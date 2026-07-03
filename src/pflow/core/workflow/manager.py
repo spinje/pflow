@@ -18,7 +18,7 @@ import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import yaml
 
@@ -40,7 +40,7 @@ class WorkflowManager:
     an entry point .pflow.md file and any bundled dependencies.
     """
 
-    def __init__(self, workflows_dir: Optional[Path] = None):
+    def __init__(self, workflows_dir: Path | None = None):
         """Initialize WorkflowManager.
 
         Args:
@@ -63,7 +63,7 @@ class WorkflowManager:
         """Return the entry point file: workflows_dir / name / {name}.pflow.md."""
         return self.workflows_dir / name / f"{name}.pflow.md"
 
-    def _copy_dependencies(self, temp_dir: str, dependencies: Optional[list[tuple[str, Path]]]) -> None:
+    def _copy_dependencies(self, temp_dir: str, dependencies: list[tuple[str, Path]] | None) -> None:
         """Copy dependency files into the temp bundle directory."""
         if not dependencies:
             return
@@ -121,7 +121,7 @@ class WorkflowManager:
                 raise WorkflowValidationError(f"Invalid workflow name '{name}'. {error}")
             raise WorkflowValidationError(error)
 
-    def _build_frontmatter(self, metadata: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    def _build_frontmatter(self, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
         """Build frontmatter dict for a new save.
 
         Args:
@@ -190,8 +190,8 @@ class WorkflowManager:
         self,
         name: str,
         markdown_content: str,
-        metadata: Optional[dict[str, Any]] = None,
-        dependencies: Optional[list[tuple[str, Path]]] = None,
+        metadata: dict[str, Any] | None = None,
+        dependencies: list[tuple[str, Path]] | None = None,
     ) -> str:
         """Save a workflow as a folder with entry point and dependencies.
 

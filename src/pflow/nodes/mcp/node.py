@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.node import Node
 from pflow.mcp.auth_utils import build_auth_headers, expand_env_vars_nested
@@ -76,7 +76,7 @@ class MCPNode(Node):
         # Note: max_retries=1 means 1 total attempt (no retries)
         # Connection reuse is handled by MCPConnectionPool (see pool.py)
         super().__init__(max_retries=1, wait=0)
-        self._server_config: Optional[dict[str, Any]] = None
+        self._server_config: dict[str, Any] | None = None
         self._timeout: int = 30  # Default timeout in seconds
 
     def prep(self, shared: dict) -> dict:

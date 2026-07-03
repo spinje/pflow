@@ -7,7 +7,7 @@ Replaces the PocketFlow-based WorkflowDiscoveryNode with a plain function.
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -27,7 +27,7 @@ class WorkflowDecision(BaseModel):
     """Schema for LLM structured output."""
 
     found: bool
-    workflow_name: Optional[str] = None
+    workflow_name: str | None = None
     confidence: float
     reasoning: str
 
@@ -37,16 +37,16 @@ class WorkflowMatch:
     """Result of LLM-powered workflow discovery."""
 
     found: bool
-    workflow_name: Optional[str]
+    workflow_name: str | None
     confidence: float
     reasoning: str
-    workflow: Optional[dict[str, Any]]  # Full metadata from WorkflowManager.load() if found
+    workflow: dict[str, Any] | None  # Full metadata from WorkflowManager.load() if found
 
 
 def find_workflow(
     query: str,
-    model_name: Optional[str] = None,
-    workflow_manager: Optional[WorkflowManager] = None,
+    model_name: str | None = None,
+    workflow_manager: WorkflowManager | None = None,
 ) -> WorkflowMatch:
     """Discover a saved workflow that matches the user's query.
 

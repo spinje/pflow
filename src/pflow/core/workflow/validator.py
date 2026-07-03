@@ -8,7 +8,7 @@ import logging
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity, deduplicate_diagnostics, format_child_provenance
 from pflow.core.exceptions import SchemaValidationError, WorkflowValidationError
@@ -136,12 +136,12 @@ class WorkflowValidator:
     @staticmethod
     def validate(
         workflow_ir: dict[str, Any],
-        extracted_params: Optional[dict[str, Any]] = None,
-        registry: Optional[Registry] = None,
+        extracted_params: dict[str, Any] | None = None,
+        registry: Registry | None = None,
         skip_node_types: bool = False,
-        workflow_file: Optional[Path] = None,
-        _seen: Optional[set[str]] = None,
-        _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Path]]]] = None,
+        workflow_file: Path | None = None,
+        _seen: set[str] | None = None,
+        _ir_cache: dict[str, tuple[dict[str, Any], Path | None]] | None = None,
     ) -> list[Diagnostic]:
         """Run complete workflow validation.
 
@@ -382,7 +382,7 @@ class WorkflowValidator:
         return []
 
     @staticmethod
-    def _validate_data_flow(workflow_ir: dict[str, Any], workflow_file: Optional[Path] = None) -> list[Diagnostic]:
+    def _validate_data_flow(workflow_ir: dict[str, Any], workflow_file: Path | None = None) -> list[Diagnostic]:
         """Validate execution order and data dependencies.
 
         Assumes ``workflow_ir`` has passed structural validation (step 1 short-circuits
@@ -478,7 +478,7 @@ class WorkflowValidator:
         return diagnostics
 
     @staticmethod
-    def _validate_output_sources(workflow_ir: dict[str, Any], registry: Optional[Registry] = None) -> list[Diagnostic]:
+    def _validate_output_sources(workflow_ir: dict[str, Any], registry: Registry | None = None) -> list[Diagnostic]:
         """Validate that workflow output sources reference valid roots.
 
         Ensures output source fields reference existing node IDs or declared
@@ -1326,12 +1326,12 @@ class WorkflowValidator:
     @staticmethod
     def _validate_sub_workflows(
         workflow_ir: dict[str, Any],
-        extracted_params: Optional[dict[str, Any]],
-        registry: Optional[Registry],
-        _seen: Optional[set[str]],
-        _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Path]]]] = None,
+        extracted_params: dict[str, Any] | None,
+        registry: Registry | None,
+        _seen: set[str] | None,
+        _ir_cache: dict[str, tuple[dict[str, Any], Path | None]] | None = None,
         skip_node_types: bool = False,
-        workflow_file: Optional[Path] = None,
+        workflow_file: Path | None = None,
     ) -> list[Diagnostic]:
         """Recursively validate sub-workflow references.
 
@@ -1387,12 +1387,12 @@ class WorkflowValidator:
         *,
         node_id: str,
         effective_params: dict[str, Any],
-        batch_item_index: Optional[int],
+        batch_item_index: int | None,
         inputs_from_item: bool,
         seen: set[str],
-        ir_cache: dict[str, tuple[dict[str, Any], Optional[Path]]],
-        workflow_file: Optional[Path],
-        registry: Optional[Registry],
+        ir_cache: dict[str, tuple[dict[str, Any], Path | None]],
+        workflow_file: Path | None,
+        registry: Registry | None,
         skip_node_types: bool,
     ) -> list[Diagnostic]:
         """Validate a single parent→child call: load the child, check input
@@ -1450,11 +1450,11 @@ class WorkflowValidator:
     @staticmethod
     def _resolve_child_file_refs(
         child_ir: dict[str, Any],
-        child_path: Optional[Path],
+        child_path: Path | None,
         ref_label: str,
         node_id: str,
-        batch_item_index: Optional[int],
-    ) -> Optional[Diagnostic]:
+        batch_item_index: int | None,
+    ) -> Diagnostic | None:
         """Resolve external ``@./file.ext`` refs inside the child IR so template
         validation sees their contents. Returns an error diagnostic on failure,
         ``None`` on success (including when there's no ``child_path``).
@@ -1485,7 +1485,7 @@ class WorkflowValidator:
     @staticmethod
     def _enumerate_child_calls(
         node: dict[str, Any],
-    ) -> Iterator[tuple[dict[str, Any], Optional[int], bool]]:
+    ) -> Iterator[tuple[dict[str, Any], int | None, bool]]:
         """Yield ``(effective_params, batch_item_index, inputs_from_item)`` per
         child call this node makes.
 
@@ -1577,7 +1577,7 @@ class WorkflowValidator:
         return False
 
     @staticmethod
-    def _step_locator(node_id: str, batch_item_index: Optional[int]) -> str:
+    def _step_locator(node_id: str, batch_item_index: int | None) -> str:
         """Return ``Step 'X' (batch.items[N])`` when ``batch_item_index`` is set,
         else ``Step 'X'``. This prefix is what makes per-item diagnostics survive
         ``Diagnostic.__hash__`` dedup (hash includes message, excludes context).
@@ -1592,7 +1592,7 @@ class WorkflowValidator:
         ref_label: str,
         parent_params: dict[str, Any],
         child_inputs: dict[str, Any],
-        batch_item_index: Optional[int] = None,
+        batch_item_index: int | None = None,
     ) -> list[Diagnostic]:
         """Check the parent→child input boundary in both directions.
 
@@ -1733,10 +1733,10 @@ class WorkflowValidator:
         node_id: str,
         params: dict[str, Any],
         seen: set[str],
-        ir_cache: dict[str, tuple[dict[str, Any], Optional[Path]]],
-        workflow_file: Optional[Path] = None,
-        batch_item_index: Optional[int] = None,
-    ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[Diagnostic], bool, tuple[Diagnostic, ...]]:
+        ir_cache: dict[str, tuple[dict[str, Any], Path | None]],
+        workflow_file: Path | None = None,
+        batch_item_index: int | None = None,
+    ) -> tuple[dict[str, Any] | None, Path | None, str, list[Diagnostic], bool, tuple[Diagnostic, ...]]:
         """Load a child workflow from a file reference or saved name.
 
         ``batch_item_index`` is threaded into load-error diagnostics so per-item

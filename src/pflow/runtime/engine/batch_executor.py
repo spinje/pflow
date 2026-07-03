@@ -13,9 +13,9 @@ import contextlib
 import copy
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import CompilationError
@@ -299,7 +299,7 @@ def _execute_batch_item(
     parent_shared: dict[str, Any],
     execute_single_fn: Callable,
     batch_config: BatchConfig,
-    item_shared: Optional[dict[str, Any]] = None,
+    item_shared: dict[str, Any] | None = None,
 ) -> tuple[dict | None, dict | None, float, dict, list]:
     """Execute single batch item with retry. Unified path for seq and parallel.
 
@@ -983,11 +983,11 @@ def _strip_redundant_item_llm_fields(item_event: dict[str, Any]) -> None:
 
 
 def build_batch_output(
-    results: Sequence[Optional[dict[str, Any]]],
+    results: Sequence[dict[str, Any] | None],
     *,
     total_count: int,
     errors: list[dict[str, Any]],
-    timing_stats: Optional[dict[str, float]],
+    timing_stats: dict[str, float] | None,
     batch_config: BatchConfig,
 ) -> dict[str, Any]:
     """Canonical batch output shape written to ``shared[node_id]``.

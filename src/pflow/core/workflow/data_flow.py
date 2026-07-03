@@ -6,7 +6,7 @@ all data dependencies are satisfied before nodes execute.
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.cache_ttl import (
     build_unsupported_cache_ttl_diagnostic,
@@ -123,7 +123,7 @@ def _check_forward_reference(
     node_positions: dict[str, int],
     loop_forward_limits: dict[str, int],
     loop_node_ids: set[str],
-) -> Optional[Diagnostic]:
+) -> Diagnostic | None:
     """Check if a node reference is a disallowed forward reference.
 
     Returns error diagnostic if ref_node_id comes after node_id in execution order
@@ -172,7 +172,7 @@ def _reserved_internal_key_diagnostic(
     param_name: str,
     *,
     has_path: bool,
-) -> Optional[Diagnostic]:
+) -> Diagnostic | None:
     """Targeted error for ``${__execution__}`` / ``${__index__.x}`` references.
 
     Catches reserved double-underscore keys in BOTH bare (``${__cache_hits__}``)
@@ -263,7 +263,7 @@ def _validate_template_reference(  # noqa: C901
     loop_forward_limits: dict[str, int],
     loop_node_ids: set[str],
     check_inputs: bool,
-) -> Optional[Diagnostic]:
+) -> Diagnostic | None:
     """Validate a single template reference.
 
     Args:
@@ -400,7 +400,7 @@ def _validate_template_reference(  # noqa: C901
 def validate_data_flow(
     workflow_ir: dict[str, Any],
     check_inputs: bool = True,
-    workflow_path: Optional[str] = None,
+    workflow_path: str | None = None,
 ) -> list[Diagnostic]:
     """Validate that data flows correctly between nodes.
 
@@ -619,7 +619,7 @@ def _validate_loop_carry_shape(node: dict[str, Any], loop_data: dict[str, Any]) 
     return diagnostics
 
 
-def _validate_loop_carry_value_self_ref(node_id: Optional[str], key: Any, value: str) -> list[Diagnostic]:
+def _validate_loop_carry_value_self_ref(node_id: str | None, key: Any, value: str) -> list[Diagnostic]:
     var = TemplateResolver.extract_simple_template_var(value)
     root = TemplateResolver.extract_root_node_id(var) if var is not None else None
     if root == node_id:
@@ -655,7 +655,7 @@ def _validate_approval_node_combos(workflow_ir: dict[str, Any]) -> list[Diagnost
     return diagnostics
 
 
-def _make_loop_namespacing_diagnostic(node_id: Optional[str]) -> Diagnostic:
+def _make_loop_namespacing_diagnostic(node_id: str | None) -> Diagnostic:
     """Reject `loop:` when `enable_namespacing: false` (issue #445).
 
     The `while:` self-reference (`${node.output}`) only resolves under namespacing;
@@ -679,7 +679,7 @@ def _make_loop_namespacing_diagnostic(node_id: Optional[str]) -> Diagnostic:
     )
 
 
-def _make_loop_batch_exclusion_diagnostic(node_id: Optional[str]) -> Diagnostic:
+def _make_loop_batch_exclusion_diagnostic(node_id: str | None) -> Diagnostic:
     """Reject a node declaring both `batch:` and `loop:` (issue #445).
 
     Mirrors the compiler's fail-fast check (`_build_loop_config`) so the save /
@@ -701,7 +701,7 @@ def _make_loop_batch_exclusion_diagnostic(node_id: Optional[str]) -> Diagnostic:
     )
 
 
-def _make_loop_polarity_diagnostic(node_id: Optional[str], message: str) -> Diagnostic:
+def _make_loop_polarity_diagnostic(node_id: str | None, message: str) -> Diagnostic:
     return Diagnostic(
         severity=Severity.ERROR,
         source="validator",
@@ -715,7 +715,7 @@ def _make_loop_polarity_diagnostic(node_id: Optional[str], message: str) -> Diag
     )
 
 
-def _make_loop_carry_seed_diagnostic(node_id: Optional[str], key: str) -> Diagnostic:
+def _make_loop_carry_seed_diagnostic(node_id: str | None, key: str) -> Diagnostic:
     return Diagnostic(
         severity=Severity.ERROR,
         source="validator",
@@ -732,7 +732,7 @@ def _make_loop_carry_seed_diagnostic(node_id: Optional[str], key: str) -> Diagno
     )
 
 
-def _make_loop_carry_self_ref_diagnostic(node_id: Optional[str], key: Any, value: str) -> Diagnostic:
+def _make_loop_carry_self_ref_diagnostic(node_id: str | None, key: Any, value: str) -> Diagnostic:
     return Diagnostic(
         severity=Severity.ERROR,
         source="validator",
@@ -749,7 +749,7 @@ def _make_loop_carry_self_ref_diagnostic(node_id: Optional[str], key: Any, value
     )
 
 
-def _make_loop_cap_diagnostic(node_id: Optional[str], cap: int, max_visits: int) -> Diagnostic:
+def _make_loop_cap_diagnostic(node_id: str | None, cap: int, max_visits: int) -> Diagnostic:
     """Reject a literal `max_iterations` over the hard visit cap (issue #445).
 
     Mirrors the compiler's `_validate_loop_cap` upper-bound check so the validate
@@ -956,7 +956,7 @@ def _validate_cache_block(  # noqa: C901
     batch_item_aliases: set[str],
     diagnostics: list[Diagnostic],
     *,
-    workflow_path: Optional[str] = None,
+    workflow_path: str | None = None,
 ) -> None:
     """Validate cache-related declarations: per-node ``prompt_cache:`` and ``prewarm:``,
     plus the workflow-level ``## Cache`` block's chunk references.
@@ -1413,7 +1413,7 @@ def _emit_prompt_body_overlap_diagnostics(
     node_id: str,
     prompt_cache: list[str],
     cache_item_names: set[str],
-    workflow_path: Optional[str],
+    workflow_path: str | None,
     diagnostics: list[Diagnostic],
 ) -> None:
     """Detect prompt-body / prompt_cache overlap and emit consolidated diagnostics.
@@ -1500,7 +1500,7 @@ def _is_templated(value: Any) -> bool:
     return isinstance(value, str) and "${" in value
 
 
-def _literal_non_one_temperature(temperature: Any) -> Optional[float]:
+def _literal_non_one_temperature(temperature: Any) -> float | None:
     """Return the temperature as a float if it's a literal numeric ≠ 1.0,
     otherwise None. Filters: None (default → 1.0), bools (subclass of int),
     non-numeric, and exactly 1.0.
@@ -1515,7 +1515,7 @@ def _literal_non_one_temperature(temperature: Any) -> Optional[float]:
     return value
 
 
-def _extract_thinking_temp_violation(node: dict[str, Any]) -> Optional[tuple[str, str, str, float]]:
+def _extract_thinking_temp_violation(node: dict[str, Any]) -> tuple[str, str, str, float] | None:
     """Return ``(node_id, model, reasoning_effort, temperature)`` if the node
     is an Anthropic LLM node with reasoning_effort enabled AND a literal
     temperature ≠ 1.0; otherwise ``None``.
@@ -1560,7 +1560,7 @@ def _validate_thinking_temperature_compatibility(
     workflow_ir: dict[str, Any],
     diagnostics: list[Diagnostic],
     *,
-    workflow_path: Optional[str] = None,
+    workflow_path: str | None = None,
 ) -> None:
     """Emit ``llm.thinking-temperature-mismatch`` ERROR for Anthropic LLM nodes
     that combine ``reasoning_effort`` (which pflow translates to

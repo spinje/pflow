@@ -8,7 +8,7 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ def path_to_module(file_path: Path, base_path: Path) -> str:
     return ".".join(parts)
 
 
-def extract_metadata(cls: type, module_path: str, file_path: Path, extractor: Optional[Any] = None) -> dict[str, Any]:
+def extract_metadata(cls: type, module_path: str, file_path: Path, extractor: Any | None = None) -> dict[str, Any]:
     """Extract metadata from a node class including parsed interface.
 
     Args:

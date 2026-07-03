@@ -9,7 +9,7 @@ import json
 import logging
 import sys
 import time
-from typing import ClassVar, Optional
+from typing import ClassVar
 
 import click
 
@@ -95,7 +95,7 @@ def _add_from_json_string(manager: MCPServerManager, json_str: str) -> list[str]
     )
 
 
-def _validate_timeout_flags(timeout: Optional[int], sse_timeout: Optional[int]) -> None:
+def _validate_timeout_flags(timeout: int | None, sse_timeout: int | None) -> None:
     """Validate timeout CLI flags before any config is saved.
 
     Args:
@@ -117,8 +117,8 @@ def _validate_timeout_flags(timeout: Optional[int], sse_timeout: Optional[int]) 
 def _apply_http_timeouts(
     manager: MCPServerManager,
     server_names: list[str],
-    timeout: Optional[int],
-    sse_timeout: Optional[int],
+    timeout: int | None,
+    sse_timeout: int | None,
 ) -> None:
     """Apply timeout overrides to newly added HTTP servers.
 
@@ -153,7 +153,7 @@ def _apply_http_timeouts(
 @click.option(
     "--sse-timeout", type=int, default=None, help="SSE read timeout in seconds (applies to HTTP servers only)"
 )
-def add(config_sources: tuple, timeout: Optional[int], sse_timeout: Optional[int]) -> None:
+def add(config_sources: tuple, timeout: int | None, sse_timeout: int | None) -> None:
     """Add MCP servers from config files or raw JSON.
 
     Examples:
@@ -534,7 +534,7 @@ def remove(name: str, force: bool) -> None:
         sys.exit(1)
 
 
-def _validate_sync_arguments(name: Optional[str], all_servers: bool) -> None:
+def _validate_sync_arguments(name: str | None, all_servers: bool) -> None:
     """Validate sync command arguments.
 
     Args:
@@ -672,7 +672,7 @@ def _display_registered_tools(server_name: str, registered_count: int, registrar
 @click.argument("name", required=False)
 @click.option("--all", "-a", "all_servers", is_flag=True, help="Sync all configured servers")
 @click.option("--verbose", "-v", is_flag=True, help="Show technical error details for failed servers")
-def sync(name: Optional[str], all_servers: bool, verbose: bool) -> None:
+def sync(name: str | None, all_servers: bool, verbose: bool) -> None:
     """Discover and register tools from MCP servers.
 
     Examples:

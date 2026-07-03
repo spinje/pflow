@@ -145,9 +145,7 @@ markers = [
 # Use 'make test' for parallel or 'make test-debug' for sequential
 
 [tool.ruff]
-# STALE: requires-python is >=3.10 — deleting this line unlocks ~500 auto-fixable
-# modernization rewrites (Optional[X] -> X | None etc.); tracked in issue #555.
-target-version = "py39"
+# target-version is inferred from requires-python (>=3.10) — do not pin it separately.
 line-length = 120
 exclude = [
     "src/pflow/pocketflow/*",

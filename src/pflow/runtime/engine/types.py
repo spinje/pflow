@@ -44,12 +44,12 @@ class LoopConfig:
     (do-while); falsy → advance to the successor. Mutually exclusive with batch.
     """
 
-    while_template: Optional[str] = None  # Condition source, raw "${node.output}" template string
+    while_template: str | None = None  # Condition source, raw "${node.output}" template string
     # Iteration cap. Either a pre-validated positive int (literal branch) OR a raw
     # "${template}" string resolved + validated at loop entry. None → MAX_NODE_VISITS.
-    max_iterations: Optional[int] = None
-    max_iterations_template: Optional[str] = None
-    until_template: Optional[str] = None
+    max_iterations: int | None = None
+    max_iterations_template: str | None = None
+    until_template: str | None = None
     carry: dict[str, str] = field(default_factory=dict)
 
 
@@ -59,10 +59,10 @@ class NodeConfig:
 
     node_id: str
     node_type_name: str  # Actual node class name (e.g., "ShellNode")
-    template_config: Optional[TemplateConfig]  # None if no templates in params
-    batch_config: Optional[BatchConfig]  # None if not a batch node
+    template_config: TemplateConfig | None  # None if no templates in params
+    batch_config: BatchConfig | None  # None if not a batch node
     namespaced: bool  # Whether node outputs are namespaced
-    interface_metadata: Optional[dict[str, Any]]  # Registry interface for type validation
+    interface_metadata: dict[str, Any] | None  # Registry interface for type validation
     cache_enabled: bool = False  # Whether to use memoization cache. Default `False` because most node types side-effect or read external state; compiler sets `True` for `llm`.
     # Task 159: per-node prompt-cache subset (declaration order, frozen tuple).
     # Empty tuple = no opt-in (DD#19, byte-identical to absent).
@@ -86,4 +86,4 @@ class CompiledWorkflow:
     template_resolution_mode: str = "strict"
     # Task 159: workflow-level ## Cache IR. Frozen + tuple items so it is safe
     # to share across parallel sub-workflow invocations via _compiled_workflow_cache.
-    cache_block: Optional[CacheBlockIR] = None
+    cache_block: CacheBlockIR | None = None

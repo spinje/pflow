@@ -10,7 +10,7 @@ single source of runtime data.
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.json_utils import try_parse_json
 from pflow.core.param_coercion import coerce_param_for_node
@@ -44,7 +44,7 @@ def _runtime_base_type(type_str: str) -> str:
     return type_str if "|" in type_str else outer_base_type(type_str)
 
 
-def build_type_cache(interface_metadata: Optional[dict[str, Any]]) -> dict[str, str]:
+def build_type_cache(interface_metadata: dict[str, Any] | None) -> dict[str, str]:
     """Extract param_key -> expected_type from registry interface metadata.
 
     Declared types are normalized to their outer base via ``_runtime_base_type``
@@ -124,7 +124,7 @@ def validate_resolved_type(
     template_str: str,
     expected_types: dict[str, str],
     resolution_mode: str,
-) -> Optional[str]:
+) -> str | None:
     """Validate that resolved value type matches expected parameter type.
 
     Returns error message string on type mismatch, None on success.
@@ -217,7 +217,10 @@ def contains_unresolved_template(resolved_value: Any, original_template: Any, _d
     if isinstance(resolved_value, list) and isinstance(original_template, list):
         if len(resolved_value) != len(original_template):
             return False
-        return any(contains_unresolved_template(r, t, _depth + 1) for r, t in zip(resolved_value, original_template))
+        return any(
+            contains_unresolved_template(r, t, _depth + 1)
+            for r, t in zip(resolved_value, original_template, strict=True)
+        )
 
     if isinstance(resolved_value, dict) and isinstance(original_template, dict):
         if set(resolved_value.keys()) != set(original_template.keys()):
@@ -467,12 +470,12 @@ def resolve_templates(  # noqa: C901
     return merged_params, last_resolutions, template_errors
 
 
-def _extract_source_file(shared: dict[str, Any]) -> Optional[str]:
+def _extract_source_file(shared: dict[str, Any]) -> str | None:
     """Extract the workflow source file path for error messages."""
     return shared.get("_pflow_workflow_file")
 
 
-def _extract_source_line(template_config: TemplateConfig, key: str) -> Optional[int]:
+def _extract_source_line(template_config: TemplateConfig, key: str) -> int | None:
     """Extract the source line for a template parameter, if tracked.
 
     The compiler stores _<key>_source_line in static_params for parameters

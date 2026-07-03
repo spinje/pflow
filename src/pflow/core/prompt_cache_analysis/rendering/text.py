@@ -1851,7 +1851,7 @@ def _compute_per_call_column_widths(
     static_mode: bool = False,
 ) -> tuple[int, ...]:
     widths = [len(header) for header in visible_columns]
-    for row, deduped_components in zip(rows, deduped_components_by_row):
+    for row, deduped_components in zip(rows, deduped_components_by_row, strict=True):
         for index, cell in enumerate(
             _per_call_cells(
                 row,

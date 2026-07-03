@@ -5,7 +5,7 @@ When batch items come from an upstream node's results array, checks
 that referenced fields actually exist on each item.
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.runtime.template_resolver import TemplateResolver
@@ -62,7 +62,7 @@ def validate_batch_item_fields(
 def _infer_batch_item_structure(
     items_template: Any,
     node_outputs: dict[str, Any],
-) -> Optional[dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Infer the structure of batch items from the items template.
 
     When items: ${upstream.results}, looks up the upstream node's results
@@ -145,7 +145,7 @@ def _check_batch_item_ref(
     items_template: Any,
     node_id: str,
     seen_errors: set[str],
-) -> Optional[Diagnostic]:
+) -> Diagnostic | None:
     """Check a single ${item.field} reference against item structure."""
     parts = field_path.split(".")
     first_field = parts[0].split("[")[0]

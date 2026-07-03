@@ -5,7 +5,7 @@ import contextlib
 import logging
 import sys
 from collections.abc import Iterator
-from typing import Any, Optional, TextIO
+from typing import Any, TextIO
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -24,7 +24,7 @@ class MCPDiscovery:
     converting them to a format suitable for the pflow registry.
     """
 
-    def __init__(self, manager: Optional[MCPServerManager] = None):
+    def __init__(self, manager: MCPServerManager | None = None):
         """Initialize MCPDiscovery.
 
         Args:

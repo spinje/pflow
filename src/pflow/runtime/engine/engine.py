@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
 from types import MappingProxyType
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import (
@@ -97,7 +97,7 @@ _CLEAN_SUCCESS_ACTIONS = frozenset({"", "default", "end"})
 _EMPTY_PROMPT_CACHE: Mapping[str, CacheRenderContext] = MappingProxyType({})
 
 
-def _diagnose_carry_ref(template: str, node_id: str, latest: Any) -> Optional[tuple[str, list[str], str]]:
+def _diagnose_carry_ref(template: str, node_id: str, latest: Any) -> tuple[str, list[str], str] | None:
     """For a simple self-ref carry ``${node_id.a.b...}``, walk the loop node's latest
     output along the WHOLE path and, if a segment is absent, return
     ``(missing_path, available_keys_at_that_level, resolved_prefix)``; else ``None``.
@@ -145,7 +145,7 @@ def _loop_available_outputs(latest: Any) -> list[str]:
 
 
 def _carry_unresolved_error(
-    node_id: str, key: str, template: str, missing_path: Optional[str], available: list[str], parent_prefix: str
+    node_id: str, key: str, template: str, missing_path: str | None, available: list[str], parent_prefix: str
 ) -> LoopCarryError:
     avail_str = ", ".join(available) if available else "(none)"
     produced = f"output '{missing_path}'" if missing_path else "the carried output"
@@ -443,7 +443,7 @@ def validate_only_target(workflow: CompiledWorkflow, only_node: str | None) -> t
     return this_only, child_only
 
 
-def is_clean_termination(action: Optional[str], successors: dict[str, Any]) -> bool:
+def is_clean_termination(action: str | None, successors: dict[str, Any]) -> bool:
     """Whether the graph walk should clean-terminate after a node returns `action`.
 
     Shared predicate between the runtime engine (`_handle_no_successor` —
@@ -478,7 +478,7 @@ class RouteDecision:
     next_node: Any = None
 
 
-def route_action(action: Optional[str], successors: dict[str, Any]) -> RouteDecision:
+def route_action(action: str | None, successors: dict[str, Any]) -> RouteDecision:
     """Pure routing kernel: where does the walk go after a node yields ``action``?
 
     Shared between the runtime engine (``WorkflowEngine._run_inner``'s
@@ -577,11 +577,11 @@ class WorkflowEngine:
 
     def __init__(
         self,
-        metrics_collector: Optional[Any] = None,
-        trace_collector: Optional[Any] = None,
-        only_node: Optional[str] = None,
-        workflow_path: Optional[str] = None,
-        snapshot_events: Optional[list[dict]] = None,
+        metrics_collector: Any | None = None,
+        trace_collector: Any | None = None,
+        only_node: str | None = None,
+        workflow_path: str | None = None,
+        snapshot_events: list[dict] | None = None,
     ):
         self.metrics = metrics_collector
         self.trace = trace_collector
@@ -711,7 +711,7 @@ class WorkflowEngine:
                 # (cleared by the re-entry logic / outer finally below), so
                 # clear_iteration_on_exit=False here.
                 is_loop = config.loop_config is not None
-                iteration: Optional[int] = None
+                iteration: int | None = None
                 if is_loop:
                     loop_counts[node_id] = loop_counts.get(node_id, 0) + 1
                     iteration = loop_counts[node_id]
@@ -923,7 +923,7 @@ class WorkflowEngine:
             id="loop.max-iterations-reached",
         )
 
-    def _populate_outputs(self, workflow: CompiledWorkflow, shared: dict[str, Any], last_action: Optional[str]) -> None:
+    def _populate_outputs(self, workflow: CompiledWorkflow, shared: dict[str, Any], last_action: str | None) -> None:
         """Resolve declared workflow outputs into the shared store.
 
         Under ``--only``, outputs whose source templates cannot resolve (because
@@ -947,8 +947,8 @@ class WorkflowEngine:
                 raise
 
     def _handle_no_successor(
-        self, last_action: Optional[str], node_id: str, curr: Any, shared: dict[str, Any]
-    ) -> Optional[str]:
+        self, last_action: str | None, node_id: str, curr: Any, shared: dict[str, Any]
+    ) -> str | None:
         """Handle case where no successor matches the current action.
 
         Distinguishes intentional termination from routing errors:
@@ -1029,9 +1029,9 @@ class WorkflowEngine:
         # Steps 5-11 are inside try so template errors get recorded in trace
         last_resolutions: dict = {}
         template_errors: list = []
-        resolved_params: Optional[dict] = None
-        batch_trace_items: Optional[list] = None
-        child_trace_events: Optional[list] = None
+        resolved_params: dict | None = None
+        batch_trace_items: list | None = None
+        child_trace_events: list | None = None
         host_frame: Any = None  # Task 172: a sub-workflow host's reserved correlation (run-scoped)
         start_frame: Any = None  # Task 173: a leaf's node.start correlation (reserved seq, reused at completion)
 
@@ -1070,7 +1070,7 @@ class WorkflowEngine:
                         cache_key=plan.cache_key,
                         created_at=plan.cached_created_at,
                     )
-                    cached_source: Optional[str] = None
+                    cached_source: str | None = None
                 else:
                     cached_source = "in_process"
                 # GH #540: record the RESOLVED params + template resolutions the cache
@@ -1236,7 +1236,7 @@ class WorkflowEngine:
             # actual error text so --report and other trace consumers don't
             # fall back to "Unknown error").
             is_error_action = str(action).startswith("error")
-            trace_error: Optional[str] = None
+            trace_error: str | None = None
             if is_error_action:
                 node_data_snapshot = shared.get(config.node_id, {})
                 if isinstance(node_data_snapshot, dict):

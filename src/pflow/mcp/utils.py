@@ -1,9 +1,7 @@
 """Utility functions for MCP operations."""
 
-from typing import Optional
 
-
-def _find_known_server_match(parts: list[str], known_servers: list[str]) -> Optional[tuple[str, str]]:
+def _find_known_server_match(parts: list[str], known_servers: list[str]) -> tuple[str, str] | None:
     """Find the best matching server from known servers.
 
     Args:
@@ -65,7 +63,7 @@ def _guess_server_tool_split(parts: list[str]) -> tuple[str, str]:
     return "unknown", "-".join(parts)
 
 
-def parse_mcp_node_name(node_name: str, known_servers: Optional[list[str]] = None) -> tuple[str, str]:
+def parse_mcp_node_name(node_name: str, known_servers: list[str] | None = None) -> tuple[str, str]:
     """Parse an MCP node name into server and tool components.
 
     Handles server names that contain hyphens by checking against known servers.

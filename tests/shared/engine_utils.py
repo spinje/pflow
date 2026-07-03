@@ -16,7 +16,7 @@ Usage:
     assert len(collector.events) == 1
 """
 
-from typing import Any, Optional
+from typing import Any
 
 from pflow.registry import Registry
 from pflow.runtime import compile_workflow
@@ -25,15 +25,15 @@ from pflow.runtime.engine import WorkflowEngine
 
 def compile_and_run(
     ir: dict[str, Any],
-    registry: Optional[Registry] = None,
-    initial_params: Optional[dict[str, Any]] = None,
-    shared: Optional[dict[str, Any]] = None,
+    registry: Registry | None = None,
+    initial_params: dict[str, Any] | None = None,
+    shared: dict[str, Any] | None = None,
     *,
     metrics_collector: Any = None,
     trace_collector: Any = None,
-    only_node: Optional[str] = None,
-    workflow_path: Optional[str] = None,
-    snapshot_events: Optional[list[dict[str, Any]]] = None,
+    only_node: str | None = None,
+    workflow_path: str | None = None,
+    snapshot_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Compile IR, seed shared store, run engine, return shared.
 

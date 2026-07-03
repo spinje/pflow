@@ -6,7 +6,7 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class MCPServerManager:
 
     DEFAULT_CONFIG_PATH = Path("~/.pflow/mcp-servers.json")
 
-    def __init__(self, config_path: Optional[Path] = None):
+    def __init__(self, config_path: Path | None = None):
         """Initialize MCPServerManager.
 
         Args:
@@ -139,14 +139,14 @@ class MCPServerManager:
         self,
         name: str,
         transport: str = "stdio",
-        command: Optional[str] = None,
-        args: Optional[list[str]] = None,
-        env: Optional[dict[str, str]] = None,
-        url: Optional[str] = None,
-        auth: Optional[dict[str, Any]] = None,
-        headers: Optional[dict[str, str]] = None,
-        timeout: Optional[int] = None,
-        sse_timeout: Optional[int] = None,
+        command: str | None = None,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        url: str | None = None,
+        auth: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: int | None = None,
+        sse_timeout: int | None = None,
     ) -> None:
         """Add or update an MCP server configuration.
 
@@ -209,9 +209,9 @@ class MCPServerManager:
 
     def _build_stdio_config(
         self,
-        command: Optional[str],
-        args: Optional[list[str]],
-        env: Optional[dict[str, str]],
+        command: str | None,
+        args: list[str] | None,
+        env: dict[str, str] | None,
     ) -> dict[str, Any]:
         """Build stdio configuration in standard MCP format.
 
@@ -245,12 +245,12 @@ class MCPServerManager:
 
     def _build_http_config(
         self,
-        url: Optional[str],
-        auth: Optional[dict[str, Any]],
-        headers: Optional[dict[str, str]],
-        timeout: Optional[int],
-        sse_timeout: Optional[int],
-        env: Optional[dict[str, str]],
+        url: str | None,
+        auth: dict[str, Any] | None,
+        headers: dict[str, str] | None,
+        timeout: int | None,
+        sse_timeout: int | None,
+        env: dict[str, str] | None,
     ) -> dict[str, Any]:
         """Build HTTP configuration in standard MCP format.
 
@@ -298,8 +298,8 @@ class MCPServerManager:
         is_update: bool,
         name: str,
         transport: str,
-        command: Optional[str],
-        url: Optional[str],
+        command: str | None,
+        url: str | None,
     ) -> None:
         """Log server add/update action.
 
@@ -341,7 +341,7 @@ class MCPServerManager:
         logger.info(f"Removed MCP server '{name}' from configuration")
         return True
 
-    def get_server(self, name: str) -> Optional[dict[str, Any]]:
+    def get_server(self, name: str) -> dict[str, Any] | None:
         """Get configuration for a specific MCP server.
 
         Args:

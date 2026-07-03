@@ -8,7 +8,6 @@ import tempfile
 import threading
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -91,16 +90,16 @@ class LLMSettings(BaseModel):
         }
     """
 
-    default_model: Optional[str] = Field(
+    default_model: str | None = Field(
         default=None,
         description="Default model for all pflow LLM usage. "
         "Used by LLM nodes, discovery, and filtering when specific settings are not set.",
     )
-    discovery_model: Optional[str] = Field(
+    discovery_model: str | None = Field(
         default=None,
         description="Model for discovery commands. Overrides default_model for discovery only.",
     )
-    filtering_model: Optional[str] = Field(
+    filtering_model: str | None = Field(
         default=None,
         description="Model for smart field filtering. Overrides default_model for filtering only.",
     )
@@ -119,9 +118,9 @@ class PflowSettings(BaseModel):
 class SettingsManager:
     """Manages pflow settings with environment variable override support."""
 
-    def __init__(self, settings_path: Optional[Path] = None):
+    def __init__(self, settings_path: Path | None = None):
         self.settings_path = settings_path or Path.home() / ".pflow" / "settings.json"
-        self._settings: Optional[PflowSettings] = None
+        self._settings: PflowSettings | None = None
         # RLock for thread-safe operations (reentrant since set_env calls load)
         self._lock = threading.RLock()
 
@@ -169,7 +168,7 @@ class SettingsManager:
                     f"Using default: {settings.runtime.template_resolution_mode}"
                 )
 
-    def should_include_node(self, node_name: str, node_module: Optional[str] = None) -> bool:
+    def should_include_node(self, node_name: str, node_module: str | None = None) -> bool:
         """Check if a node should be included based on settings.
 
         Args:
@@ -208,7 +207,7 @@ class SettingsManager:
         return "*" in settings.registry.nodes.allow
 
     @staticmethod
-    def _build_match_candidates(node_name: str, node_module: Optional[str]) -> list[str]:
+    def _build_match_candidates(node_name: str, node_module: str | None) -> list[str]:
         """Build candidate strings used for pattern matching."""
         candidates: list[str] = [node_name]
         if node_module:
@@ -239,7 +238,7 @@ class SettingsManager:
                     return True
         return False
 
-    def save(self, settings: Optional[PflowSettings] = None) -> None:
+    def save(self, settings: PflowSettings | None = None) -> None:
         """Save settings to file with atomic operations and secure permissions."""
         if settings is None:
             settings = self.load()
@@ -337,7 +336,7 @@ class SettingsManager:
                 return True
             return False
 
-    def get_env(self, key: str, default: Optional[str] = None) -> Optional[str]:
+    def get_env(self, key: str, default: str | None = None) -> str | None:
         """Get an environment variable value.
 
         Args:
@@ -378,7 +377,7 @@ class SettingsManager:
             return "***"
         return value[:3] + "***"
 
-    def _validate_permissions(self, settings: Optional[PflowSettings] = None) -> None:
+    def _validate_permissions(self, settings: PflowSettings | None = None) -> None:
         """Validate file permissions and warn if insecure (defense-in-depth).
 
         Checks if settings file has world/group-readable permissions when it

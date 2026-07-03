@@ -5,7 +5,7 @@ ensuring CLI and MCP return identical output structures.
 """
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.diagnostic_render import format_diagnostic
@@ -27,11 +27,11 @@ def format_execution_success(
     shared_storage: dict[str, Any],
     workflow_ir: dict[str, Any],
     metrics_collector: Any,
-    workflow_metadata: Optional[dict[str, Any]] = None,
-    output_key: Optional[str] = None,
-    trace_path: Optional[str] = None,
-    status: Optional[WorkflowStatus] = None,
-    warnings: Optional[list[Any]] = None,
+    workflow_metadata: dict[str, Any] | None = None,
+    output_key: str | None = None,
+    trace_path: str | None = None,
+    status: WorkflowStatus | None = None,
+    warnings: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Format successful workflow execution output.
 
@@ -179,7 +179,7 @@ def _mirror_pricing_tri_state(result: dict[str, Any], metrics_summary: dict[str,
 def _collect_outputs(
     shared_storage: dict[str, Any],
     workflow_ir: dict[str, Any],
-    output_key: Optional[str] = None,
+    output_key: str | None = None,
 ) -> dict[str, Any]:
     """Collect outputs from shared storage for JSON formatting.
 

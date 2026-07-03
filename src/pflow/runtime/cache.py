@@ -11,7 +11,7 @@ import sqlite3
 import time
 import zlib
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ def _deterministic_json(obj: Any) -> str:
 
 def compute_node_cache_key(
     config_hash: str,
-    resolved_inputs: Optional[dict[str, Any]] = None,
+    resolved_inputs: dict[str, Any] | None = None,
 ) -> str:
     """Compute memoization cache key for a non-batch node.
 
@@ -166,7 +166,7 @@ class MemoizationCache:
 
     def __init__(
         self,
-        db_path: Optional[Path] = None,
+        db_path: Path | None = None,
         ttl_seconds: float = DEFAULT_TTL_SECONDS,
         read_enabled: bool = True,
     ):
@@ -220,7 +220,7 @@ class MemoizationCache:
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
-    def get(self, cache_key: str) -> Optional[tuple[str, dict[str, Any]]]:
+    def get(self, cache_key: str) -> tuple[str, dict[str, Any]] | None:
         """Look up cache entry.
 
         Args:
@@ -262,7 +262,7 @@ class MemoizationCache:
             logger.debug("Memoization cache read failed", exc_info=True)
             return None
 
-    def get_with_age(self, cache_key: str) -> Optional[tuple[str, dict[str, Any], float]]:
+    def get_with_age(self, cache_key: str) -> tuple[str, dict[str, Any], float] | None:
         """Look up cache entry with its creation time.
 
         Args:
@@ -303,8 +303,8 @@ class MemoizationCache:
             return None
 
     def get_latest_for_node(
-        self, node_id: str, *, workflow_path: Optional[str] = None
-    ) -> Optional[tuple[dict[str, Any], float]]:
+        self, node_id: str, *, workflow_path: str | None = None
+    ) -> tuple[dict[str, Any], float] | None:
         """Look up the newest cache entry for a node_id.
 
         Args:
@@ -328,8 +328,8 @@ class MemoizationCache:
         return output, created_at
 
     def get_latest_for_node_with_cache_key(
-        self, node_id: str, *, workflow_path: Optional[str] = None
-    ) -> Optional[tuple[dict[str, Any], float, str]]:
+        self, node_id: str, *, workflow_path: str | None = None
+    ) -> tuple[dict[str, Any], float, str] | None:
         """Look up the newest cache entry for a node_id, including cache_key.
 
         This is an additive API for analyzer freshness checks. Existing
@@ -379,7 +379,7 @@ class MemoizationCache:
         self,
         cache_key: str,
         node_id: str,
-        workflow_path: Optional[str],
+        workflow_path: str | None,
         action: str,
         output: dict[str, Any],
     ) -> None:
@@ -419,7 +419,7 @@ class MemoizationCache:
         except (sqlite3.Error, OSError):
             logger.debug("Memoization cache write failed", exc_info=True)
 
-    def evict_expired(self, ttl_seconds: Optional[float] = None) -> int:
+    def evict_expired(self, ttl_seconds: float | None = None) -> int:
         """Remove entries older than TTL.
 
         Args:
@@ -446,7 +446,7 @@ class MemoizationCache:
             logger.debug("Memoization cache eviction failed", exc_info=True)
             return 0
 
-    def clear(self, workflow_path: Optional[str] = None) -> int:
+    def clear(self, workflow_path: str | None = None) -> int:
         """Clear all entries, or entries for a specific workflow.
 
         Args:

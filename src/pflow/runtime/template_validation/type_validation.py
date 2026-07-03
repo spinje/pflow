@@ -6,7 +6,7 @@ Pass 9: Validates code-node input annotations against template source types.
 """
 
 import re
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.types import outer_base_type
@@ -96,7 +96,7 @@ def validate_template_types(
 def _check_param_type(
     param_name: str,
     value: Any,
-    expected_type: Optional[str],
+    expected_type: str | None,
     node_id: str,
     workflow_ir: dict[str, Any],
     node_outputs: dict[str, Any],
@@ -380,7 +380,7 @@ def _infer_missing_annotation_type(
     inputs: dict[str, Any],
     workflow_ir: dict[str, Any],
     node_outputs: dict[str, Any],
-) -> Optional[str]:
+) -> str | None:
     """Infer a Python-display type for a missing code-node input annotation.
 
     Returns the inferred Python name (``"list"``, ``"dict"``, ``"str"``, …)
@@ -463,7 +463,7 @@ def _build_orphan_code_annotation_diagnostics(
     annotations: dict[str, str],
     load_refs: set[str],
     assigned_names: set[str],
-    batch_alias: Optional[str],
+    batch_alias: str | None,
 ) -> list[Diagnostic]:
     """Build diagnostics for *bare* annotations with no matching input binding.
 
@@ -619,7 +619,7 @@ def _build_complex_template_str_coercion_diagnostic(
     annotation_str: str,
     expected_canonical: str,
     annotation_is_optional: bool,
-) -> Optional[Diagnostic]:
+) -> Diagnostic | None:
     """Emit a diagnostic when a complex template resolves to str and violates a non-str target.
 
     Runtime coerces ``"prefix ${x}"`` / ``"${a} ${b}"`` to str unconditionally
@@ -912,7 +912,7 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
         # Batch alias is used to produce a specific `${alias}` suggestion when
         # the orphan is the batch iteration variable.
         batch_cfg = node.get("batch")
-        batch_alias: Optional[str] = (batch_cfg.get("as") or "item") if isinstance(batch_cfg, dict) else None
+        batch_alias: str | None = (batch_cfg.get("as") or "item") if isinstance(batch_cfg, dict) else None
 
         diagnostics.extend(
             _build_missing_code_annotation_diagnostics(
@@ -939,7 +939,7 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
     return diagnostics
 
 
-def _traverse_to_structure(structure: dict[str, Any], path: str) -> Optional[dict[str, Any]]:
+def _traverse_to_structure(structure: dict[str, Any], path: str) -> dict[str, Any] | None:
     """Traverse nested structure to find the structure at a given path.
 
     Args:

@@ -8,7 +8,7 @@ returns ``AdapterResponse`` instances directly.
 import contextlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.llm_client import AdapterResponse
 from pflow.core.llm_usage import normalize_litellm_usage_tokens
@@ -57,7 +57,7 @@ _DEFAULT_RESPONSES: dict[str, dict] = {
 }
 
 
-def _schema_name(schema: Any) -> Optional[str]:
+def _schema_name(schema: Any) -> str | None:
     """Extract a schema's name for default-response lookup.
 
     Accepts either a Pydantic class (legacy callers) or a JSON Schema dict
@@ -105,7 +105,7 @@ class MockLLMClient:
     call_history: list[dict] = field(default_factory=list)
     call_history_full: list[dict] = field(default_factory=list)
     _responses: dict[str, dict] = field(default_factory=dict)
-    _costs: dict[str, Optional[float]] = field(default_factory=dict)
+    _costs: dict[str, float | None] = field(default_factory=dict)
     _warnings: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     # Task 159 C1.2: per-(model,schema) cache-token staging. Production
     # callers populate via ``set_response`` so cache-hit scenarios surface at
@@ -119,10 +119,10 @@ class MockLLMClient:
         schema: Any,
         response: Any,
         *,
-        cost_usd: Optional[float] = None,
+        cost_usd: float | None = None,
         warnings: list[dict[str, Any]] | None = None,
-        cache_creation_input_tokens: Optional[int] = 0,
-        cache_read_input_tokens: Optional[int] = 0,
+        cache_creation_input_tokens: int | None = 0,
+        cache_read_input_tokens: int | None = 0,
     ) -> None:
         """Configure a response for a (model, schema) pair.
 
@@ -182,7 +182,7 @@ class MockLLMClient:
         # 4. Final fallback
         return {"response": "mock response"}
 
-    def _get_cost(self, model: str, schema: Any) -> Optional[float]:
+    def _get_cost(self, model: str, schema: Any) -> float | None:
         """Resolve the configured cost for a (model, schema) pair.
 
         Returns ``None`` when no cost was set for the matching key — matches
@@ -204,7 +204,7 @@ class MockLLMClient:
             return list(self._warnings[f"*:{name}"])
         return []
 
-    def _get_cache_creation(self, model: str, schema: Any) -> Optional[int]:
+    def _get_cache_creation(self, model: str, schema: Any) -> int | None:
         """Resolve staged cache-write token count for a (model, schema) pair.
 
         Returns ``None`` when the test staged absent telemetry; the mock
@@ -217,7 +217,7 @@ class MockLLMClient:
             return self._cache_creation_tokens[f"*:{name}"]
         return 0
 
-    def _get_cache_read(self, model: str, schema: Any) -> Optional[int]:
+    def _get_cache_read(self, model: str, schema: Any) -> int | None:
         """Resolve staged cache-read token count for a (model, schema) pair.
 
         ``None`` semantic mirrors ``_get_cache_creation``.
@@ -245,16 +245,16 @@ class MockLLMClient:
         *,
         model: str,
         prompt: str,
-        system: Optional[str | list[dict[str, Any]]] = None,
+        system: str | list[dict[str, Any]] | None = None,
         temperature: float = 0.0,
-        max_tokens: Optional[int] = None,
-        attachments: Optional[list] = None,
-        schema: Optional[dict] = None,
-        reasoning_kwargs: Optional[dict] = None,
-        model_options: Optional[dict] = None,
-        timeout: Optional[float] = None,
-        trace_hook: Optional[Any] = None,
-        user_message_blocks: Optional[list[dict[str, Any]]] = None,
+        max_tokens: int | None = None,
+        attachments: list | None = None,
+        schema: dict | None = None,
+        reasoning_kwargs: dict | None = None,
+        model_options: dict | None = None,
+        timeout: float | None = None,
+        trace_hook: Any | None = None,
+        user_message_blocks: list[dict[str, Any]] | None = None,
     ) -> AdapterResponse:
         """Record the call and return a mocked AdapterResponse.
 

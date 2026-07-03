@@ -10,7 +10,6 @@ Key resolution sources (in priority order):
 
 import logging
 import os
-from typing import Optional
 
 from pflow.core.llm_providers import PROVIDERS
 from pflow.core.settings import SettingsManager
@@ -18,7 +17,7 @@ from pflow.core.settings import SettingsManager
 logger = logging.getLogger(__name__)
 
 # Cache the detected default model to avoid repeated key checks
-_cached_default_model: Optional[str] = None
+_cached_default_model: str | None = None
 # Flag to track if detection has been completed (even if result is None)
 _detection_complete: bool = False
 
@@ -75,7 +74,7 @@ def _has_provider_key(provider: str) -> bool:
     return False
 
 
-def _detect_default_model() -> Optional[str]:
+def _detect_default_model() -> str | None:
     """Detect best available LLM model based on configured API keys.
 
     Priority order:
@@ -107,7 +106,7 @@ def _detect_default_model() -> Optional[str]:
     return None
 
 
-def get_default_llm_model() -> Optional[str]:
+def get_default_llm_model() -> str | None:
     """Get default LLM model with caching.
 
     This function:
@@ -268,7 +267,7 @@ def get_model_for_feature(feature: str) -> str:
     return _DEFAULT_FALLBACK_MODEL
 
 
-def get_default_workflow_model() -> Optional[str]:
+def get_default_workflow_model() -> str | None:
     """Get the default model for user workflow LLM nodes.
 
     Resolution order:

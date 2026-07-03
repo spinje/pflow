@@ -2,7 +2,7 @@
 
 import os
 import tempfile
-from typing import Any, Optional
+from typing import Any
 
 from pflow.registry import Registry
 from pflow.runtime import WorkflowEngine, compile_workflow
@@ -12,7 +12,7 @@ def _compile_and_run(
     workflow_ir: dict[str, Any],
     registry: Registry,
     shared: dict[str, Any],
-    initial_params: Optional[dict[str, Any]] = None,
+    initial_params: dict[str, Any] | None = None,
 ) -> None:
     """Compile workflow and run via WorkflowEngine, seeding shared store."""
     workflow = compile_workflow(workflow_ir, registry, initial_params=initial_params)

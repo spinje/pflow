@@ -2109,7 +2109,7 @@ class TestIREquivalence:
         assert len(parsed_ir["nodes"]) == 3
         assert parsed_ir["edges"] == original_ir["edges"]
 
-        for orig, parsed in zip(original_ir["nodes"], parsed_ir["nodes"]):
+        for orig, parsed in zip(original_ir["nodes"], parsed_ir["nodes"], strict=True):
             assert parsed["id"] == orig["id"]
             assert parsed["type"] == orig["type"]
 

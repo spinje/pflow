@@ -25,8 +25,9 @@ import hashlib
 import json
 import logging
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, TypedDict
+from typing import Any, TypedDict
 
 from pflow.core.trace_tree import event_cost
 

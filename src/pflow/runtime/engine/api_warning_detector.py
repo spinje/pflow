@@ -13,7 +13,7 @@ When an error matches both validation and resource patterns, validation wins.
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class _ErrorSignal:
     from_explicit_failure_flag: bool
 
 
-def detect_api_warning(node_id: str, shared: dict[str, Any], *, node_type_name: Optional[str] = None) -> Optional[str]:
+def detect_api_warning(node_id: str, shared: dict[str, Any], *, node_type_name: str | None = None) -> str | None:
     """Detect API errors that should surface as warnings.
 
     Explicit failure flags are trusted as self-reported API failures. For
@@ -90,7 +90,7 @@ def detect_api_warning(node_id: str, shared: dict[str, Any], *, node_type_name: 
     return _warning_from_message(error_msg)
 
 
-def _format_explicit_failure_warning(error_msg: str, error_code: Optional[str]) -> str:
+def _format_explicit_failure_warning(error_msg: str, error_code: str | None) -> str:
     if error_code:
         logger.info(f"Explicit API failure detected: {error_code} - {error_msg}")
         return f"API error ({error_code}): {error_msg}"
@@ -98,7 +98,7 @@ def _format_explicit_failure_warning(error_msg: str, error_code: Optional[str]) 
     return f"API error: {error_msg}"
 
 
-def _warning_from_error_code(error_code: Optional[str], error_msg: str) -> tuple[bool, Optional[str]]:
+def _warning_from_error_code(error_code: str | None, error_msg: str) -> tuple[bool, str | None]:
     if not error_code:
         return False, None
 
@@ -117,7 +117,7 @@ def _warning_from_error_code(error_code: Optional[str], error_msg: str) -> tuple
     return False, None
 
 
-def _warning_from_message(error_msg: str) -> Optional[str]:
+def _warning_from_message(error_msg: str) -> str | None:
     # PRIORITY 2: Check if it's a validation error
     if _is_validation_error(error_msg):
         logger.debug(f"Validation error detected: {error_msg}")
@@ -133,7 +133,7 @@ def _warning_from_message(error_msg: str) -> Optional[str]:
     return None
 
 
-def unwrap_mcp_response(output: Any, *, inspect_result: bool = True) -> Optional[dict]:
+def unwrap_mcp_response(output: Any, *, inspect_result: bool = True) -> dict | None:
     """Unwrap MCP nested responses to get actual API response."""
     if not isinstance(output, dict):
         return None
@@ -167,7 +167,7 @@ def unwrap_mcp_response(output: Any, *, inspect_result: bool = True) -> Optional
     return output
 
 
-def _parse_mcp_json_result(output: dict) -> Optional[dict]:
+def _parse_mcp_json_result(output: dict) -> dict | None:
     """Parse MCP JSON result field if present."""
     if "result" not in output or not isinstance(output["result"], str):
         return None
@@ -189,7 +189,7 @@ def _parse_mcp_json_result(output: dict) -> Optional[dict]:
     return None
 
 
-def _unwrap_successful_data(output: dict) -> Optional[dict]:
+def _unwrap_successful_data(output: dict) -> dict | None:
     """Return nested MCP data from successful wrapper payloads."""
     if output.get("successful") is True and "data" in output:
         data = output["data"]
@@ -199,7 +199,7 @@ def _unwrap_successful_data(output: dict) -> Optional[dict]:
     return None
 
 
-def extract_error_code(output: dict) -> Optional[str]:
+def extract_error_code(output: dict) -> str | None:
     """Extract error code from various API response formats."""
     # Defensive type check
     if not isinstance(output, dict):
@@ -221,7 +221,7 @@ def extract_error_code(output: dict) -> Optional[str]:
     return None
 
 
-def _check_boolean_error_flags(output: dict) -> Optional[str]:
+def _check_boolean_error_flags(output: dict) -> str | None:
     """Check boolean error flags in API response.
 
     Args:
@@ -254,7 +254,7 @@ def _check_boolean_error_flags(output: dict) -> Optional[str]:
     return None
 
 
-def _check_status_field(output: dict) -> Optional[str]:
+def _check_status_field(output: dict) -> str | None:
     """Check status field for error indicators.
 
     Args:
@@ -273,7 +273,7 @@ def _check_status_field(output: dict) -> Optional[str]:
     return None
 
 
-def _check_graphql_errors(output: dict) -> Optional[str]:
+def _check_graphql_errors(output: dict) -> str | None:
     """Check for GraphQL errors in API response.
 
     Args:
@@ -299,7 +299,7 @@ def _check_graphql_errors(output: dict) -> Optional[str]:
     return None
 
 
-def extract_error_message(output: dict) -> Optional[str]:
+def extract_error_message(output: dict) -> str | None:
     """Extract error message from API response.
 
     Args:
@@ -318,7 +318,7 @@ def extract_error_message(output: dict) -> Optional[str]:
     return signal.message
 
 
-def _extract_error_signal(output: dict) -> Optional[_ErrorSignal]:
+def _extract_error_signal(output: dict) -> _ErrorSignal | None:
     """Extract error text and whether it came from an explicit failure flag."""
     # Defensive type check
     if not isinstance(output, dict):
@@ -356,7 +356,7 @@ def _first_error_message(*values: Any, default: str) -> str:
     return default
 
 
-def _coerce_error_message(value: Any) -> Optional[str]:
+def _coerce_error_message(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):

@@ -8,7 +8,7 @@ the workflow for it to work as a self-contained bundle.
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import yaml
 
@@ -34,7 +34,7 @@ class Dependency:
 def discover_dependencies(
     ir_dict: dict[str, Any],
     base_dir: Path,
-    seen: Optional[set[str]] = None,
+    seen: set[str] | None = None,
 ) -> list[Dependency]:
     """Recursively discover all file dependencies of a workflow.
 

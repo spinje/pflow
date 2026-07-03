@@ -19,7 +19,7 @@ This module owns:
 import logging
 import re
 from collections.abc import Iterator
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.suggestion_utils import find_similar_items
@@ -237,7 +237,7 @@ def _loop_condition_diagnostic(
     condition_template: str,
     workflow_ir: dict[str, Any],
     node_outputs: dict[str, Any],
-) -> Optional[Diagnostic]:
+) -> Diagnostic | None:
     """Return the (at most one) ERROR for a loop condition, or None if valid.
 
     - **Operator rejection**: `while: ${x > 0}` / arithmetic is unsupported — the
@@ -383,7 +383,7 @@ def _loop_declared_outputs(node_id: str, node_outputs: dict[str, Any]) -> list[s
     return sorted(names)
 
 
-def _carry_value_unknown_output(value: str, node_id: str, node_outputs: dict[str, Any]) -> Optional[str]:
+def _carry_value_unknown_output(value: str, node_id: str, node_outputs: dict[str, Any]) -> str | None:
     """Return the first self-referencing output segment in a carry value that the loop
     node does NOT declare (a typo), or None when every self-ref operand is declared.
 
@@ -880,7 +880,7 @@ def _extract_cache_templates_for_unused_check(workflow_ir: dict[str, Any]) -> se
 def extract_node_outputs(
     workflow_ir: dict[str, Any],
     registry: Registry,
-    initial_params: Optional[dict[str, Any]] = None,
+    initial_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Extract full output structures from nodes using interface metadata.
 
@@ -929,7 +929,7 @@ def extract_node_outputs(
 
         # Pre-compute code-node annotations so both batch and non-batch output
         # registration can enrich the `result` type uniformly.
-        code_annotations: Optional[dict[str, str]] = None
+        code_annotations: dict[str, str] | None = None
         if node_type == "code":
             code_param = node.get("params", {}).get("code")
             if isinstance(code_param, str):
@@ -1009,7 +1009,7 @@ def _register_workflow_node_outputs(
     node_type: str,
     enable_namespacing: bool,
     registry: Registry,
-    initial_params: Optional[dict[str, Any]],
+    initial_params: dict[str, Any] | None,
 ) -> None:
     """Register outputs for a workflow node, handling both batch and non-batch cases.
 
@@ -1118,8 +1118,8 @@ def _register_inputs_context_variables(
 
 def _resolve_child_workflow_outputs(
     node: dict[str, Any],
-    initial_params: Optional[dict[str, Any]],
-) -> Optional[dict[str, Any]]:
+    initial_params: dict[str, Any] | None,
+) -> dict[str, Any] | None:
     """Try to resolve a workflow node's child outputs for validation.
 
     Returns the child's declared outputs dict if resolvable, or None if
@@ -1204,7 +1204,7 @@ def _get_inner_outputs_from_registry(node_type: str, registry: Registry) -> dict
 def _enrich_code_result_output_type(
     output_key: str,
     output_info: dict[str, Any],
-    code_annotations: Optional[dict[str, str]],
+    code_annotations: dict[str, str] | None,
 ) -> dict[str, Any]:
     """Override code-node `result` output type from its annotation when known."""
     if not code_annotations or output_key != "result" or output_info.get("type") != "any":
@@ -1229,10 +1229,10 @@ def _register_batch_outputs(
     node_type: str,
     enable_namespacing: bool,
     registry: Registry,
-    inner_outputs_override: Optional[dict[str, Any]] = None,
+    inner_outputs_override: dict[str, Any] | None = None,
     skip_results_structure: bool = False,
     error_handling: str = "fail_fast",
-    code_annotations: Optional[dict[str, str]] = None,
+    code_annotations: dict[str, str] | None = None,
 ) -> None:
     """Register batch-specific outputs for a node with batch configuration.
 
@@ -1309,7 +1309,7 @@ def _register_node_outputs_from_registry(
     node_type: str,
     enable_namespacing: bool,
     registry: Registry,
-    code_annotations: Optional[dict[str, str]] = None,
+    code_annotations: dict[str, str] | None = None,
 ) -> None:
     """Register outputs from registry interface metadata for non-batch nodes.
 

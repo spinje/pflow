@@ -9,7 +9,7 @@ import json
 import logging
 import re
 from collections.abc import Mapping
-from typing import Any, Optional
+from typing import Any
 
 from pflow.core.json_utils import try_parse_json
 
@@ -366,7 +366,7 @@ class TemplateResolver:
         return (None, "unresolved")
 
     @staticmethod
-    def extract_simple_template_var(value: str) -> Optional[str]:
+    def extract_simple_template_var(value: str) -> str | None:
         """Extract variable name from a simple template.
 
         Args:
@@ -556,7 +556,7 @@ class TemplateResolver:
             return var_name in context
 
     @staticmethod
-    def resolve_value(var_name: str, context: dict[str, Any]) -> Optional[Any]:
+    def resolve_value(var_name: str, context: dict[str, Any]) -> Any | None:
         """Resolve a variable name (possibly with path and array indices) from context.
 
         Handles path traversal for nested data access:

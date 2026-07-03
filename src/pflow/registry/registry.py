@@ -8,7 +8,7 @@ import tempfile
 from collections.abc import Collection
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class Registry:
     """Manages persistent storage of discovered node metadata."""
 
-    def __init__(self, registry_path: Optional[Path] = None):
+    def __init__(self, registry_path: Path | None = None):
         """Initialize Registry with optional custom path.
 
         Args:
@@ -29,12 +29,12 @@ class Registry:
             self.registry_path = Path(registry_path)
 
         # Add caching
-        self._cached_nodes: Optional[dict[str, dict[str, Any]]] = None
-        self._registry_version: Optional[str] = None
-        self._registry_last_scan: Optional[str] = None
+        self._cached_nodes: dict[str, dict[str, Any]] | None = None
+        self._registry_version: str | None = None
+        self._registry_last_scan: str | None = None
 
         # Lazy load settings manager to avoid circular import
-        self._settings_manager: Optional[Any] = None
+        self._settings_manager: Any | None = None
 
     def __deepcopy__(self, memo: dict[int, Any]) -> "Registry":
         """Return self on deep copy — Registry is a shared, read-only resource.
@@ -398,7 +398,7 @@ class Registry:
         # Save with metadata, using the pre-scan timestamp
         self._save_with_metadata(registry_nodes, scan_time=scan_start)
 
-    def _save_with_metadata(self, nodes: dict[str, dict[str, Any]], scan_time: Optional[str] = None) -> None:
+    def _save_with_metadata(self, nodes: dict[str, dict[str, Any]], scan_time: str | None = None) -> None:
         """Save nodes with updated version and timestamp.
 
         Unlike save(), this always updates the version and last_core_scan fields

@@ -1,9 +1,9 @@
 """Shared validation helpers for the ``loop:`` modifier."""
 
-from typing import Any, Optional
+from typing import Any
 
 
-def check_loop_polarity(loop_data: dict[str, Any]) -> Optional[str]:
+def check_loop_polarity(loop_data: dict[str, Any]) -> str | None:
     """Return an exactly-one-of ``while``/``until`` error message, or ``None``.
 
     This rule is enforced by both the compiler path and the validate-only/save
