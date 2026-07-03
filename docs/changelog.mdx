@@ -5,6 +5,124 @@ icon: "clock"
 rss: true
 ---
 
+<Update label="July 2026" description="v0.14.0" tags={["New releases", "Improvements", "Breaking changes"]}>
+  ## Interactive Web UI and Live Overlay
+
+  We launched an interactive visualizer and control center. Using the `pflow ui` command, you can render your entire workflow structure dynamically using an ELK-layout canvas, launch detached execution runs directly from your browser, pre-fill parameters using past-run history, and watch execution progress live via an SSE overlay.
+
+  ```bash
+  # Launch the web-based visualizer and server
+  pflow ui workflow.pflow.md
+
+  # Switch an active browser viewer to a specific execution run
+  pflow ui workflow.pflow.md --run 3a2c5e6
+  ```
+
+  <Tip>
+    To protect against remote exploits, our UI server implements loopback-only middleware. This DNS-rebinding guard rejects non-loopback Host headers on both reads and writes, protecting local execution channels.
+  </Tip>
+
+  **Highlights**
+  - Added the `pflow ui` command, introducing a web UI using React Flow and ELK layout engines.
+  - Added a live execution overlay that tails execution traces and lights up running, cached, successful, or failed nodes dynamically.
+  - Implemented an interactive execution launcher on the canvas with auto-generated input forms, past-run parameter pre-filling, and detached runner spawning.
+  - Added a stateful agent-to-browser interaction channel ("Point & Watch") with CLI commands `focus`, `frame`, `clear-focus`, and `user-activity`.
+  - Added an output-node panel to inspect resolved inputs, outputs, costs, and token usages per node directly from live execution files.
+  - Fixed multi-tab browser connection limits by releasing connection pooling boundaries for Server-Sent Events (SSE).
+  - Improved UI server robustness with auto-reconnection filters and automatic viewer-tab reuse.
+  - Redesigned UI run selection by git-bucketing histories, grouping runs under local git repositories.
+
+  ## Declarative Stateful Loops and Human Approval Gates
+
+  Workflows now support stateful loops and interactive verification steps. You can declare condition-terminated iterations that thread variable states across sequential iterations without side effects, or insert human-in-the-loop steps that pause execution for approval.
+
+  ```markdown
+  ### approve-release
+  - type: claude-code
+  - prompt: Audit and approve the compiled changelog
+  - approval: required
+
+  ### iterative-refinement
+  - type: workflow
+  - workflow: ./agent-turn.pflow.md
+  - loop:
+      carry:
+        history: ${iterative-refinement.result}
+      until: ${iterative-refinement.done}
+      max_iterations: 15
+  ```
+
+  **Highlights**
+  - Added human-in-the-loop approval gates via the `approval: required` modifier, pausing execution for interactive YES/NO confirmations.
+  - Added agent-raised escalation gates, allowing `claude-code` or `code` steps to pause execution using `result.escalation` blocks.
+  - Added the `--auto-approve=<node-id>` repeatable CLI flag and an equivalent MCP `auto_approve` execution option.
+  - Implemented the `loop:` node modifier with `while:` and `until:` conditions, backed by a robust engine-reentry compiler pattern.
+  - Added the `carry:` state-mapping block (`{ input_key: ${loop-node.output} }`) to thread outputs sequentially across loop iterations.
+  - Added support for settable node-level retry configurations with configurable max attempts, initial wait times, and linear/exponential backoff.
+  - Fixed empty-input batches to output a non-degrading advisory message rather than raising a false `DEGRADED` warning.
+  - Added a loop iteration indicator (`⟳` badge) and self-edge representations to workflow visual layouts.
+
+  ## Streamable Traces and Content Interning
+
+  Execution traces are now written incrementally as each node completes, protecting run diagnostics from crash termination. These traces are compressed automatically by interning string blobs at the file boundary and canonicalizing LLM-producing node parameters.
+
+  ```bash
+  # Re-run a specific node using its frozen execution snapshot
+  pflow workflow.pflow.md --only extract-entities
+  ```
+
+  <Note>
+    Because streamable traces use raw JSONL entries, pflow can read incomplete runs. If a run crashes, the system can reconstruct trace logs up to the failure point while gracefully dropping dangling sub-workflow nodes.
+  </Note>
+
+  **Highlights**
+  - Rebuilt tracing as an incremental JSONL streaming transport, flushing execution events to disk line-by-line during runtime.
+  - Added content interning at the disk boundary, replacing the legacy `blobs` trailer with inline-first-occurrence blob keys.
+  - Shrink trace footprint by canonicalizing LLM prompts and systems, stripping redundant template resolutions and raw parameters.
+  - Added prewarm-batch prompt optimization, capturing shared prefixes as cache blocks to prevent duplicate prompt storage.
+  - Fixed the `--only` execution flag to restore a frozen snapshot of historical upstream inputs instead of re-firing side-effecting steps.
+  - Added support for reporting true input token counts and agent execution calls in output summaries.
+  - Added best-effort trace writing, allowing runs to execute safely even under disk-full or read-only filesystem environments.
+
+  ## LLM Control and Execution Refinements
+
+  We adjusted default execution settings, upgraded the `??` coalesce operator to support JSON literals, and added type coercion capabilities to Claude Code output schemas.
+
+  ```markdown
+  - prompt: Process this data: ${read.content ?? "empty fallback"}
+  - prompt: Score threshold: ${assess.score ?? 0.8}
+  ```
+
+  **Highlights**
+  - Flipped memoization defaults: only `llm` nodes cache by default; all other node types require explicit `- cache: true`.
+  - Added support for JSON literals (`string`, `number`, `boolean`, `null`) inside `??` template coalesce operations.
+  - Improved the `??` operator to fall through on absent sub-fields and unexecuted branches without raising validation errors.
+  - Added self-healing schemas to `claude-code` outputs, enabling scalar type coercion and resume-retries on schema soft-failures.
+  - Added pre-execution validation for LLM model IDs, throwing validation errors before initiating live provider calls.
+  - Unified reasoning budget parameter mappings (`reasoning_effort` and `reasoning_max_tokens`) across LLM providers.
+  - Added support for shielding `${...}` templates in flow-style YAML, preventing unquoted inline maps from parsing incorrectly.
+  - Fixed `code-node` type validations, allowing outputs of type `list[T]` to satisfy parameters expecting `list[str]`.
+  - Added a redirection helper for CLI users typing `pflow validate <wf>` or `pflow check <wf>`, suggesting the correct `--validate-only` command.
+  - Added calendar validation for task scripts, rejecting impossible dates like leap-year boundary failures.
+
+  <Accordion title="Breaking changes">
+    ### Caching Defaults Flipped
+    Non-LLM nodes (such as `code`, `shell`, and `http`) no longer cache execution results by default. Workflows relying on memoization for these steps must explicitly set `- cache: true`.
+
+    ### Mermaid Command Renamed
+    The `pflow visualize` command has been renamed to `pflow mermaid`.
+
+    ### Storage Mode Removed
+    The `storage_mode` parameter has been deleted entirely.
+
+    ### Claude Code Billing
+    Claude Code nodes now default to subscription billing; use the `use_api_key: true` parameter to opt into standard API-key billing.
+
+    ### MCP Result Access
+    MCP nodes no longer copy top-level result fields into `${node.field}` or create a `{server}_{tool}_result` alias. Access tool output through the canonical `${node.result.field}` path instead.
+  </Accordion>
+</Update>
+
 <Update label="May 2026" description="v0.13.0" tags={["New releases", "Improvements", "Breaking changes"]}>
   ## Declarative prompt caching and `pflow analyze-cache`
 

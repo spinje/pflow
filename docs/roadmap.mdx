@@ -6,7 +6,7 @@ icon: "map"
 
 ## <Icon icon="circuit-board" size={24} color="#f97316" /> Current status
 
-Where pflow is today (v0.12.0):
+Where pflow is today (v0.14.0):
 
 - **Standalone orchestration engine** with compile-once batch optimization (~7x speedup for large parallel workflows)
 - **Markdown workflows** — `.pflow.md` files that agents read and write naturally
@@ -16,7 +16,10 @@ Where pflow is today (v0.12.0):
 - **Memoization cache** — unchanged nodes serve cached results across re-runs, with `--only`, `--no-cache`, and per-node `cache: false` controls
 - **Execution reports** — `--report` generates navigable markdown directories with rendered prompts, responses, token breakdowns, and cost data per node
 - **Dry-run execution plans** — `--dry-run` previews cost, duration, and cache boundaries before execution
-- **Workflow visualization** — `pflow visualize` generates Mermaid flowcharts of workflow topology
+- **Workflow visualization** — `pflow mermaid` generates Mermaid flowcharts of workflow topology, and `pflow ui` serves an interactive React Flow canvas with a live execution overlay and run-from-browser controls
+- **Human-in-the-loop approval gates** — pause a workflow before a step with `approval: required`, plus agent-raised escalations and a `--auto-approve` pre-approval flag
+- **Stateful loops** — the `loop:` modifier runs a node repeatedly with `while:`/`until:` conditions and a `carry:` block to thread state across iterations
+- **Streamable traces** — execution traces stream to disk as JSONL for crash-tail resilience, with per-node retry/backoff via the `retry:` block
 - **Batch processing** — process arrays through nodes, sequential or parallel, with per-item parameter overrides and error handling modes
 - **External file references** — `prompt: ./prompts/system.md` keeps long content out of workflow files
 - **Workflow bundling** — `pflow save` packages workflows with all file dependencies as self-contained folders
@@ -33,7 +36,7 @@ Where pflow is today (v0.12.0):
 
 ## <Icon icon="hammer" size={24} color="#f97316" /> Now
 
-**Human-in-the-loop approval gates** — pause workflow execution for human review before continuing. Workflows that create PRs, send messages, or modify infrastructure need a trust gate. Without this, workflows that take real-world actions aren't trustworthy enough to run unattended.
+**Resume workflows from a failed node** — when a long workflow fails partway through, pick up from the failed step instead of re-running everything from the top. Paired with durable resume tokens so approval gates can pause and resume across process restarts and non-interactive runs.
 
 ## <Icon icon="lightbulb" size={24} color="#f97316" /> Next
 

@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.14.0 (2026-07-03)
+
+- Removed the obsolete `storage_mode` parameter. [#523](https://github.com/spinje/pflow/pull/523)
+- Removed outdated subcommand alias notes from the main CLI `--help` output.
+- Changed `claude-code` nodes to default to subscription billing, requiring users to explicitly configure `use_api_key: true` to opt into API-key-based Anthropic billing. [#455](https://github.com/spinje/pflow/pull/455)
+- Changed the caching defaults to optimize for safety: only `llm` nodes cache by default, while side-effecting nodes like `shell`, `code`, and `http` now default to uncached execution unless explicitly configured with `cache: true`. [#441](https://github.com/spinje/pflow/pull/441) ([Task 161](.taskmaster/tasks/task_161/task-review.md))
+- Changed the `pflow visualize` command to `pflow mermaid`. [#496](https://github.com/spinje/pflow/pull/496) ([Task 168](.taskmaster/tasks/task_168/task-review.md))
+- Changed MCP nodes to no longer copy top-level result fields into `${node.field}` or create a `{server}_{tool}_result` alias; access tool output via `${node.result.field}`. [#490](https://github.com/spinje/pflow/pull/490)
+- Changed the internal `worktree-pflow` developer command to prevent overwriting existing git worktrees by default.
+- Changed the developer `code-review` skill to `deep-review` to offer scales of configurable agent counts, an 8-tiered evaluation battery, and `/deep-review` planning modes.
+- Added the interactive `pflow ui` command and visualization dashboard, serving a Vite-powered React Flow graph of workflow structures, nested sub-workflows, loops, and data flow. [#496](https://github.com/spinje/pflow/pull/496) ([Task 168](.taskmaster/tasks/task_168/task-review.md))
+- Added a live execution overlay to the web UI allowing real-time monitoring of active node states, along with a "This run" side panel detailing cost, input/output data, and token counts. [#543](https://github.com/spinje/pflow/pull/543) ([Task 173](.taskmaster/tasks/task_173/task-review.md))
+- Added the capability to launch, inspect, and replay workflows directly from the web UI with automatically generated input forms and selective run pre-fills. [#547](https://github.com/spinje/pflow/pull/547) ([Task 175](.taskmaster/tasks/task_175/task-review.md))
+- Added human-in-the-loop approval gates (`approval: required`) to pause workflows before a step executes, and added support for agent-raised escalations (`result.escalation`) with a CLI pre-approve flag (`--auto-approve`). [#554](https://github.com/spinje/pflow/pull/554) ([Task 125](.taskmaster/tasks/task_125/task-review.md))
+- Added an agent-to-browser interaction channel, enabling terminal-driven highlight, focus, and camera frame commands (`focus`, `frame`, `clear-focus`) to dynamically control active browser views. [#527](https://github.com/spinje/pflow/pull/527) ([Task 169](.taskmaster/tasks/task_169/task-review.md))
+- Added a real-time, streamable JSONL transport for trace file execution, offering crash-tail resilience and partial execution trace recovery on failures. [#530](https://github.com/spinje/pflow/pull/530) ([Task 172](.taskmaster/tasks/task_172/task-review.md)), [#525](https://github.com/spinje/pflow/pull/525) ([Task 133](.taskmaster/tasks/task_133/task-review.md))
+- Added a declarative stateful loop modifier (`loop:`) to run nodes repeatedly using `while:` or `until:` conditions, plus a `carry:` configuration block to thread outputs as inputs into subsequent iterations. [#472](https://github.com/spinje/pflow/pull/472) ([Task 166](.taskmaster/tasks/task_166/task-review.md)), [#445](https://github.com/spinje/pflow/pull/445) ([Task 162](.taskmaster/tasks/task_162/task-review.md))
+- Added support for literal values and default fallbacks inside template coalesce expressions (e.g., `${item.label ?? "untitled"}`), allowing seamless fall-throughs on absent fields. [#441](https://github.com/spinje/pflow/pull/441) ([Task 161](.taskmaster/tasks/task_161/task-review.md))
+- Added self-healing capability to `claude-code` node outputs, performing automatic scalar type coercion and retry-resumes if model JSON deviates from the expected schema. [#465](https://github.com/spinje/pflow/pull/465)
+- Added declarative, per-node retry and exponential backoff configuration via the `retry:` schema block. [#471](https://github.com/spinje/pflow/pull/471)
+- Added thinking budget configuration parameters (`reasoning_effort` and `reasoning_max_tokens`) to manage reasoning depth for LLM nodes. [#446](https://github.com/spinje/pflow/pull/446)
+- Added a plan-to-code agentic coding harness for structured, agent-driven in-code development workflows. [#466](https://github.com/spinje/pflow/pull/466) (Task 163)
+- Added a validation guard in repository task scripts to reject impossible date shapes for `--since` task filters and protect against out-of-root executions.
+- Fixed the `--only NODE` execution flag to run targets against a frozen snapshot of the last full run instead of re-executing active, side-effecting upstream nodes. [#443](https://github.com/spinje/pflow/pull/443)
+- Fixed python `code` nodes to treat type-annotated assignments (e.g., `x: list[str] = [...]`) as local scope variables rather than undeclared workflow inputs. [#331](https://github.com/spinje/pflow/pull/331)
+- Fixed static type validation to allow generic python lists (`list[T]` or `list`) to satisfy downstream parameters expecting typed lists like `list[str]`. [#460](https://github.com/spinje/pflow/pull/460)
+- Fixed sub-workflow failures to cleanly bubble up structured diagnostics to the parent execution boundary, showing exact error locations. [#522](https://github.com/spinje/pflow/pull/522)
+- Fixed LLM model ID checks to occur during compile-time workflow validation, preventing model mismatch failures from occurring mid-run after wasting upstream cost. [#439](https://github.com/spinje/pflow/pull/439)
+- Fixed cost estimation logic in dry-run planning to accurately align with actual engine costs and downstream batch loop costs. [#506](https://github.com/spinje/pflow/pull/506)
+- Fixed `${...}` template handling inside flow-style YAML files to prevent parser crashes on unquoted inline maps. [#482](https://github.com/spinje/pflow/pull/482)
+- Fixed tracking of `input_tokens` across diverse LLM-producing nodes to ensure uniform accounting for cached and uncached prompts. [#492](https://github.com/spinje/pflow/pull/492)
+- Fixed core-node refresh operations to preserve synced MCP tools rather than clearing them from the active registry. [#462](https://github.com/spinje/pflow/pull/462)
+- Fixed CLI option parsing to reject invalid or stray flags placed after the workflow file argument instead of silently ignoring them. [#454](https://github.com/spinje/pflow/pull/454)
+- Fixed the batch `errors` output field to always return a list (even when empty) rather than a null value. [#484](https://github.com/spinje/pflow/pull/484)
+- Fixed error routing inside MCP protocol execution to cleanly propagate errors rather than swallowing or misrouting them. [#491](https://github.com/spinje/pflow/pull/491)
+- Fixed result warning detectors and validation policies for MCP nodes to prevent false alarms on valid raw JSON-string outputs. [#508](https://github.com/spinje/pflow/pull/508), [#490](https://github.com/spinje/pflow/pull/490)
+- Fixed the API warning detector to defer to the node's actual execution success/error status, preventing false positive warnings on handled routing decisions. [#519](https://github.com/spinje/pflow/pull/519)
+- Fixed the `--report` CLI command to display accurate input tokens and labeled agent-call counts. [#463](https://github.com/spinje/pflow/pull/463)
+- Fixed validation warnings for empty-input batches to print as neutral, non-degrading CLI advisories rather than noisy `DEGRADED` warnings. [#450](https://github.com/spinje/pflow/pull/450)
+- Fixed static validation diagnostics for assigned orphan python annotations to offer helpful remove-or-add suggestions. [#477](https://github.com/spinje/pflow/pull/477)
+- Improved tracing efficiency and significantly shrunk trace sizes (up to 33% reduction losslessly) via per-run disk-boundary interning and canonical LLM prompt/system deduplication. [#382](https://github.com/spinje/pflow/pull/382) ([Task 165](.taskmaster/tasks/task_165/task-review.md))
+- Improved UI server robustness with automatic onerror reconnect handling for SSE connections and browser connection pool optimization to release the 6-connection cap on multi-tab live-overlay viewers. [#529](https://github.com/spinje/pflow/pull/529), [#539](https://github.com/spinje/pflow/pull/539)
+- Improved CLI `pflow run` summary outputs with airy line spacing, metadata re-ordered above output data, and clear output labels. [#469](https://github.com/spinje/pflow/pull/469)
+- Improved `pflow report` CLI summaries to surface cost, token, and node call totals as prominent headline figures. [#435](https://github.com/spinje/pflow/pull/435)
+- Improved Mermaid visualization (`pflow mermaid`) to render `loop:` nodes with distinct `⟳` badges and self-looping dependency edges. [#452](https://github.com/spinje/pflow/pull/452)
+- Improved large guide outputs inside the CLI by framing content with read-completeness headers and trailing end-markers. [#509](https://github.com/spinje/pflow/pull/509)
+- Improved CLI user experience by redirecting invalid validation verbs (`pflow validate <wf>`, `pflow check <wf>`) to the correct `--validate-only` flag with helpful instructions. (Task 118)
+
 ## v0.13.0 (2026-05-26)
 
 - Changed underlying LLM integration library to LiteLLM, introducing a robust, pflow-owned adapter, typed exception handling, and a centralized provider registry. Model names now require provider prefixes (e.g., `openai/gpt-4o`). [#356](https://github.com/spinje/pflow/pull/356) ([Task 158](.taskmaster/tasks/task_158/task-review.md))

@@ -113,7 +113,7 @@ def _get_version() -> str:
     try:
         return pkg_version("pflow-cli")
     except Exception:
-        return "0.13.0"
+        return "0.14.0"
 
 
 @click.group(cls=PflowCLI, invoke_without_command=True)
