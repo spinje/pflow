@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import subprocess
 import sys
@@ -16,7 +17,15 @@ from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from pflow.core.workflow.manager import WorkflowManager
-from pflow.ui.server import _ACTIVITY_MAX, _Hub, _workflow_key, create_app, events
+from pflow.ui.server import (
+    _ACTIVITY_MAX,
+    _AUDIO_STORE_MAX,
+    _AudioStore,
+    _Hub,
+    _workflow_key,
+    create_app,
+    events,
+)
 from tests.shared.markdown_utils import write_workflow_file
 
 
@@ -340,7 +349,7 @@ class TestInteractionEndpoints:
         workflow = _workflow(tmp_path)
         client = _client()
 
-        for path in ("/api/command", "/api/interaction", "/api/visibility"):
+        for path in ("/api/command", "/api/say", "/api/interaction", "/api/visibility"):
             response = client.post(path, content=json.dumps({"workflow": str(workflow)}))
             assert response.status_code == 415
             assert "application/json" in response.json()["error"]
@@ -439,6 +448,230 @@ def _workflow_with_input(tmp_path: Path, *, required: bool) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+_GREET_DESCRIPTOR = {"kind": "node", "ref": {"node_id": "greet", "ancestor_path": [], "port": None}}
+
+
+class TestSayEndpoint:
+    """``POST /api/say`` (Task 174) — store audio + broadcast the point then the caption; ``GET
+    /api/audio/<id>`` serves stored clips."""
+
+    def test_say_broadcasts_point_then_caption_with_audio(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        key = str(workflow.resolve())
+        conn = app.state.hub.register(key, "visible")
+        clip = b"\x00\x01\x02\x03fake-wav-bytes"
+
+        response = _client(app).post(
+            "/api/say",
+            json={
+                "workflow": str(workflow),
+                "type": "focus",
+                "target": "greet",
+                "caption": "this is the LLM call",
+                "audio_b64": base64.b64encode(clip).decode(),
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["resolved"] == {"matched": 1, "address": "greet"}
+        assert body["sent_to"] == 1
+
+        # Order is load-bearing: the ordinary stamped point arrives BEFORE the transient caption.
+        point = conn.queue.get_nowait()
+        assert point == {"type": "focus", "target": _GREET_DESCRIPTOR, "epoch": 1}
+        say_msg = conn.queue.get_nowait()
+        assert say_msg["type"] == "say"
+        assert say_msg["target"] == _GREET_DESCRIPTOR
+        assert say_msg["caption"] == "this is the LLM call"
+        assert "epoch" not in say_msg  # transient — never latched/replayed
+
+        audio_url = say_msg["audio_url"]
+        assert audio_url.startswith("/api/audio/")
+        got = _client(app).get(audio_url)
+        assert got.status_code == 200
+        assert got.headers["content-type"] == "audio/wav"
+        assert got.content == clip
+
+    def test_say_without_audio_omits_audio_url(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        conn = app.state.hub.register(str(workflow.resolve()), "visible")
+
+        response = _client(app).post(
+            "/api/say",
+            json={"workflow": str(workflow), "type": "focus", "target": "greet", "caption": "hi"},
+        )
+
+        assert response.status_code == 200
+        conn.queue.get_nowait()  # the point
+        say_msg = conn.queue.get_nowait()
+        assert say_msg["type"] == "say"
+        assert "audio_url" not in say_msg
+
+    def test_say_point_is_replayed_to_a_reconnecting_window_but_the_caption_is_not(self, tmp_path: Path) -> None:
+        """The plan's most-debated deep-review decision, verified through the REAL replay path (not just the
+        latch): a window connecting AFTER a say catches up to the POINT (latched like any focus) but is NEVER
+        replayed the caption/audio. Reconnecting to stale audio would be worse than silence. This is the
+        demo-critical scenario — the presenter's tab was backgrounded during the say and reopens. Drives the
+        events() generator directly (same technique as test_events_replays_the_latched_point_to_a_new_connection)."""
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        key = str(workflow.resolve())
+        caption = "this is the LLM call"
+
+        # Agent says at a node while NO tab of this workflow is connected.
+        _client(app).post(
+            "/api/say",
+            json={
+                "workflow": str(workflow),
+                "type": "focus",
+                "target": "greet",
+                "caption": caption,
+                "audio_b64": base64.b64encode(b"clip").decode(),
+            },
+        )
+
+        # The point is latched (set_point); the say is fire-and-forget (stored in no latch).
+        assert app.state.hub.point_for(key) == {"type": "focus", "target": _GREET_DESCRIPTOR, "epoch": 1}
+
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/events",
+            "query_string": urlencode({"workflow": str(workflow), "visibility": "visible"}).encode(),
+            "headers": [],
+            "app": app,
+        }
+
+        async def _drive() -> list[str]:
+            response = await events(Request(scope))
+            body = response.body_iterator
+            # Replay is exactly: connected -> run-snapshot -> latched point (run_for is None, so no 4th
+            # replay frame; a 4th __anext__ would block until keepalive). The say is NOT in this sequence.
+            frames = [await asyncio.wait_for(body.__anext__(), timeout=2.0) for _ in range(3)]
+            await body.aclose()
+            return frames
+
+        connected, snapshot, latched = asyncio.run(_drive())
+
+        assert '"type": "connected"' in connected
+        assert '"type": "run-snapshot"' in snapshot
+        payload = json.loads(latched.removeprefix("data: ").strip())
+        assert payload == {"type": "focus", "target": _GREET_DESCRIPTOR, "epoch": 1}  # the point, no caption
+        # The caption text and the say envelope never enter the replay — a reconnecting window can't
+        # receive stale audio because there is no latch to replay it from.
+        assert all(caption not in frame and '"type": "say"' not in frame for frame in (connected, snapshot, latched))
+
+    def test_say_frame_uses_frame_verb(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        conn = app.state.hub.register(str(workflow.resolve()), "visible")
+
+        _client(app).post(
+            "/api/say",
+            json={"workflow": str(workflow), "type": "frame", "target": "greet", "caption": "hi"},
+        )
+
+        assert conn.queue.get_nowait()["type"] == "frame"
+
+    def test_say_missing_caption_is_400(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        response = _client().post("/api/say", json={"workflow": str(workflow), "type": "focus", "target": "greet"})
+        assert response.status_code == 400
+
+    def test_say_bad_base64_is_400(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        response = _client().post(
+            "/api/say",
+            json={
+                "workflow": str(workflow),
+                "type": "focus",
+                "target": "greet",
+                "caption": "hi",
+                "audio_b64": "!!!not-base64!!!",
+            },
+        )
+        assert response.status_code == 400
+
+    def test_say_rejects_non_point_verb(self, tmp_path: Path) -> None:
+        # Only focus/frame carry a caption; clear/select-run are not say verbs.
+        workflow = _workflow(tmp_path)
+        response = _client().post(
+            "/api/say",
+            json={"workflow": str(workflow), "type": "clear", "target": "greet", "caption": "hi"},
+        )
+        assert response.status_code == 400
+
+    def test_say_unknown_workflow_is_404(self) -> None:
+        response = _client().post(
+            "/api/say",
+            json={"workflow": "does-not-exist", "type": "focus", "target": "greet", "caption": "hi"},
+        )
+        assert response.status_code == 404
+
+    def test_say_oversize_audio_is_400_stating_the_limit(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        # Patch the constant in the namespace the RUNNING handler reads (`create_app.__globals__`), not
+        # via a `"pflow.ui.server._AUDIO_MAX_BYTES"` string — a sibling test reloads that module
+        # (test_ui.py pops it from sys.modules), so the string form would target a fresh module object
+        # while `create_app` (imported at file top) still runs the original one (tests/CLAUDE.md #21).
+        with patch.dict(create_app.__globals__, {"_AUDIO_MAX_BYTES": 4}):
+            response = _client().post(
+                "/api/say",
+                json={
+                    "workflow": str(workflow),
+                    "type": "focus",
+                    "target": "greet",
+                    "caption": "hi",
+                    "audio_b64": base64.b64encode(b"12345").decode(),
+                },
+            )
+        assert response.status_code == 400
+        assert "max 4" in response.json()["error"]
+
+    def test_say_failed_resolve_does_not_broadcast_or_store_audio(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        conn = app.state.hub.register(str(workflow.resolve()), "visible")
+
+        response = _client(app).post(
+            "/api/say",
+            json={
+                "workflow": str(workflow),
+                "type": "focus",
+                "target": "grete",  # typo → matched 0
+                "caption": "hi",
+                "audio_b64": base64.b64encode(b"clip").decode(),
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["resolved"]["matched"] == 0
+        assert response.json()["sent_to"] == 0
+        assert conn.queue.empty()  # neither point nor say broadcast
+        assert app.state.audio._clips == {}  # audio is NOT stored on a failed resolve
+
+    def test_audio_unknown_id_is_404(self) -> None:
+        response = _client().get("/api/audio/no-such-id")
+        assert response.status_code == 404
+
+
+class TestAudioStore:
+    def test_put_get_round_trip(self) -> None:
+        store = _AudioStore()
+        audio_id = store.put(b"clip")
+        assert store.get(audio_id) == b"clip"
+
+    def test_evicts_oldest_beyond_max(self) -> None:
+        store = _AudioStore()
+        ids = [store.put(bytes([i % 256])) for i in range(_AUDIO_STORE_MAX + 1)]
+        assert store.get(ids[0]) is None  # oldest evicted once over the bound
+        assert store.get(ids[1]) is not None
+        assert store.get(ids[-1]) is not None
 
 
 class TestRunEndpoint:
@@ -549,6 +782,16 @@ class TestHostGuard:
             == 403
         )
         assert (
+            _client()
+            .post(
+                "/api/say",
+                json={"workflow": workflow, "type": "focus", "target": "greet", "caption": "hi"},
+                headers=evil,
+            )
+            .status_code
+            == 403
+        )
+        assert (
             _client().post("/api/interaction", json={"workflow": workflow, "type": "x"}, headers=evil).status_code
             == 403
         )
@@ -567,6 +810,7 @@ class TestHostGuard:
             ("/api/graph", {"workflow": workflow}),
             ("/api/source", {"workflow": workflow}),
             ("/api/catalog", {}),
+            ("/api/audio/some-id", {}),
         ):
             assert _client().get(path, params=params, headers=evil).status_code == 403, path
             assert _client().get(path, params=params).status_code != 403, path

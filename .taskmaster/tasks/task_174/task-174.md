@@ -10,7 +10,11 @@ of the conversation metaphor Task 169 was designed around ("the agent points, sa
 
 ## Status
 
-not started
+in progress
+
+> Phases 1–3 (Core TTS, Server, CLI) implemented + tested (`make check` green; +42 tests, 0
+> regressions) on 2026-07-04; stopped for human review. Phases 4 (frontend) and 5 (docs +
+> real-browser + deep-review) not started. See `implementation/progress-log.md`.
 
 ## Priority
 

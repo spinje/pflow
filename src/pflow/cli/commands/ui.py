@@ -8,6 +8,7 @@ server and use only the core ``httpx`` dependency.
 
 from __future__ import annotations
 
+import base64
 import json
 import socket
 import time
@@ -29,6 +30,8 @@ _REQUEST_TIMEOUT_S = 5.0
 _PROBE_TIMEOUT_S = 1.0
 _OPEN_TIMEOUT_S = 15.0
 _OPEN_INTERVAL_S = 0.25
+# A typo must not synthesize a 10-minute clip. 1500 chars is ~90-100s of audio.
+_SAY_MAX_CHARS = 1500
 
 
 class UiGroup(click.Group):
@@ -379,6 +382,109 @@ def _point_request(
     )
 
 
+def _prepare_say(say: str) -> str:
+    """Validate ``--say`` and return the caption (delivery tags stripped).
+
+    Raises ``click.BadParameter`` (a usage error) on an over-length input or one
+    that is nothing but ``[delivery]`` tags — the caption would be empty, so there
+    is nothing to show or speak.
+    """
+    from pflow.core.tts import strip_delivery_tags
+
+    if len(say) > _SAY_MAX_CHARS:
+        raise click.BadParameter(f"--say is {len(say)} chars (max {_SAY_MAX_CHARS}).", param_hint="'--say'")
+    caption = strip_delivery_tags(say)
+    if not caption:
+        # Accurate for BOTH an empty --say "" and a tags-only --say "[excited]": an agent passing an
+        # empty variable must not be sent hunting for [tags] that aren't there.
+        raise click.BadParameter(
+            "--say has no speakable text — it is empty or only [delivery] tags, so nothing would be shown or spoken.",
+            param_hint="'--say'",
+        )
+    return caption
+
+
+def _synthesize_say(say: str) -> tuple[str | None, str | None, str | None]:
+    """Synthesize ``--say`` to base64 audio. Returns ``(audio_b64, reason, reason_kind)``.
+
+    Success: ``(b64, None, None)``. NEVER raises — this seam enforces the locked
+    "synthesis failure is a report note, never an error" decision, so the catch is
+    ``except Exception`` (a belt to ``synthesize()``'s own totality). A missing key
+    is ``reason_kind="missing_key"``; any other failure (``TTSSynthesisError`` or a
+    stray crash) is ``"synthesis_failed"`` — the point is never dropped.
+    """
+    from pflow.core.exceptions import MissingApiKeyError
+    from pflow.core.llm_config import inject_settings_env_vars
+    from pflow.core.settings import SettingsManager
+    from pflow.core.tts import synthesize
+
+    inject_settings_env_vars()  # push settings-stored keys into os.environ (ui.py never called this)
+    llm = SettingsManager().load().llm
+    try:
+        audio = synthesize(say, model=llm.tts_model, voice=llm.tts_voice)
+        return base64.b64encode(audio).decode("ascii"), None, None
+    except MissingApiKeyError as exc:
+        return None, str(exc), "missing_key"
+    except Exception as exc:
+        return None, str(exc), "synthesis_failed"
+
+
+def _say_request(
+    ctx: click.Context,
+    port: int,
+    workflow: str,
+    command_type: str,
+    target: str,
+    caption: str,
+    audio_b64: str | None,
+    *,
+    output_json: bool,
+) -> dict[str, object]:
+    json_body: dict[str, str] = {"workflow": workflow, "type": command_type, "target": target, "caption": caption}
+    if audio_b64 is not None:
+        json_body["audio_b64"] = audio_b64
+    return _request(
+        ctx,
+        port,
+        "POST",
+        "/api/say",
+        workflow=workflow,
+        output_json=output_json,
+        json_body=json_body,
+    )
+
+
+def _resolve_narration(say: str | None) -> tuple[str | None, str | None, str | None, str | None]:
+    """Prepare + synthesize a ``--say`` request. Returns ``(caption, audio_b64, reason, reason_kind)``;
+    an all-None tuple when ``--say`` was not given. ``_prepare_say`` may raise ``click.BadParameter``
+    (a usage error the caller lets propagate); ``_synthesize_say`` never raises (caption-only degrade).
+    """
+    if say is None:
+        return None, None, None, None
+    caption = _prepare_say(say)
+    audio_b64, reason, reason_kind = _synthesize_say(say)
+    return caption, audio_b64, reason, reason_kind
+
+
+def _send_point(
+    ctx: click.Context,
+    port: int,
+    workflow: str,
+    command_type: str,
+    target: str,
+    caption: str | None,
+    audio_b64: str | None,
+    *,
+    output_json: bool,
+) -> dict[str, object]:
+    """Dispatch a point: a ``say`` (caption + optional audio) when ``--say`` produced a caption, else a
+    bare ``focus``/``frame``. Concentrating the say-vs-point routing here keeps each command body linear
+    and lets the ``--open`` re-send reuse the SAME ``audio_b64`` (never re-synthesize)."""
+    if caption is not None:
+        return _say_request(ctx, port, workflow, command_type, target, caption, audio_b64, output_json=output_json)
+    return _point_request(ctx, port, workflow, command_type, target, output_json=output_json)
+
+
 @click.group(cls=UiGroup, name="ui", invoke_without_command=True)
 @click.pass_context
 def ui_cmd(ctx: click.Context) -> None:
@@ -521,10 +627,23 @@ def serve_cmd(
         server.run()
 
 
+_say_option = click.option(
+    "--say",
+    "say",
+    default=None,
+    help=(
+        "Narrate this text aloud in the Viewer with an on-canvas caption. Delivery direction goes in "
+        '[brackets] (e.g. "[excited] this node..."); bracketed tags shape the voice and are stripped '
+        "from the caption."
+    ),
+)
+
+
 @ui_cmd.command(name="focus")
 @click.argument("workflow")
 @click.argument("target")
 @click.option("--open", "open_if_absent", is_flag=True, help="Open a Viewer when no window is connected.")
+@_say_option
 @click.option(
     "--output-format",
     "output_json",
@@ -540,6 +659,7 @@ def focus_cmd(
     workflow: str,
     target: str,
     open_if_absent: bool,
+    say: str | None,
     output_json: bool,
     port: int,
 ) -> None:
@@ -550,8 +670,11 @@ def focus_cmd(
     (``gen.response -> summarize.prompt``). If a name matches more than one
     element the command replies with qualified addresses to pick from — you never
     have to guess the syntax.
+
+    ``--say "text"`` also narrates the text aloud with an on-canvas caption.
     """
-    payload = _point_request(ctx, port, workflow, "focus", target, output_json=output_json)
+    caption, audio_b64, narration_reason, narration_kind = _resolve_narration(say)
+    payload = _send_point(ctx, port, workflow, "focus", target, caption, audio_b64, output_json=output_json)
     opened = False
     timed_out = False
     if open_if_absent and _int_field(payload, "sent_to") == 0 and _int_field(_resolution(payload), "matched") == 1:
@@ -572,10 +695,18 @@ def focus_cmd(
         # Deliver once after the loop, unconditionally: this makes `timed_out` reflect
         # a real send (a window that connects in the final poll interval must not be
         # reported "didn't connect"), and an edge focus can ONLY arrive over SSE — the
-        # opened URL carries no edge focus. Applying a bare focus once is harmless.
-        payload = _point_request(ctx, port, workflow, "focus", target, output_json=output_json)
+        # opened URL carries no edge focus. Re-send reuses the SAME audio_b64 (do NOT
+        # re-synthesize). Applying a bare focus once is harmless.
+        payload = _send_point(ctx, port, workflow, "focus", target, caption, audio_b64, output_json=output_json)
         timed_out = _int_field(payload, "sent_to") == 0
 
+    if say is not None:
+        # CLI-merged so JSON consumers see the narration outcome without substring-matching prose.
+        payload["narration"] = {
+            "audio": audio_b64 is not None,
+            "reason": narration_reason,
+            "reason_kind": narration_kind,
+        }
     _emit_payload(payload, output_json)
     if not output_json and not timed_out:
         _render_dispatch(
@@ -594,6 +725,11 @@ def focus_cmd(
             f"→ re-run `pflow ui focus {workflow} {target!r}` now that it may be up.",
             err=output_json,
         )
+    if narration_reason is not None:
+        # A top-level statement (NOT gated by the timed_out/text-mode block above): the point still
+        # delivered, so the caption showed — only the voice is missing. err=output_json keeps stdout
+        # parseable in JSON mode (the exact `timed_out` routing precedent). Never exits non-zero.
+        click.echo(f"narration unavailable: {narration_reason}", err=output_json)
     if _dispatch_failed(payload):
         ctx.exit(1)
 
@@ -601,6 +737,7 @@ def focus_cmd(
 @ui_cmd.command(name="frame")
 @click.argument("workflow")
 @click.argument("target")
+@_say_option
 @click.option(
     "--output-format",
     "output_json",
@@ -611,15 +748,26 @@ def focus_cmd(
 )
 @click.option("--port", default=_DEFAULT_PORT, type=int, help="Viewer server port (default: 8765).")
 @click.pass_context
-def frame_cmd(ctx: click.Context, workflow: str, target: str, output_json: bool, port: int) -> None:
+def frame_cmd(ctx: click.Context, workflow: str, target: str, say: str | None, output_json: bool, port: int) -> None:
     """Frame TARGET without changing focus state.
 
-    TARGET uses the same names as ``pflow ui focus``.
+    TARGET uses the same names as ``pflow ui focus``. ``--say "text"`` also
+    narrates the text aloud with an on-canvas caption.
     """
-    payload = _point_request(ctx, port, workflow, "frame", target, output_json=output_json)
+    caption, audio_b64, narration_reason, narration_kind = _resolve_narration(say)
+    payload = _send_point(ctx, port, workflow, "frame", target, caption, audio_b64, output_json=output_json)
+    if say is not None:
+        payload["narration"] = {
+            "audio": audio_b64 is not None,
+            "reason": narration_reason,
+            "reason_kind": narration_kind,
+        }
     _emit_payload(payload, output_json)
     if not output_json:
         _render_dispatch("frame", workflow, target, payload)
+    if narration_reason is not None:
+        # Top-level: the caption showed even when synthesis failed. err=output_json keeps stdout clean.
+        click.echo(f"narration unavailable: {narration_reason}", err=output_json)
     if _dispatch_failed(payload):
         ctx.exit(1)
 

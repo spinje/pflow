@@ -651,6 +651,19 @@ def _likely_env_var_for_unknown_provider(model: str | None) -> str | None:
     return f"{prefix.upper()}_API_KEY"
 
 
+class TTSSynthesisError(PflowError):
+    """TTS synthesis call failed (network, API error, or unparseable response).
+
+    Raised by ``core.tts.synthesize`` for every failure after the API key check
+    (a missing key raises ``MissingApiKeyError`` instead). It never reaches the
+    engine — the ``pflow ui --say`` path catches it and folds the message into
+    the narration report so a synthesis failure degrades to caption-only rather
+    than aborting the point. No ``to_diagnostics`` override needed.
+    """
+
+    pass
+
+
 class SchemaValidationError(PflowError):
     """Validation error for IR schema with helpful messages and field paths.
 

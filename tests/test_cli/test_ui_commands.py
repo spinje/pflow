@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from unittest.mock import patch
 
@@ -9,6 +10,7 @@ import httpx
 from click.testing import CliRunner
 
 from pflow.cli.commands import ui as ui_module
+from pflow.core.exceptions import MissingApiKeyError, TTSSynthesisError
 
 
 def _response(status: int, payload: dict[str, object]) -> httpx.Response:
@@ -383,6 +385,190 @@ class TestPointCommands:
         assert "didn't connect within 15s" in result.output
         assert "re-run `pflow ui focus demo" in result.output
         assert "0 windows" not in result.output
+
+
+class TestSayNarration:
+    """``pflow ui focus/frame --say`` (Task 174) — synthesize CLI-side, POST to ``/api/say``, and never
+    let a synthesis failure drop the point. ``pflow.core.tts.synthesize`` is patched where the lazy
+    import resolves it (at call time)."""
+
+    def test_focus_say_posts_to_api_say_with_stripped_caption(self) -> None:
+        runner = CliRunner()
+        with (
+            patch("httpx.request", return_value=_response(200, _dispatch_payload())) as request,
+            patch("pflow.core.tts.synthesize", return_value=b"WAVDATA") as synth,
+        ):
+            result = runner.invoke(
+                ui_module.ui_cmd, ["focus", "demo", "greet", "--say", "[excited] hi", "--port", "9123"]
+            )
+
+        assert result.exit_code == 0, result.output
+        assert request.call_args.args[:2] == ("POST", "http://127.0.0.1:9123/api/say")
+        body = request.call_args.kwargs["json"]
+        assert body["type"] == "focus"
+        assert body["target"] == "greet"
+        assert body["caption"] == "hi"  # [excited] stripped
+        assert body["audio_b64"] == base64.b64encode(b"WAVDATA").decode("ascii")
+        # The RAW text (tags included) is synthesized; only the caption is stripped.
+        assert synth.call_args.args[0] == "[excited] hi"
+
+    def test_frame_say_posts_to_api_say_with_frame_type(self) -> None:
+        runner = CliRunner()
+        with (
+            patch("httpx.request", return_value=_response(200, _dispatch_payload())) as request,
+            patch("pflow.core.tts.synthesize", return_value=b"WAV"),
+        ):
+            result = runner.invoke(ui_module.ui_cmd, ["frame", "demo", "greet", "--say", "hi"])
+
+        assert result.exit_code == 0, result.output
+        assert request.call_args.args[:2] == ("POST", "http://127.0.0.1:8765/api/say")
+        assert request.call_args.kwargs["json"]["type"] == "frame"
+
+    def test_synthesis_failure_posts_caption_only_and_exits_zero(self) -> None:
+        runner = CliRunner()
+        with (
+            patch("httpx.request", return_value=_response(200, _dispatch_payload())) as request,
+            patch("pflow.core.tts.synthesize", side_effect=TTSSynthesisError("boom")),
+        ):
+            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "greet", "--say", "hi"])
+
+        assert result.exit_code == 0, result.output
+        body = request.call_args.kwargs["json"]
+        assert body["caption"] == "hi"
+        assert "audio_b64" not in body  # caption-only — the point still delivered
+        assert "narration unavailable: boom" in result.output
+
+    def test_synthesis_failure_json_mode_splits_stdout_and_stderr(self) -> None:
+        runner = CliRunner(mix_stderr=False)
+        with (
+            patch("httpx.request", return_value=_response(200, _dispatch_payload())),
+            patch("pflow.core.tts.synthesize", side_effect=TTSSynthesisError("boom")),
+        ):
+            result = runner.invoke(
+                ui_module.ui_cmd, ["focus", "demo", "greet", "--say", "hi", "--output-format", "json"]
+            )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["narration"] == {"audio": False, "reason": "boom", "reason_kind": "synthesis_failed"}
+        assert "narration unavailable: boom" in result.stderr  # note on stderr keeps stdout parseable
+
+    def test_missing_api_key_reports_reason_kind_missing_key(self) -> None:
+        runner = CliRunner(mix_stderr=False)
+        with (
+            patch("httpx.request", return_value=_response(200, _dispatch_payload())),
+            patch("pflow.core.tts.synthesize", side_effect=MissingApiKeyError("no key: settings set-env ...")),
+        ):
+            result = runner.invoke(
+                ui_module.ui_cmd, ["focus", "demo", "greet", "--say", "hi", "--output-format", "json"]
+            )
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["narration"]["reason_kind"] == "missing_key"
+
+    def test_bare_runtime_error_backstop_still_posts_and_exits_zero(self) -> None:
+        # A stray crash inside synthesize must degrade to caption-only, never drop the point.
+        runner = CliRunner()
+        with (
+            patch("httpx.request", return_value=_response(200, _dispatch_payload())) as request,
+            patch("pflow.core.tts.synthesize", side_effect=RuntimeError("unexpected")),
+        ):
+            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "greet", "--say", "hi"])
+
+        assert result.exit_code == 0, result.output
+        assert "audio_b64" not in request.call_args.kwargs["json"]
+        assert "narration unavailable: unexpected" in result.output
+
+    def test_over_length_say_is_rejected_before_any_request(self) -> None:
+        runner = CliRunner()
+        with patch("httpx.request") as request:
+            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "greet", "--say", "x" * 1501])
+
+        assert result.exit_code != 0
+        assert "max 1500" in result.output
+        request.assert_not_called()
+
+    def test_tags_only_say_is_rejected(self) -> None:
+        runner = CliRunner()
+        with patch("httpx.request") as request:
+            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "greet", "--say", "[only-tags]"])
+
+        assert result.exit_code != 0
+        assert "only [delivery] tags" in result.output
+        request.assert_not_called()
+
+    def test_empty_say_is_rejected(self) -> None:
+        # An empty --say "" (e.g. an agent passing an empty variable) is a usage error, not a silent
+        # no-op, and the message must not send the agent hunting for [tags] that aren't there.
+        runner = CliRunner()
+        with patch("httpx.request") as request:
+            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "greet", "--say", ""])
+
+        assert result.exit_code != 0
+        assert "no speakable text" in result.output
+        request.assert_not_called()
+
+    def test_bare_focus_still_posts_to_api_command(self) -> None:
+        # Regression: no --say leaves the Task 169 body/endpoint untouched.
+        runner = CliRunner()
+        with patch("httpx.request", return_value=_response(200, _dispatch_payload())) as request:
+            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "greet"])
+
+        assert result.exit_code == 0, result.output
+        assert request.call_args.args[:2] == ("POST", "http://127.0.0.1:8765/api/command")
+        assert request.call_args.kwargs["json"] == {"workflow": "demo", "type": "focus", "target": "greet"}
+
+    def test_bare_frame_still_posts_to_api_command(self) -> None:
+        runner = CliRunner()
+        with patch("httpx.request", return_value=_response(200, _dispatch_payload())) as request:
+            result = runner.invoke(ui_module.ui_cmd, ["frame", "demo", "greet"])
+
+        assert result.exit_code == 0, result.output
+        assert request.call_args.args[:2] == ("POST", "http://127.0.0.1:8765/api/command")
+        assert request.call_args.kwargs["json"] == {"workflow": "demo", "type": "frame", "target": "greet"}
+
+    def test_open_say_resends_to_api_say_and_synthesizes_once(self) -> None:
+        zero = _dispatch_payload(sent_to=0)
+        connected = _dispatch_payload(sent_to=1)
+        runner = CliRunner()
+        with (
+            patch("httpx.request", side_effect=[_response(200, zero), _response(200, connected)]) as request,
+            patch("webbrowser.open"),
+            # Pitfall #21: the monotonic deadline ignores a patched sleep — mock the health poll to
+            # break on connect, otherwise the loop spins the real 15s _OPEN_TIMEOUT_S.
+            patch.object(ui_module, "_probe_health", side_effect=[{"windows": 0}, {"windows": 1}]),
+            patch("time.sleep"),
+            patch("pflow.core.tts.synthesize", return_value=b"WAV") as synth,
+        ):
+            result = runner.invoke(ui_module.ui_cmd, ["focus", "demo", "greet", "--say", "hi", "--open"])
+
+        assert result.exit_code == 0, result.output
+        assert request.call_count == 2
+        # BOTH the initial send and the re-send go to /api/say...
+        assert [call.args[:2] for call in request.call_args_list] == [
+            ("POST", "http://127.0.0.1:8765/api/say"),
+            ("POST", "http://127.0.0.1:8765/api/say"),
+        ]
+        # ...but synthesis happens exactly ONCE (the re-send reuses the same audio).
+        assert synth.call_count == 1
+        assert request.call_args_list[1].kwargs["json"]["audio_b64"] == base64.b64encode(b"WAV").decode("ascii")
+
+    def test_inject_settings_env_vars_called_on_say_path_only(self) -> None:
+        runner = CliRunner()
+        with (
+            patch("httpx.request", return_value=_response(200, _dispatch_payload())),
+            patch("pflow.core.tts.synthesize", return_value=b"WAV"),
+            patch("pflow.core.llm_config.inject_settings_env_vars") as inject,
+        ):
+            runner.invoke(ui_module.ui_cmd, ["focus", "demo", "greet", "--say", "hi"])
+            assert inject.call_count == 1
+
+        with (
+            patch("httpx.request", return_value=_response(200, _dispatch_payload())),
+            patch("pflow.core.llm_config.inject_settings_env_vars") as inject_bare,
+        ):
+            runner.invoke(ui_module.ui_cmd, ["focus", "demo", "greet"])
+            inject_bare.assert_not_called()
 
 
 class TestUserActivityCommand:
