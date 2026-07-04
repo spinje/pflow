@@ -316,6 +316,9 @@ def execute_json_workflow(  # noqa: C901
             gate_resolver=gate_resolver,
             workflow_manager=WorkflowManager() if ctx.obj.get("workflow_source") == "library" else None,
             workflow_name=workflow_name,
+            # Task 164: `pflow resume` sets this before dispatching here; a normal
+            # run leaves it absent (None) — the runner then behaves exactly as before.
+            resume_source=ctx.obj.get("resume_source"),
         )
         _display_execution_result(ctx, result, output_key, ir_data, output_format, effective_verbose)
 
@@ -346,7 +349,30 @@ def execute_json_workflow(  # noqa: C901
             # block (above the data); JSON and failure paths echo it here.
             text_success = bool(result and result.success and output_format == "text")
             _finalize_trace_and_report(ctx, trace, echo_trace_line=not text_success)
+            _maybe_echo_resume_hint(ctx, result)
         _cleanup_temp_files(stdin_data, effective_verbose)
+
+
+def _maybe_echo_resume_hint(ctx: click.Context, result: Any | None) -> None:
+    """After a FAILED run whose trace was saved, tell the agent how to resume (Task 164, §E step 10).
+
+    Discoverability where it is needed: the failed-run output gains one stderr
+    line naming the exact ``pflow resume <execution-id>`` command. Gated on a
+    saved trace (``ctx.obj["trace_file"]`` — set by ``_finalize_trace_and_report``)
+    so ``--no-trace`` and stream-failed runs (which have no file to resume from)
+    stay silent. Skipped for success and for a clean gate denial (exit 3 is a
+    human stop, not a resumable failure). ``_echo_trace`` respects ``-p``.
+    """
+    from pflow.core.workflow.status import WorkflowStatus
+
+    if not result or result.success or result.status is WorkflowStatus.DENIED:
+        return
+    if not ctx.obj.get("trace_file"):
+        return
+    execution_id = getattr(result.trace, "execution_id", None) if result.trace else None
+    if not execution_id:
+        return
+    _echo_trace(ctx, f"To resume from the failed step: pflow resume {execution_id}")
 
 
 def _prepare_gate_resolver(
@@ -584,6 +610,8 @@ def _display_plan_result(
             verbose=False,
             only_node=ctx.obj.get("only_node"),
         ),
+        # Task 164: `pflow resume --dry-run` sets this; a normal --dry-run leaves it None.
+        resume_source=ctx.obj.get("resume_source"),
     )
 
     if output_format == "json":

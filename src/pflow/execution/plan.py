@@ -38,9 +38,9 @@ from time import time
 from typing import Any, Literal
 
 from pflow.core.diagnostic import Diagnostic, Severity
-from pflow.core.exceptions import LoopConditionError
+from pflow.core.exceptions import CompilationError, LoopConditionError, ResumeNotResumableError
 from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
-from pflow.execution.result import Plan, PlanEntry, PlanSummary
+from pflow.execution.result import Plan, PlanEntry, PlanSummary, ResumePlanInfo
 from pflow.registry import Registry
 from pflow.runtime.cache import MemoizationCache
 from pflow.runtime.engine.batch_executor import build_batch_output, resolve_batch_items
@@ -227,6 +227,9 @@ def build_plan(
     *,
     workflow_name: str = "<unnamed>",
     only_node: str | None = None,
+    resume_from: str | None = None,
+    resume_events: list[dict[str, Any]] | None = None,
+    resume_source_id: str | None = None,
     _visited_paths: list[str] | None = None,
     _depth: int = 0,
     _parent_workflow_file: str | None = None,
@@ -239,6 +242,9 @@ def build_plan(
         registry,
         workflow_name=workflow_name,
         only_node=only_node,
+        resume_from=resume_from,
+        resume_events=resume_events,
+        resume_source_id=resume_source_id,
         _visited_paths=_visited_paths,
         _depth=_depth,
         _parent_workflow_file=_parent_workflow_file,
@@ -254,6 +260,9 @@ def _build_plan_with_shared(
     *,
     workflow_name: str = "<unnamed>",
     only_node: str | None = None,
+    resume_from: str | None = None,
+    resume_events: list[dict[str, Any]] | None = None,
+    resume_source_id: str | None = None,
     _visited_paths: list[str] | None = None,
     _depth: int = 0,
     _parent_workflow_file: str | None = None,
@@ -326,7 +335,16 @@ def _build_plan_with_shared(
         depth=_depth,
     )
 
-    curr = _resolve_walk_start(compiled, shared, workflow_path, this_only, state.diagnostics)
+    curr, resume_info = _resolve_walk_start(
+        compiled,
+        shared,
+        workflow_path,
+        this_only,
+        state.diagnostics,
+        resume_from=resume_from,
+        resume_events=resume_events,
+        resume_source_id=resume_source_id,
+    )
     while curr is not None:
         node_id = getattr(curr, "node_id", None)
         if not isinstance(node_id, str) or node_id not in compiled.node_configs:
@@ -380,6 +398,7 @@ def _build_plan_with_shared(
         summary=_summarize(state.entries, cost_basis=state.cost_basis),
         diagnostics=state.diagnostics,
         workflow_path=workflow_path,
+        resume=resume_info,
     )
     return plan, shared
 
@@ -471,28 +490,52 @@ def _resolve_walk_start(
     workflow_path: str | None,
     this_only: str | None,
     diagnostics: list[Diagnostic],
-) -> Any:
-    """Return the node the planner walk starts from.
+    *,
+    resume_from: str | None = None,
+    resume_events: list[dict[str, Any]] | None = None,
+    resume_source_id: str | None = None,
+) -> tuple[Any, ResumePlanInfo | None]:
+    """Return ``(walk_start_node, resume_info)`` for the planner.
 
     Full plan → the workflow start node. Flat ``--only`` → seed upstream from the
     snapshot (issue #443) and start AT the target so the plan is a single entry.
-    No snapshot → hard error (the loader's falsy ``workflow_path`` guard also
-    covers the degenerate inline-without-path case). Seeding makes the target's
-    templated params resolve against frozen upstream, so its cache verdict matches
-    the engine actually serving/executing it.
+    Resume (Task 164, Decision 2) → seed upstream from the SOURCE trace's events
+    and start AT the failed step K (the same ``seed_walk_entry`` the engine's
+    ``_prepare_resume`` uses — parity pinned by ``test_plan_drift``); unlike
+    ``--only`` this does NOT set ``state.only_node``, so the walk continues across
+    the whole resumed tail. ``--only`` and resume are mutually exclusive by
+    construction (the CLI never passes both).
 
-    When the snapshot source is a DEGRADED run, append the same loud advisory the
-    engine emits (shared ``build_snapshot_degraded_diagnostic``) to ``diagnostics``
-    so ``--dry-run --only`` shows the partial-upstream caveat too — the ADR's "loud,
-    never silent" promise must hold on the preview surface, not just the real run.
+    No ``--only`` snapshot → hard error. K removed since the run → the SAME
+    ``ResumeNotResumableError`` the engine raises (lockstep — a ``--force`` resume
+    after a rename must refuse identically on both preview and real paths).
+
+    When the ``--only`` snapshot source is DEGRADED, append the shared loud advisory
+    so ``--dry-run --only`` shows the partial-upstream caveat too.
     """
+    if resume_from is not None:
+        try:
+            entry_node, final = seed_walk_entry(
+                shared, resume_events or [], entry=resume_from, start_node=compiled.start_node
+            )
+        except CompilationError:
+            raise ResumeNotResumableError(
+                f"Step '{resume_from}' no longer exists in the workflow — it was renamed or "
+                f"removed since the failed run.",
+                execution_id=resume_source_id,
+                suggestions=["Re-run the workflow from the start instead of resuming."],
+            ) from None
+        restored = [nid for nid in final if nid != resume_from]
+        return entry_node, ResumePlanInfo(
+            entry_node=resume_from, restored_nodes=restored, execution_id=resume_source_id or ""
+        )
     if this_only is None:
-        return compiled.start_node
+        return compiled.start_node, None
     events, source_status = load_snapshot_or_raise(workflow_path, this_only)
     entry_node, _ = seed_walk_entry(shared, events, entry=this_only, start_node=compiled.start_node)
     if source_status == "degraded":
         diagnostics.append(build_snapshot_degraded_diagnostic(this_only, source="planner"))
-    return entry_node
+    return entry_node, None
 
 
 def create_planner_shared(

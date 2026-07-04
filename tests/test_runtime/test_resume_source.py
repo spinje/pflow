@@ -1,11 +1,11 @@
 """``load_resume_source`` — the resume loader's failed-trace arms (Task 164, Phase 1).
 
 Covers selection (newest-for-workflow, by-execution-id), the refusal ladder
-(inline source, liveness, superseded, success/denied/gate-stopped/incomplete
-status arms, undecided-escalation + lossy-binary seed-scope guards), the
-event-order entry rule for multi-failure traces, and the happy-path
-``ResumeSource`` fields. The ``incomplete`` arm is a Phase-1 stub (refuses);
-Phase 5 replaces it.
+(inline source, liveness, superseded, success/denied/gate-stopped status arms,
+undecided-escalation + lossy-binary seed-scope guards), the event-order entry
+rule for multi-failure traces, the Phase-5 ``incomplete`` arm (Decision 7:
+killed-mid-node via a dangling ``node.start``, killed-between-nodes, meta-only,
+locked-incomplete), and the happy-path ``ResumeSource`` fields.
 
 Fixtures are written with the shared JSONL serializer (``tests/shared/trace_jsonl``)
 so they read back through the exact production reader (``load_trace_file``).
@@ -191,17 +191,107 @@ def test_denied_run_refused(tmp_path: Path) -> None:
         load_resume_source(workflow_path=WF, debug_dir=tmp_path)
 
 
-def test_incomplete_run_refused_stub(tmp_path: Path) -> None:
-    """Phase-1 stub: the incomplete arm refuses; Phase 5 replaces it with the killed-node derivation."""
-    _write_trace(
+def _write_incomplete_trace(
+    debug_dir: Path,
+    *,
+    execution_id: str,
+    timestamp: str,
+    completed: list[dict[str, Any]],
+    killed_node: str | None = None,
+    workflow_path: str = WF,
+    name: str = "wf",
+) -> Path:
+    """Write a production-faithful incomplete (interrupted) trace, returning its path.
+
+    Meta + one ``event`` line per completed node + an optional dangling
+    ``node.start`` (``parent_id=None``, an ``id`` beyond the completed events) for
+    a node killed mid-execution — and NO ``run.complete`` trailer, so the reader
+    synthesizes ``final_status="incomplete"`` exactly as a real Ctrl+C/SIGKILL run.
+    """
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    data: dict[str, Any] = {
+        "format_version": "2.5.0",
+        "execution_id": execution_id,
+        "workflow_name": name,
+        "workflow_path": workflow_path,
+        "only_node": None,
+        "content_hash": "hash-v1",
+        "inputs": None,
+        "nodes": completed,
+    }
+    lines = [line for line in flatten_trace_to_lines(data) if line.get("kind") != "run.complete"]
+    if killed_node is not None:
+        next_id = max((line["id"] for line in lines if line.get("kind") == "event"), default=-1) + 1
+        lines.append({
+            "kind": "node.start",
+            "id": next_id,
+            "seq": next_id,
+            "parent_id": None,
+            "node_id": killed_node,
+            "node_type": "ShellNode",
+            "run_id": execution_id,
+        })
+    path = debug_dir / format_trace_filename(workflow_path, name, timestamp)
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    return path
+
+
+def test_incomplete_killed_mid_node_enters_at_dangling_start(tmp_path: Path) -> None:
+    """A top-level node.start with no matching terminal event = the killed-mid-node K (Decision 7)."""
+    _write_incomplete_trace(
         tmp_path,
-        execution_id="crash-1",
+        execution_id="crash-mid",
         timestamp="20260101-000000",
-        final_status="incomplete",
-        nodes=[_node("a")],
+        completed=[_node("a"), _node("b")],
+        killed_node="c",
     )
-    with pytest.raises(ResumeNotResumableError, match=r"[Ii]nterrupted"):
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert source.final_status == "incomplete"
+    assert source.entry_node_id == "c"
+    assert source.last_completed_node_id is None
+
+
+def test_incomplete_killed_between_nodes_returns_last_completed(tmp_path: Path) -> None:
+    """No dangling start, ≥1 event → entry None + last_completed (the CLI resolves the successor)."""
+    _write_incomplete_trace(
+        tmp_path,
+        execution_id="crash-between",
+        timestamp="20260101-000000",
+        completed=[_node("a"), _node("b")],
+    )
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert source.entry_node_id is None
+    assert source.last_completed_node_id == "b"
+
+
+def test_incomplete_meta_only_has_nothing_to_resume(tmp_path: Path) -> None:
+    """Crashed before the first step completed (no events, no dangling start) → nothing to resume."""
+    _write_incomplete_trace(
+        tmp_path,
+        execution_id="crash-empty",
+        timestamp="20260101-000000",
+        completed=[],
+    )
+    with pytest.raises(ResumeNothingToResumeError, match=r"before its first step"):
         load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="advisory flock is POSIX-only")
+def test_incomplete_locked_trace_refused_before_status_arm(tmp_path: Path) -> None:
+    """Liveness runs FIRST: a flock-held incomplete trace is a live run, not a crash — refuse."""
+    import fcntl
+
+    path = _write_incomplete_trace(
+        tmp_path,
+        execution_id="live-incomplete",
+        timestamp="20260101-000000",
+        completed=[_node("a")],
+        killed_node="b",
+    )
+    with open(path, encoding="utf-8") as writer:
+        fcntl.flock(writer.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(ResumeStillRunningError):
+            load_resume_source(workflow_path=WF, debug_dir=tmp_path)
 
 
 def test_gate_stopped_run_names_the_gate(tmp_path: Path) -> None:

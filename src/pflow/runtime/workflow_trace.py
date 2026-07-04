@@ -326,6 +326,8 @@ class ResumeSource:
     """Everything a resume needs from a prior run's trace (Task 164).
 
     Self-contained so the engine, planner, and CLI never re-read the trace: the
+    source workflow's own `workflow_path` (so a resume-by-execution-id can
+    re-resolve the workflow without re-opening the trace it just parsed), the
     entry point (`entry_node_id` = the failed step K, or `None` with
     `last_completed_node_id` set for an incomplete between-nodes run the CLI
     resolves post-compile), the full blob-resolved top-level `events` to seed
@@ -334,6 +336,7 @@ class ResumeSource:
     """
 
     path: Path
+    workflow_path: str | None
     execution_id: str
     entry_node_id: str | None
     last_completed_node_id: str | None
@@ -528,16 +531,7 @@ def _resolve_resume_entry(path: Path, data: dict[str, Any], execution_id: str) -
             suggestions=["Re-run the workflow if you want to try again."],
         )
     if final_status == "incomplete":
-        # Phase 1 stub. Phase 5 replaces this with the Decision-7 derivation
-        # (dangling raw node.start = killed-mid-node K; unambiguous successor for
-        # killed-between-nodes; meta-only / locked refuse).
-        raise ResumeNotResumableError(
-            "This run was interrupted before it completed (Ctrl+C or a crash). "
-            "Resuming interrupted runs is not supported yet.",
-            execution_id=execution_id,
-            trace_path=str(path),
-            suggestions=["Re-run the workflow from the start."],
-        )
+        return _resolve_incomplete_entry(path, events, execution_id)
     if final_status != "failed":
         raise ResumeNotResumableError(
             f"This run's status '{final_status or 'unknown'}' is not resumable.",
@@ -558,6 +552,53 @@ def _resolve_resume_entry(path: Path, data: dict[str, Any], execution_id: str) -
             last_index[nid] = index
     entry = min(failed, key=lambda nid: last_index.get(nid, len(events)))
     return entry, None, "failed"
+
+
+def _resolve_incomplete_entry(
+    path: Path, events: list[dict[str, Any]], execution_id: str
+) -> tuple[str | None, str | None, str]:
+    """Decision 7: derive the resume entry for an interrupted (Ctrl+C/SIGKILL) run.
+
+    Entry-node identification is possible ONLY via the RAW JSONL — reconstruct
+    drops the disk-only ``node.start`` running markers. A leaf node's terminal
+    ``event`` REUSES its ``node.start``'s ``id`` (``begin_node`` reserves the seq),
+    so a TOP-LEVEL ``node.start`` (``parent_id is None``) with no matching
+    ``kind:"event"`` line marks the node that was killed MID-execution — that is K.
+    Top-level scoping is load-bearing: a kill inside a sub-workflow leaves a
+    dangling CHILD start too, whose id is not in the top-level graph. When nothing
+    dangles, the run was killed BETWEEN nodes — entry is ``None`` and the CLI
+    resolves the unambiguous successor of the last completed node post-compile
+    (§E step 4). A meta-only file (crashed before step 1) has nothing to resume.
+    """
+    started: dict[int, str] = {}
+    completed_ids: set[int] = set()
+    for line in _iter_raw_trace_lines(path):
+        line_id = line.get("id")
+        if not isinstance(line_id, int):
+            continue
+        kind = line.get("kind")
+        if kind == "node.start" and line.get("parent_id") is None:
+            node_id = line.get("node_id")
+            if isinstance(node_id, str):
+                started[line_id] = node_id
+        elif kind == "event":
+            completed_ids.add(line_id)
+    dangling = [(sid, node_id) for sid, node_id in started.items() if sid not in completed_ids]
+    if dangling:
+        # A sequential walk has exactly one in-flight top-level node at a kill; if
+        # more ever appear, the most-recently-started (highest seq) was running.
+        _, killed = max(dangling, key=lambda pair: pair[0])
+        return killed, None, "incomplete"
+    if events:
+        last_completed = events[-1].get("node_id")
+        if isinstance(last_completed, str):
+            return None, last_completed, "incomplete"
+    raise ResumeNothingToResumeError(
+        "This run was interrupted before its first step completed — there is nothing to resume.",
+        execution_id=execution_id,
+        trace_path=str(path),
+        suggestions=["Run the workflow again from the start."],
+    )
 
 
 def _guard_seed_scope(scope: list[dict[str, Any]], execution_id: str, path: Path) -> None:
@@ -664,6 +705,7 @@ def load_resume_source(
 
     return ResumeSource(
         path=path,
+        workflow_path=source_workflow_path if isinstance(source_workflow_path, str) else None,
         execution_id=source_execution_id,
         entry_node_id=entry_node_id,
         last_completed_node_id=last_completed_node_id,

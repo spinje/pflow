@@ -649,3 +649,289 @@ landed after it (self-audit, test hunt, wedge fix). Current truth:
 - **Next**: Phase 3 (CLI `pflow resume` + side-effect policy). Phase-3 obligations noted in
   entries above: CliRunner tests must exercise the CLI indicator wiring; Phase-5 note on the
   workflow-name-arm selection after a refused attempt.
+
+## 2026-07-04 — Phases 3-6 session start: scope + anchor re-verification vs HEAD 34324519
+
+**Scope this session (per instruction "Implement the remaining phases, starting with phase 3"):**
+Phases 3, 4, 5, 6 — one PR, phased commit milestones, each landing green. Phases 0/1/2 are
+committed (`34324519 phase 2 completed`); working tree clean at session start.
+
+**Baseline (committed HEAD 34324519):** `make test` **8434 passed, 0 failed** (18.4s). Target
+after each phase = baseline + that phase's new tests, `make check` green.
+
+**§E / §D / compiler anchors re-verified against current code (symbols authoritative):**
+- `load_resume_source(workflow_path=None, execution_id=None, *, debug_dir=None) -> ResumeSource`
+  at `workflow_trace.py:600`; `ResumeSource` frozen dataclass `:324` (fields path/execution_id/
+  entry_node_id/last_completed_node_id/events/inputs/content_hash/final_status). Phase-1 `incomplete`
+  arm is still the stub (`:530-540`) — so `entry_node_id` is NEVER None out of the loader until
+  Phase 5. **Verified**. CLI §E step 4 (between-nodes) is therefore unreachable in Phase 3 — deferred
+  to Phase 5 as the plan phases it.
+- Full §D exception family present (`exceptions.py:1125-1357`): `ResumeSourceError` base +
+  9 subclasses incl. `ResumeSideEffectConfirmationError(node_id, node_type, *, execution_id,
+  trace_path)` and `ResumeStaleWorkflowError(*, hash_known, execution_id, trace_path)`. **Verified**.
+- `_default_cache_for_node_type(node_type) = node_type == "llm"` (`compiler.py:643`) — the §E-step-5
+  `is_side_effecting` promotion site. **Verified**.
+- `WorkflowRunner.run(..., resume_source=None)` (`runner.py:104`) fully threads collector
+  `resumed_from` + engine `resume_from`/`resume_events`/`resume_source_id`; guards `entry_node_id is
+  None` (`:130-135`). **Verified** — CLI just builds the `ResumeSource` + merges inputs + calls run.
+- `_workflow_path_id(resolved)` (`runner.py:58`); `resolve_workflow` (`workflow_resolver.py:66`);
+  `workflow_content_hash(ir)` (`core/workflow_id.py:62`); `can_prompt(output_controller)`
+  (`gate_prompt.py:37`); `_create_workflow_metadata` (`workflow_output.py:978`);
+  `parse_workflow_params` (`param_parsing.py:49`, only processes `=`-bearing tokens). **Verified**.
+- Phase-2 display wiring already reads the resume stamps: `success_formatter.py:132-136` populates
+  `execution_dict` with `resumed_from`/`nodes_restored`/`resume_entry_node`;
+  `workflow_output.py:820-903` emits the `⤷ Resumed` indicator. So a resume routed through
+  `execute_json_workflow → runner.run(resume_source=)` displays the indicator with ZERO new display
+  code — the CLI only needs to thread `resume_source`. **Verified**.
+- `trace.execution_id` attribute (`workflow_trace.py:982`) — available for the §E-step-10 failed-run
+  resume-hint. Registration point: `main.py:136-168` (imports + `cli.add_command`). **Verified**.
+
+Delta from plan: **none**. Line refs matched at this HEAD.
+
+**Phase-3 dry-run decision (recorded to avoid a lying surface):** the plan's §E signature lists
+`--dry-run`, but its threading into `runner.plan`/`plan.py` is Phase 4 (§F). Shipping a `--dry-run`
+flag in Phase 3 that routed to `runner.plan` WITHOUT resume threading would silently plan the whole
+workflow from the start — a silent lie (the exact failure mode the plan warns against). So Phase 3's
+`resume` command omits `--dry-run`; Phase 4 adds the flag together with its plan threading + the
+parity test. No broken flag ships at any milestone (one PR).
+
+## 2026-07-04 — Phase 3 COMPLETE: CLI `pflow resume` + side-effect policy
+
+Built (plan §E steps 1-3, 5-10; step 4 is Phase 5):
+
+**`is_side_effecting` promotion (§E step 5):** new public `is_side_effecting(node_type) = node_type
+!= "llm"` in `compilation/compiler.py`; `_default_cache_for_node_type` now `return not
+is_side_effecting(node_type)` (single source). Exported from `runtime/compilation/__init__.py`.
+
+**`_workflow_path_id` → public `workflow_path_id`** (`execution/runner.py`) + back-compat alias —
+the CLI needs the canonical workflow identifier to find the source trace.
+
+**`ResumeSource.workflow_path` field added** (DEVIATION from plan §B's field list — recorded):
+plan §E step 2a said the CLI reads the source's `workflow_path` from the trace meta. The loader
+already parsed it (`data.get("workflow_path")`); carrying it on `ResumeSource` (the "readers stay
+dumb / self-contained" doctrine) is cleaner than the CLI re-opening a file the loader just read.
+One field, threaded from the existing `source_workflow_path` local; the one direct-construction
+test (`test_resume_engine.py:144`) updated. Phase-1 tests assert individual fields (never the full
+set) so they're unaffected. Rationale: simplest FINAL code, no re-read.
+
+**`cli/commands/resume.py`** — the command. Flow: split TARGET + `key=value` (TARGET required →
+usage error 2; stray `-flag` → usage error) → existence-based disambiguation (uuid-shaped: try
+`load_resume_source(execution_id=)` first, fall back to workflow-name on `ResumeSourceMissingError`
+ONLY, combined missing error if both miss so no wrong-namespace "did you mean" leaks) → content-hash
+gate (`ResumeStaleWorkflowError`, two messages) → side-effect policy (llm silent; side-effecting +
+non-TTY → `ResumeSideEffectConfirmationError`; TTY → `click.confirm` default-No, declined → clean
+exit 1; `--force` bypasses both gates) → merge `{**source.inputs, **cli_params}` → dispatch through
+`run.py`'s `execute_json_workflow` (resume rides `ctx.obj["resume_source"]`; the runner threads it —
+one added line in `execute_json_workflow`'s `runner.run(...)` call). K's node type read from
+`resolved.ir["nodes"]` (registry vocab), NEVER a trace event's class name (the §B trap; pinned).
+Registered in `main.py`.
+
+**Failed-run resume hint (§E step 10):** `_maybe_echo_resume_hint` in `run.py`, called in the run
+`finally` after trace finalize — emits `To resume from the failed step: pflow resume <exec-id>` on a
+FAILED run with a saved trace; skipped on success, on a clean gate DENIAL (exit 3), and under
+`--no-trace` (gated on `ctx.obj["trace_file"]`). Respects `-p`.
+
+**Display:** ZERO new display code — Phase-2 already wired the `⤷ Resumed` indicator + JSON
+`resumed_from`/`nodes_restored`/`resume_entry_node` off the execution dict; routing a resume through
+`execute_json_workflow` surfaces them for free.
+
+**Tests** (`tests/test_cli/test_resume_cli.py`, 28 tests, `trace_files`, real `cli` group +
+`Path.home`→tmp_path so trace write+read align): by-exec-id re-entry (upstream restored, indicator),
+by-path, key=value override (pinned upstream-not-rerun), side-effect non-TTY hard error (names K +
+type + `--force`), `--force` bypass, TTY confirm yes/no (patched `can_prompt`+`click.confirm`),
+llm-K silent (flaky llm; `click.confirm` patched to `pytest.fail` — proves no prompt), stale-hash
+refusal + `--force` override + unverifiable-message unit, mistyped-uuid combined error (no "did you
+mean"), uuid-shaped saved-name existence precedence, nothing-to-resume on success, JSON refusal
+shape (exit 1, execution_id in context), bare/stray usage errors (exit 2), failed-run hint present /
+omitted-under-`--no-trace`, and the `is_side_effecting` vocabulary matrix (llm→False,
+shell/code/http/mcp/claude-code/read-file/write-file→True, `LLMNode`→True = the class-name trap).
+
+Mutation-verified (Edit + revert, `grep MUTATION`=0 after):
+- `resume_source=None` in `run.py` threading → re-entry + llm-silent tests fail (whole workflow ran,
+  no indicator). ✅ (also motivated strengthening the override test with an upstream-not-rerun pin.)
+- skip `_confirm_or_refuse_side_effect` → non-TTY hard-error + confirm-no tests fail. ✅
+
+Manual e2e smoke (real `pflow`, real `~/.pflow/debug`): fail-demo run → hint printed → resume by
+exec-id (mode override + `--force`) restores step1, runs step2+step3, shows the indicator, correct
+output; no-`--force` → side-effect refusal; edited workflow → stale refusal; mistyped uuid →
+combined missing; bare resume → usage exit 2. All as designed.
+
+Verification: `make test` **8462 passed, 0 failed** (8434 + 28). `make check` green (ruff
+git-agnostic + format + pre-commit + mypy 244 files + deptry). Phase-1/2 resume suites unaffected
+(77 passed together). No existing test lines changed except the one `ResumeSource(...)` construction.
+
+**Next: Phase 4 (dry-run parity, Decision 2) — §F threading + `pflow resume --dry-run` + parity test.**
+
+## 2026-07-04 — Phase 4 COMPLETE: dry-run parity (Decision 2)
+
+Built (plan §F):
+
+**Planner threading:** `resume_from`/`resume_events`/`resume_source_id` through `build_plan` →
+`_build_plan_with_shared` → `_resolve_walk_start` (`execution/plan.py`). `_resolve_walk_start` now
+returns `(walk_start_node, ResumePlanInfo | None)`; the resume arm calls the SAME `seed_walk_entry`
+the engine's `_prepare_resume` uses (Phase-0 shared helper), wrapped in the IDENTICAL
+`except CompilationError → ResumeNotResumableError` (K-removed guard, in lockstep on both paths).
+Resume deliberately does NOT set `state.only_node` (the walk continues across the whole tail, unlike
+`--only`). Recursion never passes resume params, so `_force_downstream` (sub-workflow BFS) is
+unaffected — top-level K only, per scope.
+
+**`ResumePlanInfo` + `Plan.resume`** (`execution/result.py`, new frozen dataclass): carries
+`entry_node`, `restored_nodes`, `execution_id` — the honesty surface. `runner.plan(...,
+resume_source=None)` kwarg threads it (same shape as `run`).
+
+**Formatter (`plan_formatter.py`):** text gains a header line `Resuming from '<K>': N upstream steps
+restored from <exec-id> (plan + cost cover this step onward).`; JSON gains a `resume` block
+(`entry_node`/`restored_nodes`/`execution_id`). Extracted `_resume_header_line` + used
+`filter(None, (header, ...))` to fold the line WITHOUT a new branch — `format_plan_text` was already
+at the C901 budget (10); the fold keeps it there (honest, not a `# noqa`).
+
+**CLI (`resume.py`):** `--dry-run` flag added; `_dispatch_resume` sets `ctx.obj["dry_run"]` so
+`execute_json_workflow` → `_display_plan_result` → `runner.plan`. `_display_plan_result` (run.py)
+threads `resume_source=ctx.obj.get("resume_source")`. DECISION (recorded): `--dry-run` KEEPS the
+stale-workflow gate (preview mirrors what a real resume would refuse) but SKIPS the side-effect
+confirmation (a dry-run never runs K, so nothing can fire — requiring `--force` there would be a lie).
+
+**Tests:**
+- `test_engine_and_planner_resume_entry_state_match` (`test_plan_drift.py`, extends the Phase-0
+  parity test): real engine `run(resume_source=)` vs real `_build_plan_with_shared(resume_from=)` on
+  the SAME source trace — pins the located entry (`resume_entry_node`=="middle" == `plan.entries[0]`
+  == "middle"; tail continues to "last") and the seeded upstream (`restored_nodes` == planner-seeded
+  == ["first"]; full-dict value equality). Mutation-verified: mislocating the planner resume entry
+  (`entry_node = compiled.start_node`) fails EXACTLY this parity test + the 2 CLI dry-run entry tests,
+  nothing else. Reverted clean.
+- 3 CLI dry-run tests (`test_resume_cli.py`): plans the tail only (K-onward entries + resume header,
+  no side-effect needed since dry-run skips the confirm), JSON `resume` block shape, stale-workflow
+  still refuses without `--force`.
+
+Manual e2e smoke (real `pflow`): `resume <wf> mode=ok --dry-run [--force]` → header "Resuming from
+'step2': 1 upstream step restored from <id> (plan + cost cover this step onward)", plan lists
+step2/step3 only (not step1); JSON `resume` = {entry_node, restored_nodes:[step1], execution_id};
+no `--force` needed for the dry-run side-effect.
+
+Verification: `make test` **8466 passed** (8462 + 4). `make check` green. Phase-3 CLI tests +
+Phase-0/1/2 suites unaffected.
+
+**Next: Phase 5 (incomplete-trace arm, Decision 7) — loader arm 3-incomplete + CLI step 4.**
+
+## 2026-07-04 — Phase 5 COMPLETE: incomplete-trace resume (Decision 7)
+
+Built:
+
+**Loader arm (`_resolve_incomplete_entry`, `workflow_trace.py`)** replaces the Phase-1 stub. Raw-line
+pass (`_iter_raw_trace_lines`): a TOP-LEVEL `node.start` (`parent_id is None`) whose `id` has no
+matching `kind:"event"` line = killed-MID-node K (a leaf's terminal event REUSES the `node.start`'s
+reserved seq via `begin_node`, so id-matching is exact; top-level scoping avoids the dangling CHILD
+start a sub-workflow kill leaves). No dangling + ≥1 event → `entry=None` + `last_completed` = last
+top-level event (CLI resolves the successor). No events (meta-only) → `ResumeNothingToResumeError`.
+Liveness already runs FIRST in `load_resume_source`, so a flock-held incomplete trace refuses as
+`ResumeStillRunningError` before this arm.
+
+**CLI between-nodes resolution (`_resolve_between_nodes_entry` + `_single_default_successor`,
+resume.py, §E step 4)** — runs when `source.entry_node_id is None`, after the hash gate, before the
+side-effect gate. Refuses a dynamic router (last-completed is a `code` node — only code routes at
+runtime and its taken route was never traced; DECISION: since `has_dynamic` is parse-only and NOT in
+the IR, "is a `code` node" is the safe over-approximation — a non-code node routes purely
+declaratively, so its single `default` edge is unambiguous), refuses 0/>1 default successors
+(terminal / ambiguous) and a removed last-completed node; else `dataclasses.replace(entry_node_id=<the
+one default successor>)`. Default successor read from IR edges (`action=="default"`, both
+`from`/`to` + `source`/`target` spellings) — the compiled-graph fallback wasn't needed (IR edges
+expose the distinction cleanly for file-based resumable runs).
+
+**Tests:**
+- Loader (`test_resume_source.py`, replaced the stub with a production-faithful incomplete-fixture
+  helper — meta + events + dangling `node.start`, NO `run.complete` so the reader SYNTHESIZES
+  `incomplete` exactly like a real SIGKILL): killed-mid-node enters at the dangling start;
+  killed-between-nodes returns `entry=None`+`last_completed`; meta-only → nothing to resume;
+  locked-incomplete → still-running (liveness first). Mutation-verified: inverting the dangling
+  predicate (`sid in completed_ids`) fails ONLY the killed-mid-node test. Reverted clean.
+- CLI (`test_resume_cli.py`): 4 unit tests for `_resolve_between_nodes_entry` (single default
+  successor; code-router refused "dynamically"; terminal-node refused "ambiguous"; missing
+  last-completed refused "no longer exists"), + 2 e2e (crafted incomplete trace with the real
+  workflow_path, `--force` to bypass the stale hash): killed-between-nodes resumes at step1's
+  successor step2 (step1 restored); killed-mid-node (dangling step2 start) resumes AT step2.
+
+Verification: `make test` **8475 passed** (8466 + 9 net). `make check` green.
+
+**Next: Phase 6 (docs + close-out) — guide topic, CLI reference, CHANGELOG, spec verification matrix.**
+
+## 2026-07-04 — Phase 6 COMPLETE: docs + close-out
+
+Built (§G):
+- **Guide topic** `src/pflow/guide/features/resume.md` (`pflow guide resume`): at-least-once K + the
+  confirm/`--force` policy; loop-K restarts at iteration 1; downstream gates re-prompt
+  (`--auto-approve` works); top-level granularity (sub-workflow re-runs the whole host; memo softens);
+  interrupted-run resumability; inline/piped not resumable; resume-by-exec-id is the cwd-safe form; the
+  `${node.prompt}`/`${node.system}` strip caveat; the `analyze-cache` under-report caveat — WORDED
+  CORRECTLY per the Phase-2 finding (restored LLM events carry no `llm_prompt` EVIDENCE, not "no
+  `llm_call`" — they DO carry `llm_call`, cost-excluded). Registered: `RESERVED_WORKFLOW_NAMES` +
+  `entry.md` menu (topic auto-discovered by `list_topics`).
+- **Docs CLI reference** `docs/reference/cli/index.mdx`: a "Resume a failed run" section (mintlify
+  voice — mechanism over evaluation, no banned words).
+- **CHANGELOG**: an `## Unreleased` note (the release skill promotes it at release time).
+- **Directory docs**: `cli/commands/CLAUDE.md` (resume.py row + test mapping), `execution/CLAUDE.md`
+  (resume dry-run parity bullet — Phase 4), plus the Phase-3/4/5 accuracy edits logged above.
+- **#255 close-out**: its pre-engine-failure cases are "no trace → clear refusal" — pinned by
+  `test_failed_run_with_no_trace_is_a_clear_missing_error` (a `--no-trace` failed run → `pflow resume`
+  → ResumeSourceMissingError, NOT a silent re-run) + the loader's `test_no_trace_for_workflow_raises_missing`.
+
+**Spec Verification matrix (task-164.md → coverage):**
+1. Failed idempotent (llm) K: upstream restored/not re-run, K+tail run, cost only re-run → Phase 2
+   `test_resume_reenters_at_failed_node_and_skips_upstream` + cost/`nodes_executed` tests; Phase 3
+   `test_llm_failed_node_resumes_without_confirmation`. ✅
+2. Failed side-effecting K does not double-fire unacknowledged → Phase 3 side-effect confirm/refuse
+   matrix (the at-least-once guard: TTY confirm / non-TTY refuse / `--force`). ✅
+3. Conditional-branch resume onto the correct branch → Phase 2 branch/coalesce test. ✅
+4. `restored_nodes` upstream = not_executed, K-onward executed → Phase 2 relabel test. ✅
+5. No prior failed trace → clear error → loader `test_no_trace_for_workflow_raises_missing` + Phase 6
+   #255 test. ✅
+6. Incomplete (Ctrl+C/SIGKILL): killed-mid-node → that node; killed-between → unambiguous successor;
+   ambiguous/meta-only/flock-live → clear error → Phase 5 loader + CLI tests. ✅
+7. Self-contained attempt trace (Decision 6): restored zero-cost/excluded; `--only`-after-resume
+   poisoning regression; resume-of-a-resume → Phase 2 tests. ✅
+8. Gate-stopped/denied/undecided-escalation refusals (Decision 8) → Phase 1 loader tests. ✅
+9. Multi-failure enters earliest in EVENT order → Phase 1 loader test. ✅
+10. New trace + `resumed_from`, source never appended → Phase 2 tests. ✅
+11. Still-running run rejected → Phase 1 + Phase 5 locked tests. ✅
+12. `content_hash` mismatch → refuse + `--force` → Phase 3 stale-hash tests (both messages). ✅
+13. Fidelity guard (binary placeholder) → Phase 1 loader test. ✅
+14. Phase-0 extraction landed first, parity suites green unmodified, parity mutation-verified (both
+    `--only` AND resume) → Phase 0 (committed) + Phase 4 resume parity. ✅
+
+**Deliberately not run:** Task-159 `baseline/verify.sh` is a cache-analysis harness specific to Task
+159, not a 164 gate; `analyze-cache` unit tests pass in the suite and the resumed-trace caveat is
+documented — running the 159 harness adds no 164 coverage.
+
+**Verification:** `make test` **8476 passed, 0 failed** (Phase-6 baseline 8434 + 42 net new resume
+tests across Phases 3-6). `make check` green (ruff git-agnostic + format + pre-commit + mypy 244
+files + deptry). `test_docs` (94) + `test_guide` green with the new topic.
+
+## 2026-07-04 — ALL SCOPED PHASES (3-6) COMPLETE — awaiting human review
+
+Phases 3, 4, 5, 6 implemented in one PR on top of the committed Phases 0/1/2. Nothing committed this
+session (standing rule). `make test` 8476 / `make check` green throughout.
+
+**What shipped this session:**
+- Phase 3 — `pflow resume` CLI + side-effect policy (`is_side_effecting` promotion, `resume.py`,
+  registration, failed-run hint, 28 tests).
+- Phase 4 — dry-run parity: planner resume threading + `ResumePlanInfo`/`Plan.resume` + formatter +
+  `pflow resume --dry-run` + the engine↔planner resume parity test (4 tests).
+- Phase 5 — incomplete-trace resume (Decision 7): loader `_resolve_incomplete_entry` + CLI between-nodes
+  successor resolution (9 net tests).
+- Phase 6 — guide/docs/CHANGELOG + #255 close-out + spec verification matrix (1 test + docs).
+
+**Reviewer sign-off wanted on (deviations from the plan, each with rationale above):**
+1. `ResumeSource.workflow_path` field added (plan §B listed fields didn't include it) — the CLI needs
+   the source workflow to re-resolve a by-exec-id resume; carrying it (self-contained/readers-dumb)
+   beats re-opening the file the loader just parsed. One field, one construction site, one test updated.
+2. Phase-3 `resume` omits `--dry-run` at the Phase-3 milestone; Phase 4 adds it WITH its plan threading
+   (shipping a dry-run flag that plans the whole workflow would be a silent lie). End state has it.
+3. `--dry-run` resume keeps the stale-workflow gate (preview↔real parity) but skips the side-effect
+   confirm (nothing executes).
+4. Between-nodes dynamic-router detection uses "last-completed is a `code` node" (has_dynamic is
+   parse-only, not in the IR; only code nodes route at runtime) — the safe over-approximation.
+5. Guide/docs correct the plan §G "restored LLM nodes carry no llm_call" wording to "no llm_prompt
+   evidence" (the Phase-2 finding).
+
+**Manual verification for the reviewer (unchanged from prior phases):** the real-browser UI check
+(`make ui-build` + `pflow ui` over a resumed run) remains plan-designated MANUAL. All CLI/loader/engine/
+planner behavior is covered by the automated suite + the manual `pflow` smokes logged in Phases 3-5.

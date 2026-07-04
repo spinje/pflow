@@ -143,6 +143,7 @@ def test_runner_rejects_unresolved_entry_node(tmp_path) -> None:
     """A between-nodes source (entry None) must be resolved by the CLI before run()."""
     source = ResumeSource(
         path=tmp_path / "t.json",
+        workflow_path=str(tmp_path / "wf.pflow.md"),
         execution_id="e1",
         entry_node_id=None,
         last_completed_node_id="a",

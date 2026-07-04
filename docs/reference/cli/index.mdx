@@ -69,6 +69,26 @@ pflow ~/workflows/analysis.pflow.md param=value
   **No built-in natural language mode.** pflow executes workflow files and saved workflows. Your AI agent builds workflows using pflow's MCP tools or CLI primitives — pflow doesn't have its own natural language interface.
 </Info>
 
+## Resume a failed run
+
+When a run fails partway — an LLM/HTTP/MCP step times out, a transient error survives retries — `pflow resume` continues from the failed step instead of re-running the whole workflow. It restores the already-completed upstream steps' outputs from the saved trace (it does not re-run them) and walks forward from the failed step.
+
+```bash
+pflow resume 7a9e4afb-2095-447e-8043-0660438104f9   # resume that exact failed attempt
+pflow resume my-workflow                             # resume the newest failed run of a workflow
+pflow resume my-workflow api_url=https://fixed.example.com   # override an input while resuming
+```
+
+The failed run prints the exact command to use (`To resume from the failed step: pflow resume <execution-id>`). A resumed run is a new run with its own trace, linked to the original.
+
+| Option | Description |
+|--------|-------------|
+| `--force` | Bypass the side-effect confirmation and the edited-workflow check |
+| `--dry-run` | Preview the resumed tail's cost and cache plan (from the failed step onward) without running |
+| `KEY=VALUE` | Override the original run's inputs |
+
+The failed step runs again from the start, so if it already partly side-effected (an HTTP POST that sent but timed out on the response), resuming re-fires it — at-least-once execution. A side-effecting step (`shell`/`code`/`claude-code`/file-ops/`mcp`) asks for confirmation at a terminal and refuses for non-interactive agents unless you pass `--force`; an idempotent `llm` step resumes silently. See [`pflow guide resume`](/reference/cli/guide) for the full behavior (loop restart, gate re-prompting, top-level granularity, interrupted-run handling).
+
 ## Global options
 
 | Option | Description |

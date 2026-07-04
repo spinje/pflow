@@ -193,6 +193,21 @@ class PlanSummary:
 
 
 @dataclass(frozen=True)
+class ResumePlanInfo:
+    """Resume context for a ``--dry-run`` of a resumed run (Task 164, Decision 2).
+
+    A resumed plan starts AT the failed step K (upstream is restored, not planned),
+    so the plan's entries + cost cover K onward ONLY. This carries the honesty
+    surface the formatter renders: the entry node K, the upstream node ids restored
+    from the source trace, and the source ``execution_id`` the tail resumes from.
+    """
+
+    entry_node: str
+    restored_nodes: list[str]
+    execution_id: str
+
+
+@dataclass(frozen=True)
 class Plan:
     """Execution plan for a workflow -- the result of --dry-run."""
 
@@ -201,3 +216,4 @@ class Plan:
     summary: PlanSummary
     diagnostics: list[Diagnostic] = field(default_factory=list)
     workflow_path: str | None = None
+    resume: ResumePlanInfo | None = None

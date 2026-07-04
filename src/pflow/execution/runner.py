@@ -55,17 +55,23 @@ def _is_degrading_warning(value: Any) -> bool:
 _synthesize_inline_workflow_id = synthesize_inline_workflow_id
 
 
-def _workflow_path_id(resolved: ResolvedWorkflow) -> str:
+def workflow_path_id(resolved: ResolvedWorkflow) -> str:
     """Canonical workflow identifier: the resolved file path, or a synthesized
     ``ir-hash:<md5>`` for inline runs (dict / content-string / MCP-inline).
 
     The trace collector's ``workflow_path``, the memo-cache scoping key
-    (``_pflow_workflow_file``), and the ``--only`` snapshot loader (issue #443)
-    MUST all use this exact value — otherwise the snapshot loader won't find the
-    workflow's own most-recent full-run trace. Single source so the three sites
-    can't drift byte-for-byte.
+    (``_pflow_workflow_file``), the ``--only`` snapshot loader (issue #443), and
+    the Task-164 resume loader MUST all use this exact value — otherwise the
+    loader won't find the workflow's own most-recent trace. Single source so the
+    sites can't drift byte-for-byte.
     """
     return resolved.file_path or _synthesize_inline_workflow_id(resolved.ir)
+
+
+# Back-compat alias: this was module-private (`_workflow_path_id`) before Task 164
+# needed it CLI-side. Promoted to public; the alias keeps existing internal
+# callers unchanged.
+_workflow_path_id = workflow_path_id
 
 
 class WorkflowRunner:
@@ -488,8 +494,17 @@ class WorkflowRunner:
         workflow: str | dict[str, Any] | ResolvedWorkflow,
         params: dict[str, Any],
         config: RunnerConfig,
+        *,
+        resume_source: "ResumeSource | None" = None,
     ) -> Plan:
-        """Build an execution plan without invoking any node."""
+        """Build an execution plan without invoking any node.
+
+        ``resume_source`` (Task 164, Decision 2) makes ``--dry-run`` honest about a
+        resumed run: the planner seeds upstream from the source trace and starts AT
+        the failed step K, so the plan + cost cover the resumed tail only. Same
+        kwarg shape as ``run`` (the caller merges ``resume_source.inputs`` into
+        ``params`` first); its ``entry_node_id`` must already be resolved.
+        """
         from pflow.execution.plan import build_plan
         from pflow.registry import Registry
         from pflow.runtime import compile_workflow
@@ -516,6 +531,9 @@ class WorkflowRunner:
             registry,
             workflow_name=workflow_name,
             only_node=config.only_node,
+            resume_from=resume_source.entry_node_id if resume_source is not None else None,
+            resume_events=resume_source.events if resume_source is not None else None,
+            resume_source_id=resume_source.execution_id if resume_source is not None else None,
             _parent_workflow_file=resolved.file_path,
         )
 
