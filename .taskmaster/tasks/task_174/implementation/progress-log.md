@@ -706,3 +706,98 @@ guide rewrite, task review, demo fixture). Final verification on the shipped tre
 passed / 9 skipped, web 719 passed, `make check` green, plus the live user-heard walkthrough
 (block → hold → ▶ → resume). Untracked demo fixtures `ticket-triage.pflow.md` /
 `voice-demo.pflow.md` are committed on the branch.
+
+## 2026-07-04 — Post-ship stress test: live whisper-TTS bug found + stripped-tags retry
+
+A user-driven stress-test session (narrating a throwaway `silly-story-robot.pflow.md` in a real
+browser, quirky/giggly voice, deliberately re-pointing the same nodes) surfaced a **real live
+Gemini failure** the mocks never could — and produced a shipped fix to `core/tts.py`.
+
+**Symptom.** One point in a 7-step giggly walkthrough came back
+`narration unavailable: no audio in response (missing inlineData): {...finishReason: OTHER...}`.
+The point + caption still landed and the walkthrough never stumbled — i.e. the totality seam
+degraded to caption-only exactly as designed, against a **genuine** API misbehavior, not a mock.
+
+**Root cause (empirically isolated, ~35 live probe calls, ~$0.10).** `gemini-3.1-flash-tts-preview`
+returns a 200 with `finishReason=OTHER`, empty content (`parts=0`), `safety=None`, ~240 generated
+tokens, and **zero audio** for **whispered delivery on certain content**:
+- Deterministic per input (BASE line failed 5/5); a lone earlier success was a rare stochastic fluke.
+- **Whisper is the necessary ingredient** — every failure carried `[whispers]`/`[whispering
+  playfully]`; NO energetic tag (`[giggly]`, `[excited]`, even the freeform multi-word
+  `[in a silly sing-song voice]`) failed on any content, including the exact content that fails
+  0/4 under whisper.
+- **Content-dependent under whisper** — `[whispers]` + calm ("penguin drifted off to sleep") →
+  4/4 audio; `[whispers]` + "story zooms along the wire to the next room" → 0/4.
+- **Ruled out:** safety filter (no `blockReason`/ratings), the `?`, "Wheee!", freeform-vs-canonical
+  tags. It is a **Gemini preview-model bug, not a pflow bug.**
+
+**Fix — one-shot stripped-tags retry inside the `synthesize()` seam (silent recovery).** New
+private `_NoAudioError(TTSSynthesisError)` raised by `_extract_audio` on the empty-candidates /
+missing-inlineData cases (a non-200/network error stays plain `TTSSynthesisError`, NOT retried —
+stripping tags can't fix those). On `_NoAudioError`, if `strip_delivery_tags(text)` differs and is
+non-empty, `synthesize()` retries ONCE with the tags stripped: the plain words synthesize where the
+styled version won't, recovering **voice in default delivery** instead of degrading to caption-only
+("caption always, voice when it can, **styled when it can**"). Recovery is silent by design (user
+decision) — the caption already equals the stripped words, so voice and caption still match; the
+agent's surface stays the sentence. Function remains **total** (only `MissingApiKeyError`/
+`TTSSynthesisError` escape). Also: `_extract_audio`'s no-audio message is now **actionable** for
+agents (`_no_audio_message` names `finishReason` + the whisper trigger + "try rephrasing or a
+different delivery tag") instead of dumping truncated raw JSON.
+
+**Verification.** `tests/test_core/test_tts.py` **25 passed (+5)** — new `TestStrippedTagsRetry`
+pins: recover-by-stripping (asserts the 2nd call sent tag-free text), no-tags-not-retried (1 call),
+network-error-not-retried (1 call), stripped-retry-also-fails → actionable message (2 calls),
+finishReason surfaced. Updated the empty-candidates test's match string (message changed, intent —
+"not an IndexError" — preserved). **Live 3/3 recovery** of the exact fragile input through the
+shipped `synthesize()`. Full `make check` + `make test` green: **8460 passed / 0 failed**, mypy 244
+files clean, all hooks pass. Re-running the original failing CLI command now prints **no**
+"narration unavailable" note (synthesis succeeds; the only nonzero exit was an honest
+`sent to 0 windows` after the tab was closed).
+
+**Separately clarified (no code change): the "failed point's caption box wasn't shown" observation
+is OCCLUSION, not a rendering gap.** `GraphView.tsx:1148` renders the caption `<p>`
+unconditionally (only the Replay button gates on `&& url`), so a caption-only say DOES draw. The
+walkthrough's edge point (`… -> add-a-lesson.prompt`) anchors at `add-a-lesson` (target-side
+endpoint), and the *next* point (`focus add-a-lesson`) anchored the same visible node with a
+DIFFERENT `refKey` (`add-a-lesson|in|` vs `add-a-lesson|null|`) → two separate boxes stacking at
+one node, the later on top. That is the plan's own accepted-for-v1 "boxes at the same node stack in
+DOM order" limitation, now biting two say-boxes. Candidate future work if crowding matters:
+dedupe/offset boxes that resolve to the same anchor node.
+
+**Not committed** (project rule). Files touched: `src/pflow/core/tts.py`,
+`tests/test_core/test_tts.py`.
+
+## 2026-07-04 — Post-ship stress test (cont.): say-box "now speaking" polish
+
+Same session, two user-requested visual refinements to the say caption box (frontend only).
+
+**1. Shimmer border while a clip plays.** `NodeCallout` gained an optional additive `className`
+prop (the run callout doesn't pass it, so unaffected); `GraphView` passes `say-playing` only while
+`item.status === "playing"`. CSS `.node-callout.say-playing` keeps the base drop-shadow and pulses
+a soft white ring (`@keyframes pflow-say-shimmer`, 1.6s); `prefers-reduced-motion` → static ring.
+So the currently-narrating box stands out among coexisting captions.
+
+**2. Fixed-height affordance slot (no resize on play/stop).** User caught that an audio box changed
+HEIGHT on every play/stop — `playing` had no button, `done` grew a ↻ Replay row, Replay shrank it
+back — a vertical jitter made worse by the new shimmer. Fix: reserve ONE affordance row for the
+whole life of an audio box (a caption-only box has no `url` → still no slot, so it never jumped) and
+swap only its CONTENTS by status:
+- `playing` → animated equalizer bars (`.say-eq`, 4 bars bouncing in `var(--accent)`,
+  non-interactive) + "playing" label — the classic audio-playing signifier, chosen over a
+  spinner (reads as "loading") after showing the user ASCII mockups.
+- `blocked` → ▶ Play narration · `done` → ↻ Replay · `expired` → muted "clip expired".
+- New `.say-affordance` base fixes EVERY height-affecting property (margin, padding, border WIDTH,
+  font, line-height); variants only recolor + toggle `cursor`/interactivity — never the box model.
+  So the box height is constant across ▶ → bars → Replay. `prefers-reduced-motion` → static bars.
+
+**Verification.** tsc clean; **web suite 721 passed** (+2 — the say-callout playing-state test now
+also pins `.say-eq` present while playing / gone + Replay when ended, i.e. the slot SWAP, not an
+appear/disappear); `npm run build` + `make ui-build` green (bundle regenerated into
+`src/pflow/ui/static/`). Verified live against the real browser + real CLI: box shows ▶ (fresh
+`--open` window re-locks autoplay) → click → **equalizer bars + shimmer while speaking** → **↻
+Replay in the same slot** on finish, no vertical jump. User confirmed "works great" (twice — shimmer,
+then the eq/slot).
+
+**Not committed** (project rule). Files touched: `web/src/components/NodeCallout.tsx`,
+`web/src/views/GraphView.tsx`, `web/src/index.css`, `web/src/views/GraphView.test.tsx`
+(+ regenerated `src/pflow/ui/static/` bundle).

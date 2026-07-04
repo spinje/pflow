@@ -118,9 +118,10 @@ class TestSynthesizeFailures:
             synthesize("hi", model="m", voice="Kore")
 
     def test_empty_candidates_raises_tts_error_not_index_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # A safety-filtered 200 returns candidates: [] — must NOT be an IndexError.
+        # A safety-filtered 200 returns candidates: [] — must NOT be an IndexError. "hi" has no
+        # tags to strip, so it is NOT retried; the message is the actionable no-audio one.
         _patch_post(monkeypatch, _FakeResponse(200, {"candidates": []}))
-        with pytest.raises(TTSSynthesisError, match="empty candidates"):
+        with pytest.raises(TTSSynthesisError, match="no audio"):
             synthesize("hi", model="m", voice="Kore")
 
     def test_non_json_200_body_raises_tts_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -140,6 +141,71 @@ class TestSynthesizeFailures:
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
         with pytest.raises(MissingApiKeyError, match="settings set-env"):
             synthesize("hi", model="m", voice="Kore")
+
+
+def _no_audio_payload(finish_reason: str = "OTHER") -> dict[str, object]:
+    """A 200 shaped like Gemini's live no-audio failure: a candidate with empty content."""
+    return {"candidates": [{"content": {}, "finishReason": finish_reason, "index": 0}]}
+
+
+class _RecordingPost:
+    """A fake httpx.post that returns queued responses (or raises queued exceptions) in order and
+    records the request body text of each call — so a test can assert call count AND that the
+    stripped-tags retry sent the tag-free text."""
+
+    def __init__(self, responses: list[object]) -> None:
+        self._responses = list(responses)
+        self.texts: list[str] = []
+
+    def __call__(self, url: str, **kwargs: object) -> object:
+        body = kwargs.get("json")
+        assert isinstance(body, dict)
+        self.texts.append(body["contents"][0]["parts"][0]["text"])
+        item = self._responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+class TestStrippedTagsRetry:
+    """A 200-with-no-audio is retried ONCE with delivery tags stripped (whisper-bug recovery)."""
+
+    def test_recovers_voice_by_stripping_tags(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # First call (tagged text) returns no audio; the retry (tags stripped) returns audio.
+        rec = _RecordingPost([_FakeResponse(200, _no_audio_payload()), _FakeResponse(200, _audio_payload(_PCM))])
+        monkeypatch.setattr("pflow.core.tts.httpx.post", rec)
+        wav = synthesize("[whispering playfully] hello there", model="m", voice="Kore")
+        assert wav.startswith(b"RIFF")
+        assert rec.texts == ["[whispering playfully] hello there", "hello there"]  # 2nd is tag-free
+
+    def test_no_tags_is_not_retried(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Nothing to strip → a single call, then the actionable no-audio error (no wasted retry).
+        rec = _RecordingPost([_FakeResponse(200, _no_audio_payload())])
+        monkeypatch.setattr("pflow.core.tts.httpx.post", rec)
+        with pytest.raises(TTSSynthesisError, match="no audio"):
+            synthesize("hello there", model="m", voice="Kore")
+        assert len(rec.texts) == 1
+
+    def test_network_error_is_not_retried_with_stripped_tags(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A ConnectError is NOT a no-audio failure; stripping tags can't fix it, so no retry.
+        rec = _RecordingPost([httpx.ConnectError("no route")])
+        monkeypatch.setattr("pflow.core.tts.httpx.post", rec)
+        with pytest.raises(TTSSynthesisError):
+            synthesize("[whispers] hello there", model="m", voice="Kore")
+        assert len(rec.texts) == 1
+
+    def test_stripped_retry_also_no_audio_gives_actionable_message(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Both attempts return no audio → degrade with the actionable message naming the fix.
+        rec = _RecordingPost([_FakeResponse(200, _no_audio_payload()), _FakeResponse(200, _no_audio_payload())])
+        monkeypatch.setattr("pflow.core.tts.httpx.post", rec)
+        with pytest.raises(TTSSynthesisError, match="delivery tag"):
+            synthesize("[whispers] hello there", model="m", voice="Kore")
+        assert len(rec.texts) == 2
+
+    def test_no_audio_message_includes_finish_reason(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _patch_post(monkeypatch, _FakeResponse(200, _no_audio_payload("OTHER")))
+        with pytest.raises(TTSSynthesisError, match="finishReason=OTHER"):
+            synthesize("hello there", model="m", voice="Kore")
 
 
 class TestWavDuration:

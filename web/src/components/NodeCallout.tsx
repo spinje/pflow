@@ -28,10 +28,14 @@ export function NodeCallout({
   subtitle,
   frameOnMount = true,
   onClose,
+  className,
   children,
 }: {
   anchorId: string;
   direction: Direction;
+  // An optional extra class on the outer box — the shell stays content-agnostic, but a caller can
+  // add a state modifier (Task 174's say bubble adds `say-playing` while its clip is speaking).
+  className?: string;
   // An optional leading header element (rendered before the title) — the run callout passes the pflow
   // chevrons; the shell stays content-agnostic, so Task 174's "say" bubble can pass its own mark or none.
   icon?: ReactNode;
@@ -103,7 +107,10 @@ export function NodeCallout({
       {/* `nopan`/`nodrag`: the callout lives inside the RF viewport, whose d3-drag pan handler would
           otherwise swallow the pointer (the ✕ and the step buttons wouldn't click). `nowheel` lets the
           body scroll without zooming the canvas. */}
-      <div className="node-callout nopan nodrag nowheel" style={{ position: "absolute", ...style }}>
+      <div
+        className={`node-callout nopan nodrag nowheel${className ? ` ${className}` : ""}`}
+        style={{ position: "absolute", ...style }}
+      >
         <div className="node-callout-head">
           {icon != null ? <span className="node-callout-lead">{icon}</span> : null}
           <span className="node-callout-title">{title}</span>

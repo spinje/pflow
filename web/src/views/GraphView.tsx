@@ -1143,19 +1143,38 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
                     direction={direction}
                     title="Agent"
                     frameOnMount={false}
+                    className={item.status === "playing" ? "say-playing" : undefined}
                     onClose={() => closeSay(key)}
                   >
                     <p className="say-caption">{item.caption}</p>
-                    {item.status === "blocked" && url && (
-                      <button className="say-unlock" onClick={() => replaySay(key, url)}>
-                        ▶ Play narration
-                      </button>
-                    )}
-                    {item.status === "done" && url && (
-                      <button className="say-replay" onClick={() => replaySay(key, url)}>
-                        ↻ Replay
-                      </button>
-                    )}
+                    {/* ONE fixed-height affordance slot for the whole life of an audio box (a
+                        caption-only box has no url → no slot, so it never had one to jump). The row
+                        swaps content by status — playing indicator / ▶ unlock / ↻ replay / expired —
+                        but its box-model is constant, so the box never resizes on play/stop. */}
+                    {url &&
+                      (item.status === "playing" ? (
+                        <span className="say-affordance say-playing-indicator" aria-label="Playing narration">
+                          <span className="say-eq" aria-hidden="true">
+                            <i />
+                            <i />
+                            <i />
+                            <i />
+                          </span>
+                          playing
+                        </span>
+                      ) : item.status === "blocked" ? (
+                        <button className="say-affordance say-unlock" onClick={() => replaySay(key, url)}>
+                          ▶ Play narration
+                        </button>
+                      ) : item.status === "done" ? (
+                        <button className="say-affordance say-replay" onClick={() => replaySay(key, url)}>
+                          ↻ Replay
+                        </button>
+                      ) : (
+                        <span className="say-affordance say-expired" aria-label="Narration clip expired">
+                          clip expired
+                        </span>
+                      ))}
                   </NodeCallout>
                 );
               })}

@@ -1147,6 +1147,30 @@ describe("agent say callout (Task 174 + persistent-captions follow-up)", () => {
     expect(replayButtons()).toHaveLength(0);
   });
 
+  it("swaps the equalizer for Replay in one fixed slot (shimmer + no resize) when the clip ends", async () => {
+    await mountWithGraph();
+    say("speaking now");
+    const box = boxOf("speaking now");
+    // While playing: the box shimmers, the affordance slot holds the (non-clickable) equalizer,
+    // and there is NO Replay button — the swap, not an appear/disappear, is what avoids the resize.
+    expect(box.classList.contains("say-playing")).toBe(true);
+    expect(box.querySelector(".say-eq")).toBeTruthy();
+    expect(replayButtons()).toHaveLength(0);
+
+    act(() => FakeAudio.instances[0]!.fireEnded());
+    const done = boxOf("speaking now");
+    // Finished → shimmer off, equalizer gone, Replay now occupies the SAME slot.
+    expect(done.classList.contains("say-playing")).toBe(false);
+    expect(done.querySelector(".say-eq")).toBeNull();
+    expect(replayButtons()).toHaveLength(1);
+  });
+
+  it("a caption-only box never shimmers (nothing is playing)", async () => {
+    await mountWithGraph();
+    say("just words", null);
+    expect(boxOf("just words").classList.contains("say-playing")).toBe(false);
+  });
+
   it("a caption-only say renders a persistent box with no clip and no dead Replay button", async () => {
     await mountWithGraph();
     say("just the words", null);

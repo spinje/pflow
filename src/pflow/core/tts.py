@@ -18,6 +18,14 @@ response body, degenerate audio parameters) surfaces as
 :class:`TTSSynthesisError` — never a raw traceback. The CLI's ``--say`` path
 catches both and degrades to caption-only, so a synthesis failure is a report
 note, not an aborted point.
+
+Stripped-tags retry: a 200 that carries no audio (``finishReason=OTHER`` on
+certain phrasings — whispered delivery is a live-verified trigger) is the one
+failure class the delivery tags can cause, so :func:`synthesize` retries it ONCE
+with the ``[bracket]`` tags stripped before giving up. This recovers voice (in
+default delivery) where the styled version won't synthesize — "caption always,
+voice when it can, styled when it can". Recovery is silent: the caption already
+equals the stripped words, so voice and caption still match.
 """
 
 from __future__ import annotations
@@ -46,6 +54,16 @@ _PCM16_SAMPLE_WIDTH = 2  # bytes per sample; the response is signed 16-bit littl
 
 _DELIVERY_TAG_RE = re.compile(r"\[[^\]]*\]")
 _WHITESPACE_RE = re.compile(r"\s+")
+
+
+class _NoAudioError(TTSSynthesisError):
+    """Internal marker: a 200 response carried no audio (empty candidates or missing inlineData).
+
+    A subclass of :class:`TTSSynthesisError` so external callers still catch the public type, but
+    distinguishable inside :func:`synthesize` as the ONE failure class a stripped-tags retry can
+    recover — a non-200 or network error can't be fixed by dropping delivery tags, so those stay
+    plain ``TTSSynthesisError`` and are never retried.
+    """
 
 
 def strip_delivery_tags(text: str) -> str:
@@ -89,13 +107,6 @@ def synthesize(text: str, *, model: str, voice: str, timeout: float = 30.0) -> b
 
     model_id = model.removeprefix("gemini/")
     url = f"{_GEMINI_MODELS_URL}/{model_id}:generateContent"
-    body = {
-        "contents": [{"parts": [{"text": text}]}],
-        "generationConfig": {
-            "responseModalities": ["AUDIO"],
-            "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
-        },
-    }
 
     # TOTALITY (load-bearing): everything after the key check is wrapped. A
     # non-200, a 200 with empty candidates (safety filter), malformed base64, a
@@ -104,14 +115,20 @@ def synthesize(text: str, *, model: str, voice: str, timeout: float = 30.0) -> b
     # explicit TTSSynthesisErrors below re-raise unchanged (excluded from the
     # wide catch); nothing else escapes as a raw traceback.
     try:
-        response = httpx.post(url, json=body, headers={"x-goog-api-key": key}, timeout=timeout)
-        if response.status_code != 200:
-            raise TTSSynthesisError(f"Gemini TTS returned HTTP {response.status_code}: {response.text[:200]}")
-        payload = response.json()
-        data_b64, mime = _extract_audio(payload)
-        pcm = base64.b64decode(data_b64)
-        rate, channels = _parse_pcm_params(mime)
-        return _wrap_wav(pcm, rate=rate, channels=channels)
+        try:
+            return _synthesize_once(text, url=url, key=key, voice=voice, timeout=timeout)
+        except _NoAudioError:
+            # A 200 with no audio (finishReason=OTHER on certain phrasings — whispered delivery is
+            # a live-verified trigger). The bracketed delivery tags shape *how* it sounds and are
+            # the usual culprit, so retry ONCE with them stripped: the plain words often synthesize
+            # where the styled version won't, recovering voice in default delivery instead of
+            # degrading to caption-only. Skipped when there are no tags to strip (the retry would
+            # fail identically). Deliberately NOT reached for network/non-200 errors — those raise
+            # plain TTSSynthesisError, which stripping tags can't fix.
+            stripped = strip_delivery_tags(text)
+            if stripped and stripped != text:
+                return _synthesize_once(stripped, url=url, key=key, voice=voice, timeout=timeout)
+            raise
     except (MissingApiKeyError, TTSSynthesisError):
         raise
     except httpx.TimeoutException as exc:
@@ -123,6 +140,30 @@ def synthesize(text: str, *, model: str, voice: str, timeout: float = 30.0) -> b
         ) from exc
     except Exception as exc:
         raise TTSSynthesisError(f"TTS synthesis failed: {exc}") from exc
+
+
+def _synthesize_once(text: str, *, url: str, key: str, voice: str, timeout: float) -> bytes:
+    """One Gemini generateContent call → WAV bytes.
+
+    Raises :class:`_NoAudioError` on a 200 that carried no audio (retryable by stripping tags) and
+    a plain :class:`TTSSynthesisError` on a non-200 (not retryable). httpx errors and decode
+    failures propagate to :func:`synthesize`'s totality wrapper.
+    """
+    body = {
+        "contents": [{"parts": [{"text": text}]}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
+        },
+    }
+    response = httpx.post(url, json=body, headers={"x-goog-api-key": key}, timeout=timeout)
+    if response.status_code != 200:
+        raise TTSSynthesisError(f"Gemini TTS returned HTTP {response.status_code}: {response.text[:200]}")
+    payload = response.json()
+    data_b64, mime = _extract_audio(payload)
+    pcm = base64.b64decode(data_b64)
+    rate, channels = _parse_pcm_params(mime)
+    return _wrap_wav(pcm, rate=rate, channels=channels)
 
 
 def wav_duration(wav: bytes) -> float:
@@ -160,21 +201,47 @@ def _gemini_api_key() -> str | None:
 def _extract_audio(payload: object) -> tuple[str, str]:
     """Pull the base64 audio + mimeType out of a generateContent response.
 
-    Raises TTSSynthesisError (not IndexError/KeyError) on an empty ``candidates``
-    list (safety-filtered 200) or any missing key.
+    Raises :class:`_NoAudioError` (a retryable ``TTSSynthesisError`` subclass, not
+    IndexError/KeyError) on an empty ``candidates`` list (safety-filtered 200) or a 200 that
+    carried no ``inlineData`` (e.g. ``finishReason=OTHER``). A non-string ``data`` field is a
+    structural malformation, not a missing-audio case, so it stays a plain (non-retried)
+    ``TTSSynthesisError``.
     """
     candidates = payload.get("candidates") if isinstance(payload, dict) else None
     if not candidates:
-        raise TTSSynthesisError(f"no audio in response (empty candidates): {_preview(payload)}")
+        raise _NoAudioError(_no_audio_message(payload))
     try:
         inline = candidates[0]["content"]["parts"][0]["inlineData"]
         data = inline["data"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise TTSSynthesisError(f"no audio in response (missing inlineData): {_preview(payload)}") from exc
+        raise _NoAudioError(_no_audio_message(payload)) from exc
     if not isinstance(data, str):
         raise TTSSynthesisError(f"no audio in response (non-string data): {_preview(payload)}")
     mime = inline.get("mimeType", "") if isinstance(inline, dict) else ""
     return data, mime if isinstance(mime, str) else ""
+
+
+def _finish_reason(payload: object) -> str | None:
+    """The first candidate's ``finishReason`` if present — total, only enriches an error message."""
+    if not isinstance(payload, dict):
+        return None
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        return None
+    first = candidates[0]
+    reason = first.get("finishReason") if isinstance(first, dict) else None
+    return reason if isinstance(reason, str) else None
+
+
+def _no_audio_message(payload: object) -> str:
+    """Actionable message for a 200 that carried no audio (agent-first: name the likely cause)."""
+    reason = _finish_reason(payload)
+    detail = f" (finishReason={reason})" if reason else ""
+    return (
+        f"Gemini returned no audio for this text{detail} — this model sometimes cannot synthesize "
+        "certain phrasings (whispered delivery is a known trigger). Try rephrasing or a different "
+        "delivery tag."
+    )
 
 
 def _parse_pcm_params(mime: str) -> tuple[int, int]:

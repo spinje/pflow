@@ -2308,20 +2308,100 @@ textarea.run-field-input {
   color: var(--text);
   line-height: 1.45;
 }
-.say-unlock,
-.say-replay {
+/* The say box's affordance slot — ONE fixed-height row for the whole life of an audio box
+   (playing indicator / ▶ unlock / ↻ replay / expired), so the box never resizes on play/stop. The
+   base fixes every height-affecting property (margin, padding, border WIDTH, font, line-height);
+   variants only recolor + toggle interactivity — never touch the box model. */
+.say-affordance {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 8px;
   padding: 4px 10px;
-  background: transparent;
-  border: 1px solid var(--border-strong);
+  border: 1px solid transparent;
   border-radius: 6px;
+  background: transparent;
   color: var(--text);
   font-size: 12px;
+  line-height: 1.4;
+  font-family: inherit;
+}
+button.say-affordance {
   cursor: pointer;
+}
+.say-unlock,
+.say-replay {
+  border-color: var(--border-strong);
 }
 .say-unlock:hover,
 .say-replay:hover {
   border-color: var(--text-muted);
+}
+.say-playing-indicator,
+.say-expired {
+  cursor: default;
+  color: var(--text-muted);
+}
+/* Animated "audio is playing" equalizer bars (non-interactive, holds the affordance slot). */
+.say-eq {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+}
+.say-eq i {
+  width: 3px;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 1px;
+  transform-origin: bottom;
+  animation: pflow-eq 0.9s ease-in-out infinite;
+}
+.say-eq i:nth-child(2) {
+  animation-delay: -0.7s;
+}
+.say-eq i:nth-child(3) {
+  animation-delay: -0.4s;
+}
+.say-eq i:nth-child(4) {
+  animation-delay: -0.2s;
+}
+@keyframes pflow-eq {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .say-eq i {
+    animation: none;
+    transform: scaleY(0.7);
+  }
+}
+/* Task 174: a gentle "speaking now" shimmer on the say box while its clip is playing. Keeps the
+   base drop shadow and pulses a soft white ring so the currently-narrating box stands out among
+   coexisting captions. Reduced-motion → a static white ring (no pulse). */
+.node-callout.say-playing {
+  border-color: rgb(255 255 255 / 70%);
+  animation: pflow-say-shimmer 1.6s ease-in-out infinite;
+}
+@keyframes pflow-say-shimmer {
+  0%,
+  100% {
+    box-shadow: 0 8px 24px rgb(0 0 0 / 45%), 0 0 0 1px rgb(255 255 255 / 25%), 0 0 10px 1px rgb(255 255 255 / 18%);
+  }
+  50% {
+    box-shadow: 0 8px 24px rgb(0 0 0 / 45%), 0 0 0 1px rgb(255 255 255 / 65%), 0 0 18px 3px rgb(255 255 255 / 40%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .node-callout.say-playing {
+    animation: none;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 45%), 0 0 0 1px rgb(255 255 255 / 55%);
+  }
 }
 
 /* A MINIATURE of the canvas spine: kind-colored tiles joined by gradient connectors. */
