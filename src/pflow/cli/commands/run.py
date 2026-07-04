@@ -360,15 +360,22 @@ def _maybe_echo_resume_hint(ctx: click.Context, result: Any | None) -> None:
     line naming the exact ``pflow resume <execution-id>`` command. Gated on a
     saved trace (``ctx.obj["trace_file"]`` — set by ``_finalize_trace_and_report``)
     so ``--no-trace`` and stream-failed runs (which have no file to resume from)
-    stay silent. Skipped for success and for a clean gate denial (exit 3 is a
-    human stop, not a resumable failure). Emitted DIRECTLY to stderr — unlike the
-    trace-location line, this survives ``-p``: failure diagnostics must stay
-    visible in print mode (stdout stays data-only), and a ``-p`` agent otherwise
-    has no way to learn the resume target.
+    stay silent. Skipped for success, for a clean gate denial (exit 3 is a human
+    stop), and for a gate STOP (a non-interactive unapproved gate finalizes FAILED,
+    not DENIED — but ``load_resume_source`` refuses it as ``ResumeGateStoppedError``,
+    so pointing an agent at ``pflow resume`` there only wastes a round-trip; the
+    gate error already carries the ``--auto-approve`` remedy). Emitted DIRECTLY to
+    stderr — unlike the trace-location line, this survives ``-p``: failure
+    diagnostics must stay visible in print mode (stdout stays data-only), and a
+    ``-p`` agent otherwise has no way to learn the resume target.
     """
     from pflow.core.workflow.status import WorkflowStatus
 
     if not result or result.success or result.status is WorkflowStatus.DENIED:
+        return
+    # A gate stop is a human checkpoint, not a resumable failure — resume refuses it.
+    # Mirror _display_denied_result's gate detection so the two stay consistent.
+    if any(d.context and d.context.get("category") == "gate" for d in (result.diagnostics or ())):
         return
     if not ctx.obj.get("trace_file"):
         return

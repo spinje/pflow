@@ -1177,3 +1177,112 @@ Verification: `make test` 8489 passed, `make check` green.
   sign-off items (seed fidelity reaching `--only` degraded snapshots; Decision 6/7/9 letter
   refinements; JSON failure-doc fields; zero-event traces now `failed`) and the manual browser
   check (`make ui-build` + `pflow ui` over a resumed run).
+
+## 2026-07-04 — Post-close adversarial CLI verification pass (real `pflow`, real traces)
+
+Independent break-it verification: ~30 scenarios driven through the REAL `pflow` CLI on REAL
+`.pflow.md` workflows (marker-file side-effect observation, not mocks), deliberately targeting the
+silent-wrong-data / hang / crash classes the suite's synthetic fixtures can miss. Baseline confirmed
+real (`make test` 8489). **Substrate held on every correctness path**; one LOW agent-UX gap found +
+fixed; two red herrings chased and correctly dismissed.
+
+**Verified end-to-end (held):** non-TTY side-effecting-K hard error (no hang, timeout-guarded);
+upstream restored-not-rerun (marker stayed 1 line across resume, resume-of-resume, 3 attempts); seed
+fidelity (recovered-failure primary NOT seeded into a downstream `??` coalesce → resolved
+`fallback-data`); frontier entry rule (K→on-error→F both fail → resume at K, F never runs); wedge
+(zero-event refused attempt via natural missing-input path does NOT poison the chain); fidelity guard
+(raw-bytes upstream refuses, `--force` correctly can't bypass); incomplete tails (killed-mid-node /
+between-nodes-successor / dynamic-router-ambiguity refusal / meta-only "nothing to resume"); loop-K
+restart-at-iter-1 (observed via iteration log); branching divergence; nested sub-workflow host K
+(top-level granularity); `--only`-after-resume poisoning regression; llm-K silent (no confirm/force);
+large blob (>2KB) full round-trip restore; stale-hash + content_hash=None + K-removed refusals (all
+typed, no compiler crash); liveness (still-running refusal via flock); superseded / nothing-to-resume
+/ inline (`ir-hash:`) / missing-required-input; JSON stdout purity + `resumed_from`/`nodes_restored`/
+`resume_entry_node`; `pflow report` renders restored node as `cached`/0-cost; `nodes_executed`
+excludes restored; source trace byte-identical after resume (md5).
+
+**Red herrings (correctly dismissed, NOT bugs):** (1) a surgical trace showed `resumed_from` pointing
+at the wrong exec-id — my edit changed only the meta line's `execution_id`, not the `run.complete`
+trailer's; the reconstructed dict merges trailer over meta. Real traces always agree (verified). (2)
+`WARNING: Nested index must be integer, got str` — PRE-EXISTING (fires on normal full runs too, from
+template `.stdout` access); not resume-related, out of 164 scope.
+
+**LOW finding FIXED — resume hint on a non-interactive gate stop.** `_maybe_echo_resume_hint`
+(`run.py`) skipped only `success` and `DENIED` (exit 3), but a non-interactive unapproved gate
+finalizes **FAILED** (exit 1) with a `category:"gate"` diagnostic — so the failed-run output printed
+`To resume from the failed step: pflow resume <id>`, yet `load_resume_source` refuses that trace
+(`ResumeGateStoppedError`). The gate error already carries the `--auto-approve` remedy, so the resume
+line was a dead-end affordance (self-correcting via a clean refusal, but wastes an agent round-trip —
+against the agent-first bar). The authors reasoned about gate *denial* but missed gate *stop*. Fix:
+one guard mirroring `_display_denied_result`'s gate detection —
+`if any(d.context and d.context.get("category") == "gate" for d in (result.diagnostics or ())): return`
+— skips the hint on any gate-caused failure. Docstring updated to state the gate-stop case.
+Regression pin: `test_gate_stopped_run_omits_resume_hint` (`test_resume_cli.py`) — asserts the gate
+run exits 1, IS a gate stop (`auto-approve` in stderr), and omits `pflow resume`. Mutation-verified:
+removing the guard fails EXACTLY that test (1 failed, 42 passed in-file), reverted clean.
+
+**Not reachable via CLI (flagged, rest on unit tests):** undecided-escalation refusal and `denied`-
+trace refusal (both need a live agent escalation / interactive "no"); the gate-stopped arm — which I
+DID exercise — shares the same raw-line machinery, partially corroborating them. Concurrency note (not
+a bug, within the accepted at-least-once stance): two simultaneous `pflow resume` of the SAME failed
+source aren't mutually excluded (the flock guards a live attempt, not the source), so both could run
+K — consistent with at-least-once; worth a doc line if 171 ever tightens toward exactly-once.
+
+**Verification:** `make test` **8490 passed, 0 failed** (8489 + the gate-stop hint pin); `make check`
+green (ruff / ruff format / pre-commit / mypy 244 files / deptry); zero stray mutations. Files
+changed: `src/pflow/cli/commands/run.py` (`_maybe_echo_resume_hint` guard + docstring),
+`tests/test_cli/test_resume_cli.py` (`_GATE_WF` fixture + regression test). Uncommitted (standing
+rule).
+
+## 2026-07-04 — High-value test-fidelity pass ("passing the RIGHT thing", not coverage)
+
+Stepped back with the whole picture and hunted for tests that catch bugs the suite is STRUCTURALLY
+blind to (not coverage). First audited the existing crown-jewel test — the seed-fidelity coalesce
+pin `test_recovered_failure_upstream_is_not_seeded` — and confirmed it is NOT shallow: it drives two
+real `WorkflowRunner().run()` passes and asserts the OBSERVABLE downstream value
+(`shared_after["use"]["stdout"] == "used=fallback-data"`), not internal seed state. Kept as-is.
+Found and closed TWO genuine fidelity gaps, each probe-then-graduate + mutation-verified.
+
+**Gap A — the agent-critical no-hang guarantee was structurally untested.** Decision 4 promises a
+side-effecting resume in a non-interactive context "refuses, never a prompt or a hang." Every resume
+test drives this through `CliRunner`, which is ALWAYS non-TTY with empty stdin — it exercises the
+refusal branch but **cannot tell a correct refusal from a real hang** (there is no live stdin to
+block on). The hang only manifests against a real process whose stdin is an OPEN, idle, non-TTY pipe
+— exactly what an agent that spawns `pflow` with an unclosed stdin pipe produces.
+`resume._confirm_or_refuse_side_effect` calls `click.confirm` only when `can_prompt`
+(`stdin_tty and stderr_tty`) is true; drop that guard and `click.confirm` blocks on the idle pipe
+forever. NEW e2e test `tests/test_cli/test_resume_no_hang_subprocess.py` (real `uv run pflow`
+subprocess, stdin = `os.pipe()` read end with the write end held open, `timeout=45`): a correct
+refusal exits in ~1s; a broken guard hangs → `TimeoutExpired` → `pytest.fail`.
+**Mutation-verified:** replacing `if can_prompt(controller):` with `if True:` made resume HANG the
+full 45s and the test caught it (`resume HUNG on a non-interactive side-effecting step`). This is the
+catastrophic-and-silent failure mode the entire CliRunner suite cannot see. `e2e`-marked (excluded
+from default `make test`, runs in `make test-e2e`); Unix-only; skips on the uv-sandbox-panic quirk.
+
+**Gap B — the seed-fidelity filter is a SHARED seam with two consumers but only one pin.** The fix
+(`workflow_trace.py`: `final = {… if ev.get("status") != "failed"}`) lives in
+`seed_snapshot_into_shared`, reconstructing the store for BOTH resume AND `--only`. Only the resume
+side had a test. `test_only_snapshot.py` covered the coalesce only for a SUCCEEDED primary
+(`test_only_coalesce_silently_uses_snapshot_branch`), never a recovered-FAILURE primary — so a future
+"this exclusion is resume-only" refactor would silently reopen the silent-wrong-data bug in `--only`
+with every resume test still green (the review-impact-completeness class: shared pattern changed,
+not all consumers guarded). NEW test `test_only_does_not_seed_a_recovered_failure_upstream`
+(`test_only_snapshot.py`): a degraded full run (primary fails→on-error→fallback), then `--only report`
+must resolve `got fallback-data`, not the failed primary's `got primary-junk`. Probe-then-graduate:
+verified the correct `--only` behavior live first, then mutation-verified the filter removal yields
+`got primary-junk` via the CLI. **Full-suite mutation-verified:** dropping the filter fails EXACTLY 2
+tests — this new `--only` pin AND its resume sibling — nothing else (2 failed, 8489 passed), proving
+the seam now has a pin on each consumer.
+
+**Deliberately NOT added (judged low value / not "the right thing"):** the empty-`{}` re-record
+fidelity test stays unit-level — no real node cleanly emits `{}` except a `code` node returning
+`result: dict = {}`, and the mechanism is already mutation-pinned; an e2e wrapper would add wall-clock
+without new bug-catching power. The concurrency double-resume race is within the accepted at-least-once
+stance (not a bug). The undecided-escalation / `denied` refusal arms stay on their unit tests (no live
+CLI path to produce them; the gate-stopped arm I exercised shares their machinery).
+
+**Verification:** `make test` **8491 passed, 0 failed** (8490 + the `--only` seed-fidelity pin; the
+no-hang test is `e2e`, verified separately — 1 passed in ~1s, and failed-as-designed under the guard
+mutation); `make check` green (ruff / ruff format / pre-commit / mypy 244 files / deptry); zero stray
+mutations. Files added: `tests/test_cli/test_resume_no_hang_subprocess.py`; files changed:
+`tests/test_runtime/test_only_snapshot.py` (+1 test). Uncommitted (standing rule).

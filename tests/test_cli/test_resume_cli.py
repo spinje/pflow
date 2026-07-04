@@ -96,6 +96,46 @@ def shell_wf(tmp_path):
     return path
 
 
+# g1 (shell) -> gated (shell, approval: required). In a non-interactive run the
+# unapproved gate finalizes FAILED (not DENIED) — but resume refuses it as a gate
+# stop, so the failed-run output must NOT advertise a resume that can only refuse.
+_GATE_WF = """# Resume Gate Demo
+
+A workflow with an unapproved approval gate — non-interactive runs stop at it.
+
+## Steps
+
+### g1
+
+Upstream value.
+
+- type: shell
+- next: gated
+
+```shell command
+echo "g1-value"
+```
+
+### gated
+
+Requires a human approval decision before running.
+
+- type: shell
+- approval: required
+
+```shell command
+echo "gated action"
+```
+"""
+
+
+@pytest.fixture
+def gate_wf(tmp_path):
+    path = tmp_path / "gate_wf.pflow.md"
+    path.write_text(_GATE_WF)
+    return path
+
+
 def _runner() -> CliRunner:
     return CliRunner(mix_stderr=False)
 
@@ -375,6 +415,19 @@ def test_failed_run_prints_resume_hint(home, shell_wf):
 def test_failed_run_omits_hint_under_no_trace(home, shell_wf):
     result = _runner().invoke(cli, ["--no-trace", str(shell_wf), "mode=bad"])
     assert result.exit_code == 1
+    assert "pflow resume" not in result.stderr
+
+
+def test_gate_stopped_run_omits_resume_hint(home, gate_wf):
+    """A non-interactive gate stop finalizes FAILED but resume refuses it
+    (ResumeGateStoppedError). The failed-run output must NOT print the resume hint —
+    the gate error already carries the ``--auto-approve`` remedy. Regression pin for
+    the 2026-07-04 verification finding (parity with the DENIED skip)."""
+    result = _runner().invoke(cli, [str(gate_wf)])
+    assert result.exit_code == 1, result.stderr
+    # It really is a gate stop (not some other failure) …
+    assert "auto-approve" in result.stderr
+    # … and no resume affordance is offered.
     assert "pflow resume" not in result.stderr
 
 
