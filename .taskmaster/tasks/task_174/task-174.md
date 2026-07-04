@@ -12,9 +12,11 @@ of the conversation metaphor Task 169 was designed around ("the agent points, sa
 
 in progress
 
-> Phases 1–3 (Core TTS, Server, CLI) implemented + tested (`make check` green; +42 tests, 0
-> regressions) on 2026-07-04; stopped for human review. Phases 4 (frontend) and 5 (docs +
-> real-browser + deep-review) not started. See `implementation/progress-log.md`.
+> All phases (1–5) implemented + tested on 2026-07-04: core TTS, server, CLI, frontend, docs,
+> real-browser verification (caption/edge-anchor/degrade verified live; audible + autoplay-unlock
+> checks left to the user), and the code-mode deep-review (4 agents, 2 confirmed findings, both
+> fixed). `make check` green; Python suite 8471 passed (0 regressions), web suite 709 passed
+> (+15). Awaiting human review; not committed. See `implementation/progress-log.md`.
 
 ## Priority
 

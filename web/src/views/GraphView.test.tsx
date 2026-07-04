@@ -6,7 +6,7 @@
 // gap that tsc + the production build can't cover. ELK is stubbed here for
 // determinism; real ELK layout is covered in graph/flow.test.ts.
 
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { installReactFlowJsdomMocks } from "../test/rf-jsdom";
@@ -59,6 +59,14 @@ vi.mock("@xyflow/react", async (importOriginal) => {
           fitViewSpy(opts);
           return inst.fitView(opts);
         },
+        // jsdom's no-op ResizeObserver also means React Flow never MEASURES a node, so
+        // NodeCallout (which returns null until its anchor has a measured rect) could never
+        // mount in these tests. Backfill nominal dimensions; positions come from the layout stub.
+        getInternalNode: ((id: string) => {
+          const node = inst.getInternalNode(id);
+          if (!node || node.measured.width != null) return node;
+          return { ...node, measured: { width: 220, height: 60 } };
+        }) as ReturnType<typeof actual.useReactFlow>["getInternalNode"],
       };
     },
   };
@@ -229,9 +237,11 @@ describe("GraphView mount", () => {
       act(() => run.runEvents([{ id: 1, ref: { node_id: "greet", ancestor_path: [], port: null }, status: "success" }]));
       await waitFor(() => expect(screen.getByLabelText("run status: success")).toBeTruthy());
 
-      // Re-pick r1 (already the pinned run): open the Runs menu and click it again.
+      // Re-pick r1 (already the pinned run): open the Runs menu and click it again. (Filter to the
+      // menuitem — the ?run= deep-link's run callout also carries title="r1" in its subtitle.)
       fireEvent.click(screen.getByLabelText("Runs"));
-      fireEvent.click(await screen.findByTitle("r1"));
+      const menuItem = (await screen.findAllByTitle("r1")).find((el) => el.getAttribute("role") === "menuitem");
+      fireEvent.click(menuItem!);
 
       // The marker SURVIVES the re-select (the bug wiped it; with no re-subscribe nothing refilled it).
       expect(screen.getByLabelText("run status: success")).toBeTruthy();
@@ -1065,5 +1075,181 @@ describe("GraphView — Run panel (Task 175)", () => {
     expect(screen.getByText(/Workflow requires input 'name'/)).toBeTruthy();
     // The panel stays open (the form shows the error) and the canvas is intact.
     expect(screen.getByText("say hi")).toBeTruthy();
+  });
+});
+
+describe("agent say callout (Task 174)", () => {
+  // jsdom has no Audio/play() — stub a class whose play() returns a FRESH deferred promise per call
+  // (the real HTMLMediaElement contract), so tests can resolve (autoplay allowed) or reject
+  // (blocked / pause-aborted) each attempt on cue: resolvePlay(n)/rejectPlay(e, n) settle call n.
+  class FakeAudio {
+    static instances: FakeAudio[] = [];
+    readonly src: string;
+    private readonly settlers: Array<{ res: () => void; rej: (e: unknown) => void }> = [];
+    play = vi.fn(
+      () =>
+        new Promise<void>((res, rej) => {
+          this.settlers.push({ res, rej });
+        }),
+    );
+    pause = vi.fn();
+    resolvePlay(call = 0): void {
+      this.settlers[call]!.res();
+    }
+    rejectPlay(error: unknown, call = 0): void {
+      this.settlers[call]!.rej(error);
+    }
+    constructor(src: string) {
+      this.src = src;
+      FakeAudio.instances.push(this);
+    }
+  }
+
+  beforeEach(() => {
+    FakeAudio.instances = [];
+    vi.stubGlobal("Audio", FakeAudio);
+    // Earlier tests leak `?run=` into the URL through the component's own syncUrl (see the note at
+    // the density test above) — which would open the RUN callout here too. Start clean.
+    window.history.replaceState({}, "", "/");
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const mountWithGraph = async (): Promise<void> => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+    await waitFor(() => expect(live.handlers).not.toBeNull());
+  };
+  const say = (caption: string, audioUrl: string | null = "/api/audio/x"): void =>
+    act(() => live.handlers!.say!({ kind: "node", ref: GRAPH.nodes[0]!.ref }, caption, audioUrl));
+
+  it("anchors a persistent caption and starts the clip", async () => {
+    await mountWithGraph();
+    say("this is the LLM call");
+
+    expect(screen.getByText("this is the LLM call")).toBeTruthy();
+    expect(screen.getByText("Agent")).toBeTruthy(); // the callout chrome title
+    expect(FakeAudio.instances).toHaveLength(1);
+    expect(FakeAudio.instances[0]!.src).toBe("/api/audio/x");
+    expect(FakeAudio.instances[0]!.play).toHaveBeenCalledOnce();
+  });
+
+  it("a caption-only say (no audio url) renders without creating a clip", async () => {
+    await mountWithGraph();
+    say("just the words", null);
+
+    expect(screen.getByText("just the words")).toBeTruthy();
+    expect(FakeAudio.instances).toHaveLength(0);
+  });
+
+  it("an edge-target say anchors at the target-side endpoint and shows the caption", async () => {
+    await mountWithGraph();
+    act(() =>
+      live.handlers!.say!(
+        {
+          kind: "edge",
+          source: GRAPH.nodes[0]!.ref,
+          source_field: "stdout",
+          source_path: [],
+          target: GRAPH.nodes[1]!.ref,
+          input_name: "command",
+        },
+        "this wire",
+        null,
+      ),
+    );
+    expect(screen.getByText("this wire")).toBeTruthy();
+  });
+
+  it("the close button dismisses the caption and pauses the clip", async () => {
+    await mountWithGraph();
+    say("dismiss me");
+    const clip = FakeAudio.instances[0]!;
+
+    // The say callout's OWN ✕ (scoped via the caption — the run callout shares the shell class).
+    fireEvent.click(screen.getByText("dismiss me").closest(".node-callout")!.querySelector(".node-callout-close")!);
+
+    expect(screen.queryByText("dismiss me")).toBeNull();
+    expect(clip.pause).toHaveBeenCalled();
+  });
+
+  it("a blocked autoplay shows the unlock button; clicking it replays and clears the block", async () => {
+    await mountWithGraph();
+    say("locked out");
+    const clip = FakeAudio.instances[0]!;
+    await act(async () => {
+      clip.rejectPlay(new Error("NotAllowedError"));
+      await Promise.resolve();
+    });
+    const unlock = await screen.findByRole("button", { name: "▶ Play narration" });
+
+    fireEvent.click(unlock);
+    await act(async () => {
+      clip.resolvePlay(1); // settle the SECOND play() call — the gesture replay
+      await Promise.resolve();
+    });
+
+    expect(clip.play).toHaveBeenCalledTimes(2); // autoplay attempt + the gesture replay
+    await waitFor(() => expect(screen.queryByRole("button", { name: "▶ Play narration" })).toBeNull());
+    expect(screen.getByText("locked out")).toBeTruthy(); // the caption stays
+  });
+
+  it("a second say replaces the caption, pauses the prior clip, and the stale AbortError never flips the unlock on (currency guard)", async () => {
+    await mountWithGraph();
+    say("first line");
+    say("second line");
+    const [first, second] = [FakeAudio.instances[0]!, FakeAudio.instances[1]!];
+
+    expect(screen.queryByText("first line")).toBeNull();
+    expect(screen.getByText("second line")).toBeTruthy();
+    expect(first.pause).toHaveBeenCalled();
+
+    // The browser rejects the FIRST clip's in-flight play() with AbortError as a microtask AFTER the
+    // second clip started (pause() aborted it). With autoplay allowed on the second clip, the unlock
+    // button must stay ABSENT — an unguarded catch would show it while the second clip plays.
+    await act(async () => {
+      first.rejectPlay(new DOMException("interrupted", "AbortError"));
+      second.resolvePlay();
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("button", { name: "▶ Play narration" })).toBeNull();
+  });
+
+  it("the agent's clear verb dismisses the caption and pauses; a bare focus does not", async () => {
+    await mountWithGraph();
+    say("sticky caption");
+    const clip = FakeAudio.instances[0]!;
+
+    // A bare focus (no --say) leaves the caption alone — captions persist until dismissed (locked).
+    act(() => live.handlers!.focus({ kind: "node", ref: GRAPH.nodes[1]!.ref }));
+    expect(screen.getByText("sticky caption")).toBeTruthy();
+    expect(clip.pause).not.toHaveBeenCalled();
+
+    act(() => live.handlers!.clear());
+    expect(screen.queryByText("sticky caption")).toBeNull();
+    expect(clip.pause).toHaveBeenCalled();
+  });
+
+  it("unmounting the view pauses a playing clip (Back to catalog must stop the voice)", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    const { unmount } = render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+    await waitFor(() => expect(live.handlers).not.toBeNull());
+    act(() => live.handlers!.say!({ kind: "node", ref: GRAPH.nodes[0]!.ref }, "leaving now", "/api/audio/x"));
+    const clip = FakeAudio.instances[0]!;
+    expect(clip.pause).not.toHaveBeenCalled();
+
+    unmount();
+
+    expect(clip.pause).toHaveBeenCalled();
+  });
+
+  it("a stale target ref drops the say silently — no callout, no clip", async () => {
+    await mountWithGraph();
+    act(() => live.handlers!.say!({ kind: "node", ref: { node_id: "vanished", ancestor_path: [], port: null } }, "ghost", "/api/audio/x"));
+
+    expect(screen.queryByText("ghost")).toBeNull();
+    expect(screen.queryByText("Agent")).toBeNull();
+    expect(FakeAudio.instances).toHaveLength(0);
   });
 });

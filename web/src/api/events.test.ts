@@ -345,6 +345,93 @@ describe("subscribe point epoch dedup (#539)", () => {
   });
 });
 
+describe("subscribe say dispatch (Task 174)", () => {
+  // `say` is OPTIONAL on PointHandlers (additive, like the run handlers) — the pre-existing literals
+  // above compile untouched; only these tests carry a say mock.
+  const handlers = () => ({ focus: vi.fn(), frame: vi.fn(), clear: vi.fn(), selectRun: vi.fn(), say: vi.fn() });
+
+  it("dispatches say with target, caption and audio url", () => {
+    const h = handlers();
+    const unsubscribe = subscribe("wf", h);
+    const source = FakeEventSource.instances[0]!;
+
+    source.emit({ type: "say", target: { kind: "node", ref }, caption: "hi", audio_url: "/api/audio/x" });
+
+    expect(h.say).toHaveBeenCalledExactlyOnceWith({ kind: "node", ref }, "hi", "/api/audio/x");
+    unsubscribe();
+  });
+
+  it("passes a null audio url when audio_url is absent or non-string (caption-only say)", () => {
+    const h = handlers();
+    const unsubscribe = subscribe("wf", h);
+    const source = FakeEventSource.instances[0]!;
+
+    source.emit({ type: "say", target: { kind: "node", ref }, caption: "quiet" });
+    source.emit({ type: "say", target: { kind: "node", ref }, caption: "garbled", audio_url: 42 });
+
+    expect(h.say.mock.calls.map((c) => c[2])).toEqual([null, null]);
+    unsubscribe();
+  });
+
+  it("ignores a say with a malformed target or a missing/non-string caption", () => {
+    const h = handlers();
+    const unsubscribe = subscribe("wf", h);
+    const source = FakeEventSource.instances[0]!;
+
+    source.emit({ type: "say", target: { kind: "node", ref: { node_id: 4 } }, caption: "bad ref" });
+    source.emit({ type: "say", target: { kind: "node", ref } }); // no caption
+    source.emit({ type: "say", target: { kind: "node", ref }, caption: 7 });
+
+    expect(h.say).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
+  it("is transient — not epoch-gated: a say always dispatches and never bumps the point baseline", () => {
+    const h = handlers();
+    const unsubscribe = subscribe("wf", h);
+    const source = FakeEventSource.instances[0]!;
+
+    source.emit({ type: "focus", target: { kind: "node", ref }, epoch: 5 }); // point baseline → 5
+    source.emit({ type: "say", target: { kind: "node", ref }, caption: "one" });
+    source.emit({ type: "say", target: { kind: "node", ref }, caption: "one" }); // repeats are not deduped
+    source.emit({ type: "focus", target: { kind: "node", ref }, epoch: 6 }); // still admitted after says
+
+    expect(h.say).toHaveBeenCalledTimes(2);
+    expect(h.focus).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it("dispatches an edge-target say (isTarget validates edge descriptors too)", () => {
+    const h = handlers();
+    const unsubscribe = subscribe("wf", h);
+    const target = {
+      kind: "edge",
+      source: ref,
+      source_field: "result",
+      source_path: ["ok"],
+      target: { ...ref, node_id: "use" },
+      input_name: "value",
+    };
+
+    FakeEventSource.instances[0]!.emit({ type: "say", target, caption: "this wire", audio_url: "/api/audio/y" });
+
+    expect(h.say).toHaveBeenCalledExactlyOnceWith(target, "this wire", "/api/audio/y");
+    unsubscribe();
+  });
+
+  it("is silently ignored by a Viewer without a say handler (old frontend / Point-only literal)", () => {
+    const h = { focus: vi.fn(), frame: vi.fn(), clear: vi.fn(), selectRun: vi.fn() };
+    const unsubscribe = subscribe("wf", h);
+    const source = FakeEventSource.instances[0]!;
+
+    expect(() => source.emit({ type: "say", target: { kind: "node", ref }, caption: "hi" })).not.toThrow();
+    // and the Point arm still works
+    source.emit({ type: "clear" });
+    expect(h.clear).toHaveBeenCalledOnce();
+    unsubscribe();
+  });
+});
+
 describe("reportInteraction", () => {
   it("posts JSON with keepalive and swallows transport rejection", async () => {
     vi.mocked(fetch).mockRejectedValueOnce(new TypeError("offline"));

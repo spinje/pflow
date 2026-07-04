@@ -519,6 +519,9 @@ class TestLLMShowCommand:
         assert "default_model:" in result.output
         assert "discovery_model:" in result.output
         assert "filtering_model:" in result.output
+        # TTS narration settings (Task 174) surface here with their concrete defaults.
+        assert "tts_model:        gemini-3.1-flash-tts-preview" in result.output
+        assert "tts_voice:        Kore" in result.output
 
     def test_llm_show_with_configured_default(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test llm show when default_model is configured."""

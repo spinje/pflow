@@ -286,10 +286,245 @@ undo an edit on a file with uncommitted changes — use Edit to revert the speci
 
 Net test delta this pass: 0 (one test replaced by a strictly-stronger one). Suite: **8471 passed**.
 
+---
+
+## 2026-07-04 — Session 2 kickoff: phases 4–5 (frontend + verification/docs)
+
+**Scope:** Phase 4 (frontend `web/`) + Phase 5 (verification, docs, deep-review), then STOP for
+human review. No commits.
+
+### Plan anchors re-verified for Phase 4 (code is truth; all read directly)
+
+| Plan cite | Actual | Status |
+|---|---|---|
+| `events.ts` `PointHandlers` :6-14 / `isTarget` :46-58 / focus-frame branch :175-176 | all match | ✅ |
+| `NodeCallout.tsx` props :22-42 / one-shot frame effect :70 | match | ✅ |
+| `GraphView.tsx` `direction` :99 / run-callout state :131 / `runAnchorId` :305-310 / `pointHandlers.current` :693-705 / clear :697-700 / subscribe handlers :717-721 / run-callout render :959-983 | all match | ✅ |
+| `index.css` CANVAS-token grant :66-69 (`.node-callout` in list) / `.node-callout*` block :2238-2303 | match | ✅ |
+| `events.test.ts` FakeEventSource :8-37, handler literal :54 | match | ✅ |
+| `GraphView.test.tsx` `live.handlers` mock :22-32, Point tests :776-845 | match | ✅ |
+
+### Deltas from plan text (recorded; none block)
+
+1. **`runEvents.test.ts` lives at `web/src/api/`, not `web/src/views/`** (plan cites
+   "runEvents.test.ts:39-51,217"). The literals are at :38-51 (handler factory) and :217 (inline
+   Point-only literal). Substance unchanged: `say?` optional keeps them compiling untouched.
+2. **`sayAnchorId` placement:** the plan sketches it "near the run-callout state (:131)", but it
+   depends on `representativeFor`, defined at :616. The state lives with the other state; the memo +
+   audio callbacks sit after `representativeFor` (still before `applyPoint`). Ordering constraint,
+   not a design change.
+3. **Plan-internal tension resolved:** §4a says optional `say?` "leaves every pre-existing
+   PointHandlers test literal (`events.test.ts`, …) untouched", while §4d says "add `say: vi.fn()`
+   to the handler literals (:54 and siblings)". Read: §4a is the compile-time guarantee; §4d's
+   intent is that the NEW say tests have a say mock. I add a new describe block with its own
+   handlers factory (including `say`) and leave all pre-existing literals untouched — satisfies
+   both clauses.
+
+### Baseline for this session
+Suite at session start = **8471 passed / 9 skipped** (end of session 1). `web/` baseline (fresh
+`npm ci` — node_modules was absent in this worktree): **694 passed / 51 files**.
+
+### Phase 4 — Frontend (COMPLETE)
+- **4a `events.ts`**: `say?` optional member on `PointHandlers` (additive, run-handlers pattern);
+  `say` branch after focus/frame — validated by the existing `isTarget` (covers node AND edge
+  descriptors), NO `admitEpoch` gate (transient, never latched), `audio_url` non-string → `null`.
+- **4b `NodeCallout.tsx`**: `frameOnMount?: boolean` (default `true`) gating the one-shot frame
+  effect; header comment updated. Run callout behavior unchanged (prop unset).
+- **4c `GraphView.tsx`**: `sayCallout` state stores the STRUCTURAL `RFRef` (never a flat id);
+  `sayAnchorId` re-resolved from `graph` every render (placed after `representativeFor` — its
+  dependency; the plan sketched it "near :131" but that's above the definition, ordering only);
+  `playNarration` with the currency-guarded `.catch` (`audioRef.current === clip`);
+  `narrationBlocked` + "▶ Play narration" unlock/replay button (trailing catch); say handler in
+  `pointHandlers.current` (edge → target-side endpoint, stale ref drops silently); `clear` extended
+  to dismiss + pause; `say` wired into `subscribe(...)` as a delegating arrow (deps untouched);
+  render sibling of the run callout with `frameOnMount={false}`, `title="Agent"`, plain `<p>`.
+- **DEVIATION (justified): folded the dismiss into ONE `dismissSay` callback.** The plan writes
+  `audioRef.current?.pause(); setSayCallout(null);` inline at BOTH the clear handler and the
+  callout `onClose`. Two identical multi-statement sites = drift risk; one named callback states
+  the locked semantics ("dismiss = stop talking") once. Same behavior, folded.
+- **CSS**: `.say-caption` + `.say-unlock` beside the `.node-callout*` block; they live inside
+  `.node-callout`, which is already in the CANVAS-layer token-grant list (:66-69) → tokens inherit.
+- **4d tests**: `events.test.ts` +6 (dispatch with url / null-url coercion / malformed drops /
+  transient-not-epoch-gated + no baseline bump / edge-target / handler-absent back-compat — all in
+  a NEW describe with its own say-mock factory; pre-existing literals untouched per §4a).
+  `GraphView.test.tsx` +8 (caption+clip start, caption-only no clip, edge-target anchor, close
+  dismisses+pauses, blocked→unlock→replay clears, second-say replaces + pauses prior + **currency
+  guard pinned** (stale AbortError after two rapid says → unlock stays absent), clear dismisses /
+  bare focus does NOT, stale ref drops). FakeAudio stub returns a FRESH promise per `play()` call
+  (the real HTMLMediaElement contract — a shared per-instance deferred made the replay test
+  wrongly see the old rejection).
+
+**Discoveries while testing (real deltas, recorded):**
+1. **`NodeCallout` could never render in jsdom** — the no-op ResizeObserver means RF never sets
+   `measured` on any node, so the callout returns null forever (this is why NO existing GraphView
+   test asserts run-callout DOM). Fixed in scaffolding, not production: extended the file's existing
+   `useReactFlow` partial mock to backfill nominal `measured` dims in `getInternalNode`. This made
+   the run callout render in pre-existing tests too (see 2/3).
+2. **Pre-existing test edit (query-tightening only):** "re-picking the already-pinned run" clicked
+   `findByTitle("r1")` — now ambiguous because the `?run=` deep-link's run callout ALSO renders
+   (its subtitle carries `title="r1"`). Filtered to the `role="menuitem"` match. Assertions
+   unchanged; forced by the scaffolding improvement, not by production changes.
+3. **URL leak between tests:** launch tests leak `?run=<id>` into the URL via the component's own
+   `syncUrl` (a known file quirk, commented at the density test) — with (1), that opened the RUN
+   callout inside my say tests. My describe's beforeEach resets the URL to "/".
+
+**Verification:** `npx tsc --noEmit` clean; `npx vitest run` = **708 passed / 51 files** (baseline
+694, **+14, 0 regressions**); `npm run build` green (strict tsc + vite; chunk-size warning
+pre-existing); `make ui-build` → bundle regenerated into `src/pflow/ui/static/`.
+
+### Phase 5 — Verification, docs (COMPLETE except deep-review at time of this entry)
+
+- **5.1** `pytest test_ui_interaction_server.py test_ui_commands.py test_ui.py test_ui_targets.py`
+  = **167 passed**, zero pre-existing Task 169 tests edited.
+- **5.2** Full `uv run pytest -q` = **8471 passed / 9 skipped** — byte-identical to the phase-3
+  baseline (Phase 4 is web-only; its +14 tests are vitest). `make check` fully green after every
+  edit (ruff, ruff-format, mypy 244 files, deptry, MDX checks).
+- **5.3 Real browser (screenshot-pflow-web-ui MCP Chrome + a purpose-built scratchpad workflow
+  `say-verify.pflow.md`: open → settle → run the REAL CLI --say → assert DOM → screenshot):**
+  - Node target: `focus classify --say "[excited] this is where..."` → caption shows the CLEAN
+    stripped text, callout title "Agent", anchored above the node (LR), point focus + ReadPanel
+    ride the preceding focus message. `passed: true`.
+  - **Audio played end-to-end**: headless Chrome permits autoplay; `play()` resolved (no unlock
+    button), which requires the real synthesized WAV served from `/api/audio/<id>` — the full
+    CLI-synth → upload → store → fetch → play chain ran against the live Gemini API.
+  - Edge target: `frame "fetch-data.stdout -> classify.data" --say ...` → caption anchors at the
+    TARGET-side endpoint (classify), both endpoints framed. (First attempt with the unqualified
+    address exercised the did-you-mean resolver — worked.)
+  - Synthesis failure: invalid `GEMINI_API_KEY` → point + caption still land, exit 0,
+    `narration unavailable: Gemini TTS returned HTTP 400: ... API key not valid ...` in the report.
+  - A stale pre-174 server on :8765 answered 405 on `/api/say` (static-mount fallthrough) —
+    killed + restarted from this worktree. Worth remembering: a lingering old server makes the
+    feature look absent.
+  - **NOT verifiable here:** the autoplay-BLOCKED → unlock flow (headless Chrome allows autoplay;
+    the braindump predicted this) — pinned by jsdom tests instead; and the audible check (a
+    screenshot can't hear) — both handed to the user.
+- **5.4 Collision guard**: `git diff 845a9943` (full task diff) touches NONE of
+  `server.py::_run_entry`, `/api/runs`, `RunSelector.tsx`, `resumed_from`. Verified by grep.
+- **5.5 Docs**: `docs/reference/cli/index.mdx` (both verb lines gain `[--say TEXT]` + a --say
+  paragraph), `src/pflow/guide/features/ui.md` (verb lines + the agent-facing contract verbatim:
+  delivery in `[brackets]`, everything outside is spoken AND shown), `settings.py::llm_show`
+  (+2 lines, pinned in `test_settings_cli.py`), `src/pflow/core/CLAUDE.md` (tts.py module row +
+  section, `TTSSynthesisError` in tree + usage table), `src/pflow/cli/commands/CLAUDE.md` (ui.py
+  row), `src/pflow/ui/CLAUDE.md` (say/audio endpoints + store + security note),
+  `web/CLAUDE.md` (SSE verb list + say semantics), `web/src/components/CLAUDE.md` (NodeCallout —
+  which Task 175 never documented there — + `frameOnMount`).
+- **DEVIATION (justified): no CHANGELOG edit.** The plan lists "CHANGELOG entry", but this repo's
+  CHANGELOG is machine-generated at release time by the release skill ("prepended with the new
+  version section"; git history shows CHANGELOG.md only ever changes in version-bump commits —
+  there is no Unreleased section). A hand-added section now would be clobbered/duplicated by the
+  next release run. The release process will pick this task up from its task files/PR.
+
+### Phase 5.6 — Code-mode deep-review (4 agents) + fixes
+
+Deployed `review-silent-failures`, `review-feature-interactions`, `review-impact-completeness`,
+`review-concurrency-safety` over the full branch diff (`git diff 845a9943`), each pointed at the
+plan's locked-decisions section (no re-litigation occurred). `review-test-fidelity` was passed
+over because session 1 already ran a dedicated test-depth audit; the risk mass sat in the four
+chosen lenses.
+
+**Findings: 2 confirmed (both fixed), 0 critical, 0 disputed.**
+1. **CONFIRMED + FIXED — no unmount cleanup for the playing clip** (found independently by
+   concurrency-safety AND silent-failures). `new Audio()` is a detached object, not DOM — React
+   unmount doesn't stop it, so Back-to-catalog / workflow-switch mid-narration left the voice
+   playing, unstoppable (the demo path!). Fix: `useEffect(() => () => audioRef.current?.pause(), [])`
+   in GraphView + a jsdom test ("unmounting the view pauses a playing clip"). Web suite → **709**.
+2. **CONFIRMED + FIXED — two stale settings-doc consumers** (impact-completeness). My `llm_show`
+   change added two output lines, but `docs/reference/cli/settings.mdx` transcribes that command's
+   LITERAL output, and `docs/reference/configuration.mdx` tables the `llm.*` fields — both missed
+   by the plan's Phase 5.5 doc list. Added `tts_model`/`tts_voice` to both.
+
+**Suggestions declined (with cause):**
+- "Partial bracket-stripping is silent" — that IS the locked semantics ("everything outside
+  brackets is spoken AND shown"), now taught verbatim in the guide. No change.
+- "Synthesize before checking server reachability wastes a call when the server is down" — real
+  but tiny (one ~$0.003 call + ~3s), and a pre-flight health probe adds a request to every
+  successful say to optimize the failure case. Not plan-sanctioned; declined for v1.
+
+**Verified clean by the battery** (each agent's no-finding dimensions recorded): _AudioStore loop
+affinity holds (the sole `put` runs post-`to_thread`-resume ON the loop); no `await` between the
+two broadcasts, ordering holds even under concurrent says (pairs interleave, never split); no
+stale-closure in the say handler; currency guard correct; say×{latch/replay, epoch/boot_id fence,
+#539 hidden tab, 173 run-callout camera, 175 select-run, live-reload renumber, --open re-send,
+edge anchors, loopback+content-type guards, multi-window} all handled AND named-tested; every
+PointHandlers/guard-inventory/doc consumer updated; no MCP parity gap (point verbs are CLI-only
+by 169 design); engine/batch/loop/caching untouched by design.
+
+**Post-fix verification:** `npx vitest run` = **709 passed** (+1), `npm run build` + `make ui-build`
+green (bundle regenerated), full `make check` green.
+
+### 2026-07-04 — Session 2 addendum: closed the cheap real-browser gaps
+
+After the wrap-up the reviewer asked whether the frontend browser verification was complete
+(it was thinner than the backend). First established the load-bearing fact I'd assumed: **this
+session has NO direct chrome-devtools MCP access** (only WebFetch + the Google MCP servers) —
+the chrome-devtools server is wired into pflow as `mcp-chrome-devtools-*` nodes, so browser
+driving MUST go through a pflow workflow (a driver-script/interactive-MCP alternative was
+eliminated, not just skipped). Within that constraint the simplest tool was ONE self-contained,
+hardcoded scratchpad workflow (`say-sequence.pflow.md`) — no inputs and no `${...}` in the
+assertion JS (avoids the pflow-template↔JS-template-literal collision that a parameterized
+generic would hit), linear named steps, poll-with-deadline asserts.
+
+Three previously jsdom-only behaviors now confirmed against the REAL browser + real CLI pushes:
+- **Say REPLACEMENT** — `focus classify --say "…"` then `focus done --say "…"` on one persistent
+  page: caption became the second text, moved to the `done` node, `callout_count == 1` and
+  `caption_count == 1` (replaced, NOT stacked). Screenshot `say-seq-replaced.png`.
+- **clear-dismiss** — `clear-focus` after a say: `.say-caption` gone from the DOM, focus ring
+  cleared. Screenshot `say-seq-dismissed.png`. Confirms the locked "clear dismisses the caption".
+- **Collapsed/nested target** — `focus extract --say "…"` on deep-research with `collapse=all`:
+  caption rendered (DOM-authoritative — `NodeCallout` returns null on an unresolved/unmeasured
+  anchor, so `.say-caption` existing proves `sayAnchorId`→`representativeFor` resolved the buried
+  node) and the ReadPanel showed the nested `extract` (`analyze-source.pflow.md:22`), proving the
+  point revealed the collapsed sub-workflow. Caveat: the auto-framed screenshot didn't CENTER the
+  caption — a Task-169 point-camera nuance for deep collapsed→revealed targets (frameOnMount=false
+  means the point owns the camera), NOT a 174 defect; resolution is what 174 adds and it works.
+
+**Still user-only (unchanged):** the audible check (a screenshot can't hear) and the
+autoplay-BLOCKED→unlock flow (headless Chrome allows autoplay, so the block never triggers;
+jsdom pins that logic). No code changed this addendum — verification only.
+
 ### What to verify manually (when resuming / reviewing)
-- The wire contract is exercised only within-process (TestClient + CliRunner + mocked Gemini/httpx).
-  A **real** `pflow ui <wf>` + `pflow ui focus <wf> <node> --say "[excited] …"` against a live
-  browser is still needed (Phase 5.3) to confirm audible playback, the caption anchor, edge-target
-  anchoring, and the autoplay-unlock flow — a screenshot can't hear audio; ask the user.
+- ~~The wire contract is exercised only within-process~~ **RESOLVED 2026-07-04 session 2:** the
+  full chain ran against a live browser + live Gemini (Phase 5.3 above). Still user-only:
+  **the audible check** (a screenshot can't hear — the WAV round-tripped and `play()` resolved,
+  but a human confirming sound is the last mile) and **the autoplay-unlock flow in a fresh
+  non-headless window** (headless Chrome allows autoplay; jsdom pins the logic).
 - The default `tts_model` (`gemini-3.1-flash-tts-preview`) is the plan's pinned preview id; confirm
   it still resolves at demo time (config-driven, so a drift is a one-line settings change).
+  (Re-confirmed live 2026-07-04 session 2 — HTTP 200 through the shipped path.)
+
+---
+
+## 2026-07-04 — Session 2 wrap-up: phases 4–5 DONE; STOP for human review
+
+**Result:** Task 174 fully implemented. Python **8471 passed / 9 skipped** (identical to the
+phase-3 baseline — phase 4 is web-only), web **709 passed** (baseline 694; +15), strict tsc +
+`npm run build` + `make ui-build` + full `make check` all green. Deep-review ran (4 agents),
+2 confirmed findings, both fixed same-session. NOT committed (project rule).
+
+**Key learnings / insights (session 2):**
+- **jsdom can't mount `NodeCallout` naturally** — RF never measures nodes under a no-op
+  ResizeObserver, so the callout returns null forever; this is WHY no prior test asserted
+  run-callout DOM. The `getInternalNode` measured-backfill in the existing `useReactFlow` partial
+  mock unlocks callout testing for all future work (run callout included).
+- **The component leaks `?run=` into the URL across tests** via its own `syncUrl` (a known quirk
+  commented in the test file) — combined with the backfill, that opened the RUN callout inside
+  unrelated tests. URL hygiene in a describe's beforeEach is the cure.
+- **`HTMLMediaElement.play()` mints a NEW promise per call** — a per-instance shared deferred in
+  the Audio stub silently makes replay tests assert against the old rejection. Stub per-call.
+- **A lingering pre-feature `pflow ui` server answers 405 on new endpoints** (static-mount
+  fallthrough) — looks exactly like "the feature isn't there". Kill + restart before browser
+  verification.
+- The deep-review earned its cost: two agents independently found the ONE real runtime gap
+  (unmount doesn't stop a detached `Audio` object — invisible to every existing test dimension),
+  and the impact lens caught doc surfaces the plan's own checklist missed.
+
+**Deviations from plan (session 2, all recorded in-place above):** `dismissSay` fold (two
+identical inline sites → one named callback); no CHANGELOG edit (machine-generated at release —
+a hand-added section would be clobbered); test-scaffolding additions (measured backfill, one
+query-tightening in a pre-existing test forced by it); `review-test-fidelity` swapped for
+`review-concurrency-safety` in the battery (test-depth audit already done in session 1).
+
+**For the reviewer / next session:** the audible check + fresh-window autoplay-unlock are the
+only unverified behaviors (user's ears + a non-headless window needed). Phase 5.7's offer stands:
+an ADR for "TTS bypasses LiteLLM via direct httpx" — the decision survived implementation
+unchanged (LiteLLM pin `==1.86.1` + BerriAI/litellm#11118), so it qualifies; ask the user.

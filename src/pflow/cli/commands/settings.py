@@ -446,6 +446,9 @@ def llm_show() -> None:
     click.echo(f"  default_model:    {default_resolved}")
     click.echo(f"  discovery_model:  {discovery_resolved}")
     click.echo(f"  filtering_model:  {filtering_resolved}")
+    # TTS narration (Task 174): concrete defaults, no resolution chain — shown as-is.
+    click.echo(f"  tts_model:        {current_settings.llm.tts_model}")
+    click.echo(f"  tts_voice:        {current_settings.llm.tts_voice}")
 
     click.echo("\nResolution order:")
     click.echo("  default:    workflow params → default_model → auto-detect → error")

@@ -38,11 +38,19 @@ shape as you work.
 Once a Viewer server is running, an agent can Point at things in the user's open
 windows and Watch what they deliberately click:
 
-- `pflow ui focus <workflow> <target> [--open]` — focus/reveal a target in every
+- `pflow ui focus <workflow> <target> [--open] [--say TEXT]` — focus/reveal a target in every
   matching Viewer.
-- `pflow ui frame <workflow> <target>` — move the camera without changing focus.
-- `pflow ui clear-focus <workflow>` — clear the current focus.
+- `pflow ui frame <workflow> <target> [--say TEXT]` — move the camera without changing focus.
+- `pflow ui clear-focus <workflow>` — clear the current focus (also dismisses a `--say` caption).
 - `pflow ui user-activity [workflow]` — read recent clicks and view changes.
+
+`--say "text"` narrates the point aloud with a persistent on-canvas caption anchored at the
+target — point *and explain* in one command. Delivery direction goes in `[brackets]` (e.g.
+`--say "[excited] this node calls the LLM"`): bracketed tags shape the voice and are stripped
+from the caption; **everything outside brackets is spoken AND shown**. You write only the
+sentence — voice, model, and audio format come from settings (`tts_model`/`tts_voice`; needs a
+Gemini API key). If synthesis fails, the point and caption still land and the result notes
+`narration unavailable: <reason>` — never an error you must catch.
 
 `focus`/`frame`/`clear-focus` reach every matching Viewer — including one whose tab is
 currently backgrounded; the highlight is applied when the user returns to it.

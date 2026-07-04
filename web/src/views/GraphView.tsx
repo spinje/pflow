@@ -39,7 +39,7 @@ import {
   readViewParams,
   writeViewParams,
 } from "../utils/viewParams";
-import type { InteractionTarget, NodeRunState, PointTarget, RFEdge, RFGraph, RFNode, RunComplete, RunEvent, SourceFiles } from "../types";
+import type { InteractionTarget, NodeRunState, PointTarget, RFEdge, RFGraph, RFNode, RFRef, RunComplete, RunEvent, SourceFiles } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
 import { HoverMarksProvider, InteractionProvider, NO_HOVER } from "../components/interaction";
@@ -134,6 +134,15 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // Whether THIS page load was a `?run=` deep-link (immutable). The run callout then frames the initial
   // camera on its anchor, so the camera hook skips the competing one-shot whole-graph fit.
   const runDeepLinkRef = useRef(Boolean(new URLSearchParams(window.location.search).get("run")));
+  // Task 174: the agent's say caption — ONE active callout globally (a new say replaces the prior, any
+  // target). Anchored by the STRUCTURAL ref, never the resolved flat id: flat ids are positional and
+  // renumber on an auto-update rebuild, so the anchor id is re-derived from `graph` every render
+  // (sayAnchorId below — the runAnchorId pattern); an unresolvable ref hides the callout.
+  const [sayCallout, setSayCallout] = useState<{ anchorRef: RFRef; caption: string; audioUrl: string | null } | null>(null);
+  // The browser blocked autoplay for the current clip → show the "▶ Play narration" affordance
+  // (which doubles as replay); the click gesture unlocks the page for subsequent clips.
+  const [narrationBlocked, setNarrationBlocked] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   // Hover marks a SET of canvas subjects — a panel chip marks its one resolved
   // node, a canvas row marks its edges + their far ends. Pure highlight, no
   // focus / expansion / camera change (user decision 2026-06-11). Own context
@@ -620,6 +629,41 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     },
     [graph, ioOwnership],
   );
+
+  // Task 174: the say callout's anchor, re-resolved from the CURRENT graph every render so it
+  // survives a live-reload flat-id renumber; a vanished node (ref no longer resolves) hides the
+  // callout rather than anchoring it to the wrong node.
+  const sayAnchorId = useMemo(() => {
+    if (!sayCallout || !graph) return null;
+    const flatId = flatIdForRef(graph, sayCallout.anchorRef);
+    const node = flatId ? graph.nodes.find((n) => n.id === flatId) : undefined;
+    return node ? representativeFor(node) : null;
+  }, [sayCallout, graph, representativeFor]);
+  const playNarration = useCallback((url: string | null) => {
+    audioRef.current?.pause();
+    audioRef.current = null;
+    setNarrationBlocked(false);
+    if (!url) return;
+    const clip = new Audio(url);
+    audioRef.current = clip;
+    // CURRENCY GUARD: pause() rejects the PRIOR clip's still-pending play() with AbortError — as a
+    // microtask AFTER this new clip has started. An unguarded catch would flip narrationBlocked on
+    // while the new clip is audibly playing (fires exactly on rapid successive says).
+    clip.play().catch(() => {
+      if (audioRef.current === clip) setNarrationBlocked(true);
+    });
+  }, []);
+  // Dismiss = "stop talking": close the caption AND pause the clip. Used by the callout's ✕ and by
+  // the agent's `clear` verb (clearing the point clears its annotation — locked); a bare focus/frame
+  // deliberately does NOT dismiss (spec: captions persist until the user dismisses).
+  const dismissSay = useCallback(() => {
+    audioRef.current?.pause();
+    setSayCallout(null);
+  }, []);
+  // The clip is a detached Audio object, not DOM — React unmount doesn't stop it. Without this,
+  // leaving the graph mid-narration (Back to catalog, workflow switch) keeps the voice playing
+  // with no way to stop it (deep-review finding, 2026-07-04).
+  useEffect(() => () => audioRef.current?.pause(), []);
   // Search-select behaves like CLICKING the node: REVEAL it (expand the collapsed
   // ancestor chain so a buried target becomes visible), then focus + SELECT +
   // camera its representative (a host → its group; a leaf → itself). Passing the
@@ -697,6 +741,19 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     clear: () => {
       setFocus(null);
       setSelectedId(null);
+      // Task 174 (locked): clearing the agent's point also clears its annotation — dismiss the
+      // caption and stop the clip. `selectRun` and a bare focus/frame leave the caption alone.
+      dismissSay();
+    },
+    // Task 174: anchor the caption + play the clip. Camera/selection ride the stamped point message
+    // that PRECEDES this on the same SSE queue — say does neither. An edge target anchors at its
+    // target-side endpoint; a stale ref drops silently (applyPoint's behavior for stale Viewers).
+    say: (target, caption, audioUrl) => {
+      if (!graph) return;
+      const anchorRef = target.kind === "node" ? target.ref : target.target;
+      if (!flatIdForRef(graph, anchorRef)) return;
+      setSayCallout({ anchorRef, caption, audioUrl });
+      playNarration(audioUrl);
     },
     // Task 175: the agent's select-run verb switches this open Viewer to a run — reuses the SAME selectRun
     // the RunSelector pin / launch use (its `if (next === runId) return` guard makes a re-pick a no-op; a
@@ -719,6 +776,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       frame: (target) => pointHandlers.current?.frame(target),
       clear: () => pointHandlers.current?.clear(),
       selectRun: (runId) => pointHandlers.current?.selectRun(runId),
+      say: (target, caption, audioUrl) => pointHandlers.current?.say?.(target, caption, audioUrl),
       // Task 173 live overlay. setState identities are stable + refKey is pure, so these never
       // re-subscribe. The status map is keyed by structural ref-key (survives a flat-id renumber).
       runSnapshot: (events, run, stopped, stale) => {
@@ -979,6 +1037,37 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
                   outcome={runMissing ? "not-found" : runStopped ? "stopped" : null}
                   onSelectStep={(id) => onNavigate(id, id)}
                 />
+              </NodeCallout>
+            )}
+            {/* Task 174: the agent's say bubble — caption always, voice when it can. Coexists with the
+                run callout (say renders after, so it stacks on top when both anchor the same node —
+                accepted for v1; both have close buttons). frameOnMount={false}: the point message that
+                preceded this say already framed the camera. */}
+            {sayCallout && sayAnchorId && (
+              <NodeCallout
+                anchorId={sayAnchorId}
+                direction={direction}
+                title="Agent"
+                frameOnMount={false}
+                onClose={dismissSay}
+              >
+                <p className="say-caption">{sayCallout.caption}</p>
+                {narrationBlocked && sayCallout.audioUrl && (
+                  <button
+                    className="say-unlock"
+                    onClick={() => {
+                      // The click gesture satisfies the autoplay policy (for this and later clips).
+                      // Trailing catch: the clip may be evicted server-side (404) or still blocked —
+                      // never surface an unhandled rejection.
+                      audioRef.current
+                        ?.play()
+                        .then(() => setNarrationBlocked(false))
+                        .catch(() => {});
+                    }}
+                  >
+                    ▶ Play narration
+                  </button>
+                )}
               </NodeCallout>
             )}
           </ReactFlow>

@@ -21,7 +21,7 @@ One file per top-level command, registered in `main.py` via `cli.add_command()`.
 | `settings.py` | `pflow settings ...` | `pflow.core.settings` |
 | `report.py` | `pflow report` | `pflow.core.trace_report` |
 | `mermaid.py` | `pflow mermaid` | `pflow.core.workflow.mermaid`, `pflow.execution.*` |
-| `ui.py` | `pflow ui [workflow]` | `pflow.ui.server` (lazy, behind `[ui]` extra); server/contract → `src/pflow/ui/CLAUDE.md` |
+| `ui.py` | `pflow ui [workflow]`; Point verbs `focus`/`frame` take `--say TEXT` (Task 174: CLI-side Gemini TTS via `core/tts.py` → base64-WAV upload to `/api/say`; `_synthesize_say` NEVER raises — synthesis failure degrades to caption-only, `narration unavailable:` note on stderr in JSON mode, exit 0 if the point delivered) | `pflow.ui.server` (lazy, behind `[ui]` extra); server/contract → `src/pflow/ui/CLAUDE.md` |
 | `analyze_cache.py` | `pflow analyze-cache <workflow> [params]` | `pflow.core.prompt_cache_analysis` |
 
 ## Cross-References Within commands/

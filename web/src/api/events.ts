@@ -11,6 +11,10 @@ export interface PointHandlers {
   // target). Applied by the frontend's existing selectRun (honors its re-pick guard); a stale id surfaces
   // the run-not-found path.
   selectRun: (runId: string) => void;
+  // Task 174: the agent's narration — a persistent caption + optional audio clip anchored at the target.
+  // The stamped point message precedes it on the same SSE queue and owns camera/selection; say only
+  // annotates. OPTIONAL like the run handlers, so pre-existing PointHandlers literals stay valid (additive).
+  say?: (target: PointTarget, caption: string, audioUrl: string | null) => void;
 }
 
 // Live execution overlay (Task 173) — optional run-event arms on the same vocabulary-agnostic
@@ -174,6 +178,10 @@ export function subscribe(
         if (admitEpoch(message.epoch, "point")) handlers.clear();
       } else if ((message.type === "focus" || message.type === "frame") && isTarget(message.target)) {
         if (admitEpoch(message.epoch, "point")) handlers[message.type](message.target);
+      } else if (message.type === "say" && isTarget(message.target) && typeof message.caption === "string") {
+        // Task 174: no admitEpoch gate — say is transient, never latched/replayed (the point message
+        // that precedes it on the same queue carries the epoch and steers camera/selection).
+        handlers.say?.(message.target, message.caption, typeof message.audio_url === "string" ? message.audio_url : null);
       } else if (message.type === "select-run" && typeof message.run === "string") {
         // Task 175: switch the open Viewer to the broadcast run id. Issue #539: latched + epoch-deduped on
         // its own channel, so the agent can steer a backgrounded/returning window, not just a live one.

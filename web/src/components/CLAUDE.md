@@ -22,7 +22,10 @@ and the ChipRail's old status slot; three node surfaces now coexist — corner S
 `EdgePanel`, `IoPanel`, `Chip` (+ `ConnectionSections`), `PanelHeader`, `BatchItems`,
 `Markdown`, `CodeBlock`. **Shell:** `Toolbar`, `ErrorBoundary`, `PanelResizer`, `SourcePane`,
 `interaction.ts` (the click-callback context + hover-set channel — keeps node `data`
-callback-free).
+callback-free), `NodeCallout` (the content-agnostic node-anchored flow-space box, Task 175 —
+the run-progress callout AND Task 174's agent "say" bubble both ride it; `frameOnMount?`
+(default `true`) gates its one-shot camera frame — the say bubble passes `false` because the
+point message that precedes a say already owns the camera).
 
 ## The leaf node — one component, two densities (`WorkflowNode`)
 
