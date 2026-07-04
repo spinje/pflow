@@ -13,6 +13,7 @@ re-record stamp.
 
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -608,6 +609,48 @@ def test_restored_subworkflow_and_batch_hosts_are_childless_and_reseed(tmp_path)
     assert attempt_b.shared_after["k"]["stdout"] == "child-value|item-a"
 
 
+def test_resume_at_a_sub_workflow_host_reruns_the_whole_host(tmp_path) -> None:
+    """The product stance: a failure INSIDE a sub-workflow makes K the top-level HOST,
+    and resume re-runs the whole host (top-level granularity). Upstream of the host is
+    restored, the host re-executes (its inner step now succeeds), the tail continues."""
+    child = tmp_path / "child.pflow.md"
+    write_workflow_file(
+        {
+            "inputs": {"mode": {"type": "string", "required": True}},
+            "nodes": [
+                {"id": "inner", "type": "shell", "params": {"command": "test '${mode}' = ok && printf inner-ok"}}
+            ],
+            "outputs": {"out": {"description": "The child's value.", "source": "${inner.stdout}"}},
+        },
+        child,
+    )
+    wf = tmp_path / "parent.pflow.md"
+    write_workflow_file(
+        {
+            "inputs": {"mode": {"type": "string", "required": True}},
+            "nodes": [
+                {"id": "pre", "type": "shell", "params": {"command": "printf pre-done"}},
+                {"id": "host", "type": "workflow", "params": {"workflow": str(child), "inputs": {"mode": "${mode}"}}},
+                {"id": "post", "type": "shell", "params": {"command": "printf 'post %s' '${host.out}'"}},
+            ],
+        },
+        wf,
+    )
+
+    run1 = WorkflowRunner().run(str(wf), {"mode": "bad"}, RunnerConfig())
+    assert not run1.success
+    p1 = run1.trace.save_to_file()
+    source = load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
+    # K is the top-level HOST (not the inner node) — top-level granularity.
+    assert source.entry_node_id == "host"
+
+    resumed = WorkflowRunner().run(str(wf), {"mode": "ok"}, RunnerConfig(), resume_source=source)
+    assert resumed.success, [str(d) for d in resumed.diagnostics]
+    # `pre` restored (not re-run); the host re-executed with the fix; the tail ran.
+    assert resumed.shared_after["__execution__"]["restored_nodes"] == ["pre"]
+    assert resumed.shared_after["post"]["stdout"] == "post inner-ok"
+
+
 def test_loop_k_restarts_at_iteration_one(tmp_path) -> None:
     """Decision 9 pin: a resumed loop-node K restarts at iteration 1 — loop state
     (``loop_counts``/``__iteration__``) is engine-ephemeral, never traced or seeded."""
@@ -673,3 +716,327 @@ def test_loop_k_restarts_at_iteration_one(tmp_path) -> None:
     assert result.shared_after["__execution__"]["restored_nodes"] == ["prep"]
     # The resume's iterations are 1,2,3 (restart), never 2,3 (continuation).
     assert iter_file.read_text().splitlines() == ["1", "1", "2", "3"]
+
+
+def test_both_primary_and_fallback_fail_resumes_at_the_primary_e2e(tmp_path) -> None:
+    """REAL on-error double-failure (Decision 9 / ADR-0010): primary K fails → on-error → fallback F
+    also fails. Resume must enter at the PRIMARY (the root of the terminal failure), and fixing the
+    primary's cause makes it succeed and follow its SUCCESS edge, bypassing the fallback entirely.
+
+    This is the production shape the (previously fictional) synthetic loader tests could not model —
+    real routing tags the primary with an ``on_error_recovery`` warning, which is exactly what the
+    old `_unrecovered_failed_node_ids`-only entry logic (wrongly) filtered out."""
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        textwrap.dedent(
+            """\
+            # Both fail
+
+            Primary + fallback both fail.
+
+            ## Inputs
+
+            ### mode
+
+            Gate for the primary.
+
+            - type: string
+            - required: true
+
+            ## Steps
+
+            ### primary
+
+            Primary — fails unless mode=ok; on error routes to the fallback.
+
+            - type: shell
+            - on-error: fallback
+            - next: done
+
+            ```shell command
+            test "${mode}" = "ok" && echo primary-ok
+            ```
+
+            ### fallback
+
+            Fallback — always fails.
+
+            - type: shell
+            - next: done
+
+            ```shell command
+            exit 7
+            ```
+
+            ### done
+
+            End.
+
+            - type: shell
+
+            ```shell command
+            echo done
+            ```
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    run1 = WorkflowRunner().run(str(wf), {"mode": "bad"}, RunnerConfig())
+    assert not run1.success
+    p1 = run1.trace.save_to_file()
+    source = load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
+    # Root of the terminal failure — the PRIMARY, not the fallback that stopped the run.
+    assert source.entry_node_id == "primary"
+
+    resumed = WorkflowRunner().run(str(wf), {"mode": "ok"}, RunnerConfig(), resume_source=source)
+    assert resumed.success, [str(d) for d in resumed.diagnostics]
+    completed = resumed.shared_after["__execution__"]["completed_nodes"]
+    # Fixed primary succeeds → follows its success edge to `done`; the fallback never runs.
+    assert completed == ["primary", "done"]
+    assert "fallback" not in completed
+
+
+def test_non_interactive_gate_stop_refuses_naming_the_gate_e2e(tmp_path) -> None:
+    """REAL non-interactive approval-gate stop (Decision 8): the run fails with EMPTY failed_node_ids
+    (the gated node never ran), and resume refuses — naming the gate — rather than treating it as a
+    resumable failure. Validates the whole chain against production, not a spliced synthetic trace."""
+    from pflow.core.exceptions import ResumeGateStoppedError
+
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        textwrap.dedent(
+            """\
+            # Gated
+
+            A gated step with no resolver -> non-interactive stop.
+
+            ## Steps
+
+            ### prep
+
+            Plain upstream step.
+
+            - type: shell
+
+            ```shell command
+            echo ready
+            ```
+
+            ### guarded
+
+            Gated step (never runs — no resolver to approve it).
+
+            - type: shell
+            - approval: required
+
+            ```shell command
+            echo do-it
+            ```
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    # No gate_resolver installed → GateNotInteractiveError at the gate.
+    run1 = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert not run1.success
+    p1 = run1.trace.save_to_file()
+    trace = load_trace_file(p1)
+    assert trace.get("final_status") == "failed"
+    assert trace.get("failed_node_ids") == []  # the gated node produced zero events
+
+    with pytest.raises(ResumeGateStoppedError) as exc:
+        load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
+    assert exc.value.node_id == "guarded"
+
+
+# ── Review fixes (2026-07-04): seed fidelity + incomplete tails ending in a failure ──
+
+WF_RECOVERED_COALESCE = textwrap.dedent(
+    """\
+    # Recovered coalesce
+
+    Coalesce over a recovered failure.
+
+    ## Inputs
+
+    ### mode
+
+    Primary gate.
+
+    - type: string
+    - required: true
+
+    ### flag
+
+    Use gate.
+
+    - type: string
+    - required: true
+
+    ## Steps
+
+    ### primary
+
+    Fails unless mode=ok; on error routes to the fallback.
+
+    - type: shell
+    - on-error: fallback
+    - next: use
+
+    ```shell command
+    test "${mode}" = "ok" && printf primary-data
+    ```
+
+    ### fallback
+
+    Always succeeds.
+
+    - type: shell
+    - next: use
+
+    ```shell command
+    printf fallback-data
+    ```
+
+    ### use
+
+    Consumes the coalesce; fails unless flag=ok.
+
+    - type: shell
+
+    ```shell command
+    test "${flag}" = "ok" && printf 'used=%s' '${primary.stdout ?? fallback.stdout}'
+    ```
+    """
+)
+
+
+def _truncate_trace(path: Path, *, first_dropped_node: str | None) -> None:
+    """Simulate a SIGKILL tail: keep lines before `first_dropped_node`'s first line,
+    always dropping the run.complete trailer (the reader then synthesizes `incomplete`)."""
+    kept: list[str] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = json.loads(raw)
+        if line.get("kind") == "run.complete":
+            break
+        if first_dropped_node is not None and line.get("node_id") == first_dropped_node:
+            break
+        kept.append(raw)
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+
+def test_recovered_failure_upstream_is_not_seeded(tmp_path) -> None:
+    """Seed fidelity (review fix 2026-07-04): a RECOVERED failure upstream of K is not
+    seeded — its data lived in ``__failures__`` in the source run, never the store — so a
+    ``${primary.x ?? fallback.x}`` coalesce in the resumed tail falls through to the
+    fallback exactly as the original run did. It is also neither listed as restored nor
+    re-recorded into the attempt trace (the old behavior seeded the failed output, and the
+    coalesce silently resolved to it: ``used=`` instead of ``used=fallback-data``)."""
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(WF_RECOVERED_COALESCE, encoding="utf-8")
+    run1 = WorkflowRunner().run(str(wf), {"mode": "bad", "flag": "bad"}, RunnerConfig())
+    assert not run1.success
+    p1 = run1.trace.save_to_file()
+    source = load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
+    assert source.entry_node_id == "use"
+
+    resumed = WorkflowRunner().run(str(wf), {"mode": "bad", "flag": "ok"}, RunnerConfig(), resume_source=source)
+    assert resumed.success, [str(d) for d in resumed.diagnostics]
+    # Original-run semantics preserved: the coalesce falls through to the fallback.
+    assert resumed.shared_after["use"]["stdout"] == "used=fallback-data"
+    # The failed-recovered primary is not restored...
+    assert resumed.shared_after["__execution__"]["restored_nodes"] == ["fallback"]
+    # ...and not re-recorded into the attempt trace (no flipped cached-success event).
+    attempt_node_ids = [e.get("node_id") for e in resumed.trace.events]
+    assert "primary" not in attempt_node_ids
+    assert "fallback" in attempt_node_ids
+
+
+def test_incomplete_tail_ending_in_unrecovered_failure_reenters_at_the_failure(tmp_path) -> None:
+    """Incomplete-tail fix (review 2026-07-04): killed AFTER an unrecovered failure flushed
+    but BEFORE the trailer — the old between-nodes rule continued to the failure's default
+    successor, resuming past an unhandled failure as if it had succeeded. The terminal-failure
+    root rule re-enters at the failure itself."""
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        textwrap.dedent(
+            """\
+            # Two step
+
+            Unrecovered failure then a tail step.
+
+            ## Inputs
+
+            ### mode
+
+            Gate.
+
+            - type: string
+            - required: true
+
+            ## Steps
+
+            ### boom
+
+            Fails unless mode=ok.
+
+            - type: shell
+            - next: after
+
+            ```shell command
+            test "${mode}" = "ok" && printf boom-ok
+            ```
+
+            ### after
+
+            Tail.
+
+            - type: shell
+
+            ```shell command
+            printf after-ran
+            ```
+            """
+        ),
+        encoding="utf-8",
+    )
+    run1 = WorkflowRunner().run(str(wf), {"mode": "bad"}, RunnerConfig())
+    assert not run1.success
+    p1 = run1.trace.save_to_file()
+    _truncate_trace(p1, first_dropped_node=None)  # drop only the trailer
+
+    source = load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
+    assert source.final_status == "incomplete"
+    assert source.entry_node_id == "boom"
+    assert source.last_completed_node_id is None
+
+    resumed = WorkflowRunner().run(str(wf), {"mode": "ok"}, RunnerConfig(), resume_source=source)
+    assert resumed.success, [str(d) for d in resumed.diagnostics]
+    assert resumed.shared_after["__execution__"]["completed_nodes"] == ["boom", "after"]
+
+
+def test_incomplete_tail_killed_before_the_error_handler_reenters_at_the_recovered_primary(tmp_path) -> None:
+    """Incomplete-tail fix (review 2026-07-04): killed between a RECOVERED failure and its
+    on-error handler's start — the taken route was the ERROR edge, so the old rule's single
+    DEFAULT successor was provably the wrong branch (it skipped the fallback entirely).
+    Re-entering at the primary re-fires it (at-least-once) and its error edge re-routes to
+    the fallback, reproducing the interrupted run's actual path."""
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(WF_RECOVERED_COALESCE, encoding="utf-8")
+    run1 = WorkflowRunner().run(str(wf), {"mode": "bad", "flag": "bad"}, RunnerConfig())
+    assert not run1.success
+    p1 = run1.trace.save_to_file()
+    # Kill between primary's (failed, recovered) event and the fallback's start.
+    _truncate_trace(p1, first_dropped_node="fallback")
+
+    source = load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
+    assert source.final_status == "incomplete"
+    assert source.entry_node_id == "primary"
+    assert source.last_completed_node_id is None
+
+    resumed = WorkflowRunner().run(str(wf), {"mode": "bad", "flag": "ok"}, RunnerConfig(), resume_source=source)
+    # primary fails again → error edge re-taken → fallback runs → use reads the fallback.
+    assert resumed.shared_after["__execution__"]["completed_nodes"] == ["fallback", "use"]
+    assert resumed.shared_after["use"]["stdout"] == "used=fallback-data"

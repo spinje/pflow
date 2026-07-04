@@ -469,13 +469,19 @@ def _select_resume_trace(
 def _seed_scope_events(events: list[dict[str, Any]], entry_node_id: str | None) -> list[dict[str, Any]]:
     """Top-level events that WILL be seeded — everything before the entry, or all when entry is None.
 
-    Mirrors ``seed_snapshot_into_shared``'s ``events[:target_idx]`` slice so the
-    escalation/fidelity guards scan exactly the events resume will restore.
+    Mirrors ``seed_snapshot_into_shared`` so the escalation/fidelity guards scan
+    exactly what resume will restore: the ``events[:target_idx]`` slice, MINUS
+    every node whose final event in that slice is ``failed`` (seed fidelity —
+    those are never seeded, so refusing on their contents would block a
+    legitimate resume).
     """
     if entry_node_id is None:
-        return events
-    idx = next((i for i, e in enumerate(events) if e.get("node_id") == entry_node_id), None)
-    return events if idx is None else events[:idx]
+        scope = events
+    else:
+        idx = next((i for i, e in enumerate(events) if e.get("node_id") == entry_node_id), None)
+        scope = events if idx is None else events[:idx]
+    failed = {nid for nid, ev in final_events_by_node(scope).items() if ev.get("status") == "failed"}
+    return [e for e in scope if e.get("node_id") not in failed]
 
 
 def _contains_binary_placeholder(value: Any) -> bool:
@@ -512,6 +518,41 @@ def _raise_gate_stopped_or_generic(path: Path, execution_id: str) -> NoReturn:
     )
 
 
+def _terminal_failure_root(events: list[dict[str, Any]]) -> str | None:
+    """The ROOT of the trace's TERMINAL failure region, or None if there isn't one.
+
+    The earliest failed node with no successful/cached node AFTER it in event
+    order — the "frontier" of what actually completed (Temporal's replay-frontier
+    idea, one pass over the trace). Decision 9 + ADR-0010: a ``K --on-error--> F``
+    chain where BOTH fail resumes at K, not F — re-running K re-evaluates its
+    branch, so a fixed K follows its SUCCESS edge and F never runs. A failure
+    whose recovery genuinely SUCCEEDED (a success sits after it) is excluded —
+    the later, separate failure is the root. NEVER the alphabetical
+    ``failed_node_ids`` trailer. Returns None when no failure sits after the
+    frontier (nothing failed at all, or every failure was followed by a success —
+    e.g. a gate-stopped run).
+
+    Used by BOTH the ``failed`` arm and the ``incomplete`` arm — an interrupted
+    tail that ends in a failure re-enters at the same root a failed run would.
+    Needs no warnings data, which the incomplete arm could never supply (the
+    trailer carrying them is exactly what an interrupted run lacks).
+    """
+    final = final_events_by_node(events)
+    last_index: dict[str, int] = {}
+    for index, event in enumerate(events):
+        nid = event.get("node_id")
+        if isinstance(nid, str):
+            last_index[nid] = index
+    frontier = max(
+        (idx for nid, idx in last_index.items() if final[nid].get("status") in ("success", "cached")),
+        default=-1,
+    )
+    candidates = [
+        (idx, nid) for nid, idx in last_index.items() if final[nid].get("status") == "failed" and idx > frontier
+    ]
+    return min(candidates)[1] if candidates else None
+
+
 def _resolve_resume_entry(path: Path, data: dict[str, Any], execution_id: str) -> tuple[str | None, str | None, str]:
     """Apply the status arm: return ``(entry_node_id, last_completed_node_id, final_status)`` or refuse."""
     final_status = str(data.get("final_status") or "")
@@ -539,18 +580,18 @@ def _resolve_resume_entry(path: Path, data: dict[str, Any], execution_id: str) -
             trace_path=str(path),
             suggestions=["Re-run the workflow from the start."],
         )
-    failed = _unrecovered_failed_node_ids(final_events_by_node(events), data.get("warnings"))
-    if not failed:
+    if not _unrecovered_failed_node_ids(final_events_by_node(events), data.get("warnings")):
         _raise_gate_stopped_or_generic(path, execution_id)
-    # Entry = the failed node whose FINAL event has the lowest index in event
-    # order (NEVER the alphabetically-sorted failed_node_ids trailer): with a
-    # K-failed → fallback-F-failed chain, resume must enter at K.
-    last_index: dict[str, int] = {}
-    for index, event in enumerate(events):
-        nid = event.get("node_id")
-        if isinstance(nid, str):
-            last_index[nid] = index
-    entry = min(failed, key=lambda nid: last_index.get(nid, len(events)))
+    # This check is NOT redundant with the frontier scan below: a recovered
+    # failure can be the trace's LAST event when its on-error handler was
+    # gate-stopped before running — the frontier alone would resume at that
+    # failure instead of refusing at the gate. Keep this ordering.
+    entry = _terminal_failure_root(events)
+    if entry is None:
+        # Engine-unproducible (an unrecovered failure stops the walk, so it is
+        # always the last event) — reachable only from a hand-edited trace.
+        # Refuse cleanly rather than crash.
+        _raise_gate_stopped_or_generic(path, execution_id)
     return entry, None, "failed"
 
 
@@ -566,9 +607,12 @@ def _resolve_incomplete_entry(
     ``kind:"event"`` line marks the node that was killed MID-execution — that is K.
     Top-level scoping is load-bearing: a kill inside a sub-workflow leaves a
     dangling CHILD start too, whose id is not in the top-level graph. When nothing
-    dangles, the run was killed BETWEEN nodes — entry is ``None`` and the CLI
-    resolves the unambiguous successor of the last completed node post-compile
-    (§E step 4). A meta-only file (crashed before step 1) has nothing to resume.
+    dangles and the tail ENDS in a failure, the run was killed while failing (or
+    heading down an on-error edge) — re-enter at the terminal-failure root,
+    exactly like the failed arm. Only a SUCCESS-ending tail was killed cleanly
+    between nodes — entry is ``None`` and the CLI resolves the unambiguous
+    successor of the last completed node post-compile (§E step 4). A meta-only
+    file (crashed before step 1) has nothing to resume.
     """
     started: dict[int, str] = {}
     completed_ids: set[int] = set()
@@ -589,6 +633,14 @@ def _resolve_incomplete_entry(
         # more ever appear, the most-recently-started (highest seq) was running.
         _, killed = max(dangling, key=lambda pair: pair[0])
         return killed, None, "incomplete"
+    root = _terminal_failure_root(events)
+    if root is not None:
+        # The tail ends in a FAILURE — the run was failing when it was killed.
+        # The successor path below is for success-ending tails ONLY: a failed
+        # last node's taken route may have been its ERROR edge, so its single
+        # default successor is provably the wrong branch (and continuing past an
+        # unrecovered failure would resume as if it had succeeded).
+        return root, None, "incomplete"
     if events:
         last_completed = events[-1].get("node_id")
         if isinstance(last_completed, str):
@@ -674,7 +726,7 @@ def load_resume_source(
 
     if _is_trace_locked(path) is True:
         raise ResumeStillRunningError(
-            "This run is still in progress — its trace is held by a live writer.",
+            "This run is still in progress.",
             execution_id=source_execution_id,
             trace_path=str(path),
             suggestions=["Wait for the run to finish (or stop it), then resume."],
@@ -853,10 +905,16 @@ def seed_snapshot_into_shared(
 
     Mirrors ``apply_memo_hit``'s restore shape: each in-scope node's terminal
     ``node_output`` is written to ``shared[node_id]`` with the engine-injected
-    reserved keys (``_SNAPSHOT_RESERVED``) filtered out. Nodes with no captured
-    output are skipped (a failed node forces the trace to ``"failed"`` → already
-    rejected by the loader, so the only no-output case here is a node that
-    genuinely produced nothing).
+    reserved keys (``_SNAPSHOT_RESERVED``) filtered out.
+
+    Seeding reconstructs the shared store AS IT EXISTED in the source run. A node
+    whose final event is ``failed`` is therefore skipped entirely: its data lived
+    in ``__failures__``, never in the store, so seeding it would resolve template
+    paths (e.g. ``${primary.x ?? fallback.x}``) that the original run — and a
+    fresh run — resolve to the fallback instead. This matters whenever a
+    RECOVERED failure sits in scope: a resume tail downstream of an on-error
+    chain, or an ``--only`` run against a DEGRADED snapshot. Nodes with no
+    captured output are also skipped (they genuinely produced nothing).
 
     Scope = nodes that executed BEFORE ``exclude`` (the ``--only`` target) in the
     snapshot's execution order. pflow templates can only reference EARLIER steps,
@@ -871,12 +929,14 @@ def seed_snapshot_into_shared(
     error.
 
     NEVER seeds ``exclude`` itself — the target must execute fresh, never read a
-    stale copy of itself. Returns the ``final_events_by_node`` map (restricted to
-    the seeded scope) so callers can derive ``restored_nodes`` without a second pass.
+    stale copy of itself. Returns the ``final_events_by_node`` map restricted to
+    the SEEDABLE scope (failed-final-status nodes excluded), so callers derive
+    ``restored_nodes`` — and the resume re-record loop — from exactly what was
+    seeded, without a second pass.
     """
     target_idx = next((i for i, e in enumerate(events) if e.get("node_id") == exclude), None)
     in_scope = events if target_idx is None else events[:target_idx]
-    final = final_events_by_node(in_scope)
+    final = {nid: ev for nid, ev in final_events_by_node(in_scope).items() if ev.get("status") != "failed"}
     for nid, ev in final.items():
         if nid == exclude:
             continue

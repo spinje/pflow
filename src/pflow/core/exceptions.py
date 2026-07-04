@@ -1276,7 +1276,7 @@ class ResumeFidelityError(ResumeSourceError):
     ):
         super().__init__(
             f"Step '{node_id}' produced binary data (in '{key}') that the saved run stores only as a "
-            "placeholder, so resuming would seed corrupt state. Only a code/python step can produce this.",
+            "placeholder, so resuming would restore corrupt data. Only a `code` step can produce this.",
             execution_id=execution_id,
             trace_path=trace_path,
             node_id=node_id,

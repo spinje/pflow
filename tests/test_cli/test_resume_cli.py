@@ -16,6 +16,7 @@ CliRunner stdin is never a TTY (pitfall #10), so the TTY-confirm flow patches
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -355,6 +356,13 @@ def test_stray_flag_after_target_is_usage_error(home, shell_wf):
     assert result.exit_code == 2
 
 
+def test_dash_token_target_after_separator_is_rejected(home):
+    """`--` forwards a dash token to our arg splitter (past Click); it must reject it, not treat it as a workflow."""
+    result = _runner().invoke(cli, ["resume", "--", "--foo"])
+    assert result.exit_code == 2
+    assert "key=value" in (result.stdout + result.stderr)
+
+
 # --- Failed-run resume hint (§E step 10) -------------------------------------
 
 
@@ -368,6 +376,39 @@ def test_failed_run_omits_hint_under_no_trace(home, shell_wf):
     result = _runner().invoke(cli, ["--no-trace", str(shell_wf), "mode=bad"])
     assert result.exit_code == 1
     assert "pflow resume" not in result.stderr
+
+
+def test_failed_run_hint_survives_print_mode(home, shell_wf):
+    """Agent-UX (review 2026-07-04): ``-p`` suppresses the trace-location line but NOT
+    the resume hint — a ``-p`` agent otherwise has no way to learn the resume target.
+    stdout stays data-only; the hint rides stderr."""
+    result = _runner().invoke(cli, [str(shell_wf), "mode=bad", "-p"])
+    assert result.exit_code == 1
+    assert "To resume from the failed step: pflow resume " in result.stderr
+    assert "pflow resume" not in result.stdout
+
+
+def test_failed_run_json_document_carries_resume_fields(home, shell_wf):
+    """Agent-UX (review 2026-07-04): the JSON failure document carries the resume target
+    (``execution_id`` + literal ``resume_command``) so a stdout-only JSON consumer can act
+    without scraping the stderr prose hint."""
+    result = _runner().invoke(cli, [str(shell_wf), "mode=bad", "--output-format", "json"])
+    assert result.exit_code == 1
+    document = json.loads(result.stdout)
+    assert document["success"] is False
+    exec_id = document["execution_id"]
+    assert document["resume_command"] == f"pflow resume {exec_id}"
+    # The id is real: the stderr hint names the same run.
+    assert f"pflow resume {exec_id}" in result.stderr
+
+
+def test_failed_run_json_document_omits_resume_fields_under_no_trace(home, shell_wf):
+    """No trace on disk → nothing to resume → the JSON document must not advertise one."""
+    result = _runner().invoke(cli, ["--no-trace", str(shell_wf), "mode=bad", "--output-format", "json"])
+    assert result.exit_code == 1
+    document = json.loads(result.stdout)
+    assert "execution_id" not in document
+    assert "resume_command" not in document
 
 
 # --- --dry-run (Decision 2) --------------------------------------------------

@@ -22,7 +22,10 @@ the failed node onward — instead of re-running the whole workflow from scratch
 > the Run-query section (consumer inventory) applied below.
 
 ## Status
-not started
+done
+
+## Completed
+2026-07-04
 
 ## Priority
 medium
@@ -296,7 +299,9 @@ accepted by the owner). This ledger is the durable record.
    consumer) and excluding resumed traces from snapshot sources (`--only` would silently ignore the
    newest real run; the loader still needs union logic). `resumed_from` stays pure lineage, never a
    data dependency. Aggregates must not double-count restored events (cost 0; `nodes_executed`
-   excludes them). Recorded in ADR-0010.
+   excludes them). Recorded in ADR-0010. *Scope refined 2026-07-04 (intent unchanged): re-record
+   covers the SEEDABLE upstream only — a failed-recovered node is neither seeded nor re-recorded
+   (seed fidelity: its data lived in `__failures__`, never the store); see ADR-0010 amendment.*
 7. **Incomplete-trace resume → IN, narrow shape (DECIDED 2026-07-03, plan session — resolves
    Decision 3's assessment gate).** Entry-node identification is feasible only via RAW JSONL: a
    dangling `node.start` line with no matching terminal event (same `id`) marks the killed-mid-node
@@ -305,7 +310,10 @@ accepted by the owner). This ledger is the durable record.
    (`record_node_execution` has no action field), so resume only when the last completed node's
    successor is unambiguous; branching ambiguity → actionable refusal. Meta-only trace (crashed
    before node 1) → "nothing to resume" error. Liveness probe runs FIRST — a flock-locked
-   incomplete trace is a live run, refuse.
+   incomplete trace is a live run, refuse. *Mechanism refined 2026-07-04 (intent unchanged): the
+   successor rule applies only to SUCCESS-ending tails — a tail ending in a failed event re-enters
+   at the terminal-failure root (its taken route may have been the error edge, so the default
+   successor is provably wrong); see ADR-0010 amendment.*
 8. **Gate-stopped and `denied` traces → refused in v1 (DECIDED 2026-07-03, plan session).**
    Post-125 reality the pre-session spec missed: `final_status:"failed"` can be gate-caused
    (`gate_outcome` channel) with EMPTY `failed_node_ids` — for a pre-exec approval gate the gated
@@ -318,7 +326,11 @@ accepted by the owner). This ledger is the durable record.
    upstream state.
 9. **Smaller calls locked at the same sitting:** entry node = **earliest failed node in EVENT
    order** (`failed_node_ids` is alphabetically sorted on disk — "first of the list" is wrong; with
-   K-failed→fallback-F-failed chains, resume at K and F never runs if K now succeeds). A loop-node
+   K-failed→fallback-F-failed chains, resume at K and F never runs if K now succeeds). *Mechanism
+   refined 2026-07-04 (intent unchanged): entry = the root of the terminal failure region — the
+   earliest failed node with no successful/cached node after it in event order — because real
+   on-error routing tags the primary "recovered", which the original wording's naive reading
+   missed; see ADR-0010 amendment.* A loop-node
    K **restarts at iteration 1** (loop state `loop_counts`/`__iteration__` is engine-ephemeral,
    never traced — documented, not engineered around). Resume does **not inherit prior approvals** —
    downstream gates re-prompt (125's "each execution is a new action"); `--auto-approve` still

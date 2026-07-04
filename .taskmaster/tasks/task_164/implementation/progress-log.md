@@ -935,3 +935,229 @@ session (standing rule). `make test` 8476 / `make check` green throughout.
 **Manual verification for the reviewer (unchanged from prior phases):** the real-browser UI check
 (`make ui-build` + `pflow ui` over a resumed run) remains plan-designated MANUAL. All CLI/loader/engine/
 planner behavior is covered by the automated suite + the manual `pflow` smokes logged in Phases 3-5.
+
+## 2026-07-04 — Post-implementation loose-end sweep ("fully happy?" audit)
+
+Audited the whole diff for gaps rather than trusting the summary. Findings + resolutions:
+
+- **§E step 6 (required input absent on resume) — VERIFIED adequate, no code change.** Drove a
+  resume of a workflow with a required input against a pre-175-style trace (`inputs=None`), no
+  override → clean actionable `Validation Error: Workflow requires input 'mode'… At: inputs.mode`
+  (exit 1, no crash). The agent passes `key=value`, which resume accepts. The plan's conditional
+  "wrap if it doesn't mention resume" isn't needed — the standard message is already actionable.
+- **Stray-flag guard in `_split_target_and_params` — was reachable but UNTESTED.** `--frobnicate`
+  hits Click's parser (my test only proved exit 2 there); my guard fires only for a dash token
+  forwarded past `--` (`resume -- --foo`), where it gives the nicer "inputs are key=value" message
+  and rejects a dash-token target as a usage error (vs. a confusing "workflow not found"). Added
+  `test_dash_token_target_after_separator_is_rejected` to exercise MY branch directly. Kept the
+  guard (earns its keep on the `resume -- --foo` single-dash-target case).
+- **Resume AT a sub-workflow host K — was UNTESTED (a real v1 product-stance scenario).** Verified
+  end-to-end then locked it: `test_resume_at_a_sub_workflow_host_reruns_the_whole_host` — a failure
+  INSIDE a sub-workflow makes K the top-level HOST; resume restores upstream (`pre`), re-runs the
+  whole host (inner step now succeeds with the fixed input), tail continues. Confirms the
+  "top-level granularity" stance holds and `is_side_effecting("workflow")=True` gates a host K
+  correctly. Sound — no bug.
+- **Considered and left as accepted scope (not gaps):** `--report` on resume (hardcoded off — not in
+  spec); library-metadata "last used" not updated on by-exec-id resume (resolves as file source —
+  cosmetic); the failed-run hint firing on a zero-event validation-failed resume attempt (points at
+  an attempt that then gives the accurate Phase-1 defensive refusal — consistent with the wedge-fix
+  design, message stays accurate). None affect correctness.
+
+Net: 8476 → **8478 passed** (+2 loose-end tests). `make check` green. Nothing else outstanding.
+
+## 2026-07-04 — HIGH-VALUE FINDING + FIX: resume entry selection contradicted locked Decision 9
+
+Hunting for "passing the wrong thing" (owner-requested) surfaced a REAL implementation-vs-spec bug,
+masked by two fictional synthetic fixtures.
+
+**The bug.** In a `K --on-error--> F` chain where BOTH fail, the loader resumed at **F** (the
+fallback), not **K** (the primary). Decision 9 (locked) says resume at K ("F never runs if K now
+succeeds"). Root cause: entry was `min(_unrecovered_failed_node_ids(...), event-index)`; real
+on-error routing tags the recovered primary K with an `on_error_recovery` warning, so
+`_unrecovered_failed_node_ids` FILTERS K OUT → only F remains → entry=F. Verified end-to-end against
+a real run (not a fixture): entry was `alpha`(F); resuming there re-ran the broken fallback and
+failed again — useless for the common "I fixed the primary's cause" resume.
+
+**Why the tests didn't catch it (the "passing wrong thing" part).** BOTH Phase-1 synthetic tests
+used shapes production never writes:
+- `test_multi_failure_enters_earliest_in_event_order` built two failed nodes with NO
+  `on_error_recovery` warning — so both were "unrecovered", min gave zeta, green — but that shape
+  can't occur for the K→on-error→F scenario its own docstring described (K IS recovered in reality).
+- `test_recovered_failure_is_not_an_entry` had a recovered node then a failure with NO success
+  between them — indistinguishable from the both-fail chain, yet asserted the (wrong-per-Decision-9)
+  F answer.
+Also: a linear/branching walk stops at its FIRST unrecovered failure, so
+`_unrecovered_failed_node_ids` returns ≤1 in production — the `min(..., event-index)` tiebreak the
+test exercised was effectively DEAD CODE.
+
+**Industry check (owner asked "isn't this solved?").** Two families: Temporal = event-sourced
+deterministic REPLAY to the frontier (never picks an entry node); Airflow/Dagster/n8n/GH Actions =
+re-run the failed unit and let graph edges re-route. Shared principle: re-enter at the failure and
+let the graph decide the path — don't pre-commit the downstream. Decision 9 is the correct member of
+the second family; "resume at F" was the anomaly.
+
+**The fix (owner chose spec intent).** New entry rule = **the earliest failed step with no
+successful/cached step after it in event order** — the root of the terminal failure region
+(Temporal's frontier, one pass, IR-free). `_unrecovered_failed_node_ids` is kept ONLY for the
+gate-stopped emptiness check; entry selection is decoupled from it. Cases:
+- K→F both fail → K (fixed K follows its success edge, F bypassed). Verified e2e:
+  `completed == ["primary", "done"]`, fallback never ran.
+- K→recovery-SUCCEEDS→L fails → L (a success sits after K, so K isn't re-run — more precise than
+  Airflow's "re-run all reds").
+- single failure / recovered-success cases: unchanged.
+
+**Tests.** Rewrote the 2 fictional synthetic tests to REAL production shapes (recovered node carries
+the `on_error_recovery` warning; the recovery-succeeded case has the intervening success). Added TWO
+real e2e (`test_resume_engine.py`, real traces): the on-error double-failure resumes at the primary +
+bypasses the fallback on fix; and — a separate verified win — a real non-interactive gate-stop
+(`final_status=failed`, empty `failed_node_ids`) refuses via `ResumeGateStoppedError` naming the
+gate (the synthetic gate-stopped test's shape now confirmed to match production).
+Mutation-verified: reverting to the old `min(unrecovered)` fails EXACTLY the both-fail synthetic +
+e2e tests (`- primary + fallback`), reverted clean.
+
+**Documented** in ADR-0010 (amended 2026-07-04): the frontier entry rule + the known sharp edge —
+resume is at-least-once over the WHOLE K-onward tail, so a both-fail resume at the primary can re-fire
+the fallback F's side effects a second time if the primary still fails; the confirm/`--force` policy
+gates K's type but does not separately warn about a downstream on-error fallback re-firing. Flagged
+for Task 171+ (durable/exactly-once/saga) to revisit. Decision 9's ledger wording is unchanged — its
+intent is now honored; the ADR carries the precise mechanism.
+
+Net: **8480 passed** (+2 real e2e; 2 synthetic tests rewritten in place). `make check` green.
+
+## 2026-07-04 — Independent review of the frontier entry fix (fresh session) — APPROVED + 2 hardening fixes
+
+Owner-requested review of the unstaged frontier-rule change under the simplicity lens ("final code
+the top 10% would ship"). Verdict: **the decision stands** — bug re-confirmed against the producers
+(BOTH recovery channels stamp at routing time: `on_error_recovery` at engine step 17.5, and
+`api_warning`'s `recovered` flag = handler-exists, instrumentation.py:858 — so a both-fail chain
+always tags the primary "recovered"), the frontier rule verified sound over the closed per-node
+status vocabulary (`success|cached|failed`; `cached` inclusion is load-bearing for attempt traces),
+and the rewritten tests + 2 e2e now encode production shapes. The tempting further "simplification"
+(frontier-only, drop the unrecovered-set check) was evaluated and REJECTED with a constructed
+counterexample: **K fails → its on-error handler is GATED and gate-stopped** — K is then a failed
+event after the frontier with nothing successful after it; only the warnings-based check routes it
+to the gate refusal. The two-notion structure is earned, not vestigial.
+
+Two hardening fixes applied (the review's only code findings):
+1. **Totality**: guard set (unrecovered) and selection set (failed-after-frontier) were linked only
+   by an unstated invariant ("an unrecovered failure stops the walk ⟹ it's the last event") — a
+   crafted trace with a failed event followed by a success crashed `min()` with a raw `ValueError`
+   (reproduced), violating the Phase-1 typed-refusal posture. Fixed: candidates collected first;
+   empty → `_raise_gate_stopped_or_generic` (identical behavior on every engine-producible trace).
+2. **The load-bearing check now has its pin**: `test_gate_stop_at_the_on_error_handler_refuses_
+   naming_the_gate` — WITHOUT it, replacing the unrecovered check with a candidates-empty fallback
+   passes the ENTIRE suite while regressing gate-after-recovered-failure to "resume at K"
+   (mutation-verified: bypassing the check fails ONLY this test; removing the totality guard fails
+   ONLY the new crafted-trace test). Comment updated to state WHY the check isn't redundant
+   (was delete-bait: "only answers failure vs gate stop").
+
+Also: task-164.md Decision 9 ledger wording annotated (mechanism refined → ADR-0010 pointer,
+intent unchanged) so a future reader doesn't re-implement the stale "earliest failed in event
+order" reading. Checked-and-sound, deliberately unchanged: recovered-K's failed `node_output`
+being seeded in the K-recovered→L-failed case (pre-existing, logged in Phase 2, exposure SHRINKS
+under the new rule); the loader staying IR-free (graph-aware entry rightly rejected).
+
+Net: **8482 passed** (+2 loader tests), `make check` green (ruff/mypy/deptry), zero stray mutations.
+
+## 2026-07-04 — Review-fixes batch COMPLETE (3 proven bugs + agent-UX findings; plan: review-fixes-plan.md)
+
+Step-back audit ("passing the right thing", whole-picture) found THREE real bugs, each proven by a
+temporary probe test asserting the CORRECT semantics against real runs (probe fails ⟺ bug exists),
+then fixed with the probe graduated as the regression pin. Plus a `review-agent-ux` subagent pass
+over every resume surface (guide / --help / exception family / hints / MCP-leak check).
+
+**Bug A — seed fidelity (silent wrong data).** `seed_snapshot_into_shared` had no status filter, so
+a RECOVERED failure in seed scope (primary-failed→on-error→fallback→…→K-failed) seeded the failed
+primary's output into `shared[primary]`; a `${primary.x ?? fallback.x}` coalesce in the resumed tail
+then resolved the failed data (proven: `used=` instead of `used=fallback-data`). Its docstring's
+safety claim ("failed traces already rejected by the loader") was --only-era and false under resume.
+Fix: `final_events_by_node` filtered to non-`failed` events at the single seam — the store is
+reconstructed AS IT WAS (failed data lived in `__failures__`). Also fixes the identical latent
+`--only`-degraded divergence, and dissolves the Phase-2 wart: failed-recovered upstream is neither
+seeded, restored-listed, nor re-recorded (Decision 6 scope note added to spec + ADR). ZERO existing
+tests encoded the old behavior (full suite green on first run after the fix).
+
+**Bug B — incomplete tails ending in a FAILED event resumed down the wrong edge.** Neither
+`_resolve_incomplete_entry` nor the CLI successor resolution consulted the last event's status:
+(B1) kill after an unrecovered failure flushed → resumed at its DEFAULT successor, past the failure;
+(B2) kill between a recovered failure and its handler's start → default successor = provably the
+wrong branch (taken route was the ERROR edge; the fallback was skipped). Fix: extracted
+`_terminal_failure_root(events)` (the frontier rule; needs no warnings — exactly what an
+interrupted trace lacks) and gave the incomplete arm the same rule: failure-ending tail → re-enter
+at the root; between-nodes successor applies ONLY to success-ending tails. Unifies the two arms
+instead of adding a case. The failed arm's order is UNCHANGED (unrecovered-set check first — the
+gate-stop discriminator — then root, with the totality fallback).
+
+**Agent-UX fixes** (subagent findings; full report referenced in this log's session):
+- The resume affordance now survives `-p` (stderr, failure only — a `-p` agent had NO path to the
+  resume target) and the JSON failure document gains `execution_id` + `resume_command`
+  (`_resumable_execution_id` in run.py → `output_error`/`format_error_json` kwarg; gated on
+  trace-enabled + stream health because JSON mode finalizes the trace AFTER emission; MCP builds
+  its payload via `format_execution_errors` directly — untouched by construction).
+- Guide internals scrub (`meta.inputs`, `content_hash`, `llm_prompt`/`llm_system`,
+  "engine-ephemeral (never traced)" → agent-vocabulary rewrites), the misquoted confirm prompt
+  dropped, the interrupted-runs bullet extended with the failing-tail behavior, and
+  `ResumeStillRunningError` trimmed of "held by a live writer" (flock vocabulary).
+- Verified-clear by the UX pass (no change): exception family WHAT/WHY/HOW + literal recovery
+  commands; `--help`; MCP never told to resume; discoverability; indicator/JSON honesty.
+
+**Tests:** +6 (3 graduated bug pins in `test_resume_engine.py` — seed-fidelity coalesce,
+incomplete-unrecovered-tail, incomplete-recovered-tail-error-edge; 3 UX pins in
+`test_resume_cli.py` — `-p` hint survival, JSON resume fields, no-trace omission). Probe file
+deleted after graduation. Mutation-verified: seed filter reverted → exactly the seed-fidelity test
+fails; incomplete-root check bypassed → exactly the two tail tests fail. Docs: ADR-0010 amended
+(both fixes), Decision 6/7 spec annotations (intent unchanged), guide, task-171 note
+(resume-loader module extraction trigger + `_attempt_consumed_work` reuse).
+
+**Verification:** `make test` **8488 passed, 0 failed** (8482 + 6), `make check` green, zero stray
+mutations. Reviewer sign-off items: (1) seed-fidelity change reaches `--only` degraded snapshots;
+(2) Decision 6/7 letter refinements (both intent-preserving, annotated in the ledger);
+(3) the JSON failure document's two new fields (additive).
+
+## 2026-07-04 — "Fully happy?" loose-end sweep (post review-fixes batch)
+
+One REAL loose end found and closed, introduced by the seed-fidelity fix itself:
+`_seed_scope_events`'s docstring claimed it "mirrors seed_snapshot_into_shared" — FALSE after the
+fix (the seed additionally excludes failed-final-status nodes; the escalation/fidelity guards still
+scanned them). Consequence: over-refusal — a binary placeholder inside a failed-recovered node's
+output (never seeded) raised `ResumeFidelityError` and blocked a legitimate resume. Same smell
+class as Bug A (a "mirrors X" claim drifting from X). Fixed: guard scope now drops nodes whose
+final event in the slice is failed; docstring states it. Pin:
+`test_binary_placeholder_in_unseeded_failed_node_is_ignored`; mutation-verified (filter removed →
+exactly that test fails; reverted clean). Escalation semantics unaffected in practice (markers ride
+SUCCESS events — Decision 8's seam is post-exec).
+
+Doc staleness closed: `engine/CLAUDE.md` `_run_only_snapshot` step-2 seeding description (failed
+exclusion added); guide gains one line documenting the JSON failure document's
+`execution_id`/`resume_command` fields (they were shipped but documented nowhere).
+
+Accepted, deliberately (for the reviewer):
+- `_resumable_execution_id` reads the collector's private `_stream_failed` via defensive getattr —
+  one consumer, documented in its docstring; a public accessor is not earned until a second reader.
+- Guard scans remain PER-EVENT within the seedable node set (an earlier-iteration event of a
+  final-success node is still scanned) — conservative direction, matches Decision 8's
+  "anywhere in the seed scope" wording.
+Carry-overs NOT from this batch (already recorded): manual browser UI check (plan-designated);
+workflow-name-arm selection after a refused attempt (Phase-5 note); trace retention GH #542;
+run-query glob consolidation (deferred, standalone); workflow_trace.py loader extraction
+(task-171 note).
+
+Verification: `make test` **8489 passed, 0 failed** (8488 + the alignment pin), `make check` green,
+zero stray mutations.
+
+## 2026-07-04 — Guide vocabulary scrub, round 2 (owner-caught: "K" leaked)
+
+The owner caught what the agent-UX pass missed: `guide/features/resume.md` still used the spec's
+internal shorthand **K** (×4) plus "seed"/"re-seeds", "memo cache", "host step", "re-resolve" —
+internals vocabulary on the primary external-agent surface. Full rewrite pass against the bar
+"external agent, zero pflow-internals knowledge": every occurrence now says "the failed step" /
+"restores" / "cross-run cache" / "sub-workflow step" / plain language. Also swept the OTHER
+agent-facing strings for the same class: exceptions messages had ONE leak
+(`ResumeFidelityError`: "would seed corrupt state" → "would restore corrupt data"; no test pinned
+the old text); resume.py's K/seed hits are all docstrings/comments (maintainer-facing — correct
+home for spec shorthand); docs/reference/cli/index.mdx and the indicator/plan lines are clean.
+Lesson recorded: the UX review checked messages for leaks but read the guide's PROSE with
+spec-primed eyes — "K" was invisible to a reviewer who had just read the task spec. A vocabulary
+lint of guide prose should grep for single-letter shorthand explicitly.
+
+Verification: `make test` 8489 passed, `make check` green.

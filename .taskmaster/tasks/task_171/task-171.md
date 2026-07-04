@@ -181,6 +181,13 @@ CLI verb.
   missing a visibly drifted fork).
 - Dry-run parity: `--dry-run` on a resume should be consistent with whatever 164 decided for
   `--dry-run --resume` (recorded decision in task-164.md "Engine/planner parity plan" §2).
+- **Module placement (164 post-review note, 2026-07-04):** `runtime/workflow_trace.py` has
+  accreted the whole resume loader (`ResumeSource`, `load_resume_source`, entry resolvers,
+  raw-line reader, flock probe — ~400 lines) beside the collector/readers/seeder. When this
+  task adds the `paused` arm (and `resume list`), extract the loader into its own module
+  (e.g. `runtime/resume_source.py`) FIRST — the paused arm is the third consumer-shaped
+  growth spurt, which is the extraction trigger the 164 review deferred on. Also fold
+  `_attempt_consumed_work` reuse for `resume list` (noted in its docstring).
 - Original durable-phase notes (state serialization steps, edge cases, CLI sketch) were
   drafted in task-125.md pre-split — preserved here in Requirements/Solution; the CLI sketch:
 

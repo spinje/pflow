@@ -361,7 +361,10 @@ def _maybe_echo_resume_hint(ctx: click.Context, result: Any | None) -> None:
     saved trace (``ctx.obj["trace_file"]`` — set by ``_finalize_trace_and_report``)
     so ``--no-trace`` and stream-failed runs (which have no file to resume from)
     stay silent. Skipped for success and for a clean gate denial (exit 3 is a
-    human stop, not a resumable failure). ``_echo_trace`` respects ``-p``.
+    human stop, not a resumable failure). Emitted DIRECTLY to stderr — unlike the
+    trace-location line, this survives ``-p``: failure diagnostics must stay
+    visible in print mode (stdout stays data-only), and a ``-p`` agent otherwise
+    has no way to learn the resume target.
     """
     from pflow.core.workflow.status import WorkflowStatus
 
@@ -372,7 +375,7 @@ def _maybe_echo_resume_hint(ctx: click.Context, result: Any | None) -> None:
     execution_id = getattr(result.trace, "execution_id", None) if result.trace else None
     if not execution_id:
         return
-    _echo_trace(ctx, f"To resume from the failed step: pflow resume {execution_id}")
+    click.echo(f"To resume from the failed step: pflow resume {execution_id}", err=True)
 
 
 def _prepare_gate_resolver(
@@ -532,8 +535,29 @@ def _display_execution_result(
             metrics_collector=result.metrics,
             shared_storage=result.shared_after,
             ir_data=ir_data,
+            resume_execution_id=_resumable_execution_id(ctx, result),
         )
         ctx.exit(1)
+
+
+def _resumable_execution_id(ctx: click.Context, result: Any) -> str | None:
+    """The failed run's execution id, when a trace exists on disk to resume from.
+
+    Feeds the JSON failure document's ``execution_id``/``resume_command`` fields
+    (agent-UX: a ``--output-format json`` consumer must be able to extract the
+    resume target from stdout, not scrape a stderr prose line). Mirrors
+    ``_maybe_echo_resume_hint``'s gate, but must run BEFORE the trace is
+    finalized (the JSON document is emitted first, and JSON mode finalizes in
+    the ``finally``), so it checks trace-enabled + stream health instead of the
+    finalized path.
+    """
+    trace = result.trace
+    if trace is None or not (ctx.obj or {}).get("trace", True):
+        return None
+    if getattr(trace, "_stream_failed", False):
+        return None
+    execution_id = getattr(trace, "execution_id", None)
+    return execution_id if isinstance(execution_id, str) else None
 
 
 def _echo_diagnostic_group(diagnostics: list[Any], *, blank_line: bool) -> None:

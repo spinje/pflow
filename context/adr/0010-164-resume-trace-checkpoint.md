@@ -23,6 +23,51 @@ attempt — the mandated resume target — has no upstream outputs to seed) and 
 it, and upstream references fail to resolve). `resumed_from` stays pure lineage — never a data
 dependency a reader must follow.
 
+**Amended 2026-07-04 (Phase-5 review): entry K is the ROOT of the terminal failure region, not the
+last unrecovered node.** Resume must choose ONE step to re-enter at (K). The rule: **the earliest
+failed step with no successful/cached step after it in event order** — the "frontier" of what
+actually completed. This is Temporal's replay-frontier idea reduced to a one-pass scan of the trace
+(pflow re-enters at K and lets `route_action` re-derive the path forward, the same way Airflow
+re-evaluates trigger rules on a cleared task). Two behaviours this pins, both Decision 9's intent:
+- A `K --on-error--> F` chain where BOTH fail resumes at **K** (the primary), NOT F (the fallback
+  that stopped the run). Re-running K re-evaluates its branch, so a fixed K follows its SUCCESS edge
+  and F never runs. The earlier `_unrecovered_failed_node_ids`-only selection resumed at F because
+  routing tags the recovered primary K as "recovered" and filtered it out — the frontier rule
+  decouples entry selection from that set (which now only answers "real failure vs. gate stop").
+- A failure whose recovery genuinely **succeeded** (a success sits after it) is NOT re-run — the
+  later, separate failure is K. This is strictly more precise than Airflow's "re-run every failed
+  task," which would wastefully re-do the recovered branch.
+
+**Known sharp edge (may bite; needs care in follow-ups):** at-least-once (Decision 4) still applies
+to the whole K-onward tail — resuming a both-fail chain at the primary means that if the primary
+still fails, the fallback F runs AGAIN (a second at-least-once firing of F's side effects across
+attempts, on top of K's). The confirm/`--force` policy gates K's type, but does NOT separately
+warn that a downstream on-error fallback may also re-fire. Acceptable for v1 (resume is at-least-once
+by construction and F already fired once), but a durable-resume / compensation feature (Task 171+)
+that wants exactly-once or saga-style rollback must revisit this — the frontier rule chooses the
+re-entry point, it does not bound how many side-effecting steps the resumed tail may re-run.
+
+**Amended 2026-07-04 (post-implementation review, two proven-bug fixes):**
+
+1. **Seed fidelity: failed events are never seeded.** `seed_snapshot_into_shared` reconstructs
+   the shared store AS IT EXISTED in the source run — a node whose final event is `failed` had
+   its data in `__failures__`, never the store, so seeding it resolves coalesce paths
+   (`${primary.x ?? fallback.x}`) that the original run resolved to the fallback (proven: a
+   resumed tail silently computed the failed primary's empty output). The filter lives at the
+   single seam, so it also fixes the identical latent divergence in `--only` against a DEGRADED
+   snapshot, and it narrows Decision 6's re-record scope for free: a failed-recovered upstream
+   node is neither seeded, listed as restored, nor re-recorded — the attempt trace no longer
+   flips it to cached-success.
+2. **Incomplete tails ending in a failure re-enter at the terminal-failure root** — the same
+   frontier rule as the failed arm (extracted as `_terminal_failure_root`; it needs no warnings
+   data, which an interrupted trace's missing trailer could never supply). The between-nodes
+   single-default-successor resolution applies ONLY to success-ending tails: a failed last
+   node's taken route may have been its ERROR edge, so its default successor is provably the
+   wrong branch (proven: a kill between a recovered failure and its handler resumed past the
+   handler; a kill after an unrecovered failure resumed past the failure). Decision 7's intent —
+   never a wrong-branch guess — is preserved; strictly more tails become resumable instead of
+   wrong.
+
 ## Considered options
 
 - **Dedicated snapshot store (ADR-0002's reserved escape hatch)** — rejected. ADR-0002 built

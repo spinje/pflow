@@ -329,35 +329,87 @@ def test_failed_with_no_failed_node_and_no_gate_refuses_generically(tmp_path: Pa
 # ── Entry derivation + seed-scope guards ──────────────────────────────────────
 
 
-def test_multi_failure_enters_earliest_in_event_order(tmp_path: Path) -> None:
-    """K fails, its on-error F also fails: resume enters at K (event order), not alphabetical first.
+def test_both_primary_and_fallback_failed_enters_at_the_root(tmp_path: Path) -> None:
+    """PRODUCTION shape: K (primary) fails → on-error → F (fallback) also fails (Decision 9 / ADR-0010).
 
-    'zeta' fails first (index 0), 'alpha' fails second (index 1). The disk
-    ``failed_node_ids`` is sorted alphabetically → 'alpha' first, which is WRONG:
-    resuming at F when K now succeeds would never run F. Entry must be 'zeta'.
-    """
+    Real on-error routing tags the recovered primary K with an ``on_error_recovery``
+    warning (this is the shape a live run writes — the earlier fictional fixture
+    OMITTED it). No node succeeded after K, so the terminal-failure region starts
+    at K: resume enters at K (the root), NOT the fallback F. Fixing K's cause then
+    bypasses F entirely on the walk. Names chosen so alphabetical (F='alpha') would
+    disagree with the correct answer (K='zeta')."""
     _write_trace(
         tmp_path,
-        execution_id="multi-1",
+        execution_id="both-fail",
         timestamp="20260101-000000",
         nodes=[_node("zeta", status="failed", output={}), _node("alpha", status="failed", output={})],
-        failed_node_ids=["alpha", "zeta"],  # alphabetical, as save_to_file writes it
+        warnings=[{"node_id": "zeta", "type": "on_error_recovery"}],  # zeta routed to its on-error F
+        failed_node_ids=["alpha"],  # only the unrecovered F, as save_to_file writes it
     )
     source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
     assert source.entry_node_id == "zeta"
 
 
-def test_recovered_failure_is_not_an_entry(tmp_path: Path) -> None:
-    """A failed node with an on_error_recovery warning is recovered — the later real failure is the entry."""
+def test_recovery_that_succeeded_is_not_the_entry(tmp_path: Path) -> None:
+    """PRODUCTION shape: K fails → recovery SUCCEEDS → a later, separate node fails.
+
+    The success between the recovered K and the later failure is what makes K's
+    recovery genuinely 'done' — so resume must NOT re-run the recovered K, it
+    enters at the later real failure (Temporal's frontier). The earlier fictional
+    fixture omitted that success, making it indistinguishable from the both-fail
+    case above."""
     _write_trace(
         tmp_path,
-        execution_id="rec-1",
+        execution_id="rec-ok",
         timestamp="20260101-000000",
-        nodes=[_node("recovered", status="failed", output={}), _node("real", status="failed", output={})],
+        nodes=[
+            _node("recovered", status="failed", output={}),
+            _node("handler", status="success"),  # the recovery SUCCEEDED — the run progressed
+            _node("real", status="failed", output={}),
+        ],
         warnings=[{"node_id": "recovered", "type": "on_error_recovery"}],
+        failed_node_ids=["real"],
     )
     source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
     assert source.entry_node_id == "real"
+
+
+def test_gate_stop_at_the_on_error_handler_refuses_naming_the_gate(tmp_path: Path) -> None:
+    """K fails → its on-error HANDLER is gated and the gate stops the run non-interactively.
+
+    K is then a failed event with nothing successful after it — inside the frontier
+    scan's selection — but it is recovery-tagged. The unrecovered-set check must route
+    this to the gate refusal, never resume at K. This is the case that makes that check
+    load-bearing alongside the frontier rule (a frontier-only 'simplification' regresses it)."""
+    _write_trace(
+        tmp_path,
+        execution_id="gate-after-recovered",
+        timestamp="20260101-000000",
+        nodes=[_node("k", status="failed", output={})],
+        warnings=[{"node_id": "k", "type": "on_error_recovery"}],
+        failed_node_ids=[],
+        gate_lines=[
+            {"kind": "gate", "node_id": "handler", "phase": "pause", "gate_kind": "approval"},
+        ],
+    )
+    with pytest.raises(ResumeGateStoppedError) as excinfo:
+        load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert excinfo.value.node_id == "handler"
+
+
+def test_crafted_failure_before_a_success_refuses_instead_of_crashing(tmp_path: Path) -> None:
+    """Engine-unproducible shape (an unrecovered failure always stops the walk, so it is the
+    last event): a failed event FOLLOWED by a success leaves no failure after the frontier.
+    The loader must refuse with a typed error, never crash on min() of an empty selection."""
+    _write_trace(
+        tmp_path,
+        execution_id="crafted-1",
+        timestamp="20260101-000000",
+        nodes=[_node("k", status="failed", output={}), _node("s", status="success")],
+        failed_node_ids=["k"],
+    )
+    with pytest.raises(ResumeNotResumableError):
+        load_resume_source(workflow_path=WF, debug_dir=tmp_path)
 
 
 def test_undecided_escalation_in_seed_scope_refused(tmp_path: Path) -> None:
@@ -417,6 +469,26 @@ def test_binary_placeholder_in_seed_scope_refused(tmp_path: Path) -> None:
     with pytest.raises(ResumeFidelityError) as excinfo:
         load_resume_source(workflow_path=WF, debug_dir=tmp_path)
     assert excinfo.value.node_id == "makebytes"
+
+
+def test_binary_placeholder_in_unseeded_failed_node_is_ignored(tmp_path: Path) -> None:
+    """Seed fidelity alignment (review 2026-07-04): a FAILED-recovered node is never seeded,
+    so a binary placeholder inside ITS output must not refuse the resume — the guard scope
+    mirrors the seedable set, not the raw pre-K slice."""
+    _write_trace(
+        tmp_path,
+        execution_id="bin-recovered",
+        timestamp="20260101-000000",
+        nodes=[
+            _node("brokenbytes", status="failed", output={"data": "<binary data: 42 bytes>"}),
+            _node("handler", status="success"),
+            _node("k", status="failed", output={}),
+        ],
+        warnings=[{"node_id": "brokenbytes", "type": "on_error_recovery"}],
+        failed_node_ids=["k"],
+    )
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert source.entry_node_id == "k"
 
 
 def test_binary_placeholder_downstream_of_entry_is_ignored(tmp_path: Path) -> None:
