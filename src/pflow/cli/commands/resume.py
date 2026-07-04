@@ -142,6 +142,21 @@ def _node_registry_type(ir: dict[str, Any], node_id: str | None) -> str | None:
     return None
 
 
+def _node_has_loop(ir: dict[str, Any], node_id: str | None) -> bool:
+    """Whether ``node_id`` is a ``loop:`` node — its next step is condition-determined.
+
+    A loop node re-enters itself until its ``while:``/``until:`` condition flips;
+    that re-entry is engine-ephemeral, never a graph edge, so the only DECLARED
+    edge out of a loop node is its exit route. After a loop iteration completes,
+    the next step is "another iteration" or "the exit successor" — decided by the
+    runtime condition, which an interrupted trace never records.
+    """
+    for node in ir.get("nodes", []):
+        if node.get("id") == node_id:
+            return node.get("loop") is not None
+    return False
+
+
 def _single_default_successor(ir: dict[str, Any], node_id: str) -> str | None:
     """The one node reached by ``node_id``'s DEFAULT (unconditional) edge, or None if 0/ambiguous.
 
@@ -189,6 +204,19 @@ def _resolve_between_nodes_entry(resolved: ResolvedWorkflow, source: ResumeSourc
         raise ResumeNotResumableError(
             f"The run was interrupted after step '{last}', which routes dynamically — its next step "
             "was never recorded, so resume cannot tell where to continue.",
+            execution_id=source.execution_id,
+            trace_path=str(source.path),
+            node_id=last,
+            suggestions=["Re-run the workflow from the start."],
+        )
+    # A loop node's continuation is condition-determined and untraced. A `code` loop node
+    # is already refused above (dynamic router); this arm covers the NON-code loop shapes
+    # the code arm misses — notably a `workflow`-type node looping on a child's typed output.
+    if _node_has_loop(resolved.ir, last):
+        raise ResumeNotResumableError(
+            f"The run was interrupted after loop step '{last}', whose next step depends on the loop "
+            "condition (another iteration or the exit route) and was never recorded, so resume "
+            "cannot tell where to continue.",
             execution_id=source.execution_id,
             trace_path=str(source.path),
             node_id=last,

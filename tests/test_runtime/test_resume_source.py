@@ -178,6 +178,86 @@ def test_superseded_points_at_newer_attempt(tmp_path: Path) -> None:
     assert "pflow resume resume-2" in " ".join(excinfo.value.suggestions)
 
 
+def _restored(node_id: str) -> dict[str, Any]:
+    """An upstream re-record as _prepare_resume writes it (cached + restored, zero work)."""
+    return {
+        "node_id": node_id,
+        "node_type": "ShellNode",
+        "status": "cached",
+        "restored": True,
+        "node_output": {"stdout": f"{node_id}-out"},
+    }
+
+
+def test_attempt_killed_mid_step_supersedes_its_source(tmp_path: Path) -> None:
+    """C1: an attempt SIGKILL'd mid-step (dangling start, side effect may have fired) DID consume
+    the chain — resuming the source must refuse as superseded, not silently re-run the started step."""
+    _write_trace(tmp_path, execution_id="src", timestamp="20260101-000000")
+    _write_incomplete_trace(
+        tmp_path,
+        execution_id="att",
+        timestamp="20260102-000000",  # newer
+        completed=[_restored("step1")],  # upstream re-records only...
+        killed_node="step2",  # ...then killed mid-step2 (dangling start, no terminal event)
+        resumed_from="src",
+    )
+    with pytest.raises(ResumeSupersededError) as excinfo:
+        load_resume_source(execution_id="src", debug_dir=tmp_path)
+    assert excinfo.value.newer_execution_id == "att"
+
+
+def test_dead_zero_work_attempt_does_not_wedge_workflow_resume(tmp_path: Path) -> None:
+    """C4: a DEAD zero-work attempt (crash before the first step) is newest, but `resume <workflow>`
+    must skip it and fall through to the older resumable source, not refuse 'nothing to resume'."""
+    _write_trace(tmp_path, execution_id="src", timestamp="20260101-000000")  # resumable, older
+    _write_trace(
+        tmp_path,
+        execution_id="dead",
+        timestamp="20260102-000000",  # newest, but did nothing
+        nodes=[],
+        failed_node_ids=[],
+        resumed_from="src",
+    )
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert source.execution_id == "src"
+    assert source.entry_node_id == "k"
+
+
+def test_workflow_resume_does_not_skip_a_resumable_interrupted_run(tmp_path: Path) -> None:
+    """C4 over-skip guard: a killed-mid-step run (dangling start, zero completed events) is NOT dead —
+    it is the newest resumable attempt and must be selected, not skipped for an older failed run."""
+    _write_trace(tmp_path, execution_id="src", timestamp="20260101-000000")  # older failed run
+    _write_incomplete_trace(
+        tmp_path,
+        execution_id="killed",
+        timestamp="20260102-000000",  # newest, killed mid-first-step
+        completed=[],
+        killed_node="step1",
+    )
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert source.execution_id == "killed"
+    assert source.entry_node_id == "step1"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="advisory flock is POSIX-only")
+def test_workflow_resume_does_not_skip_a_live_zero_work_run(tmp_path: Path) -> None:
+    """C4 race guard: a live run with no steps yet (meta only, lock held) must NOT be skipped for an
+    older run — it is selected and refused as still-running, closing a double-resume window."""
+    import fcntl
+
+    _write_trace(tmp_path, execution_id="src", timestamp="20260101-000000")  # older resumable
+    live = _write_incomplete_trace(
+        tmp_path,
+        execution_id="live",
+        timestamp="20260102-000000",  # newest, live, no events yet
+        completed=[],
+    )
+    with open(live, encoding="utf-8") as writer:
+        fcntl.flock(writer.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(ResumeStillRunningError):
+            load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+
+
 @pytest.mark.parametrize("status", ["success", "degraded"])
 def test_succeeded_run_has_nothing_to_resume(tmp_path: Path, status: str) -> None:
     _write_trace(tmp_path, execution_id="ok", timestamp="20260101-000000", final_status=status)
@@ -200,6 +280,7 @@ def _write_incomplete_trace(
     killed_node: str | None = None,
     workflow_path: str = WF,
     name: str = "wf",
+    resumed_from: str | None = None,
 ) -> Path:
     """Write a production-faithful incomplete (interrupted) trace, returning its path.
 
@@ -219,6 +300,8 @@ def _write_incomplete_trace(
         "inputs": None,
         "nodes": completed,
     }
+    if resumed_from is not None:
+        data["resumed_from"] = resumed_from
     lines = [line for line in flatten_trace_to_lines(data) if line.get("kind") != "run.complete"]
     if killed_node is not None:
         next_id = max((line["id"] for line in lines if line.get("kind") == "event"), default=-1) + 1
@@ -264,7 +347,12 @@ def test_incomplete_killed_between_nodes_returns_last_completed(tmp_path: Path) 
 
 
 def test_incomplete_meta_only_has_nothing_to_resume(tmp_path: Path) -> None:
-    """Crashed before the first step completed (no events, no dangling start) → nothing to resume."""
+    """Crashed before the first step completed (no events, no dangling start) → nothing to resume.
+
+    Addressed by execution id: the by-exec-id selector never skips, so it reaches the incomplete
+    arm's specific message. (Via `resume <workflow>` this same dead trace is skipped as zero-work
+    and surfaces the generic 'no resumable run' — see the C4 selection tests.)
+    """
     _write_incomplete_trace(
         tmp_path,
         execution_id="crash-empty",
@@ -272,7 +360,7 @@ def test_incomplete_meta_only_has_nothing_to_resume(tmp_path: Path) -> None:
         completed=[],
     )
     with pytest.raises(ResumeNothingToResumeError, match=r"before its first step"):
-        load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+        load_resume_source(execution_id="crash-empty", debug_dir=tmp_path)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="advisory flock is POSIX-only")

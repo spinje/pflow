@@ -463,6 +463,45 @@ def test_failed_run_json_document_omits_resume_fields_under_no_trace(home, shell
     assert "resume_command" not in document
 
 
+@pytest.fixture
+def output_fail_wf(tmp_path):
+    """A workflow whose only step SUCCEEDS but whose declared output can't be built, so the
+    run FAILS with every step green. Resume refuses this (nothing to resume), so the failure
+    surface must not advertise a resume that dead-ends (C2)."""
+    from tests.shared.markdown_utils import ir_to_markdown
+
+    ir = {
+        "nodes": [
+            {"id": "step1", "type": "shell", "purpose": "emit a ready marker", "params": {"command": "echo ready"}}
+        ],
+        "outputs": {
+            "result": {"description": "references a key step1 never wrote", "source": "${step1.does_not_exist}"}
+        },
+    }
+    path = tmp_path / "outwf.pflow.md"
+    path.write_text(ir_to_markdown(ir, title="Output Fail Demo", description="Step succeeds; declared output missing."))
+    return path
+
+
+def test_output_resolution_failure_omits_resume_hint(home, output_fail_wf):
+    """C2: a run where every step succeeded but the declared output could not be built FAILS,
+    yet resume refuses it (nothing to resume) — so no dead-end resume hint is offered."""
+    result = _runner().invoke(cli, [str(output_fail_wf)])
+    assert result.exit_code == 1, result.stderr
+    assert "pflow resume" not in result.stderr
+
+
+def test_output_resolution_failure_json_omits_resume_fields(home, output_fail_wf):
+    """C2 (JSON parity): the JSON failure document must not carry resume fields for a run resume
+    would refuse — a stdout-only agent must not be handed a dead-end resume_command."""
+    result = _runner().invoke(cli, [str(output_fail_wf), "--output-format", "json"])
+    assert result.exit_code == 1
+    document = json.loads(result.stdout)
+    assert document["success"] is False
+    assert "execution_id" not in document
+    assert "resume_command" not in document
+
+
 # --- --dry-run (Decision 2) --------------------------------------------------
 
 
@@ -555,6 +594,33 @@ def test_between_nodes_dynamic_code_router_refused():
     }
     with pytest.raises(ResumeNotResumableError, match="dynamically"):
         _resolve_between_nodes_entry(_resolved(ir), _between_source("router"))
+
+
+def test_between_nodes_loop_node_refused():
+    # A loop node's next step (another iteration vs. the exit route) is decided by the
+    # runtime loop condition, which an interrupted trace never records — taking the single
+    # declared (exit) edge would skip the remaining loop body. The realistic non-code loop
+    # shape is a WORKFLOW-type node looping on a child's typed output (verified to validate;
+    # a shell node CANNOT loop — no bool output). It is NOT a `code` node, so the dynamic-
+    # router arm does not catch it — the loop arm is what refuses it. (A `code` loop node is
+    # refused by the dynamic-router arm instead — test_between_nodes_dynamic_code_router_refused.)
+    from pflow.cli.commands.resume import _resolve_between_nodes_entry
+    from pflow.core.exceptions import ResumeNotResumableError
+
+    ir = {
+        "nodes": [
+            {
+                "id": "poll",
+                "type": "workflow",
+                "params": {"workflow": "child.pflow.md"},
+                "loop": {"while": "${poll.keep_going}", "max_iterations": 5},
+            },
+            {"id": "after", "type": "shell", "params": {"command": "echo done"}},
+        ],
+        "edges": [{"from": "poll", "to": "after"}],
+    }
+    with pytest.raises(ResumeNotResumableError, match="loop"):
+        _resolve_between_nodes_entry(_resolved(ir), _between_source("poll"))
 
 
 def test_between_nodes_terminal_node_refused():

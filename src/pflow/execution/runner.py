@@ -505,6 +505,12 @@ class WorkflowRunner:
         kwarg shape as ``run`` (the caller merges ``resume_source.inputs`` into
         ``params`` first); its ``entry_node_id`` must already be resolved.
         """
+        if resume_source is not None and resume_source.entry_node_id is None:
+            # Same library-misuse guard as run(): an unresolved between-nodes
+            # source would thread resume_from=None to build_plan and silently
+            # plan the WHOLE workflow while the plan header claims a resume.
+            raise ValueError("resume_source.entry_node_id must be resolved before plan()")
+
         from pflow.execution.plan import build_plan
         from pflow.registry import Registry
         from pflow.runtime import compile_workflow

@@ -1421,3 +1421,162 @@ point of use instead:
   the seed guards — the `paused` arm composes with `_apply_gate_resolutions` unchanged.
 - 176: `--auto-approve` is approval-kind-only (gate_prompt.py) — an escalation-paused run can
   never be resumed by flag alone; load-bearing for the merged resume/approve control call.
+
+## 2026-07-04 — PR #559 review response: 2 clear fixes landed (S2 + C3)
+
+Two external reviews on PR #559 (a human code review comment + a Codex automated review on the
+STALE commit `717fe445`). Triaged all 7 findings against current HEAD `11b1186c`. Codex's
+escalation finding (C5: "preserve resolved escalations before refusing resume") was **already
+fixed** by the deep-review batch's `_apply_gate_resolutions` fold in `11b1186c` — Codex reviewed
+pre-fold code. Landed the two unambiguous fixes now; the rest (C1/C2/C4 zero-work-trace family +
+S1 predicate-decoupling) are under owner discussion.
+
+- **S2 — `plan()` now guards `entry_node_id is None`** (`runner.py`), mirroring the `run()`
+  library-misuse guard. An unresolved between-nodes source threaded to `plan()` would pass
+  `resume_from=None` to `build_plan` and silently plan the WHOLE workflow while the header claims
+  a resume. CLI-unreachable today (CLI resolves entry first) but the two entry points must be
+  symmetric. Pin: `test_planner_rejects_unresolved_entry_node`. Mutation-verified (neuter the
+  guard → exactly that test fails, the `run()` guard test still passes).
+- **C3 — between-nodes resume after a LOOP node now refuses** (`resume.py`
+  `_resolve_between_nodes_entry` + new `_node_has_loop`). A run killed between a loop node's
+  iteration-end and the next `node.start` has a condition-determined next step (another iteration
+  vs. the exit route) that the trace never records; the old code took the single declared (exit)
+  edge → silently skipped the remaining loop body (silent-wrong-data class). Now refuses as
+  ambiguous, matching the reviewers' "treat loop nodes as ambiguous unless the re-entry decision
+  is persisted." Chose refuse over resume-at-the-loop (Decision-9 restart-iter-1) as the minimal
+  safe fix. Pin: `test_between_nodes_loop_node_refused`. Mutation-verified (neuter the check →
+  exactly that test fails, the other 5 between-nodes tests still pass).
+
+Verification: `make test` **8498 passed, 0 failed** (8496 + 2); `make check` green (ruff / ruff
+format / pre-commit / mypy 244 / deptry); zero stray mutations. Uncommitted (standing rule).
+
+## 2026-07-04 — PR #559 review response: dead/interrupted-attempt tracking (C1 + C4)
+
+Codex flagged two faces of ONE root cause: the loader could not tell a **dead zero-work attempt**
+(refused `--force` resume / crash before the first step) from an attempt that **started a step**
+(SIGKILL mid-step, side effect may have fired) from a genuinely **resumable interrupted** run.
+**Reproduced both against production code FIRST** (scratchpad repro driving a real failed run +
+crafted attempt traces through the real loader) before touching anything — the honest-verification
+step the owner asked for:
+- **C1 confirmed**: an attempt SIGKILL'd mid-step reconstructs with only its restored upstream
+  events (the dangling `node.start` is dropped by reconstruction), so `_attempt_consumed_work`
+  returned False → the source was NOT superseded → `resume <source-id>` silently re-ran the started
+  step (double-fire beyond the acknowledged at-least-once — a violation of the "resume targets the
+  newest attempt" lineage rule).
+- **C4 confirmed**: a dead zero-work attempt sitting newest made `resume <workflow>` refuse ("no
+  failed step to resume") instead of falling through to the older resumable run — the convenience
+  path wedged (this was the log's own deferred Phase-5 note, now closed).
+
+**Fix — one shared predicate, two call sites** (deep-module fold, not two patches):
+- Extracted `_dangling_top_level_starts(path)` from `_resolve_incomplete_entry`'s inline scan (that
+  arm now calls it — zero behavior change there, verified).
+- `_attempt_consumed_work(path, candidate)` (was `(candidate)`): "got somewhere" = a non-`restored`
+  event completed OR a dangling top-level `node.start` exists. Negation = truly dead zero-work.
+- **C1**: superseded scan now `_attempt_consumed_work(path, candidate) or live` — a mid-step kill
+  supersedes; a refused-before-step-1 attempt (zero events, no dangling) still does NOT (the wedge
+  test's clean-source-resume is preserved).
+- **C4**: `_select_resume_trace`'s workflow-name arm skips a candidate only when it did no work AND
+  is not live, falling through to the newest resumable run. Liveness clause is load-bearing: a
+  run mid-startup (meta written, first `node.start` not yet) must be SELECTED then refused
+  as still-running, not skipped — closes a double-resume race. By-exec-id never skips (naming an
+  exact attempt gets a verdict about THAT attempt).
+
+**Deliberate, minor message change** (surfaced, not silent): `resume <workflow>` on a LONE
+meta-only crash now gives the generic "no resumable run found" instead of the specific "interrupted
+before its first step" — both accurate, and the specific message is still reached (correctly) via
+`resume <exec-id>`, which never skips. The one existing test that pinned the specific message was
+re-pointed at the by-exec-id selector (still pins that arm); its docstring notes the split.
+
+**Tests (+4, all mutation-verified)** in `test_resume_source.py`:
+`test_attempt_killed_mid_step_supersedes_its_source` (C1), `…dead_zero_work_attempt_does_not_wedge_
+workflow_resume` (C4), `…does_not_skip_a_resumable_interrupted_run` (over-skip guard — the Phase-5
+case must stay selectable), `…does_not_skip_a_live_zero_work_run` (race guard, POSIX flock).
+Mutations: drop the dangling check → exactly the C1 + over-skip tests fail (with the original bug's
+`src`/`k` answers); remove the C4 skip → exactly the C4 test fails (original "no failed step"
+error); drop the liveness clause → exactly the race-guard test fails. All reverted, `grep MUTATION`
+= 0.
+
+`_attempt_consumed_work` keeps its name (Task 171's `resume list` note still points at it) with the
+enhanced meaning documented in its docstring. Verification: `make test` **8502 passed, 0 failed**
+(8498 + 4); `make check` green; resume no-hang e2e passes (1). Uncommitted (standing rule).
+
+## 2026-07-04 — PR #559 review response: no dead-end resume affordance (C2)
+
+Owner-approved fixing C2 (the recorded "message stays accurate" acceptance is superseded — the
+gate-stop fix `04474c30` already chose round-trip efficiency; this applies the same principle to
+the remaining cases). **Reproduced first**: a run where every step SUCCEEDS but a declared output
+can't be built FAILS (`success=False`) with a trace whose `final_status` is `success` — the failure
+surface printed `To resume from the failed step: pflow resume <id>` and set the JSON
+`resume_command`, but `load_resume_source` then refuses (`ResumeNothingToResumeError`). Same dead
+end for a crash before the first step (zero-node trace, `final_status` failed but no failed step).
+Confirmed the naive gate ("did any step run?") is INSUFFICIENT — the output-fail case has a
+completed step; and it must not count RECOVERED failures.
+
+**Fix — one writer-side predicate mirroring the loader.** New `WorkflowTraceCollector.has_resumable_step()`
+answers "does this run have a failed step `load_resume_source` would accept?" by reusing the
+collector's OWN in-memory judgment — `_determine_trace_status(...) == "failed"` AND
+`_unrecovered_failed_node_ids(final, execution_warnings)` non-empty (the exact primitives the loader
+and trace-status use, so recovered-failure filtering + gate-stop + zero-node are inherited, not
+re-derived). Computed in memory, so it holds on the JSON path too (that document is emitted BEFORE
+the trace is finalized — the reason `_resumable_execution_id` can't read the finalized file).
+"Writer honesty over reader compensation" again: the producer says whether it's resumable; the two
+CLI surfaces just ask.
+
+Both emission sites now gate on it: `_maybe_echo_resume_hint` (stderr) keeps its existing
+success/denied/gate guards and ADDS the check (additive — no existing suppression removed, zero
+regression risk); `_resumable_execution_id` (JSON `execution_id`/`resume_command`) adds it after the
+stream-health gate. Cases: normal node failure → advertises resume (unchanged); output-resolution
+failure / zero-step crash / gate stop / denied → silent.
+
+**Tests (+3, mutation-verified):** `test_has_resumable_step_matches_the_loader_verdict`
+(`test_resume_engine.py`, direct: failed-step True, zero-node False, all-success False),
+`test_output_resolution_failure_omits_resume_hint` + `…_json_omits_resume_fields`
+(`test_resume_cli.py`, real CLI on a real output-fail run — the reachable bug). Mutation: force
+`has_resumable_step` → True → exactly those 3 fail (the JSON one showing the leaked `execution_id`),
+reverted clean. All 8 pre-existing hint/JSON tests (incl. gate-stop-omits, hint-present, `-p`
+survival) still green — the additive gate changed nothing for resumable runs.
+
+Verification: `make test` **8505 passed, 0 failed** (8502 + 3); `make check` clean (exit 0);
+resume no-hang e2e passes. Uncommitted (standing rule).
+
+## 2026-07-04 — Test-fidelity audit of the review-response tests ("passing the right thing")
+
+Owner challenge: are the new tests catching real bugs, or shallow/phantom? Stepped back and found
+TWO real problems in my own tests — one shallow, one phantom — plus a docstring overclaim. All
+resolved via EMPIRICAL verification, not reasoning.
+
+**Shallow test fixed (C2).** `test_has_resumable_step_matches_the_loader_verdict` claimed
+loader-parity but NEVER called the loader — it asserted hardcoded True/False on constructed
+collectors. Worse, on inspection full parity is FALSE: `has_resumable_step` checks only the loader's
+STATUS arm, not its seed-scope guards (lossy-binary / undecided-escalation), and it CAN'T replicate
+them in memory (the escalation guard needs the disk-only gate-resolution fold — replaying it would
+false-refuse a resolved escalation, hiding the hint on a resumable run). Corrected the contract to a
+**sound suppressor**: `False` ⟹ the loader definitely refuses (safe to hide the hint); `True` is
+necessary-not-sufficient. Rewrote the test as `test_has_resumable_step_agrees_with_the_loader_on_
+common_cases` — drives BOTH surfaces on REAL runs (normal failure + output-unbuildable failure) and
+asserts `has_resumable_step() == load_resume_source-accepts`. Mutation-verified it now catches drift:
+forcing the predicate True fails via the LOADER disagreeing (the old test couldn't see this). Fixed
+the docstring + task-review overclaim to the honest contract, documenting the deliberate seed-scope
+gap (a rare lossy-upstream failure may still show a hint that then refuses — an actionable refusal).
+
+**Phantom test fixed (C3).** `test_between_nodes_loop_node_refused` used a `shell` loop node — which
+I EMPIRICALLY PROVED cannot validate (loop `while:`/`until:` require a bool output; shell has none).
+Since my loop refusal sits AFTER the `code` dynamic-router arm, and loop conditions need a bool, I
+had to check: are loop nodes always `code` (→ my arm is dead code, already handled)? Answer: NO — a
+`workflow`-type node CAN loop (sub-workflow looping on a child's typed `## Output`; verified it
+validates, valid=True). `workflow` ≠ `code`, so the dynamic-router arm misses it → the loop arm is
+what refuses it → **C3 is a genuinely real, reachable bug** (a sub-workflow loop killed between
+iterations would otherwise resume down the exit edge, skipping remaining iterations). The FIX was
+right; only the test's node type was impossible. Fixed the test to the proven-valid workflow-type
+loop shape + added a code comment explaining the arm ordering (code loops → dynamic-router arm;
+non-code loops → loop arm). Also empirically confirmed loop nodes trace PER-ITERATION (a loop node
+appears as N `node.start`/`event` pairs), so the "between iterations" state the bug needs is real.
+
+**Deliberately NOT added** (cost > value): a full sub-workflow-loop e2e for C3 — the incomplete-arm →
+CLI between-nodes WIRING is already e2e-tested for the non-loop case (shared path), and the
+loop-specific refusal is now unit-tested on a realistic shape; a real sub-workflow-loop + crafted
+incomplete trace adds wall-clock without new bug-catching power. A test pinning the rare
+fidelity/escalation hint gap — it would lock in intentional best-effort behavior as a contract.
+
+Verification: `make test` **8505 passed, 0 failed** (net: C2 test upgraded in place, C3 test shape
+fixed); `make check` clean (exit 0). Uncommitted (standing rule).

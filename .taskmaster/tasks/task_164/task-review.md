@@ -93,8 +93,22 @@ knowledge is:
   anything used to finalize as `success` on disk (zero-event `_determine_trace_status` lie) and
   permanently consume the attempt chain. Now: zero-event runs finalize `failed` (GLOBAL trace
   semantics change), and the superseded scan counts only attempts that **consumed work**
-  (`_attempt_consumed_work`: ≥1 non-restored event OR live flock) — the liveness clause closes a
-  minutes-wide double-resume race during K's first execution.
+  (`_attempt_consumed_work(path, candidate)`: ≥1 non-restored event OR a dangling top-level
+  `node.start` OR live flock) — the liveness clause closes a minutes-wide double-resume race during
+  K's first execution.
+- **Dead vs interrupted attempt tracking (PR #559 review, C1+C4):** `_attempt_consumed_work` grew a
+  `path` arg and a **dangling-top-level-`node.start`** check (extracted as `_dangling_top_level_starts`,
+  shared with the incomplete arm) — an attempt SIGKILL'd MID-step reconstructs to restored-only
+  events (the dangling start is dropped), so the old content-only predicate mislabeled it "did
+  nothing." Consequences it now prevents: (C1) `resume <source>` re-running a started step because the
+  mid-step attempt failed to supersede; (C4) `resume <workflow>` wedging on a dead zero-work attempt
+  instead of falling through to the older resumable run. The workflow-name selector
+  (`_select_resume_trace`) skips a candidate only when it did no work AND is not live — a run
+  mid-startup is selected then refused as still-running, never skipped (race guard); by-exec-id never
+  skips. One deliberate message shift: `resume <workflow>` on a lone meta-only crash now gives the
+  generic "no resumable run" (the specific "before its first step" message stays reachable via
+  by-exec-id). Both bugs were reproduced against production BEFORE the fix and graduated as
+  mutation-verified pins in `test_resume_source.py`.
 - Smaller deviations, each logged with rationale: third engine stamp `resume_entry_node` (the
   indicator needs K; the two planned stamps didn't carry it); `ResumeSource.workflow_path` field
   (by-exec-id resume must re-resolve the workflow); bare `pflow resume` is a usage error; Phase 3
@@ -139,6 +153,21 @@ knowledge is:
   trace during output handling, so finalize happens in the `finally` AFTER the JSON document is
   printed. `_resumable_execution_id` therefore gates on trace-enabled + the collector's private
   `_stream_failed` (accepted single-consumer private read) instead of `ctx.obj["trace_file"]`.
+- **The resume affordance is gated by a SOUND SUPPRESSOR, not a full loader mirror** (C2): both the
+  stderr hint (`_maybe_echo_resume_hint`) and the JSON `resume_command` (`_resumable_execution_id`)
+  gate on `collector.has_resumable_step()` — the loader's STATUS arm only
+  (`_determine_trace_status == "failed"` AND a non-empty unrecovered set), computed IN MEMORY
+  because the JSON path runs pre-finalize. Contract: **`False` ⟹ the loader definitely refuses**
+  (safe to hide the hint); **`True` is necessary-not-sufficient**. It deliberately does NOT replicate
+  the loader's seed-scope guards (lossy-binary / undecided-escalation) — those need the disk-only
+  gate-resolution fold (`_apply_gate_resolutions`), and replaying it in memory would FALSE-refuse a
+  resolved escalation (a false negative that hides the hint on a resumable run — the dangerous
+  direction). So a rare lossy-upstream failure may still show a hint that then refuses (an actionable
+  refusal). It kills the C2-reported dead-ends: all-steps-succeed-but-output-unbuildable (trace
+  `final_status` is `success`), zero-step crash, gate stop. Do NOT "simplify" to "did any step run":
+  a recovered failure is a completed step but not a resumable one. The sound direction is pinned by
+  `test_has_resumable_step_agrees_with_the_loader_on_common_cases` (drives BOTH surfaces on real
+  runs — a shallow "assert the predicate in isolation" test would not catch predicate↔loader drift).
 - **Trace-fixture rules that cost real time:** gate/`node.start` lines must be spliced BEFORE
   `run.complete` (content after the trailer raises); a leaf's terminal event REUSES its
   `node.start`'s reserved id (dangling-start detection is exact id matching); top-level scoping

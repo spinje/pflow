@@ -161,6 +161,28 @@ def test_runner_rejects_unresolved_entry_node(tmp_path) -> None:
         )
 
 
+def test_planner_rejects_unresolved_entry_node(tmp_path) -> None:
+    """plan() mirrors run()'s guard: an unresolved between-nodes source would
+    otherwise plan the whole workflow while the header claims a resume (S2)."""
+    source = ResumeSource(
+        path=tmp_path / "t.json",
+        workflow_path=str(tmp_path / "wf.pflow.md"),
+        execution_id="e1",
+        entry_node_id=None,
+        last_completed_node_id="a",
+        events=[],
+        inputs=None,
+        content_hash=None,
+    )
+    with pytest.raises(ValueError, match="entry_node_id"):
+        WorkflowRunner().plan(
+            {"nodes": [{"id": "a", "type": "shell", "params": {"command": "true"}}]},
+            {},
+            RunnerConfig(),
+            resume_source=source,
+        )
+
+
 def test_resume_after_entry_node_removed_is_a_typed_refusal(tmp_path, flaky_step2) -> None:
     """K renamed/removed since the failed run → ResumeNotResumableError naming K,
     never find_node_by_id's misattributed "compiler bug" CompilationError."""
@@ -363,6 +385,65 @@ def test_refused_attempt_does_not_wedge_the_chain(tmp_path, flaky_step2) -> None
 
 
 # --- Empty-output fidelity (§C step 4 `is not None` stamp) -------------------
+
+
+def test_has_resumable_step_agrees_with_the_loader_on_common_cases(tmp_path) -> None:
+    """C2 SOUND-direction drift pin: drive BOTH the writer-side gate and the real loader on the
+    SAME real runs and assert they agree for the cases the resume hint must get right.
+
+    ``has_resumable_step()`` is a sound suppressor — ``False`` MUST mean
+    ``load_resume_source`` refuses, else the hint vanishes on a resumable run. This runs the
+    two workflows the C2 report named — a normal node failure (resumable) and an
+    all-steps-succeed-but-output-unbuildable failure (not) — and asserts the predicate equals
+    'the loader accepts'. If the two ever drift on these, this fails. (``True`` is only
+    necessary-not-sufficient — the rarer seed-scope refusals are out of scope by design; see
+    ``has_resumable_step``'s docstring.)
+    """
+    from pflow.core.exceptions import ResumeSourceError
+    from tests.shared.markdown_utils import ir_to_markdown
+
+    def loader_accepts(result: Any) -> bool:
+        trace_path = result.trace.save_to_file()
+        try:
+            load_resume_source(execution_id=result.trace.execution_id, debug_dir=trace_path.parent)
+            return True
+        except ResumeSourceError:
+            return False
+
+    def run(ir: dict[str, Any], name: str) -> Any:
+        path = tmp_path / f"{name}.pflow.md"
+        path.write_text(ir_to_markdown(ir, title=name, description=f"{name} workflow for the parity pin."))
+        return WorkflowRunner().run(str(path), {}, RunnerConfig())
+
+    # (a) A normal node failure → resumable on BOTH surfaces.
+    r_fail = run(
+        {
+            "nodes": [
+                {"id": "step1", "type": "shell", "purpose": "emit a ready marker", "params": {"command": "echo ready"}},
+                {"id": "step2", "type": "shell", "purpose": "fail on purpose here", "params": {"command": "exit 7"}},
+            ]
+        },
+        "normal_fail",
+    )
+    assert r_fail.success is False
+    assert r_fail.trace.has_resumable_step() == loader_accepts(r_fail) == True  # noqa: E712
+
+    # (b) Every step succeeds but a declared output can't be built → resumable on NEITHER.
+    r_out = run(
+        {
+            "nodes": [
+                {"id": "step1", "type": "shell", "purpose": "emit a ready marker", "params": {"command": "echo ready"}}
+            ],
+            "outputs": {"result": {"description": "references a key step1 never wrote", "source": "${step1.nope}"}},
+        },
+        "output_fail",
+    )
+    assert r_out.success is False
+    assert r_out.trace.has_resumable_step() == loader_accepts(r_out) == False  # noqa: E712
+
+    # A crash before the first step (no events) is not easily produced by a real run; pin the
+    # zero-step branch directly — the loader refuses this too (nothing/ before-first-step).
+    assert WorkflowTraceCollector(workflow_name="t").has_resumable_step() is False
 
 
 def test_restored_empty_output_survives_rerecord_and_reseeds() -> None:

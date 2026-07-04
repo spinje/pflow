@@ -379,7 +379,13 @@ def _maybe_echo_resume_hint(ctx: click.Context, result: Any | None) -> None:
         return
     if not ctx.obj.get("trace_file"):
         return
-    execution_id = getattr(result.trace, "execution_id", None) if result.trace else None
+    # Only advertise resume when the run actually has a failed step to resume from
+    # (C2): a crash before the first step, or an all-steps-succeed-but-output-
+    # unbuildable failure, produces a trace resume would then REFUSE — a dead-end
+    # command. The collector answers this authoritatively from its own events.
+    if not result.trace or not result.trace.has_resumable_step():
+        return
+    execution_id = getattr(result.trace, "execution_id", None)
     if not execution_id:
         return
     click.echo(f"To resume from the failed step: pflow resume {execution_id}", err=True)
@@ -562,6 +568,11 @@ def _resumable_execution_id(ctx: click.Context, result: Any) -> str | None:
     if trace is None or not (ctx.obj or {}).get("trace", True):
         return None
     if getattr(trace, "_stream_failed", False):
+        return None
+    # Same resumability gate as the stderr hint (C2): don't hand a JSON agent a
+    # resume_command the loader would refuse. Computed in memory, so it holds even
+    # though the trace is not finalized yet on this (pre-finalize) JSON path.
+    if not trace.has_resumable_step():
         return None
     execution_id = getattr(trace, "execution_id", None)
     return execution_id if isinstance(execution_id, str) else None
