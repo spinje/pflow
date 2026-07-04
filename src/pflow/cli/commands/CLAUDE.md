@@ -21,7 +21,7 @@ One file per top-level command, registered in `main.py` via `cli.add_command()`.
 | `settings.py` | `pflow settings ...` | `pflow.core.settings` |
 | `report.py` | `pflow report` | `pflow.core.trace_report` |
 | `mermaid.py` | `pflow mermaid` | `pflow.core.workflow.mermaid`, `pflow.execution.*` |
-| `ui.py` | `pflow ui [workflow]`; Point verbs `focus`/`frame` take `--say TEXT` (Task 174: CLI-side Gemini TTS via `core/tts.py` → base64-WAV upload to `/api/say`; `_synthesize_say` NEVER raises — synthesis failure degrades to caption-only, `narration unavailable:` note on stderr in JSON mode, exit 0 if the point delivered) | `pflow.ui.server` (lazy, behind `[ui]` extra); server/contract → `src/pflow/ui/CLAUDE.md` |
+| `ui.py` | `pflow ui [workflow]`; Point verbs `focus`/`frame` take `--say TEXT` (Task 174: CLI-side Gemini TTS via `core/tts.py` → base64-WAV upload to `/api/say`; `_synthesize_say` NEVER raises — synthesis failure degrades to caption-only, `narration unavailable:` note on stderr in JSON mode, exit 0 if the point delivered). A `--say` WAITS for the previous clip to finish BEFORE dispatching (`_await_narration_turn` reads `narration_s_remaining`/`narration_blocked` off `/api/health` — synthesis runs first, so it overlaps the playing clip and sequential says have ~no dead air; residual gap = max(0, synth − prior clip); an autoplay-BLOCKED Viewer HOLDS the walkthrough, polling until the user's ▶ click clears it, capped at `_BLOCKED_MAX_POLLS`; `--no-wait` interrupts instead; a bare focus/frame never probes). Narration outcome rides the `Narration` NamedTuple; its `.report` (incl. `duration_s`) is merged into the JSON payload | `pflow.ui.server` (lazy, behind `[ui]` extra); server/contract → `src/pflow/ui/CLAUDE.md` |
 | `analyze_cache.py` | `pflow analyze-cache <workflow> [params]` | `pflow.core.prompt_cache_analysis` |
 
 ## Cross-References Within commands/
@@ -119,7 +119,7 @@ Node filtering priority: Test policy → Deny → Allow → Default. See `core/C
 **Environment variables**: `set-env`, `unset-env`, `list-env`.
 Stores API keys in `~/.pflow/settings.json`. Injected into `os.environ` at CLI startup (`_inject_settings_env_vars` in `commands/run.py`).
 
-**LLM model settings** (`settings llm` subgroup): `show`, `providers`, `set-default`, `set-discovery`, `set-filtering`, `unset`.
+**LLM model settings** (`settings llm` subgroup): `show`, `providers`, `set-default`, `set-discovery`, `set-filtering`, `set-tts-model`, `set-tts-voice`, `unset`. The TTS pair (Task 174, `pflow ui --say`) stores values verbatim — no LiteLLM prefix normalization — and `unset` restores their BUILT-IN defaults (they have concrete defaults, unlike the model trio's revert-to-auto-detection).
 
 LLM model resolution chain (genuinely hard to discover):
 - `default`: workflow params → `default_model` setting → `llm` CLI default → error

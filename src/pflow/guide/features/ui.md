@@ -38,19 +38,56 @@ shape as you work.
 Once a Viewer server is running, an agent can Point at things in the user's open
 windows and Watch what they deliberately click:
 
-- `pflow ui focus <workflow> <target> [--open] [--say TEXT]` — focus/reveal a target in every
-  matching Viewer.
-- `pflow ui frame <workflow> <target> [--say TEXT]` — move the camera without changing focus.
-- `pflow ui clear-focus <workflow>` — clear the current focus (also dismisses a `--say` caption).
+- `pflow ui focus <workflow> <target> [--open] [--say TEXT] [--no-wait]` — focus/reveal a target
+  in every matching Viewer.
+- `pflow ui frame <workflow> <target> [--say TEXT] [--no-wait]` — move the camera without
+  changing focus.
+- `pflow ui clear-focus <workflow>` — clear the current focus (also dismisses all `--say` captions).
 - `pflow ui user-activity [workflow]` — read recent clicks and view changes.
 
 `--say "text"` narrates the point aloud with a persistent on-canvas caption anchored at the
 target — point *and explain* in one command. Delivery direction goes in `[brackets]` (e.g.
 `--say "[excited] this node calls the LLM"`): bracketed tags shape the voice and are stripped
 from the caption; **everything outside brackets is spoken AND shown**. You write only the
-sentence — voice, model, and audio format come from settings (`tts_model`/`tts_voice`; needs a
-Gemini API key). If synthesis fails, the point and caption still land and the result notes
-`narration unavailable: <reason>` — never an error you must catch.
+sentence — voice and model come from settings: `pflow settings llm show` displays them,
+`pflow settings llm set-tts-voice <name>` / `set-tts-model <id>` change them. Narration needs a
+Gemini API key; the failure note names the exact fix if it's missing.
+
+**A sequence of `--say` commands is a narrated walkthrough that paces itself.** Each command
+waits for the previous clip to finish before it points, then returns as soon as its own clip
+starts playing — so just run them one after another, nothing more:
+
+```bash
+pflow ui focus review.pflow.md fetch --open --say "[warm] It all starts here, fetching the data."
+pflow ui frame review.pflow.md "fetch.stdout -> analyze.data" --say "The raw data flows along this wire."
+pflow ui focus review.pflow.md analyze --say "Then an LLM looks for anomalies."
+pflow ui focus review.pflow.md report --say "[cheerful] And the findings land in this report."
+```
+
+Any point target narrates — steps, inputs/outputs, or a connection (quote the `->` address);
+use `frame` when you want the camera moved without changing what's focused.
+
+Run the walkthrough as ONE chained shell command like above, not one `--say` per turn — your
+own thinking time between separate commands is absorbed only up to the playing clip's length,
+so slow turns reintroduce dead air. For a long walkthrough, run that chain in the BACKGROUND if
+your runtime supports it: pacing happens inside each command, so backgrounding changes nothing
+about the narration — it only frees you to keep working. In the foreground, budget the command
+timeout: several seconds per sentence (synthesize, wait for its turn, speak), plus up to ~2
+minutes if the hold below triggers. Two notes can appear in the output — both informational,
+neither is an error you must catch:
+
+- `narration unavailable: <reason>` — synthesis failed; the point and caption still landed,
+  only the voice is missing.
+- `note: narration is blocked in the Viewer (browser autoplay policy) — holding the
+  walkthrough; click the caption's ▶ button to hear it and resume.` — a freshly opened browser
+  window plays no sound until the user clicks in it once. The command **waits** (up to ~2
+  minutes) and continues with `note: narration unblocked — resuming.` after the click — so tell
+  the user to click the caption's ▶ button, then carry on.
+
+`--no-wait` skips all waiting: the point fires immediately and its clip interrupts whatever is
+playing. Captions **persist per target**: each narrated node keeps its caption box (with a
+Replay button once its clip finishes), a new `--say` to the same target replaces just that box,
+and the user closes boxes individually — `clear-focus` closes them all and stops the voice.
 
 `focus`/`frame`/`clear-focus` reach every matching Viewer — including one whose tab is
 currently backgrounded; the highlight is applied when the user returns to it.

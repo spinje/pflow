@@ -12,7 +12,7 @@ The SSE **message envelope is deliberately vocabulary-agnostic** (`{type, …pay
 - **Stay stateless; poll for commands** — rejected. A poll cannot *push* a focus into an already-open page, and command-polling is laggy and wasteful; the overlay genuinely needs push.
 - **Define the run-event schema now** — rejected. Task 133's consumers don't exist yet, and pinning it early over-constrains. The generic envelope keeps run events purely additive.
 - **Persist the connection/interaction state** — rejected. Unnecessary for a local single-user server; restart-drops-all is correct, and persistence would be the kind of layer this codebase deletes.
-- **Browser→server apply-acknowledgments** (the browser confirming a Point was *shown*) — rejected for v1. The human is in the loop (it's a conversation), and "the server validates the target up front + the browser always reveals a resolvable one" makes the command's report honest without an ack round-trip. Additive later, only for autonomous/no-human flows or the overlay.
+- **Browser→server apply-acknowledgments** (the browser confirming a Point was *shown*) — rejected for v1. The human is in the loop (it's a conversation), and "the server validates the target up front + the browser always reveals a resolvable one" makes the command's report honest without an ack round-trip. Additive later, only for autonomous/no-human flows or the overlay. *(The "additive later" case arrived for narration playback — ADR-0012's beacons; Point commands themselves remain ack-less.)*
 
 ## Consequences
 

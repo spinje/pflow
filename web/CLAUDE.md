@@ -107,9 +107,15 @@ Tests sit beside their subject.
   the `pointHandlers.current` ref
   to `GraphView`'s `selectRun` — the SAME pin path the RunSelector + launch use — so the agent can switch
   an open Viewer to a run; add new SSE verbs on this ref, never in the subscribe effect's deps. `say`
-  (Task 174) anchors ONE global caption callout by STRUCTURAL ref (re-resolved every render — flat ids
-  renumber on rebuild) and plays the clip; the agent's `clear` dismisses it + pauses, a bare focus/frame
-  does NOT (captions persist until dismissed — locked). Every React
+  (Task 174 + persistent-captions follow-up) anchors PERSISTENT per-target caption boxes — a
+  `Map<refKey, SayItem>` keyed by the STRUCTURAL ref (re-resolved every render — flat ids renumber on
+  rebuild); a new say to an annotated target replaces just that box, different targets coexist. Each
+  box carries a playback status (`playing → done` on `ended` → Replay button; initial `play()` reject
+  → `blocked` → unlock button; a REPLAY reject means LRU-evicted → `expired`, button gone, caption
+  stays). ONE clip plays at a time: `startClip` (the single start-any-clip seam — first play AND
+  replay) pauses the current clip and flips any OTHER playing box to `done` (interrupted = replayable,
+  not lost). The agent's `clear` dismisses ALL boxes + pauses; a bare focus/frame does NOT (captions
+  persist until dismissed — locked). Every React
   Flow component the registries reference must be `memo()`'d.
 - **Chrome palette is SCOPED, never `:root`.** The dark UI tokens (`--bg/--border/--text/
   --accent/--bg-field`, surface ladder `#0d0d0d` void < `#151515` panel < `#1c1c1c` field) are

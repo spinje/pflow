@@ -206,6 +206,21 @@ is `run_node.read_run_inputs`; sync handler, threadpooled, touches no hub state)
   per-queue ordering holds only because there is NO `await` between the two broadcasts** —
   never insert one. Audio is stored only after a unique resolve (no orphan bytes on a bad
   target); the response shape matches `/api/command` so the CLI renderers work unchanged.
+  **Pacing rendezvous (follow-up v2):** a DELIVERED audio say records
+  `app.state.narration_until = monotonic() + wav_duration + _NARRATION_START_LAG_S` (the lag
+  covers SSE delivery + audio fetch + play() init in the browser — the estimate must err PAST
+  the true end or the next say clips the last words; observed live). Overwrite, never max (a
+  new clip interrupts the prior); global, not per-workflow (one machine, one speaker);
+  caption-only / zero-window / unplayable-bytes says never mark it busy; `clear` resets it
+  (clear = stop talking). Loop-affine like the hub — only async handlers touch it.
+- `POST /api/narration` (Task 174 follow-up v2) — playback beacons: the Viewer reports what the
+  audio element ACTUALLY did with a say clip (`{audio_id, event: started|blocked|ended}`,
+  fire-and-forget from `reportNarration`). `started` re-anchors `narration_until` to now + the
+  clip's real duration (replaces the broadcast-time start-lag estimate); `blocked` sets
+  `narration_blocked` (surfaced via health — the CLI's next `--say` warns the agent the window
+  is silently captioning until a click); `ended` clears the window. `started`/`ended` clear the
+  blocked flag (sound demonstrably works). An evicted `audio_id` on `started` is harmless
+  (duration unknown → no window). Async (loop-affine narration state + store read).
 - `GET /api/audio/{audio_id}` serves a stored clip (`audio/wav`) or 404. The
   `_AudioStore` is a loop-only `OrderedDict` LRU (16 clips, 10 MB decoded upload bound,
   no lock, no TTL, no read-touch — clips are played once within seconds); like the hub it
@@ -215,9 +230,12 @@ is `run_node.read_run_inputs`; sync handler, threadpooled, touches no hub state)
   returns the bounded, newest-first snapshot. `POST /api/visibility` updates one
   connection. All POSTs require `application/json`.
 - `GET /api/health` is the cheap liveness + identity probe for discovery/reuse:
-  `{"service": "pflow-ui"}` always, plus `{"workflow_key", "windows"}` when a
-  resolvable `workflow` is supplied (`windows = len(windows_for(key))`, **no graph
-  build**). An unresolvable workflow reports identity only (no 404 — a liveness probe
+  `{"service": "pflow-ui", "narration_s_remaining": <float>, "narration_blocked": <bool>}`
+  always (seconds of `say` narration still playing — the CLI's `--say` waits its turn BEFORE
+  dispatching, so sequential narration never interrupts itself — and whether the Viewer
+  beaconed an autoplay-blocked play with no successful playback since), plus
+  `{"workflow_key", "windows"}` when a resolvable `workflow` is supplied
+  (`windows = len(windows_for(key))`, **no graph build**). An unresolvable workflow reports identity only (no 404 — a liveness probe
   must answer regardless, unlike `events()`/`command()`). It reads the hub, so it is
   `async def` per the invariant below. **`windows` can transiently over-count**
   for up to one `_KEEPALIVE_S` cycle after a Viewer reconnects to *this* server (the

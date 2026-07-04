@@ -528,3 +528,169 @@ query-tightening in a pre-existing test forced by it); `review-test-fidelity` sw
 only unverified behaviors (user's ears + a non-headless window needed). Phase 5.7's offer stands:
 an ADR for "TTS bypasses LiteLLM via direct httpx" — the decision survived implementation
 unchanged (LiteLLM pin `==1.86.1` + BerriAI/litellm#11118), so it qualifies; ask the user.
+
+---
+
+# FOLLOW-UP: Narration Pacing + Persistent Replayable Captions
+
+> Distinct unit of work (plan: `follow-up-plan-narration-pacing-and-persistence.md`; handoff:
+> `../starting-context/braindump-2026-07-04-follow-up-implementer-handoff.md`). Base: the
+> committed 174 v1 (`c1063ef0`). Both plan decisions pre-ratified by the user; the plan's two
+> v1 reopenings (interrupt model, single caption) are sanctioned and recorded there.
+
+## 2026-07-04 — Follow-up session: Changes A + B + C (COMPLETE)
+
+**Baseline** (verified at session start, on committed v1): Python **8471 passed / 9 skipped**;
+web **709 passed**. Braindump's NEEDS-VERIFICATION resolved before coding: the CLI say tests
+mock `synthesize` with `b"WAV"`-style bytes → `wav_duration` (total) returns `0.0` → the sleep
+gate is falsy → **block-by-default adds zero wall-clock to the suite** (confirmed by grep, then
+by the green run).
+
+### Plan amendment (raised with the user pre-implementation; approved)
+
+Stress-testing the plan's Change-B sketches found **two state-transition defects**:
+1. `playNarration`'s playing→done sweep flips its OWN just-set box to `done` (both functional
+   updaters compose in order), so a playing box would show a Replay button.
+2. `replay` had no sweep at all, so replaying box B while box A plays left A stuck `"playing"`
+   forever (no Replay button — contradicting "interrupted = replayable, not lost").
+
+**Fix — one fold:** `playNarration` + `replay` merged into a single `startClip(key, url,
+failStatus)` (they were ~90% identical); the sweep excludes `key`, the function owns the key's
+own status, and `failStatus` carries the one legitimate difference (`"blocked"` for the initial
+autoplay-policy rejection vs `"expired"` for a replay rejection — a user-gesture replay can't be
+policy-blocked, so its rejection means LRU-evicted). Both defects are structurally impossible in
+the folded form. **Mutation-verified (pitfall #19):** re-introducing the plan's original sketch
+order fails 5 tests; removing the sweep fails 2 (the two new pins below). Reverted.
+
+### Change A — CLI pacing (Python)
+- `core/tts.py`: `wav_duration(wav) -> float`, TOTAL (0.0 on any unparseable input).
+- `cli/commands/ui.py`: `Narration` NamedTuple (folds the 4-tuple + the narration-report dict
+  duplicated in both commands; `duration_s` added to the report, `null` without audio);
+  `--no-wait` (`wait` flag, default block) on `focus`/`frame`; `_pace_narration(payload, n,
+  wait=)` sleeps `duration_s` as the LAST statement of each command (after all reporting and the
+  `_dispatch_failed` exit check), gated on audio present + point delivered + `--no-wait` absent.
+  **DEVIATION (structural only):** the plan inlined the sleep in both commands; `_pace_narration`
+  is the same 2-line gate in one place (the `_send_point` precedent).
+- Tests: +3 `wav_duration` (real 1s WAV == 1.0 exactly; garbage/empty → 0.0); +6 pacing
+  (`TestSayPacing`: sleeps exactly the clip duration + `duration_s` in JSON; frame paces too;
+  `--no-wait` skips; synth-failure skips; 0-window skips (exit 1 unchanged); `--open --say`
+  paces ONCE, as the last event AFTER both `/api/say` posts — event-list ordering, distinguishing
+  the poll-interval sleeps per the braindump's two-sleep-sources warning). One pre-existing
+  assertion updated for the new `duration_s` report field (this branch's own test, not a 169 one).
+
+### Change B — persistent replayable captions (web)
+- `GraphView.tsx`: `sayCallout` + `narrationBlocked` replaced by `Map<refKey, SayItem>`
+  (`status: playing|blocked|done|expired`); module-level `sayAnchorIdFor` (per-box re-resolve
+  every render — flat ids renumber); `startClip` (above) + `replaySay` + `closeSay(key)` +
+  `dismissAllSays` (the `clear` verb — close-all, locked); render maps one `NodeCallout` per box
+  (`frameOnMount={false}`, unlock button on `blocked`, ↻ Replay on `done`, nothing on
+  `expired`/caption-only); unmount cleanup kept; currency guards kept on BOTH `onended` and the
+  play `.catch`. `index.css`: `.say-replay` shares the `.say-unlock` selector.
+- Tests (say describe rewritten to the Map model): FakeAudio gains `onended`/`fireEnded()`
+  (pause does NOT fire onended — interruption is code-driven, finish is event-driven, per the
+  braindump). 14 say tests (was 10): kept/adapted all v1 pins (incl. the rapid-two-say
+  AbortError currency guard, unmount-pause, stale-ref, clear-vs-bare-focus); new: different-target
+  coexistence + close-one-leaves-other; interruption flips playing→done (mutation pin);
+  replay-while-other-plays finishes the other (mutation pin); natural-finish → Replay → replays
+  via a FRESH Audio; evicted replay → expired, button gone, caption stays; no Replay while
+  playing (defect-1 pin); no dead button on caption-only.
+
+### Change C — verification, docs
+- **Suites:** Python **8480 passed / 9 skipped** (+9, 0 regressions); web **714 passed** (+5 net,
+  0 regressions); strict tsc + `npm run build` + `make ui-build` + full `make check` all green.
+- **Real browser (live Gemini + real CLI + headless MCP Chrome,** scratchpad workflow
+  `say-followup-verify.pflow.md`, all assertions DOM-polled, screenshot
+  `/tmp/pflow-shots/say-followup-persist.png`): **every check passed.**
+  - **Pacing measured:** say1 elapsed **7s** for a **3.64s** clip; say2 elapsed **8s** for a
+    **4.6s** clip (≈ synth + clip each — the CLI demonstrably blocked for the full clip);
+    `duration_s` present in the JSON report.
+  - **Persistence:** after two says to different nodes, BOTH captions coexist and BOTH show
+    ↻ Replay (each clip finished naturally while its command blocked — the playing→done→Replay
+    transition ran live, end-to-end through the real audio store).
+  - **Replay:** clicking box 1's ↻ Replay flipped it back to playing (button count 2→1) — a live
+    re-fetch + re-play of the stored WAV.
+  - **clear-focus** removed ALL boxes.
+  - Workflow-authoring notes: shell JSON stdout auto-parses to dict at a code node, while MCP
+    `evaluate_script` results arrive as a PROSE wrapper with a ```json fence inside — a verdict
+    node must brace-slice before `json.loads` (first run failed only on this; all browser checks
+    had already passed — read the trace's `node_output` before re-spending on synthesis).
+- **Docs:** `guide/features/ui.md` (verb lines + the pacing/persistence contract),
+  `docs/reference/cli/index.mdx` (`--no-wait` + pacing paragraph), `web/CLAUDE.md` (say model:
+  per-target Map, statuses, startClip), `web/src/components/CLAUDE.md` (say bubbles),
+  `src/pflow/cli/commands/CLAUDE.md` (pacing + Narration), `src/pflow/core/CLAUDE.md`
+  (`wav_duration`).
+
+### Still user-only (hand-off to the human)
+- **The felt walkthrough** — the whole origin of Change A: run the 5-step voice-demo sequence
+  and feel the pacing + the ~4-6s inter-step SILENCE GAP (synthesis of clip N+1 happens after
+  clip N ends; the braindump predicts it and names the options if it grates — accept / shorten
+  captions / consciously reopen the queue decision; nothing was built for it).
+- The audible check and a genuinely-blocked autoplay (headless allows autoplay; jsdom pins the
+  unlock logic).
+- **Box overlap on adjacent anchors** — two boxes coexisted live (DOM-verified) but the framed
+  screenshot showed one at a time; a full multi-node walkthrough is the first real eyeball of
+  crowding (braindump UNEXPLORED item).
+- The v1 ADR offer ("TTS bypasses LiteLLM via direct httpx") remains open.
+
+## 2026-07-04 — Live end-to-end demo session: pacing v2 (wait-before-dispatch) + playback beacons + blocked-hold
+
+Driven entirely by the user narrating `ticket-triage.pflow.md` (new demo fixture, repo root) in
+their REAL browser and reacting. Three user-reported defects, each fixed and re-demoed live:
+
+**1. "~5s dead air between steps; max 1 second" → pacing v2 (reopens the follow-up's own
+"block after dispatch" call, sanctioned by the user's explicit requirement).** The post-dispatch
+sleep became a PRE-dispatch wait: synthesis already runs first in the command, so it overlaps the
+still-playing previous clip; the CLI then waits out the remainder and dispatches. The rendezvous
+lives on the SERVER (which already holds the audio): `app.state.narration_until` set on a
+delivered audio say (`wav_duration(decoded)`), reset by `clear`, reported as
+`narration_s_remaining` on `/api/health` (the probe the CLI already used). No filesystem state
+(a `~/.pflow` file was rejected: real-home test pollution under xdist). Measured live: gaps
+dropped from ~5s to **0 / 0.8 / 0.6 / 1.8s** (the 1.8 = a long line after a short clip; bound is
+max(0, synth − prior clip)). Commands now return at dispatch — the LAST clip plays after the
+sequence exits.
+
+**2. "the first message was interrupted by the second" → start-lag pad.** The rendezvous was
+recorded at BROADCAST time but the browser starts playing ~0.3–1s later (SSE + audio fetch +
+play()), so the next say arrived exactly at the recorded end and clipped the last words.
+`_NARRATION_START_LAG_S = 0.75` added to the estimate (err past the true end).
+
+**3. "boxes showed without narration, only the last played (no clicks)" → playback beacons +
+blocked-hold.** Root cause (proven live by the beacons, not guessed): the fresh `--open` window's
+**autoplay policy** blocked the clips — and nothing could see it: the CLI reported "sent to 1
+window" and paced a silent walkthrough. Fix: the Viewer now beacons what the audio element
+ACTUALLY did — `POST /api/narration {audio_id, event: started|blocked|ended}`
+(`reportNarration` in events.ts, fire-and-forget like reportInteraction; wired into startClip's
+then/catch/onended + closeSay). `started` re-anchors `narration_until` to REAL playback (replaces
+the lag guess); `ended` clears it; `blocked` sets `narration_blocked` (health-surfaced).
+Then the user's follow-up ("it still marches on while blocked") locked the final behavior:
+`_await_narration_turn` **HOLDS the walkthrough while blocked** — polls health every 0.5s (cap
+240 = ~2 min), stderr notes `holding the walkthrough… click ▶` / `resuming` / gave-up — so a
+silent window pauses the sequence until the user's ▶ click plays the blocked line (started
+beacon clears the flag) and narration resumes. Verified in the live demo: block → hold note →
+user clicked ▶ → "resuming" → clips flowed back-to-back.
+
+**Contract deltas:** `/api/health` gains `narration_s_remaining` + `narration_blocked` (3
+exact-body 169-era health pins updated — deliberate extension); new mutating `POST
+/api/narration` (added to both guard inventories); the `--say`/`--no-wait` help + guide + CLI
+reference rewritten to the wait-before-dispatch + hold semantics. All notes stderr-only (stdout
+stays a pure JSON payload — they print BEFORE it).
+
+**Tests:** CLI TestSayPacing rewritten to the new seam (10 cases incl. hold-until-unblocked with
+ordered events, poll-cap give-up, bare-focus-never-probes, unreachable-server skip,
+synth-failure-still-waits); server TestNarrationPacingRendezvous (12 cases: rendezvous set/reset,
+caption-only/zero-window/garbage-bytes never busy, started re-anchors exactly, blocked flags,
+ended clears, evicted-id harmless, body validation); web +5 (beacon truthfulness incl.
+expired-replay ≠ blocked, close-beacons-ended; events.test reportNarration unit). Notable churn:
+the follow-up's own post-sleep pacing tests were REPLACED same-day by the v2 seam's tests —
+expected cost of iterating a live demo, not test instability.
+
+**Not built (noted for later):** auto-resume on ANY canvas click (currently only the ▶ click
+clears the hold — a page-level pointerdown unlock would be smoother but touches global listeners);
+per-workflow narration state (global is right for one speaker); `--no-wait` leaves a stale
+rendezvous if its clip outlives the sequence (bounded by one clip length).
+
+**ADRs recorded (closes the standing v1 offer):** `context/adr/0011-174-tts-direct-httpx.md`
+(TTS bypasses the LiteLLM single-seam rule — deliberate, don't "fix") and
+`0012-174-narration-pacing-closed-loop.md` (wait-before-dispatch + rendezvous + playback beacons;
+the queue rejection on record), plus a pointer in ADR-0007's rejected apply-acks bullet (its
+"additive later" arm arrived for narration playback only).

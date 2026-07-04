@@ -20,7 +20,7 @@ src/pflow/core/
 ├── yaml_utils.py            # safe_load_preserving_templates — YAML load that shields ${...} templates (issue #482)
 ├── llm_config.py            # LLM model resolution, env injection, provider detection
 ├── llm_client.py            # pflow LiteLLM adapter (single seam for all LLM calls)
-├── tts.py                   # Gemini TTS via direct httpx (Task 174): synthesize() → WAV bytes, strip_delivery_tags()
+├── tts.py                   # Gemini TTS via direct httpx (Task 174): synthesize() → WAV bytes, strip_delivery_tags(), wav_duration()
 ├── llm_providers.py         # Canonical provider metadata (prefixes, env vars)
 ├── llm_reasoning_map.py     # Provider/model → reasoning kwargs map
 ├── markdown_parser.py       # .pflow.md → IR dict parser
@@ -239,7 +239,7 @@ The pflow-owned LiteLLM adapter — single seam for all LLM calls (LLMNode + 3 d
 
 ### tts.py
 
-Gemini TTS behind a two-function seam (Task 174, `pflow ui --say`): `strip_delivery_tags(text)` removes `[bracketed]` delivery tags (the caption = the spoken words), and `synthesize(text, *, model, voice, timeout=30.0)` makes ONE direct httpx `generateContent` call (deliberately NOT LiteLLM — its pin `==1.86.1` predates a working Gemini-audio path, BerriAI/litellm#11118) and wraps the returned PCM16 into WAV via stdlib `wave`. Key lookup uses `PROVIDER_ENV_VARS["gemini"]` (canonical-first); missing → `MissingApiKeyError`. **`synthesize()` is TOTAL after the key check**: every other failure (non-200, network, safety-filtered empty `candidates`, malformed base64/JSON, degenerate audio params) surfaces as `TTSSynthesisError`, never a raw traceback — the CLI seam relies on this to degrade to caption-only. `rate`/`channels` are parsed from the response mimeType (defaults 24000/1) to guard a silent pitch-shift. This seam is also the future home of cross-provider delivery-tag translation (spec forward-note); the agent-facing bracket syntax must stay the ONLY syntax.
+Gemini TTS behind a small seam (Task 174, `pflow ui --say`): `strip_delivery_tags(text)` removes `[bracketed]` delivery tags (the caption = the spoken words), `synthesize(text, *, model, voice, timeout=30.0)` makes ONE direct httpx `generateContent` call (deliberately NOT LiteLLM — its pin `==1.86.1` predates a working Gemini-audio path, BerriAI/litellm#11118) and wraps the returned PCM16 into WAV via stdlib `wave`, and `wav_duration(wav)` reads a clip's length from the WAV header (TOTAL — `0.0` on any unparseable input; the CLI sleeps for this value to pace a `--say` sequence, so it must never raise). Key lookup uses `PROVIDER_ENV_VARS["gemini"]` (canonical-first); missing → `MissingApiKeyError`. **`synthesize()` is TOTAL after the key check**: every other failure (non-200, network, safety-filtered empty `candidates`, malformed base64/JSON, degenerate audio params) surfaces as `TTSSynthesisError`, never a raw traceback — the CLI seam relies on this to degrade to caption-only. `rate`/`channels` are parsed from the response mimeType (defaults 24000/1) to guard a silent pitch-shift. This seam is also the future home of cross-provider delivery-tag translation (spec forward-note); the agent-facing bracket syntax must stay the ONLY syntax.
 
 ### llm_config.py
 
