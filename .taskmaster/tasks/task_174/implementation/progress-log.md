@@ -694,3 +694,15 @@ rendezvous if its clip outlives the sequence (bounded by one clip length).
 `0012-174-narration-pacing-closed-loop.md` (wait-before-dispatch + rendezvous + playback beacons;
 the queue rejection on record), plus a pointer in ADR-0007's rejected apply-acks bullet (its
 "additive later" arm arrived for narration playback only).
+
+## 2026-07-04 — Shipped: PR #560
+
+Task 174 marked **done** (`task-174.md`); the distilled forward-reference is `task-review.md`.
+The full branch shipped as **PR #560** (https://github.com/spinje/pflow/pull/560) in five commits:
+v1 phases 1–3 (`66220404`) and 4–5 (`c1063ef0`), then the demo-day arc as three logical commits —
+`8120a324` (pacing closed loop + persistent replayable captions + beacons + blocked-hold),
+`9fc866ee` (settings `set-tts-model`/`set-tts-voice` + unset arms), `c2d1dbf6` (ADRs 0011/0012,
+guide rewrite, task review, demo fixture). Final verification on the shipped tree: Python 8495
+passed / 9 skipped, web 719 passed, `make check` green, plus the live user-heard walkthrough
+(block → hold → ▶ → resume). Untracked demo fixtures `ticket-triage.pflow.md` /
+`voice-demo.pflow.md` are committed on the branch.
