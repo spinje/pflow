@@ -541,6 +541,35 @@ def find_node_by_id(start_node: Any, node_id: str) -> Any:
     )
 
 
+def seed_walk_entry(
+    shared: dict[str, Any],
+    events: list[dict[str, Any]],
+    *,
+    entry: str,
+    start_node: Any,
+) -> tuple[Any, dict[str, dict[str, Any]]]:
+    """Seed upstream outputs from a prior run's events and locate the walk entry node.
+
+    The shared "seed + locate-entry" composition (Task 164 Phase 0), used by
+    BOTH the runtime engine (``_run_only_snapshot``) and the dry-run planner
+    (``execution/plan.py::_resolve_walk_start``) so entry/seeding semantics
+    cannot drift between the preview and the run — pinned by
+    ``test_engine_and_planner_walk_entry_state_match``. Resume (engine
+    re-entry + planner resume view) becomes additional callers of this exact
+    composition.
+
+    Returns ``(entry_node, seeded_final_events_by_node)``. Deliberately
+    NOTHING else is shared here (scope guard: if this grows a mode flag or
+    callback, back off): loading events, ``initialize_execution_state``,
+    ``restored_nodes``/``only_node`` stamping, and degraded advisories all
+    stay caller-side — they differ per surface by design.
+    """
+    from pflow.runtime.workflow_trace import seed_snapshot_into_shared
+
+    final = seed_snapshot_into_shared(shared, events, exclude=entry)
+    return find_node_by_id(start_node, entry), final
+
+
 def build_snapshot_degraded_diagnostic(this_only: str, *, source: Literal["planner", "runtime"]) -> Diagnostic:
     """Build the ``only.snapshot-degraded`` WARNING ``Diagnostic``.
 
@@ -775,12 +804,12 @@ class WorkflowEngine:
         for data-flow: templates, coalesce, and ``## Cache`` rendering SHOULD see
         the restored values).
         """
-        from pflow.runtime.workflow_trace import load_snapshot_or_raise, seed_snapshot_into_shared
+        from pflow.runtime.workflow_trace import load_snapshot_or_raise
 
         events, source_status = load_snapshot_or_raise(
             self.workflow_path, this_only, snapshot_events=self.snapshot_events
         )
-        final = seed_snapshot_into_shared(shared, events, exclude=this_only)
+        target_node, final = seed_walk_entry(shared, events, entry=this_only, start_node=workflow.start_node)
 
         initialize_execution_state(shared)
         shared["__execution__"]["restored_nodes"] = [nid for nid in final if nid != this_only]
@@ -788,7 +817,6 @@ class WorkflowEngine:
         if source_status == "degraded":
             self._emit_snapshot_degraded_advisory(shared, this_only)
 
-        target_node = find_node_by_id(workflow.start_node, this_only)
         config = workflow.node_configs[this_only]
         is_loop = config.loop_config is not None
         with loop_runtime_scope(shared, is_loop, iteration=1 if is_loop else None, clear_iteration_on_exit=True):

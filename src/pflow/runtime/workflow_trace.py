@@ -12,10 +12,19 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, NoReturn, TextIO
 
 from pflow.core.diagnostic import Diagnostic, warning_degrades_status
-from pflow.core.exceptions import OnlySnapshotMissingError
+from pflow.core.exceptions import (
+    OnlySnapshotMissingError,
+    ResumeFidelityError,
+    ResumeGateStoppedError,
+    ResumeNothingToResumeError,
+    ResumeNotResumableError,
+    ResumeSourceMissingError,
+    ResumeStillRunningError,
+    ResumeSupersededError,
+)
 from pflow.core.node_type_display import is_llm_node_type
 from pflow.core.trace_io import (
     RESERVED_LINE_KEYS,
@@ -295,6 +304,350 @@ def load_snapshot_or_raise(
     if not loaded:
         raise OnlySnapshotMissingError(only_node)
     return loaded
+
+
+# ── Resume loader (Task 164) ────────────────────────────────────────────────
+# `load_resume_source` is the ONE resume-scoped read: it selects the source
+# trace, applies resume's status/liveness/lineage policy locally (mirroring
+# `_collect_candidate_traces`'s "iterate the shared iterator, own your policy"
+# shape — `_iter_workflow_traces`'s no-final_status-filter invariant is
+# untouched), and returns a `ResumeSource` the engine/planner/CLI consume. It
+# carries NO node-type field: a trace event's `node_type` is a Python CLASS name
+# (`"LLMNode"`), while the side-effect predicate speaks IR REGISTRY names
+# (`"llm"`) — the CLI derives K's type from the resolved IR, never from an event.
+
+_BINARY_PLACEHOLDER_RE = re.compile(r"^<binary data: \d+ bytes>$")
+
+
+@dataclass(frozen=True)
+class ResumeSource:
+    """Everything a resume needs from a prior run's trace (Task 164).
+
+    Self-contained so the engine, planner, and CLI never re-read the trace: the
+    entry point (`entry_node_id` = the failed step K, or `None` with
+    `last_completed_node_id` set for an incomplete between-nodes run the CLI
+    resolves post-compile), the full blob-resolved top-level `events` to seed
+    upstream from, the original `inputs` (`None` on pre-175 traces), and the
+    `content_hash` the CLI compares against the current resolved IR.
+    """
+
+    path: Path
+    execution_id: str
+    entry_node_id: str | None
+    last_completed_node_id: str | None
+    events: list[dict[str, Any]]
+    inputs: dict[str, Any] | None
+    content_hash: str | None
+    final_status: str
+
+
+def _is_trace_locked(path: Path) -> bool | None:
+    """Best-effort advisory-lock liveness probe (local copy of ``ui.run_tailer.is_trace_locked``).
+
+    ``runtime/`` must not import ``ui/``, so this ~15-line probe is duplicated
+    (accepted until a third consumer earns a ``core/`` home — Task 164 plan §B).
+    Same semantics: a SHARED, non-blocking probe on a SEPARATE fd — ``True`` when a
+    live writer holds the producer's EXCLUSIVE lock, ``False`` when free, ``None``
+    when liveness can't be determined (no ``fcntl`` / unopenable).
+    """
+    try:
+        import fcntl
+    except ImportError:
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            return False
+    except OSError:
+        return None
+
+
+def _iter_raw_trace_lines(path: Path) -> Iterator[dict[str, Any]]:
+    """Yield each JSONL line of a trace as a dict, for the disk-only kinds ``load_trace_file`` hides.
+
+    The resume loader's ONLY raw reader (gate-stopped detection needs the
+    disk-only ``kind:"gate"`` lines, which reconstruct drops). Mirrors
+    ``ui.run_node._iter_trace_lines``: skip non-dict lines, tolerate ONE
+    truncated final line (a crash mid-flush), raise on an earlier malformed line.
+    """
+    raw_lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    for index, raw in enumerate(raw_lines):
+        try:
+            line = json.loads(raw)
+        except ValueError:
+            if index == len(raw_lines) - 1:
+                return  # truncated final line — the file is mid-flush; tolerate it
+            raise
+        if isinstance(line, dict):
+            yield line
+
+
+def _read_trace_meta_line(path: Path) -> dict[str, Any] | None:
+    """Return the trace's first (``kind:"meta"``) line without parsing the whole file, else ``None``.
+
+    Used by the by-execution-id scan so matching one run doesn't parse every
+    file's full content. Any read/parse fault → ``None`` (skip this candidate).
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            first = handle.readline()
+    except OSError:
+        return None
+    try:
+        line = json.loads(first)
+    except ValueError:
+        return None
+    if isinstance(line, dict) and line.get("kind") == "meta":
+        return line
+    return None
+
+
+def _raise_resume_source_missing(debug_dir: Path, workflow_path: str | None, execution_id: str | None) -> NoReturn:
+    if execution_id is not None:
+        raise ResumeSourceMissingError(
+            f"No run with execution id '{execution_id}' was found in {debug_dir}.",
+            execution_id=execution_id,
+            suggestions=["Check the execution id, or run the workflow so a trace exists to resume."],
+        )
+    raise ResumeSourceMissingError(
+        f"No resumable run was found for workflow '{workflow_path}' in {debug_dir}.",
+        suggestions=["Run the workflow once (without --no-trace) so a failure can be resumed."],
+    )
+
+
+def _select_resume_trace(
+    debug_dir: Path, workflow_path: str | None, execution_id: str | None
+) -> tuple[Path, dict[str, Any]]:
+    """Select the source trace: newest for a workflow, or the exact run by execution id."""
+    if not debug_dir.exists():
+        _raise_resume_source_missing(debug_dir, workflow_path, execution_id)
+    if workflow_path is not None:
+        for trace_file, data in _iter_workflow_traces(debug_dir, workflow_path):
+            return trace_file, data  # first yielded = newest
+        _raise_resume_source_missing(debug_dir, workflow_path, execution_id)
+    for trace_file in sorted(debug_dir.glob("workflow-trace-*.json"), key=_trace_recency_key, reverse=True):
+        meta = _read_trace_meta_line(trace_file)
+        if meta is None or meta.get("execution_id") != execution_id:
+            continue
+        # Mirror _iter_workflow_traces's --only exclusion: an --only run records
+        # only its target, so resuming its exec id would seed an empty scope.
+        if meta.get("only_node") is not None:
+            continue
+        try:
+            return trace_file, load_trace_file(trace_file)
+        except (json.JSONDecodeError, OSError):
+            # Same skip-corrupt posture as _iter_workflow_traces (the workflow_path
+            # arm gets this for free): a matched-but-corrupt trace degrades to a
+            # clean "missing" refusal, never an uncaught JSONDecodeError traceback.
+            logger.debug("Skipping unparseable resume-source trace %s", trace_file, exc_info=True)
+            continue
+    _raise_resume_source_missing(debug_dir, workflow_path, execution_id)
+
+
+def _seed_scope_events(events: list[dict[str, Any]], entry_node_id: str | None) -> list[dict[str, Any]]:
+    """Top-level events that WILL be seeded — everything before the entry, or all when entry is None.
+
+    Mirrors ``seed_snapshot_into_shared``'s ``events[:target_idx]`` slice so the
+    escalation/fidelity guards scan exactly the events resume will restore.
+    """
+    if entry_node_id is None:
+        return events
+    idx = next((i for i, e in enumerate(events) if e.get("node_id") == entry_node_id), None)
+    return events if idx is None else events[:idx]
+
+
+def _contains_binary_placeholder(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(_BINARY_PLACEHOLDER_RE.match(value))
+    if isinstance(value, dict):
+        return any(_contains_binary_placeholder(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_binary_placeholder(v) for v in value)
+    return False
+
+
+def _raise_gate_stopped_or_generic(path: Path, execution_id: str) -> NoReturn:
+    """A ``failed`` trace with no unrecovered failed node = gate-stopped (or the defensive fallback)."""
+    paused = [
+        line for line in _iter_raw_trace_lines(path) if line.get("kind") == "gate" and line.get("phase") == "pause"
+    ]
+    if paused:
+        last = paused[-1]
+        raise ResumeGateStoppedError(
+            node_id=str(last.get("node_id") or "?"),
+            gate_kind=last.get("gate_kind"),
+            execution_id=execution_id,
+            trace_path=str(path),
+        )
+    # Defensive: `failed` + no unrecovered node + zero gate lines is not
+    # producible today (only gate stops make that combination). Refuse cleanly
+    # rather than fall through to an undefined branch.
+    raise ResumeNotResumableError(
+        "This run is marked failed but has no failed step to resume from.",
+        execution_id=execution_id,
+        trace_path=str(path),
+        suggestions=["Re-run the workflow from the start."],
+    )
+
+
+def _resolve_resume_entry(path: Path, data: dict[str, Any], execution_id: str) -> tuple[str | None, str | None, str]:
+    """Apply the status arm: return ``(entry_node_id, last_completed_node_id, final_status)`` or refuse."""
+    final_status = str(data.get("final_status") or "")
+    events = data.get("nodes") or []
+    if final_status in ("success", "degraded"):
+        raise ResumeNothingToResumeError(
+            "The most recent run of this workflow already succeeded — there is nothing to resume.",
+            execution_id=execution_id,
+            trace_path=str(path),
+            suggestions=["Run the workflow again if you want a fresh run."],
+        )
+    if final_status == "denied":
+        raise ResumeNotResumableError(
+            "This run was stopped by a human denial at an approval gate, not by a failure.",
+            execution_id=execution_id,
+            trace_path=str(path),
+            suggestions=["Re-run the workflow if you want to try again."],
+        )
+    if final_status == "incomplete":
+        # Phase 1 stub. Phase 5 replaces this with the Decision-7 derivation
+        # (dangling raw node.start = killed-mid-node K; unambiguous successor for
+        # killed-between-nodes; meta-only / locked refuse).
+        raise ResumeNotResumableError(
+            "This run was interrupted before it completed (Ctrl+C or a crash). "
+            "Resuming interrupted runs is not supported yet.",
+            execution_id=execution_id,
+            trace_path=str(path),
+            suggestions=["Re-run the workflow from the start."],
+        )
+    if final_status != "failed":
+        raise ResumeNotResumableError(
+            f"This run's status '{final_status or 'unknown'}' is not resumable.",
+            execution_id=execution_id,
+            trace_path=str(path),
+            suggestions=["Re-run the workflow from the start."],
+        )
+    failed = _unrecovered_failed_node_ids(final_events_by_node(events), data.get("warnings"))
+    if not failed:
+        _raise_gate_stopped_or_generic(path, execution_id)
+    # Entry = the failed node whose FINAL event has the lowest index in event
+    # order (NEVER the alphabetically-sorted failed_node_ids trailer): with a
+    # K-failed → fallback-F-failed chain, resume must enter at K.
+    last_index: dict[str, int] = {}
+    for index, event in enumerate(events):
+        nid = event.get("node_id")
+        if isinstance(nid, str):
+            last_index[nid] = index
+    entry = min(failed, key=lambda nid: last_index.get(nid, len(events)))
+    return entry, None, "failed"
+
+
+def _guard_seed_scope(scope: list[dict[str, Any]], execution_id: str, path: Path) -> None:
+    """Refuse if any node resume would SEED carries undecided escalation (Decision 8) or lossy binary (Decision 5)."""
+    for event in scope:
+        output = event.get("node_output")
+        if not isinstance(output, dict):
+            continue
+        node_id = event.get("node_id")
+        node_id_str = node_id if isinstance(node_id, str) else None
+        result = output.get("result")
+        if isinstance(result, dict):
+            escalation = result.get("escalation")
+            # Mirror engine.gate.detect_escalation EXACTLY: a non-empty dict without
+            # a "decision" key, or any non-"" string, is undecided. Do NOT .strip()
+            # the string — production pauses on a whitespace-only marker too, so
+            # stripping here would seed a marker the run actually paused on.
+            undecided = (isinstance(escalation, dict) and escalation and "decision" not in escalation) or (
+                isinstance(escalation, str) and escalation != ""
+            )
+            if undecided:
+                raise ResumeNotResumableError(
+                    f"Step '{node_id_str}' has an unresolved escalation in the saved run — resuming "
+                    "would replay it as if a human had already decided.",
+                    execution_id=execution_id,
+                    trace_path=str(path),
+                    node_id=node_id_str,
+                    suggestions=["Re-run the workflow and resolve the escalation."],
+                )
+        for key, value in output.items():
+            if _contains_binary_placeholder(value):
+                raise ResumeFidelityError(
+                    node_id=str(node_id_str or "?"),
+                    key=str(key),
+                    execution_id=execution_id,
+                    trace_path=str(path),
+                )
+
+
+def load_resume_source(
+    workflow_path: str | None = None,
+    execution_id: str | None = None,
+    *,
+    debug_dir: Path | None = None,
+) -> ResumeSource:
+    """Load and vet a prior run's trace as a resume source, or raise a typed refusal (Task 164).
+
+    Exactly one of ``workflow_path`` (→ newest reusable run of that workflow) or
+    ``execution_id`` (→ that exact attempt) is given. Refusal/derivation policy,
+    in order (each a ``ResumeSourceError`` subclass): inline source → not
+    resumable; live writer → still running; a newer attempt exists → superseded;
+    then the status arm (``success``/``degraded`` → nothing to resume; ``denied``
+    → not resumable; ``failed`` → entry is the earliest failed node in event
+    order, or gate-stopped when none; ``incomplete`` → Phase-1 stub); finally the
+    seed-scope guards (undecided escalation, lossy binary). ``content_hash`` is
+    RETURNED for the CLI to compare — the loader has no workflow IR to check it.
+    """
+    if (workflow_path is None) == (execution_id is None):
+        raise ValueError("load_resume_source requires exactly one of workflow_path / execution_id")
+    debug_dir = debug_dir if debug_dir is not None else (Path.home() / ".pflow" / "debug")
+
+    path, data = _select_resume_trace(debug_dir, workflow_path, execution_id)
+    source_execution_id = str(data.get("execution_id") or "")
+    source_workflow_path = data.get("workflow_path")
+
+    if isinstance(source_workflow_path, str) and source_workflow_path.startswith("ir-hash:"):
+        raise ResumeNotResumableError(
+            "Inline or piped workflows cannot be resumed — there is no source file to re-resolve.",
+            execution_id=source_execution_id,
+            trace_path=str(path),
+            suggestions=["Save the workflow to a file and re-run it so future failures can be resumed."],
+        )
+
+    if _is_trace_locked(path) is True:
+        raise ResumeStillRunningError(
+            "This run is still in progress — its trace is held by a live writer.",
+            execution_id=source_execution_id,
+            trace_path=str(path),
+            suggestions=["Wait for the run to finish (or stop it), then resume."],
+        )
+
+    if source_execution_id and isinstance(source_workflow_path, str):
+        for _candidate_path, candidate in _iter_workflow_traces(debug_dir, source_workflow_path):
+            if candidate.get("resumed_from") == source_execution_id:
+                raise ResumeSupersededError(
+                    str(candidate.get("execution_id") or ""),
+                    execution_id=source_execution_id,
+                    trace_path=str(path),
+                )
+
+    entry_node_id, last_completed_node_id, final_status = _resolve_resume_entry(path, data, source_execution_id)
+
+    events = list(data.get("nodes") or [])
+    _guard_seed_scope(_seed_scope_events(events, entry_node_id), source_execution_id, path)
+
+    return ResumeSource(
+        path=path,
+        execution_id=source_execution_id,
+        entry_node_id=entry_node_id,
+        last_completed_node_id=last_completed_node_id,
+        events=events,
+        inputs=data.get("inputs"),
+        content_hash=data.get("content_hash"),
+        final_status=final_status,
+    )
 
 
 @dataclass

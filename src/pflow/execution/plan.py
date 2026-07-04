@@ -48,8 +48,8 @@ from pflow.runtime.engine.engine import (
     RouteKind,
     build_prompt_cache_dict,
     build_snapshot_degraded_diagnostic,
-    find_node_by_id,
     route_action,
+    seed_walk_entry,
     validate_only_target,
 )
 from pflow.runtime.engine.instrumentation import (
@@ -64,7 +64,7 @@ from pflow.runtime.engine.template_resolution import resolve_templates
 from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, NodeConfig
 from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.workflow_executor import WorkflowExecutor
-from pflow.runtime.workflow_trace import load_snapshot_or_raise, seed_snapshot_into_shared
+from pflow.runtime.workflow_trace import load_snapshot_or_raise
 
 logger = logging.getLogger(__name__)
 
@@ -489,10 +489,10 @@ def _resolve_walk_start(
     if this_only is None:
         return compiled.start_node
     events, source_status = load_snapshot_or_raise(workflow_path, this_only)
-    seed_snapshot_into_shared(shared, events, exclude=this_only)
+    entry_node, _ = seed_walk_entry(shared, events, entry=this_only, start_node=compiled.start_node)
     if source_status == "degraded":
         diagnostics.append(build_snapshot_degraded_diagnostic(this_only, source="planner"))
-    return find_node_by_id(compiled.start_node, this_only)
+    return entry_node
 
 
 def create_planner_shared(
