@@ -3,6 +3,15 @@
 > **Refreshed 2026-07-02 against main** — checkpoint design re-derived on the shipped trace
 > substrate; the original purpose-built-state-file decision rested on now-false premises.
 > Restore contract follows Task 164's implementation (standing rule from the split braindump).
+>
+> **164 SHIPPED 2026-07-04 (PR #559) — this spec absorbed the handoff.** The restore substrate now
+> exists and is authoritative: read `task_164/task-review.md` FIRST and trust it over any
+> pre-implementation phrasing below. Concrete integration points already folded in: the loader lives
+> in `runtime/workflow_trace.py` (~400 lines) and must be **extracted to `runtime/resume_source.py`
+> FIRST** (the `paused` arm is the extraction-trigger third consumer); the `paused` insertion point
+> is `load_resume_source`'s gate-stopped refusal arm (entry = `paused_node_id`); `resume list` reuses
+> `_attempt_consumed_work`; the **UI attempt-chain rendering is 171's** (owner decision 07-04, section
+> below). Trace format shipped at **2.6.0** (`resumed_from` meta + `restored` events).
 
 ## Description
 

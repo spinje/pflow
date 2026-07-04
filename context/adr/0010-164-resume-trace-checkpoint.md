@@ -121,7 +121,10 @@ guard-scans-a-superset drift where a superseded loop iteration's contents could 
   runs write no trace and are therefore unresumable — surfaced as a hard error, never a silent
   re-run (same posture ADR-0002 set for `--only`).
 - **UI/report consumers must join attempt chains via `resumed_from`** or one logical execution
-  renders as several disconnected runs (flagged for the Task 173 overlay).
+  renders as several disconnected runs. 164 shipped this as meta-only with NO chain UI; closing it
+  is **owned by Task 171** (owner decision 2026-07-04 — it already touches run-status rendering for
+  `paused` and builds the chain-walk for `resume list`). Superseded note: originally flagged for the
+  Task 173 overlay.
 - **CLI surface is `pflow resume [<workflow>|<execution-id>]`** — one subcommand serves both the
   failure-resume path (this task) and 171's paused-gate resume, consistent with ADR-0009's already
   committed `pflow resume <execution-id>` approval verb. (A `pflow <wf>` → `pflow run <wf>` rename

@@ -123,6 +123,8 @@ seam that forces them**, not in up-front documents.
 - **Update the ledgers**: the progress log (`## Now` + a dated `## Log` entry), the CLAUDE.md
   roadmap (move shipped items to ✅ — a stale "Next" list actively misleads every agent), spec
   decision ledgers, and any spec whose ground just moved.
+  **CLAUDE.md roadmap entries = short task names only, no fluff** (no parenthetical detail — that
+  lives in the specs/ADRs; match the existing list convention).
 - **Braindump at handoff moments** (`/braindump`): tacit layer only — the user's verbatim words,
   rejected options and why, plain-language rationales decisions were approved on, traps. Never
   restate what a file already says; index sibling docs with trust notes instead.

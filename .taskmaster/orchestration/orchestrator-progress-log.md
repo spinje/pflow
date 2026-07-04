@@ -4,71 +4,48 @@ _Mutable state companion to `orchestrator-kickoff.md`. **`## Now` is edited in p
 always be true** (correct it the moment reality diverges); **`## Log` is append-only** (newest
 entry first). Every claim here is a pointer — verify against git/gh/`./scripts/tasks` at boot._
 
-## Now (last verified: 2026-07-03)
+## Now (last verified: 2026-07-04)
 
-**Current arc: resume/HITL — build order 125 ✅ → 164 (next) → 171 → 176 (→ 174).**
+**Current arc: resume/HITL — 125 ✅ → 164 ✅ → 174 ✅ → 171 (next) → 176.** 164 (PR #559, closes
+#255) + 174 (PR #560) merged 2026-07-04; their worktrees pruned; roadmap + specs reconciled.
 
-**IN FLIGHT: Task 164 building** in worktree `feat-resume-failed-node`
-(`/Users/andfal/projects/pflow-worktrees/feat-resume-failed-node`, branch `feat/resume-failed-node`,
-launched on **fable** 2026-07-03). Brief + braindump verified present in the tree. **164 is the sole
-engine toucher — keep it that way** (no parallel `runtime/engine/` work; #546 held, Task 170 must not
-start alongside). On merge: verify the merged reality personally, close **#255**, write the
-`pflow guide` resume topic if not done, and reconcile CLAUDE.md roadmap (164 → ✅, unblocks 171).
+**Next action: Task 171** (durable resume tokens / non-TTY gates) — unblocked by 164; the second
+consumer of its checkpoint→restore→continue substrate. Before launching:
+- **Read `task_164/task-review.md` FIRST** — the shipped-substrate handoff (invariants that must not
+  break, the `paused` insertion point, gotchas). The 171 spec already absorbed the handoff (banner +
+  "UI attempt-chain rendering" section) — trust the review over any pre-impl phrasing.
+- **Loader-extraction trigger:** the resume loader (~400 lines: `ResumeSource`/`load_resume_source`/
+  entry resolvers) accreted in `runtime/workflow_trace.py`. 171's `paused` arm is the third consumer
+  → **extract to `runtime/resume_source.py` FIRST** (parity net first, zero behavior change).
+- **171 now also owns the `resumed_from` run-list UI** (owner decision 07-04; ADR-0010 consequence
+  updated) — surface `resumed_from` in `/api/runs` + link chains in the run selector.
+- Open decisions to settle at 171 start: MCP/`--no-trace` gated-runs-require-trace · paused-status
+  encoding (rec `final_status:"paused"` trailer) · pause exit code · token security (rec: trust local
+  fs, record it) · MCP structured-result token surface. **#542 (retention) must be designed
+  WITH/AFTER 171** — a `paused` trace is a live obligation, not a prunable debug artifact.
 
-**PARALLEL LANE: Task 174** (Agent Voice Narration / "Point & Say") — prepped + launching on **fable**
-alongside 164. **Collision-verified disjoint** (file-level map): 174 owns the UI channel + TTS
-(`cli/commands/ui.py`, `ui/server.py`, `core/llm_client.py`, `web/events.ts`+`GraphView.tsx`); it
-never touches the engine or the trace format, so the "serialize engine work" rule doesn't bind it.
-One conditional overlap held closed by brief guard: **neither 174 nor 164 implements the ADR-0010
-`resumed_from` run-list UI** (that's Task 173 overlay's). Prep this session: verified the Gemini TTS
-model (`gemini-3.1-flash-tts-preview`) is current + PCM16/24k matches spec (request shape bifurcated
-→ builder pins at impl time); found the caption's home — **`web/src/components/NodeCallout.tsx`**, a
-content-agnostic node-anchored box Task 175 built with 174 as a named co-target (reuse note folded
-into task-174.md + brief; shrinks 174's frontend). No decision session/braindump/ADR needed (spec
-complete). Brief: `scratchpads/task-174-voice-narration/BRIEF.md`.
+**What 164/174 actually shipped (deeper than spec — read the reviews):** 164 = `pflow resume` for
+failed AND interrupted runs (Decision 3 landed IN); entry = the `_terminal_failure_root` frontier
+rule (replaced Decision 9's event-order rule after a proven both-fail-chain bug — ADR-0010 amended
+2×); trace format **2.6.0** (`resumed_from`/`restored`); zero-event runs now finalize `failed`
+(global semantics change); 3 deep-review proven-bug fixes (failed events never seeded — also fixed
+`--only` degraded-snapshot; incomplete-tail entry; escalation fold-at-load). 174 = `--say` TTS +
+self-pacing walkthroughs (playback-beacon closed loop, blocked-hold); NodeCallout reuse held;
+ADR-0011/0012 written; **zero engine/runtime contact** — the parallel-lane collision analysis was
+validated in practice.
 
-**Next action after 164 merges: Task 171** (durable resume tokens / non-TTY gates) — second consumer
-of 164's substrate; `pflow resume` subcommand extends to token addressing; `paused` becomes the 2nd
-terminal status alongside `failed`. ADR-0010 already covers its lineage model.
+**Worktrees:** 164/174 pruned. **HELD — needs a user call:** `feat-unified-node-storage` is clean but
+its branch is `docs/task-133-crash-tail-scope` (name ≠ dir) with ONE unmerged docs commit `41281872`
+([skip review], crash-tail scoping) — the "rejected premise, safe to prune" label doesn't match; do
+not force-delete blind. Many other merged `fix-*`/`feat-*` trees also remain (broader cleanup not yet
+done — not proposed this session).
 
-**Prep record for 164 (all committed `0ffd9266`; build launched after):** 125 shipped clean (#554);
-the checkpoint→restore→continue substrate is 164's to build. Launch-ready inputs were:
-- **Spec re-audited 2026-07-03** against `1d9c6b2c` (3 parallel opus audits: engine/trace/planner).
-  Substrate structurally intact post-125 + post-#557; `task-164.md` banner + run-query section
-  updated (the "five consumers" claim was wrong — corrected to 3 independent + 1 delegating).
-  Line refs drift small; re-verify at impl time.
-- **All 5 decisions DECIDED 2026-07-03** and recorded as a ledger in `task-164.md` (do not
-  re-litigate): CLI = `pflow resume <wf|exec-id>` subcommand · `--dry-run`×resume IN · incomplete-
-  trace resume PREFERRED-IN (complexity assessed at plan time — scope change vs old "no") · side-
-  effecting-K = taxonomy-keyed, **non-TTY = hard error not prompt** · fidelity = loud-caveat guard,
-  snapshot store declined (binary round-trips via base64, verified). `pflow run` rename scoped OUT.
-- **ADR-0010 written** (`context/adr/0010-164-resume-trace-checkpoint.md`, accepted).
-- **Brief + braindump** in `scratchpads/task-164-resume/` (travel into the worktree via copy_folder).
-- 164 folds in **#255 (open)** — trust `task_164/research/255-failure-state-edge-cases.md` over the
-  stale issue body; close #255 when 164 ships.
-- Launch cmd: `uv run pflow git-worktree-task-creator task_description='Task 164 — Resume Workflow
-  From a Failed Node' work_type=task copy_folder=scratchpads/task-164-resume`. **164 is the sole
-  engine toucher — no live collision** (#546 held, UI-only; Task 170 not in flight).
-
-**Decision schedule (get these from the user at the named moment, not before):**
-- **164 start:** CLI surface (`pflow resume` subcommand rec; spans 164+171) · `--dry-run`×resume ·
-  incomplete-trace resume (rec: no) · side-effecting-K policy · **snapshot fidelity (get BEFORE
-  planning — it shapes the shared helper)**. Once fidelity + checkpoint are confirmed → **write
-  ADR-0010 (trace-as-checkpoint + attempt chains)**; canonical text sits in task-164/171 specs.
-  164 also folds in **#255 (open)** — trust `task_164/research/255-failure-state-edge-cases.md`
-  over the stale issue body; close #255 when 164 ships.
-- **171 start:** trace-as-checkpoint confirm (importance 4) · MCP/`--no-trace` gated-runs-require-
-  trace sub-decision · paused-status encoding · token security (rec: trust local fs, recorded) ·
-  the pause exit code · MCP structured-result token surface.
-
-**In-flight worktrees:** none building. Cleanup candidates from `git worktree list`: many merged
-`fix-*`/`feat-*` trees remain; `feat-unified-node-storage` is the **rejected** Task-133 premise —
-prune so nobody builds on it.
-
-**Parallel-lane candidates (all verified open 2026-07-02 unless marked):**
+**Parallel-lane candidates (verified 2026-07-02 unless marked):**
+- **#561** (new, spawned by 174) — TTS clip cache for `--say`; deferred design task, backlog.
 - **#546** — pinned-run resolve race (real bug in shipped 175 launch; small; disjoint from 125).
+- **#541** ruff drift — **likely already resolved by #557's single-sourcing → verify + close.**
 - **#538** liveness backstop · **#544** `llm_*` write-side canonicalization · **#549** post-#539
-  visibility cleanup · **#541** ruff drift · **#528** CLI `--output-format` stragglers.
+  visibility cleanup · **#528** CLI `--output-format` stragglers.
 - **#542** trace retention — ⚠️ **design WITH/AFTER 171** (paused traces are live obligations;
   sequencing comment posted on the issue 2026-07-02).
 - **#357** memo-cache drift — guard merged (#524), fix worktree existed
@@ -93,6 +70,21 @@ prune so nobody builds on it.
   implementation time.
 
 ## Log (append-only, newest first)
+
+### 2026-07-04 — 164 + 174 merged; post-merge reconcile
+Both shipped: 164 (PR #559, closes #255) and 174 (PR #560). Read both task-reviews — both went
+DEEPER than spec. 164: `pflow resume` covers failed AND interrupted runs (Decision 3 landed in); the
+entry rule was rewritten mid-build to `_terminal_failure_root` (frontier) after a proven both-fail
+on-error bug; trace format → 2.6.0; zero-event runs now `failed`; a 5-agent deep-review added 3
+proven-bug fixes (failed events never seeded — also fixed `--only` degraded; incomplete-tail entry;
+escalation fold-at-load). 174: `--say` + self-pacing walkthroughs (playback beacons, blocked-hold),
+ADR-0011/0012, NodeCallout reuse held, **zero engine contact** — collision call validated.
+Reconcile done: CLAUDE.md roadmap (125/164/174 → ✅, minimalized to short names per owner; Next =
+171 → 176); ADR-0010 consequence corrected (`resumed_from` UI is **171's**, not 173's); task-171.md
+banner updated (164 shipped, handoff absorbed, loader-extraction trigger). Pruned 164/174 worktrees;
+**held `feat-unified-node-storage`** (1 unmerged docs commit `41281872`, branch≠dir name — needs a
+user call, not a blind force-delete). #561 (TTS cache) filed to backlog; #541 flagged verify+close.
+**Left off: 171 is next (unblocked); the held worktree + #541 close await user.**
 
 ### 2026-07-04 — Task 174 parallel-lane prep + launch
 User asked whether 174 could run parallel to the in-flight 164. Ran the two-dimension collision
