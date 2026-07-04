@@ -81,6 +81,19 @@ every *prior* step's output reused from the most recent full run, so only the ta
 re-executes and upstream side effects never re-fire. Requires a prior full run.
 _Avoid_: replay, restore, checkpoint.
 
+**Resume** — continuing a Failed or interrupted Run as a new Attempt: every step that completed
+in the source Run is Restored, and execution re-enters at the failed step and continues to the
+end. The re-entered step runs at-least-once — its side effects may re-fire.
+_Avoid_: retry (in-Run, same step), replay, restart (from scratch).
+
+**Attempt** — one Run in a resume chain: the original Run plus each Resume of it. Attempts are
+immutable, each linked to its source; a Resume always targets the newest Attempt in the chain.
+_Avoid_: retry, rerun, version.
+
+**Restored** — a step whose output is carried from a source Run into a new Attempt instead of
+executing again, so downstream steps read it as if it had run. A Restored step counts as not
+executed and costs nothing. _Avoid_: cached (a memoization hit), skipped, seeded.
+
 **Gate** — a pause in a Run where execution halts for a human decision before continuing.
 Two kinds: an Approval (author-declared) and an Escalation (agent-raised). The decision
 payload is structured data, rendered by whatever surface the human is on.
@@ -161,6 +174,15 @@ the step and calls the provider — only the static prefix's input tokens are di
 its declared inputs are unchanged (correctness-gated, per-step, can still re-run the step).
 Snapshot reuses *other* steps' outputs to isolate one step for iteration (`--only`),
 regardless of whether their inputs changed, and never runs the frozen steps at all.
+
+**Retry vs Resume** — both re-run failed work. Retry re-runs one step *inside a live Run*
+(capped, same inputs, invisible once it succeeds). Resume starts a *new Attempt* from a Run that
+already ended, restoring completed steps and continuing from the failed step to the end.
+
+**Snapshot vs Resume** — both reuse prior outputs so upstream never re-fires. Discriminator:
+Snapshot isolates ONE step for iteration (`--only` — runs just the target, needs a prior full
+run, and stops); Resume continues the whole workflow from the failed step onward (needs a
+Failed or interrupted run, and produces a new Attempt).
 
 **Carry vs Seed** — both supply a carried input's value. Discriminator: the Seed is the value
 for round 1 only (before the body has produced output); the Carry is the value for every round

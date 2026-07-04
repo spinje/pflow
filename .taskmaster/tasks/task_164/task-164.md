@@ -130,6 +130,10 @@ reality today:
   (`workflow_trace.py:110`, the shared candidate iterator), the UI's `scan_traces`
   (`ui/run_tailer.py:248`, cheap head+tail, `_SCAN_CACHE`-backed), and `report.py`'s
   default-newest picker (`cli/commands/report.py:57` — **was omitted from the original list**).
+  *(Plan-session correction 2026-07-03: a 4th, `trace_loading._autoload_trace`'s bare-glob
+  existence probe, plus a consolidation trap — the sites disagree on SORT KEY (mtime vs
+  filename-timestamp `_trace_recency_key`) and scoping (bare vs hash-prefixed glob). Folding them
+  must reconcile the sort key explicitly or shrink scope to the safe subset.)*
 - **1 delegating consumer** (built, NOT its own glob): analyze-cache autoload
   (`prompt_cache_analysis/trace_loading.py::_collect_candidate_traces`) iterates
   `_iter_workflow_traces` and layers its own `failed`-bucket status policy — exactly the case the
@@ -226,9 +230,8 @@ surface. Consequences for this task's implementation plan:
   Note `"incomplete"` is reader-synthesized, never producer-written — no on-disk `incomplete`
   trailer exists. The graceful/hard-kill discriminator is therefore **`run.complete` present
   vs absent** — NOT trace-exists vs not. Resume-after-Ctrl+C is now physically possible;
-  **DECIDED (Decision 3): preferred in-scope, but entry-node identification for an incomplete
-  tail is the open complexity — assessed at implementation-plan time; surface-then-decide if
-  disproportionate.**
+  **RESOLVED (Decision 7, 2026-07-03): IN with the narrow shape — dangling raw `node.start` = K;
+  between-nodes only when the successor is unambiguous; meta-only and live-locked traces refuse.**
 - **Nested / sub-workflow resume is OUT of scope (v1).** Dotted `--only parent.child` is
   rejected on every live path today; the child plumbing (`_pflow_child_only_node`) exists but
   is dormant (#443). Resuming *into* a sub-workflow is a deferred follow-up. v1 resumes only
@@ -247,8 +250,9 @@ flag on the run surface was rejected. Carry this into task-171.md (its Dependenc
 joint decision).
 
 ## Decisions (all DECIDED 2026-07-03 by the task owner — do not re-litigate)
-Recorded at the 164-start sitting. Rationales the owner approved on are captured verbatim in the
-starting-context braindump; this ledger is the durable record.
+Decisions 1–5 recorded at the 164-start sitting (rationales in the starting-context braindump);
+6–9 at the same-day plan session (6 and 7 owner-picked; 8 and 9 session calls surfaced to and
+accepted by the owner). This ledger is the durable record.
 1. **CLI surface → `pflow resume [<workflow>|<execution-id>]` subcommand.** Bare = newest failed
    run; `execution-id` = that exact attempt; the same surface serves 171's token addressing. A
    `--resume` flag was rejected. **Adjacent (NOT in 164 scope):** the owner is considering
@@ -281,6 +285,48 @@ starting-context braindump; this ledger is the durable record.
    with an actionable error rather than resume with corrupt state. Document that normal binary
    flows resume cleanly. **Impl-plan follow-up:** confirm the python-node raw-`bytes` path is the
    *only* way such a value reaches the store, and pin the guard's trigger there.
+6. **Attempt-trace self-containment → restored events re-recorded (DECIDED 2026-07-03, plan
+   session).** A resumed attempt's trace re-records each restored upstream node's final event
+   (copied from the source trace) at seed time, marked `restored` with zero cost — the same shape
+   as `cached` events. Why: an attempt trace holding only K-onward events breaks resume-of-a-resume
+   ("resume targets the newest attempt" would seed from a trace with no upstream outputs) AND
+   poisons later `--only` runs (a *successful* attempt becomes the newest success trace,
+   `load_full_run_events` selects it, upstream refs unresolve at runtime — nothing excludes resumed
+   traces today). Rejected: chain-union at read time (chain-awareness spreads into every snapshot
+   consumer) and excluding resumed traces from snapshot sources (`--only` would silently ignore the
+   newest real run; the loader still needs union logic). `resumed_from` stays pure lineage, never a
+   data dependency. Aggregates must not double-count restored events (cost 0; `nodes_executed`
+   excludes them). Recorded in ADR-0010.
+7. **Incomplete-trace resume → IN, narrow shape (DECIDED 2026-07-03, plan session — resolves
+   Decision 3's assessment gate).** Entry-node identification is feasible only via RAW JSONL: a
+   dangling `node.start` line with no matching terminal event (same `id`) marks the killed-mid-node
+   K (`_partition_trace_lines` drops `node.start`, so reconstructed dicts cannot show it — reuse the
+   `run_node` raw-read helper pattern). Killed-between-nodes: routing actions are NOT traced
+   (`record_node_execution` has no action field), so resume only when the last completed node's
+   successor is unambiguous; branching ambiguity → actionable refusal. Meta-only trace (crashed
+   before node 1) → "nothing to resume" error. Liveness probe runs FIRST — a flock-locked
+   incomplete trace is a live run, refuse.
+8. **Gate-stopped and `denied` traces → refused in v1 (DECIDED 2026-07-03, plan session).**
+   Post-125 reality the pre-session spec missed: `final_status:"failed"` can be gate-caused
+   (`gate_outcome` channel) with EMPTY `failed_node_ids` — for a pre-exec approval gate the gated
+   node has zero events; `denied` is a clean human stop; and a trailer-`failed` trace can hold a
+   SUCCESS event whose `node_output` carries an undecided `result.escalation` marker (seeding it
+   replays "undecided" as if decided — no detection seam fires on seeded state). The loader refuses
+   all three with an actionable error naming the gate (recovered from raw `kind:"gate"` lines,
+   which are disk-only), with the refusal arm shaped so Task 171 adds `paused` as the resumable
+   case. An undecided escalation marker anywhere in the seed scope is a refusal, not valid
+   upstream state.
+9. **Smaller calls locked at the same sitting:** entry node = **earliest failed node in EVENT
+   order** (`failed_node_ids` is alphabetically sorted on disk — "first of the list" is wrong; with
+   K-failed→fallback-F-failed chains, resume at K and F never runs if K now succeeds). A loop-node
+   K **restarts at iteration 1** (loop state `loop_counts`/`__iteration__` is engine-ephemeral,
+   never traced — documented, not engineered around). Resume does **not inherit prior approvals** —
+   downstream gates re-prompt (125's "each execution is a new action"); `--auto-approve` still
+   works. Input re-seeding: `seed_snapshot_into_shared` is OUTPUT-only, so workflow inputs seed
+   separately from `meta.inputs` with CLI `key=value` overrides winning; `meta.inputs: null`
+   (pre-175 trace) + required inputs → actionable error asking for explicit inputs. The side-effect
+   taxonomy is promoted to a public predicate (e.g. `is_side_effecting(node_type)`) rather than
+   importing `_default_cache_for_node_type` from CLI code.
 
 ## Dependencies
 - **Task 125** — shares the checkpoint/resume substrate; build order **125 → this → 171**.
@@ -306,9 +352,19 @@ starting-context braindump; this ledger is the durable record.
 - `restored_nodes` shows upstream-of-K as not_executed; K-onward as executed.
 - No prior failed trace → clear error (`OnlySnapshotMissingError`-style), not a silent re-run.
 - Incomplete trace (Ctrl+C/SIGKILL tail — `run.complete` absent, reader-synthesized
-  `incomplete`): behavior per Decision 3 (preferred resumable; entry-node identification resolved
-  at plan time). Whichever way the plan lands, an unsupported incomplete-resume must be a clear
-  actionable error — never a crash or silent re-run.
+  `incomplete`): per Decision 7 — killed-mid-node (dangling raw `node.start`) resumes at that
+  node; killed-between-nodes resumes only onto an unambiguous successor; ambiguous-branch,
+  meta-only, and flock-live traces produce a clear actionable error — never a crash or silent
+  re-run.
+- Self-contained attempt trace (Decision 6): restored upstream nodes appear in the new trace as
+  `restored` events with zero cost, excluded from `nodes_executed`/cost aggregates; a later
+  `--only` run against the workflow seeds correctly from a *successful resumed attempt* (the
+  poisoning regression); resume-of-a-resume seeds from the newest attempt's trace alone.
+- Gate-stopped refusals (Decision 8): a gate-failed trace (empty `failed_node_ids`) → actionable
+  refusal naming the gate; `denied` → refusal; an undecided `result.escalation` marker in the
+  seed scope → refusal, never seeded.
+- Multi-failure trace (K failed → fallback F failed): resume enters at the EARLIEST failed node
+  in event order (K), not the alphabetical first.
 - Resumed attempt writes a NEW trace with a new `execution_id` and `resumed_from` on the meta
   line; the source trace is never appended to. Resume targets the newest attempt in a chain.
 - Resuming a still-running run is rejected (advisory-flock liveness probe, `is_trace_locked`).

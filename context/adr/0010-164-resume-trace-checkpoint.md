@@ -14,6 +14,15 @@ end — the "resume-and-continue" half of the `--only` snapshot machinery. Canon
 `task-164.md` ("Run lineage (attempt chains)", "Reuse", Decision 5); this ADR records the two
 load-bearing calls durably.
 
+**Amended 2026-07-03 (plan session): attempt traces are self-contained.** A resumed attempt
+re-records each restored upstream node's final event (copied from the source trace) into its own
+trace at seed time, marked `restored` with zero cost — the same shape as `cached` events. Without
+this, an attempt trace holds only K-onward events, which breaks resume-of-a-resume (the newest
+attempt — the mandated resume target — has no upstream outputs to seed) and silently poisons later
+`--only` runs (a successful attempt becomes the newest `success` trace, the snapshot loader selects
+it, and upstream references fail to resolve). `resumed_from` stays pure lineage — never a data
+dependency a reader must follow.
+
 ## Considered options
 
 - **Dedicated snapshot store (ADR-0002's reserved escape hatch)** — rejected. ADR-0002 built
@@ -30,6 +39,13 @@ load-bearing calls durably.
   impossible by construction: content after a `run.complete` line is treated as corruption (a
   verified reader invariant, `core/trace_io.py`). A new trace + `resumed_from` back-pointer is the
   only shape the on-disk format permits.
+- **Chain-union at read time (attempt traces hold only K-onward events; readers walk
+  `resumed_from` links and union events)** — rejected. Chain-awareness would spread into every
+  snapshot consumer (`load_full_run_events` for `--only`, the resume loader, report/UI joins);
+  self-contained traces keep all readers unchanged for the cost of one writer-side mechanism.
+- **Exclude resumed traces from snapshot sources (the `--only`-trace treatment)** — rejected.
+  `--only` would silently ignore the newest real run, and the resume loader would still need the
+  union logic for resume-of-a-resume.
 - **Mutable checkpoint file updated in place** — rejected. Immutable attempts give free lineage,
   a natural "newest attempt = the one to resume," and no write-contention with a still-running
   producer (a pre-resume advisory-flock liveness probe rejects resuming a live run). Mirrors
@@ -46,6 +62,9 @@ load-bearing calls durably.
   failure-resume path (this task) and 171's paused-gate resume, consistent with ADR-0009's already
   committed `pflow resume <execution-id>` approval verb. (A `pflow <wf>` → `pflow run <wf>` rename
   is under separate consideration and would make `run`/`resume` sibling verbs; out of 164 scope.)
+- **Restored events must not double-count.** Re-recorded upstream events carry zero cost and are
+  excluded from `nodes_executed`/cost aggregates (mirroring `cached`); the chain join via
+  `resumed_from` is where true whole-execution cost lives.
 - **At-least-once semantics for node K.** Restoring upstream but re-running K means K's side effects
   can re-fire; the side-effect-taxonomy-keyed confirm/`--force` policy (Decision 4) governs when
   the user must acknowledge it. Idempotent K (`llm`) resumes silently.
