@@ -211,16 +211,23 @@ is `run_node.read_run_inputs`; sync handler, threadpooled, touches no hub state)
   covers SSE delivery + audio fetch + play() init in the browser — the estimate must err PAST
   the true end or the next say clips the last words; observed live). Overwrite, never max (a
   new clip interrupts the prior); global, not per-workflow (one machine, one speaker);
-  caption-only / zero-window / unplayable-bytes says never mark it busy; `clear` resets it
-  (clear = stop talking). Loop-affine like the hub — only async handlers touch it.
+  caption-only / zero-window / unplayable-bytes says never mark it busy. The say records
+  `narration_audio_id` alongside the window so beacons can be scoped to the current clip (below).
+  `clear` resets the WHOLE rendezvous — `narration_until`, `narration_blocked`, and
+  `narration_audio_id` (clear = stop talking, window-independent: it releases a stuck blocked flag
+  even when every tab is gone). Loop-affine like the hub — only async handlers touch it.
 - `POST /api/narration` (Task 174 follow-up v2) — playback beacons: the Viewer reports what the
   audio element ACTUALLY did with a say clip (`{audio_id, event: started|blocked|ended}`,
   fire-and-forget from `reportNarration`). `started` re-anchors `narration_until` to now + the
   clip's real duration (replaces the broadcast-time start-lag estimate); `blocked` sets
   `narration_blocked` (surfaced via health — the CLI's next `--say` warns the agent the window
   is silently captioning until a click); `ended` clears the window. `started`/`ended` clear the
-  blocked flag (sound demonstrably works). An evicted `audio_id` on `started` is harmless
-  (duration unknown → no window). Async (loop-affine narration state + store read).
+  blocked flag (sound demonstrably works, for ANY clip). **`started`/`ended` only move
+  `narration_until` when their `audio_id` matches `narration_audio_id` (the current clip)** — a
+  beacon for a superseded clip (a rapid `--no-wait` interrupt, a late/multi-window beacon) clears
+  the blocked flag but leaves pacing untouched, so the frontend can beacon `ended` from every stop
+  path (interrupt, per-box close, unmount) without racing a newer say. An evicted `audio_id` on
+  `started` is harmless (duration unknown → no window). Async (loop-affine narration state + store read).
 - `GET /api/audio/{audio_id}` serves a stored clip (`audio/wav`) or 404. The
   `_AudioStore` is a loop-only `OrderedDict` LRU (16 clips, 10 MB decoded upload bound,
   no lock, no TTL, no read-touch — clips are played once within seconds); like the hub it

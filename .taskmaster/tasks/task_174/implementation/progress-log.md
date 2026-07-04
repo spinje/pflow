@@ -801,3 +801,106 @@ then the eq/slot).
 **Not committed** (project rule). Files touched: `web/src/components/NodeCallout.tsx`,
 `web/src/views/GraphView.tsx`, `web/src/index.css`, `web/src/views/GraphView.test.tsx`
 (+ regenerated `src/pflow/ui/static/` bundle).
+
+## 2026-07-04 — Post-merge review response: PR #560 code-review triage + beacon-completeness fixes
+
+Ran `/evaluate-review` on the two PR #560 reviews — a substantive human review
+(`#issuecomment-4881677393`) and Codex's automated review (`#pullrequestreview-4629375486`, 6 inline
+P2s). Verified every finding against CURRENT code (the branch had advanced past the reviewed commit
+`c2d1dbf6` to `6e322e28` — the whisper fix + say-box polish — so line anchors needed re-checking; 3
+parallel `pflow-codebase-searcher` agents gathered the evidence, then I read the load-bearing spots
+myself). Triage: **8 real, 2 no-action-by-design, and the reviews were still relevant** — none of the
+post-review commits had touched the pacing/beacon state machine.
+
+**Key insight that shaped the fix (the reviewers' framing hid a coupling).** Findings A2/B1 (clear
+doesn't reset `narration_blocked`), A3 (interrupt doesn't beacon `ended`), B2 (close-blocked doesn't
+beacon), B3 (stale `ended` clears unconditionally), B4 (unmount doesn't beacon) are ONE family: the
+server's pacing state (`narration_until`/`narration_blocked`) is a closed loop fed by playback
+beacons, but several stop paths don't beacon. The obvious "sprinkle an `ended` at each stop path" is
+**incorrect for the interrupt case**: a new say already set `narration_until` server-side *before*
+broadcasting, so a naive interrupt-beacon (`ended` for the OLD clip) races in *after* and — because
+`narration()` zeroed `narration_until` UNCONDITIONALLY — wiped the NEW clip's pacing. So B3
+(clip-scoping) is **load-bearing** for A3/B4 to be safe, and doing them right meant folding in the
+finding I'd initially deferred. Raised the coupling with the user; they approved folding B3/[7] in.
+
+### What was fixed (family, folded into one symmetric design)
+
+- **Server (`ui/server.py`) — clip-scoped pacing (B3) + clear-reset (A2/B1).** Added
+  `app.state.narration_audio_id`. `say()` records it alongside `narration_until` (captured the stored
+  `audio_id`, previously inlined into the f-string). `narration()` now: `started`/`ended` clear the
+  blocked flag for ANY clip (evidence sound works), but only move `narration_until` when
+  `audio_id == narration_audio_id` (the current clip) — a beacon for a superseded clip is inert. This
+  makes the frontend safe to beacon `ended` from every stop path. `clear` command resets the WHOLE
+  rendezvous (`narration_until` + `narration_blocked` + `narration_audio_id`), window-independently
+  (releases a stuck blocked flag even when every tab is gone — a frontend `ended` only fires if a tab
+  is open).
+- **Frontend (`GraphView.tsx`) — the missing symmetric seam (A3/B2/B4).** Replaced `audioRef` with
+  `currentClipRef` (the clip + the box `key` it belongs to). Added `stopCurrentClip()` — the mirror of
+  `startClip` ("the single start-any-clip seam"): pause + beacon `ended` + null the ref. EVERY stop
+  path now funnels through it — `startClip`'s interrupt (A3), `closeSay` when the box owns the live
+  clip incl. a `blocked` one (B2), `dismissAllSays` (clear), and the unmount cleanup (B4).
+  `closeSay` lost its `status === "playing"` special-case (now: stop iff `currentClipRef.key === key`,
+  so closing a stale box never kills what's playing); `onended` nulls the ref to avoid a double-beacon;
+  currency guards moved to `currentClipRef.current?.audio === clip` (the rapid-two-say AbortError pin
+  still holds).
+- **[8] pace-on-say (Codex B6).** `say()` was keying pacing AND the dispatch report on the POINT
+  broadcast's `conns`, ignoring the say broadcast's return. If a Viewer's bounded queue has room for
+  the point but overflows on the say, it's evicted having received the focus but NO audio — yet pacing
+  was still set. Now captures `say_conns` and paces on it; the dispatch report stays on the point's
+  `conns` (the honest "did the focus land" count — a dropped point implies a dropped say, point-first).
+  **No dedicated test** (deliberate): forcing the case needs a queue artificially filled to 63 to
+  trigger the hub's eviction — that tests the framework's backpressure, not this logic (tests/CLAUDE.md
+  pitfall #1/#19); the comment carries the intent.
+
+### Declined / no-action (recorded so they aren't re-litigated)
+
+- **[6] synth-before-validate (Codex B5) — DECLINED (2nd time).** `--say` synthesizes (paid ~½¢/~3s
+  Gemini call) before contacting the server / resolving the target, so a typo target or dead server
+  wastes the call. Real but efficiency-only. The fix that catches typos needs a server round-trip +
+  a SECOND recursive graph build on every SUCCESS (`/api/say` already builds), taxing the ~99% path
+  and the low-dead-air pacing budget to save the rare miss; the cheap reachability-only variant
+  catches only the dead-server case (which fails on the first say and stops) and overlaps a probe the
+  CLI already makes. Deep-review declined it in v1; declined again. **Documented for a future agent in
+  a TEMP scratchpad doc** (`scratchpads/task-174-voice-narration/ISSUE-say-synthesizes-before-validation.md`
+  — a throwaway working note, NOT a durable task artifact) with repro steps, the four constraints, the
+  priced fix options, and the reconsider-triggers (observed spend / price rise / a future clip cache).
+- **A4** (`ended` zeroes global pacing while another window plays) — the documented "one machine, one
+  speaker" model; reviewer flagged it only to keep it conscious. **A5** (`TTSSynthesisError` bare
+  `pass`) — intentional and documented. No change to either.
+
+### [5] Stray demo file (human review warning)
+
+`ticket-triage.pflow.md` was already gone; only `voice-demo.pflow.md` remained at the repo root (zero
+example-validation coverage — the glob is `examples/**`). Confirmed it validates (`✓ Workflow is
+valid`), `git mv`'d it to `examples/narration/voice-demo.pflow.md` (+ a short README) — now covered by
+`test_docs/test_example_validation.py`.
+
+### Verification (0 regressions)
+
+- Python `make test`: **8463 passed** (baseline 8460 → **+3** server tests: stale-`ended` ignored,
+  stale-`started` ignored, `clear` resets blocked; `test_ended_beacon_clears_the_window` updated to use
+  the real audio_id). `make check` fully green (ruff/ruff-format, mypy 244 files, deptry, MDX).
+- Web `npx vitest run`: **723 passed** (baseline 721 → **+2**: close-blocked-beacons,
+  stale-box-close-leaves-live-clip; strengthened the interrupt + unmount tests to assert the beacon).
+  Strict `tsc` + `npm run build` + `make ui-build` green (bundle regenerated).
+
+### Deviation / design note
+
+- Folded the reviewers' 4–5 sprinkled patches into **one symmetric design** (a stop seam mirroring the
+  start seam + clip-scoped server pacing) rather than N call-site edits. Rationale: the naive sprinkle
+  is subtly *incorrect* (the interrupt/stale-beacon coupling above), and the symmetric version is the
+  simpler FINAL code — one start seam, one stop seam, symmetric `started`/`ended` guards — with no
+  deferred landmine. User explicitly asked to optimize for final-code simplicity and confirmed folding
+  [7] in.
+
+### Docs updated
+
+`src/pflow/ui/CLAUDE.md` (`/api/narration` scoping + `clear` resets the whole rendezvous),
+`web/CLAUDE.md` (the `currentClipRef` + `stopCurrentClip` stop seam, id-scoped beacon safety).
+
+**Not committed** (project rule). Files touched: `src/pflow/ui/server.py`,
+`tests/test_cli/test_ui_interaction_server.py`, `web/src/views/GraphView.tsx`,
+`web/src/views/GraphView.test.tsx`, `src/pflow/ui/CLAUDE.md`, `web/CLAUDE.md`,
+`voice-demo.pflow.md` → `examples/narration/voice-demo.pflow.md` (+ new `examples/narration/README.md`),
+(+ regenerated `src/pflow/ui/static/` bundle). Temp working note (not a task artifact):
+`scratchpads/task-174-voice-narration/ISSUE-say-synthesizes-before-validation.md`.

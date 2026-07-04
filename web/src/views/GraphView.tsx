@@ -162,9 +162,11 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // positional and renumber on an auto-update rebuild, so each box's anchor is re-resolved from
   // `graph` every render — sayAnchorIdFor; a vanished ref hides that box). A new say to an anchored
   // target replaces just that box; different targets coexist; the user closes each (or the agent's
-  // `clear` closes all). Playback status is per box; ONE clip plays at a time (audioRef).
+  // `clear` closes all). Playback status is per box; ONE clip plays at a time — `currentClipRef`
+  // holds it plus the box `key` it belongs to, so a per-box close can tell whether it owns the
+  // live clip (and so every stop path frees the server's pacing rendezvous — see stopCurrentClip).
   const [sayCallouts, setSayCallouts] = useState<Map<string, SayItem>>(() => new Map());
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const currentClipRef = useRef<{ key: string; url: string; audio: HTMLAudioElement } | null>(null);
   // Hover marks a SET of canvas subjects — a panel chip marks its one resolved
   // node, a canvas row marks its edges + their far ends. Pure highlight, no
   // focus / expansion / camera change (user decision 2026-06-11). Own context
@@ -661,6 +663,19 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       return next;
     });
   }, []);
+  // The mirror of startClip: stop the one current clip and tell the server it ended. Every stop
+  // path — an interrupt, a per-box close, the `clear` verb, unmount — funnels through here so the
+  // `ended` beacon is never forgotten and the server's pacing rendezvous is freed (else the next
+  // `--say` waits out audio that already stopped). Safe to over-call: the server ignores an `ended`
+  // whose audio_id is no longer the current clip, so this never races a newer say. A detached Audio
+  // is not DOM — React unmount won't stop it, hence the explicit pause.
+  const stopCurrentClip = useCallback(() => {
+    const current = currentClipRef.current;
+    currentClipRef.current = null;
+    if (!current) return;
+    current.audio.pause();
+    reportNarration(current.url, "ended");
+  }, []);
   // ONE function starts every clip — the first play AND a replay — so the interruption sweep and
   // the currency guards live in exactly one place. `failStatus` is the only difference between the
   // two gestures: an initial play() rejection is the autoplay policy ("blocked" → unlock button);
@@ -668,8 +683,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // the server's LRU ("expired" → button gone, caption stays).
   const startClip = useCallback(
     (key: string, url: string | null, failStatus: "blocked" | "expired") => {
-      audioRef.current?.pause();
-      audioRef.current = null;
+      stopCurrentClip(); // interrupt: pause + `ended` the prior clip (server ignores it once stale)
       setSayCallouts((prev) => {
         const next = new Map(prev);
         // Any OTHER box that was playing is now finished — interrupted means replayable, not lost.
@@ -684,12 +698,13 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       });
       if (!url) return;
       const clip = new Audio(url);
-      audioRef.current = clip;
+      currentClipRef.current = { key, url, audio: clip };
       // CURRENCY GUARD (deep-review critical in v1): pause() rejects the PRIOR clip's still-pending
-      // play() with AbortError — as a microtask AFTER this new clip has started. Both callbacks
-      // check the clip is still current, or a stale rejection would flip the NEW clip's box.
+      // play() with AbortError — as a microtask AFTER this new clip has started. Each callback
+      // checks the clip is still current, or a stale rejection would flip the NEW clip's box.
       clip.onended = () => {
-        if (audioRef.current === clip) {
+        if (currentClipRef.current?.audio === clip) {
+          currentClipRef.current = null; // natural end: a later stopCurrentClip must not double-beacon
           setSayStatus(key, "done");
           reportNarration(url, "ended");
         }
@@ -699,31 +714,28 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
         .then(() => {
           // Playback beacon: re-anchors the server's pacing rendezvous to REAL playback (the
           // broadcast-time estimate can only guess when the clip starts).
-          if (audioRef.current === clip) reportNarration(url, "started");
+          if (currentClipRef.current?.audio === clip) reportNarration(url, "started");
         })
         .catch(() => {
-          if (audioRef.current === clip) {
+          if (currentClipRef.current?.audio === clip) {
             setSayStatus(key, failStatus);
             // Only an INITIAL play can be autoplay-blocked; a gesture replay's rejection means
-            // the clip is gone (expired), not a silent window.
+            // the clip is gone (expired), not a silent window. Keep currentClipRef pointing at the
+            // blocked clip so closing its box still frees the server's blocked flag (via stopCurrentClip).
             if (failStatus === "blocked") reportNarration(url, "blocked");
           }
         });
     },
-    [setSayStatus],
+    [setSayStatus, stopCurrentClip],
   );
   const replaySay = useCallback((key: string, url: string) => startClip(key, url, "expired"), [startClip]);
-  // Close ONE box (the callout's ✕) = "stop talking": pause its clip if it was the one playing
-  // (only one box can be "playing" — the startClip sweep guarantees it).
+  // Close ONE box (the callout's ✕): if this box owns the live clip — playing, OR a blocked clip
+  // that never played — stop it and free the server (pacing + blocked flag) via stopCurrentClip.
+  // A stale box (a `done`/`blocked` box already superseded by a newer say) never owns the current
+  // clip, so closing it just removes the box and must not touch whatever is playing now.
   const closeSay = useCallback(
     (key: string) => {
-      const item = sayCallouts.get(key);
-      if (item?.status === "playing") {
-        audioRef.current?.pause();
-        audioRef.current = null;
-        // The voice stopped: free the pacing rendezvous (the next --say need not wait it out).
-        if (item.audioUrl) reportNarration(item.audioUrl, "ended");
-      }
+      if (currentClipRef.current?.key === key) stopCurrentClip();
       setSayCallouts((prev) => {
         if (!prev.has(key)) return prev;
         const next = new Map(prev);
@@ -731,19 +743,19 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
         return next;
       });
     },
-    [sayCallouts],
+    [stopCurrentClip],
   );
   // Close ALL boxes: the agent's `clear` verb (clearing the point clears its annotations — locked);
   // a bare focus/frame deliberately does NOT dismiss (spec: captions persist until the user dismisses).
   const dismissAllSays = useCallback(() => {
-    audioRef.current?.pause();
-    audioRef.current = null;
+    stopCurrentClip();
     setSayCallouts(new Map());
-  }, []);
+  }, [stopCurrentClip]);
   // The clip is a detached Audio object, not DOM — React unmount doesn't stop it. Without this,
-  // leaving the graph mid-narration (Back to catalog, workflow switch) keeps the voice playing
-  // with no way to stop it (deep-review finding, 2026-07-04).
-  useEffect(() => () => audioRef.current?.pause(), []);
+  // leaving the graph mid-narration (Back to catalog, workflow switch) keeps the voice playing with
+  // no way to stop it (deep-review finding, 2026-07-04) AND strands the server's pacing rendezvous —
+  // stopCurrentClip both pauses and beacons `ended`. It is stable, so this fires only on unmount.
+  useEffect(() => () => stopCurrentClip(), [stopCurrentClip]);
   // Search-select behaves like CLICKING the node: REVEAL it (expand the collapsed
   // ancestor chain so a buried target becomes visible), then focus + SELECT +
   // camera its representative (a host → its group; a leaf → itself). Passing the

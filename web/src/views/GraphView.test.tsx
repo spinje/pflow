@@ -1265,12 +1265,16 @@ describe("agent say callout (Task 174 + persistent-captions follow-up)", () => {
     expect(screen.getByText("box two")).toBeTruthy();
   });
 
-  it("a new say flips the interrupted box to done — replayable, not lost", async () => {
+  it("a new say flips the interrupted box to done — replayable, not lost — and beacons its end", async () => {
     await mountWithGraph();
     say("interrupted");
     say("interrupter", "/api/audio/y", GRAPH.nodes[1]!.ref);
 
     expect(FakeAudio.instances[0]!.pause).toHaveBeenCalled();
+    // The interrupt frees the prior clip's server-side rendezvous (the id-scoped `ended` is harmless
+    // even though the new say already re-armed pacing — the server ignores it once superseded). This
+    // is the ONLY thing that frees a caption-only interrupt under --no-wait.
+    expect(live.narration).toHaveBeenCalledWith("/api/audio/x", "ended");
     // The interrupted box grew a Replay button (done); the interrupter is playing (no button on it).
     expect(within(boxOf("interrupted")).getByRole("button", { name: "↻ Replay" })).toBeTruthy();
     expect(replayButtons()).toHaveLength(1);
@@ -1365,6 +1369,39 @@ describe("agent say callout (Task 174 + persistent-captions follow-up)", () => {
     expect(live.narration).toHaveBeenCalledWith("/api/audio/x", "ended");
   });
 
+  it("closing a BLOCKED box beacons 'ended' so the server's blocked-hold releases", async () => {
+    await mountWithGraph();
+    say("blocked then closed");
+    const clip = FakeAudio.instances[0]!;
+    await act(async () => {
+      clip.rejectPlay(new Error("NotAllowedError")); // autoplay blocked — the clip never played
+      await Promise.resolve();
+    });
+    live.narration.mockClear(); // drop the 'blocked' beacon — we care about what the close reports
+    // The blocked clip still owns currentClipRef, so closing its box must free the server (an `ended`
+    // clears the stuck narration_blocked flag) even though nothing ever played. Without this the next
+    // unrelated --say would hold for the full ~2-min blocked cap.
+    fireEvent.click(boxOf("blocked then closed").querySelector(".node-callout-close")!);
+    expect(live.narration).toHaveBeenCalledWith("/api/audio/x", "ended");
+  });
+
+  it("closing a stale (superseded) box does not stop the clip that is playing now", async () => {
+    await mountWithGraph();
+    say("stale box"); // A on node 0
+    say("live box", "/api/audio/y", GRAPH.nodes[1]!.ref); // B on node 1 interrupts → A done, B playing
+    const liveClip = FakeAudio.instances[1]!;
+    live.narration.mockClear();
+
+    // Close the DONE box A — it no longer owns the current clip (B does), so the close must only
+    // remove the box, never pause B or free B's rendezvous.
+    fireEvent.click(boxOf("stale box").querySelector(".node-callout-close")!);
+
+    expect(screen.queryByText("stale box")).toBeNull();
+    expect(screen.getByText("live box")).toBeTruthy();
+    expect(liveClip.pause).not.toHaveBeenCalled();
+    expect(live.narration).not.toHaveBeenCalled();
+  });
+
   it("the agent's clear verb dismisses ALL boxes and pauses; a bare focus does not", async () => {
     await mountWithGraph();
     say("sticky caption");
@@ -1383,7 +1420,7 @@ describe("agent say callout (Task 174 + persistent-captions follow-up)", () => {
     expect(playing.pause).toHaveBeenCalled();
   });
 
-  it("unmounting the view pauses a playing clip (Back to catalog must stop the voice)", async () => {
+  it("unmounting the view pauses a playing clip AND beacons 'ended' (Back to catalog stops the voice and frees pacing)", async () => {
     vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
     const { unmount } = render(<GraphView workflow="demo" onBack={() => {}} />);
     await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
@@ -1395,6 +1432,9 @@ describe("agent say callout (Task 174 + persistent-captions follow-up)", () => {
     unmount();
 
     expect(clip.pause).toHaveBeenCalled();
+    // Without the beacon the server keeps advertising narration_s_remaining for audio that stopped,
+    // so the next --say waits it out unnecessarily.
+    expect(live.narration).toHaveBeenCalledWith("/api/audio/x", "ended");
   });
 
   it("a stale target ref drops the say silently — no callout, no clip", async () => {

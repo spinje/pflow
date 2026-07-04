@@ -718,9 +718,14 @@ async def command(request: Request) -> Response:
 
     hub: _Hub = request.app.state.hub
     if command_type == "clear":
-        # Clear = "stop talking": the browser pauses the clip, so the pacing rendezvous must not make
-        # the next `--say` wait for audio that is no longer playing.
+        # Clear = "stop talking": reset the whole narration rendezvous so the next `--say` neither
+        # waits for a clip that is no longer playing (narration_until) nor holds for a stale
+        # autoplay-blocked flag from a window the user has since abandoned (narration_blocked). This
+        # is window-independent — a frontend `ended` beacon would clear it too, but only if a tab is
+        # still open; the agent's clear must reset it even when every window is gone.
         request.app.state.narration_until = 0.0
+        request.app.state.narration_blocked = False
+        request.app.state.narration_audio_id = None
         # Issue #539: latch the cleared state (stamped with its epoch) so a returning/new tab catches up to
         # the clear rather than replaying a stale highlight.
         cleared = hub.set_point(workflow_key, {"type": "clear"})
@@ -840,8 +845,10 @@ async def say(request: Request) -> Response:
 
     hub: _Hub = request.app.state.hub
     audio_url: str | None = None
+    audio_id: str | None = None
     if decoded is not None:
-        audio_url = f"/api/audio/{request.app.state.audio.put(decoded)}"
+        audio_id = request.app.state.audio.put(decoded)
+        audio_url = f"/api/audio/{audio_id}"
 
     # Two broadcasts, in this order. INVARIANT (load-bearing): the point→say per-queue ordering holds
     # only because there is NO `await` between these two broadcasts — the loop cannot preempt a
@@ -856,7 +863,13 @@ async def say(request: Request) -> Response:
     say_message: dict[str, object] = {"type": "say", "target": resolution.descriptor, "caption": caption}
     if audio_url is not None:
         say_message["audio_url"] = audio_url
-    hub.broadcast(workflow_key, say_message)
+    # Capture the SAY's own delivery for pacing (below), not the point's. The point is enqueued first,
+    # so if a Viewer's bounded queue has room for the point but overflows on the say, that connection
+    # is evicted here — it got the focus but NO caption/audio. Pacing must key on `say_conns`: keying
+    # on the point's `conns` would set narration_until for a clip that Viewer never received, stalling
+    # the next `--say`. (A dropped point implies a dropped say — point-first — so the dispatch report
+    # can safely stay on `conns`: it is the honest "did the focus land" count for the primary action.)
+    say_conns = hub.broadcast(workflow_key, say_message)
 
     # Pacing rendezvous: remember when this clip stops playing so the NEXT `--say` can wait for its
     # turn BEFORE dispatching (the CLI reads the remainder off /api/health — synthesis then overlaps
@@ -868,8 +881,9 @@ async def say(request: Request) -> Response:
     # last words (observed live 2026-07-04). A beacon reporting actual play-start would be exact —
     # add it only if the fixed allowance proves insufficient.
     duration = wav_duration(decoded) if decoded is not None else 0.0
-    if duration > 0 and conns:  # unplayable bytes (duration 0) never mark narration busy
+    if duration > 0 and say_conns:  # unplayable bytes (duration 0) / say-dropped connection never mark busy
         request.app.state.narration_until = time.monotonic() + duration + _NARRATION_START_LAG_S
+        request.app.state.narration_audio_id = audio_id  # the clip this window belongs to (beacon scope)
 
     response.update(_dispatch_report(workflow_key, conns))
     return _json(response)
@@ -887,8 +901,13 @@ async def narration(request: Request) -> Response:
     - ``blocked``: the autoplay policy rejected ``play()`` — set the blocked flag so
       ``/api/health`` can tell the CLI (whose next ``--say`` warns the agent that the window is
       silent until a click). ``narration_until`` is left alone: another window may be playing.
-    - ``ended``: playback finished (or the user dismissed the talking box) — clear the window so
-      the next ``--say`` doesn't wait for silence.
+    - ``ended``: playback finished, or the user stopped it (dismissed the box, navigated away, or a
+      newer say interrupted it) — clear the window so the next ``--say`` doesn't wait for silence.
+
+    ``started``/``ended`` only move ``narration_until`` when their ``audio_id`` matches
+    ``narration_audio_id`` (the current clip). A beacon for a superseded clip clears the blocked
+    flag (still evidence of working sound) but leaves pacing untouched — so the frontend can beacon
+    ``ended`` from every stop path without a stale beacon racing a newer say.
 
     ``async def``: touches the loop-affine narration state and reads the ``_AudioStore``.
     """
@@ -906,10 +925,21 @@ async def narration(request: Request) -> Response:
     if event == "blocked":
         state.narration_blocked = True
         return _json({})
-    state.narration_blocked = False  # started/ended: sound demonstrably works
+    # started/ended both prove the window can produce sound → not blocked (true for ANY clip, even a
+    # stale one — a late beacon is still evidence the browser is not autoplay-muted).
+    state.narration_blocked = False
+    # Pacing (narration_until) belongs to the CURRENT clip only. A beacon for a superseded clip — a
+    # rapid `--no-wait` interrupt, a late-delivered beacon, one of several open windows — must not
+    # touch it: an `ended` would free pacing early and clip the live clip's narration; a `started`
+    # would re-anchor to a window that is no longer current. The frontend can therefore beacon `ended`
+    # from every stop path (interrupt, close, unmount) without racing a newer say.
+    if audio_id != state.narration_audio_id:
+        return _json({})
     if event == "ended":
         state.narration_until = 0.0
+        state.narration_audio_id = None
         return _json({})
+    # started: replace say()'s broadcast-time start-lag estimate with the real playback start.
     clip = state.audio.get(audio_id)
     duration = wav_duration(clip) if clip is not None else 0.0
     if duration > 0:
@@ -1326,6 +1356,10 @@ def create_app() -> Starlette:
     # The Viewer reported an autoplay-blocked play() and no playback has succeeded since — surfaced
     # via /api/health so the CLI can warn that the window is silent until a click.
     app.state.narration_blocked = False
+    # Which clip `narration_until` refers to (None = idle). Scopes the playback beacons: a `started`
+    # or `ended` for a superseded clip (a rapid interrupt, a late/multi-window beacon) must NOT
+    # disturb the current clip's window — it is ignored unless its audio_id matches this one.
+    app.state.narration_audio_id = None
     return app
 
 

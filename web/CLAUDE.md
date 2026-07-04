@@ -112,9 +112,14 @@ Tests sit beside their subject.
   rebuild); a new say to an annotated target replaces just that box, different targets coexist. Each
   box carries a playback status (`playing → done` on `ended` → Replay button; initial `play()` reject
   → `blocked` → unlock button; a REPLAY reject means LRU-evicted → `expired`, button gone, caption
-  stays). ONE clip plays at a time: `startClip` (the single start-any-clip seam — first play AND
-  replay) pauses the current clip and flips any OTHER playing box to `done` (interrupted = replayable,
-  not lost). The agent's `clear` dismisses ALL boxes + pauses; a bare focus/frame does NOT (captions
+  stays). ONE clip plays at a time, held in `currentClipRef` (the clip + the box `key` it belongs
+  to). Two mirror seams: `startClip` (start-any-clip — first play AND replay) flips any OTHER playing
+  box to `done` (interrupted = replayable, not lost); `stopCurrentClip` (stop-any-clip) pauses the
+  current clip AND beacons `ended` — EVERY stop path funnels through it (an interrupt inside
+  startClip, a per-box close that owns the current clip, `clear`, unmount) so the server's pacing
+  rendezvous is always freed. Over-calling is safe: the server ignores an `ended` for a clip that is
+  no longer current (id-scoped — `narration_audio_id`), so a stale beacon never wipes a newer say's
+  window. The agent's `clear` dismisses ALL boxes + pauses; a bare focus/frame does NOT (captions
   persist until dismissed — locked). Every React
   Flow component the registries reference must be `memo()`'d.
 - **Chrome palette is SCOPED, never `:root`.** The dark UI tokens (`--bg/--border/--text/

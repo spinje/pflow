@@ -746,6 +746,20 @@ class TestNarrationPacingRendezvous:
         assert response.status_code == 200
         assert _client(app).get("/api/health").json()["narration_s_remaining"] == 0.0
 
+    def test_clear_also_resets_a_stuck_blocked_flag(self, tmp_path: Path) -> None:
+        # A window autoplay-blocked a clip and the user walked away without clicking ▶. `clear` must
+        # release the stuck flag too (window-independent — a frontend `ended` would only fire if a tab
+        # were still open), else the next unrelated --say holds for the full blocked-poll cap.
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        app.state.hub.register(str(workflow.resolve()), "visible")
+        _client(app).post("/api/narration", json={"audio_id": "x", "event": "blocked"})
+        assert _client(app).get("/api/health").json()["narration_blocked"] is True
+
+        _client(app).post("/api/command", json={"workflow": str(workflow), "type": "clear"})
+
+        assert _client(app).get("/api/health").json()["narration_blocked"] is False
+
     def test_started_beacon_reanchors_to_real_playback(self, tmp_path: Path) -> None:
         # Broadcast-time estimate = duration + the start-lag guess; the Viewer's `started` beacon
         # replaces it with the exact end measured from REAL playback (no lag pad).
@@ -775,13 +789,48 @@ class TestNarrationPacingRendezvous:
     def test_ended_beacon_clears_the_window(self, tmp_path: Path) -> None:
         workflow = _workflow(tmp_path)
         app = create_app()
+        conn = app.state.hub.register(str(workflow.resolve()), "visible")
+        self._say(app, workflow, audio_b64=self._wav_b64(5.0))
+        conn.queue.get_nowait()  # the point
+        audio_id = conn.queue.get_nowait()["audio_url"].rsplit("/", 1)[1]
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] > 0
+
+        _client(app).post("/api/narration", json={"audio_id": audio_id, "event": "ended"})
+
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] == 0.0
+
+    def test_a_stale_ended_beacon_does_not_free_the_current_clip(self, tmp_path: Path) -> None:
+        # A late `ended` for a SUPERSEDED clip (a rapid --no-wait interrupt, a multi-window or delayed
+        # beacon) must not zero the live clip's window — that would clip the current narration. This is
+        # what lets the frontend beacon `ended` from every stop path without racing a newer say.
+        workflow = _workflow(tmp_path)
+        app = create_app()
         app.state.hub.register(str(workflow.resolve()), "visible")
         self._say(app, workflow, audio_b64=self._wav_b64(5.0))
         assert _client(app).get("/api/health").json()["narration_s_remaining"] > 0
 
-        _client(app).post("/api/narration", json={"audio_id": "any", "event": "ended"})
+        _client(app).post("/api/narration", json={"audio_id": "not-the-current-clip", "event": "ended"})
 
-        assert _client(app).get("/api/health").json()["narration_s_remaining"] == 0.0
+        # The window stands — only an `ended` for the CURRENT audio_id frees pacing.
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] > 0
+
+    def test_a_stale_started_beacon_does_not_reanchor_pacing(self, tmp_path: Path) -> None:
+        # Symmetric to the stale `ended`: a `started` for a superseded clip must not re-arm pacing to a
+        # window that is no longer current (it would stretch the wait to the wrong clip's length).
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        conn = app.state.hub.register(str(workflow.resolve()), "visible")
+        self._say(app, workflow, audio_b64=self._wav_b64(2.0))
+        conn.queue.get_nowait()  # the point
+        current_id = conn.queue.get_nowait()["audio_url"].rsplit("/", 1)[1]
+        # A different, longer clip that is real in the store but NOT the current say.
+        stale_id = app.state.audio.put(base64.b64decode(self._wav_b64(9.0)))
+        assert stale_id != current_id
+
+        _client(app).post("/api/narration", json={"audio_id": stale_id, "event": "started"})
+
+        # Ignored: the window stays the ~2s current clip, never stretched to the 9s stale clip.
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] < 3.0
 
     def test_narration_beacon_validates_body(self) -> None:
         assert _client().post("/api/narration", json={"audio_id": "x", "event": "nope"}).status_code == 400
