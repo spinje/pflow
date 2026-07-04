@@ -138,6 +138,15 @@ or edge) in every Viewer showing a workflow, reusing the exact selection a user'
 The agent-side counterpart to a user click — the "hands" half of the shared canvas.
 _Avoid_: highlight, navigate; select (select is the user's click).
 
+**Say** — the agent action of attaching a spoken message to a Point: the target is focused or
+framed as usual while the text is narrated aloud and shown as a Caption. The Caption always
+appears; the voice plays when it can — a blocked or failed clip never changes what is shown.
+_Avoid_: announce, speak, narrate (unqualified), TTS (the mechanism, not the action).
+
+**Caption** — the persistent on-canvas text of a Say, anchored at its target, showing exactly the
+spoken words (delivery direction like `[excited]` is not a word, so it is not shown). Dismissed by
+the user or replaced by the next Say — never auto-faded. _Avoid_: subtitle, tooltip, bubble, label.
+
 **Watch** — reading the recent, bounded history of the user's *deliberate* interactions in the
 Viewers (clicks, focus changes, workflow switches — never hover/pan/zoom), most-recent-first.
 The agent's read-only "eyes" onto what the user is doing; the CLI surface is `user-activity`.
