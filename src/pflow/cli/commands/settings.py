@@ -6,7 +6,7 @@ from typing import ClassVar
 
 import click
 
-from pflow.core.settings import OUTPUT_MODES, PflowSettings, SettingsManager
+from pflow.core.settings import OUTPUT_MODES, LLMSettings, PflowSettings, SettingsManager
 
 
 class SettingsGroup(click.Group):
@@ -459,6 +459,8 @@ def llm_show() -> None:
     click.echo("  pflow settings llm set-default <model>")
     click.echo("  pflow settings llm set-discovery <model>")
     click.echo("  pflow settings llm set-filtering <model>")
+    click.echo("  pflow settings llm set-tts-model <model>")
+    click.echo("  pflow settings llm set-tts-voice <voice>")
 
 
 # Curated registry of LLM providers and their LiteLLM-recognized env vars.
@@ -705,33 +707,85 @@ def llm_set_filtering(model: str) -> None:
     click.echo(f"✓ Set filtering_model: {model}")
 
 
+@llm.command(name="set-tts-model")
+@click.argument("model")
+def llm_set_tts_model(model: str) -> None:
+    """Set the TTS model for `pflow ui --say` narration.
+
+    A Gemini TTS model id; a leading ``gemini/`` prefix is accepted (it is
+    stripped at call time). Narration needs a Gemini API key —
+    `pflow settings set-env GEMINI_API_KEY <value>`.
+
+    Example:
+        pflow settings llm set-tts-model gemini-3.1-flash-tts-preview
+    """
+    manager = SettingsManager()
+    current_settings = manager.load()
+    current_settings.llm.tts_model = model
+    manager.save(current_settings)
+
+    click.echo(f"✓ Set tts_model: {model}")
+
+
+@llm.command(name="set-tts-voice")
+@click.argument("voice")
+def llm_set_tts_voice(voice: str) -> None:
+    """Set the TTS voice for `pflow ui --say` narration.
+
+    A Gemini prebuilt voice name — e.g. Kore (the default), Puck, Charon,
+    or Aoede. Full list: https://ai.google.dev/gemini-api/docs/speech-generation
+
+    Example:
+        pflow settings llm set-tts-voice Puck
+    """
+    manager = SettingsManager()
+    current_settings = manager.load()
+    current_settings.llm.tts_voice = voice
+    manager.save(current_settings)
+
+    click.echo(f"✓ Set tts_voice: {voice}")
+
+
 # Valid setting names for unset command
-_LLM_SETTING_NAMES = {"default", "discovery", "filtering", "all"}
+_LLM_SETTING_NAMES = {"default", "discovery", "filtering", "tts-model", "tts-voice", "all"}
 
 
 @llm.command(name="unset")
-@click.argument("setting", type=click.Choice(["default", "discovery", "filtering", "all"]))
+@click.argument("setting", type=click.Choice(["default", "discovery", "filtering", "tts-model", "tts-voice", "all"]))
 def llm_unset(setting: str) -> None:
     """Remove an LLM model setting.
 
-    Removes the configured value, reverting to auto-detection behavior.
+    Removes the configured value: models revert to auto-detection, the TTS
+    fields revert to their built-in defaults.
 
-    SETTING can be: default, discovery, filtering, or all
+    SETTING can be: default, discovery, filtering, tts-model, tts-voice, or all
 
     Example:
         pflow settings llm unset default      # Clear default_model
         pflow settings llm unset discovery    # Clear discovery_model
+        pflow settings llm unset tts-voice    # Back to the default voice
         pflow settings llm unset all          # Clear all LLM settings
     """
     manager = SettingsManager()
     current_settings = manager.load()
+    tts_defaults = LLMSettings()
 
     if setting == "all":
         current_settings.llm.default_model = None
         current_settings.llm.discovery_model = None
         current_settings.llm.filtering_model = None
+        current_settings.llm.tts_model = tts_defaults.tts_model
+        current_settings.llm.tts_voice = tts_defaults.tts_voice
         manager.save(current_settings)
-        click.echo("✓ Removed all LLM settings (will use auto-detection)")
+        click.echo("✓ Removed all LLM settings (models use auto-detection; TTS back to defaults)")
+    elif setting == "tts-model":
+        current_settings.llm.tts_model = tts_defaults.tts_model
+        manager.save(current_settings)
+        click.echo(f"✓ Reset tts_model to the default: {tts_defaults.tts_model}")
+    elif setting == "tts-voice":
+        current_settings.llm.tts_voice = tts_defaults.tts_voice
+        manager.save(current_settings)
+        click.echo(f"✓ Reset tts_voice to the default: {tts_defaults.tts_voice}")
     elif setting == "default":
         if current_settings.llm.default_model is None:
             click.echo("default_model is not set")

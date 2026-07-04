@@ -28,6 +28,8 @@ The `pflow settings` command group manages pflow configuration stored in `~/.pfl
 | `llm set-default` | Set default model for all features |
 | `llm set-discovery` | Set model for discovery commands |
 | `llm set-filtering` | Set model for smart filtering |
+| `llm set-tts-model` | Set the TTS model for `pflow ui --say` narration |
+| `llm set-tts-voice` | Set the TTS voice for `pflow ui --say` narration |
 | `llm unset` | Remove an LLM model setting |
 | `registry output-mode` | Set registry run output display mode |
 
@@ -343,6 +345,8 @@ To configure:
   pflow settings llm set-default <model>
   pflow settings llm set-discovery <model>
   pflow settings llm set-filtering <model>
+  pflow settings llm set-tts-model <model>
+  pflow settings llm set-tts-voice <voice>
 ```
 
 ### pflow settings llm set-default
@@ -384,7 +388,8 @@ pflow settings llm set-default gemini/gemini-3-flash-preview
   the canonical `<provider>/<name>` form at write time, with a
   `Normalized:` line confirming the rewrite. Unknown bare names pass
   through with a warning so custom or self-hosted models still work.
-  This applies to all three `set-*` commands below.
+  This applies to `set-default`, `set-discovery`, and `set-filtering` —
+  not to the TTS setters (TTS ids aren't LiteLLM-routed).
 
   ```bash
   $ pflow settings llm set-default gemini-3-flash-preview
@@ -451,16 +456,31 @@ pflow settings llm set-filtering gemini/gemini-2.5-flash-lite
   All models produce equivalent quality for this task. Timings are approximate and vary with network latency.
 </Tip>
 
-### pflow settings llm unset
+### pflow settings llm set-tts-model / set-tts-voice
 
-Remove an LLM model setting, reverting to auto-detection.
+Configure voice narration for `pflow ui focus/frame --say` (see the [UI command](/reference/cli#ui-command)). Both have working defaults — you only need these to change the voice or track a new TTS model. Narration also needs a Gemini API key (`pflow settings set-env GEMINI_API_KEY <value>`).
 
 ```bash
-pflow settings llm unset {default|discovery|filtering|all}
+pflow settings llm set-tts-model <MODEL>   # a Gemini TTS model id
+pflow settings llm set-tts-voice <VOICE>   # a Gemini prebuilt voice name, e.g. Kore (default), Puck
+```
+
+**Example:**
+
+```bash
+pflow settings llm set-tts-voice Puck
+```
+
+### pflow settings llm unset
+
+Remove an LLM model setting. Models revert to auto-detection; the TTS fields revert to their built-in defaults.
+
+```bash
+pflow settings llm unset {default|discovery|filtering|tts-model|tts-voice|all}
 ```
 
 **Arguments:**
-- `SETTING` - Which setting to remove: `default`, `discovery`, `filtering`, or `all`
+- `SETTING` - Which setting to remove: `default`, `discovery`, `filtering`, `tts-model`, `tts-voice`, or `all`
 
 **Examples:**
 
@@ -470,6 +490,9 @@ pflow settings llm unset default
 
 # Clear discovery model (will use default_model or auto-detect)
 pflow settings llm unset discovery
+
+# Back to the default narration voice
+pflow settings llm unset tts-voice
 
 # Clear all LLM settings
 pflow settings llm unset all
