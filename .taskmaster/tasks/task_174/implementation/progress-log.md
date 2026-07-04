@@ -864,6 +864,9 @@ finding I'd initially deferred. Raised the coupling with the user; they approved
   a TEMP scratchpad doc** (`scratchpads/task-174-voice-narration/ISSUE-say-synthesizes-before-validation.md`
   — a throwaway working note, NOT a durable task artifact) with repro steps, the four constraints, the
   priced fix options, and the reconsider-triggers (observed spend / price rise / a future clip cache).
+  *[Update 2026-07-04, later session: the scratchpad doc was retired. The durable record is now
+  ADR-0012's rejected-options bullet ("validate-before-synthesize") + the DELIBERATE ORDERING note on
+  `_resolve_narration` in `ui.py`; the sanctioned remedy (clip cache) is designed in GH issue #561.]*
 - **A4** (`ended` zeroes global pacing while another window plays) — the documented "one machine, one
   speaker" model; reviewer flagged it only to keep it conscious. **A5** (`TTSSynthesisError` bare
   `pass`) — intentional and documented. No change to either.
@@ -903,4 +906,6 @@ valid`), `git mv`'d it to `examples/narration/voice-demo.pflow.md` (+ a short RE
 `web/src/views/GraphView.test.tsx`, `src/pflow/ui/CLAUDE.md`, `web/CLAUDE.md`,
 `voice-demo.pflow.md` → `examples/narration/voice-demo.pflow.md` (+ new `examples/narration/README.md`),
 (+ regenerated `src/pflow/ui/static/` bundle). Temp working note (not a task artifact):
-`scratchpads/task-174-voice-narration/ISSUE-say-synthesizes-before-validation.md`.
+`scratchpads/task-174-voice-narration/ISSUE-say-synthesizes-before-validation.md` *(retired in a
+later session — see the [6] update above: ADR-0012 + the `_resolve_narration` docstring are the
+durable record; clip cache designed in GH issue #561)*.

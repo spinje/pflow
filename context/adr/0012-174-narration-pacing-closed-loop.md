@@ -27,6 +27,21 @@ at dispatch; nothing sleeps after its own clip.
   words (the browser starts ~0.3–1s after broadcast); and an autoplay-blocked fresh window let the
   CLI narrate a silent room while reporting "sent to 1 window". Anything crossing into the physical
   world needs a feedback channel from the far end, not a model of it.
+- **Validate-before-synthesize (a preflight resolve, or a health ping, ahead of the paid TTS
+  call)** — declined three times (plan-stage review, code-stage deep-review, Codex on PR #560).
+  `--say` synthesizes (~½¢, ~3s) before any server contact, so a typo'd target, an unknown
+  workflow, a dead server, or a zero-window dispatch wastes one call (worst case two, via the
+  stripped-tags retry). Left as-is because the target resolver is server-side by design (the
+  Task 169 seam — the CLI never builds the graph), so a true preflight adds a second
+  resolve+build round-trip to every *successful* say, while a cheap `/api/health` ping can see
+  "is anyone listening" (dead server / unknown workflow / zero windows) but not the one failure
+  that actually recurs — the typo'd target. Every catchable miss halts and self-corrects (one
+  call per incident, no state left behind), and the gate's real price is final-code shape: a
+  delivery-prediction branch with an `--open` exemption and a probe-to-dispatch race, in command
+  bodies that are otherwise linear. Expect this to be re-proposed; this is the record of why not.
+  If the waste is ever *observed* to recur, the sanctioned remedy is the clip cache (issue #561)
+  — it absorbs the retry half of every waste path behind `synthesize()` with zero hot-path
+  branching — not a preflight.
 
 ## Consequences
 

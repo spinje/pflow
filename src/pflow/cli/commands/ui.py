@@ -484,6 +484,16 @@ def _resolve_narration(say: str | None) -> Narration:
     when ``--say`` was not given. ``_prepare_say`` may raise ``click.BadParameter``
     (a usage error the caller lets propagate); ``_synthesize_say`` never raises
     (caption-only degrade).
+
+    DELIBERATE ORDERING — declined three times; read ADR-0012's rejected options before
+    "fixing": synthesis runs BEFORE any server contact, so a typo'd target, an unknown
+    workflow, a dead server, or a zero-window dispatch wastes one paid TTS call (~half a
+    cent / ~3s). The target resolver is server-side by design (Task 169: one resolver, no
+    CLI/server graph divergence), so a preflight either doubles the graph build on every
+    SUCCESSFUL say or pings health without seeing the one failure that actually recurs
+    (the typo'd target). Every catchable miss halts and self-corrects, leaving no state
+    behind. The sanctioned remedy if the waste is ever observed to recur is a clip cache
+    behind ``synthesize()`` (issue #561), not a delivery-prediction gate here.
     """
     if say is None:
         return Narration(None, None, None, None, None)
