@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pflow.core.diagnostic import (
     LLM_WARNING_CATEGORY,
@@ -31,6 +31,9 @@ from pflow.core.workflow_id import synthesize_inline_workflow_id, workflow_conte
 
 from .result import ExecutionResult, Plan, ResolvedWorkflow, RunnerConfig, ValidationResult
 from .workflow_resolver import resolve_workflow
+
+if TYPE_CHECKING:
+    from pflow.runtime.workflow_trace import ResumeSource
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +101,7 @@ class WorkflowRunner:
         gate_resolver: Callable | None = None,
         workflow_manager: WorkflowManager | None = None,
         workflow_name: str | None = None,
+        resume_source: "ResumeSource | None" = None,
     ) -> ExecutionResult:
         """Execute a workflow and return structured results.
 
@@ -112,10 +116,23 @@ class WorkflowRunner:
                 None = gates fail loudly with ``GateNotInteractiveError``.
             workflow_manager: For metadata update on saved workflows. None = skip.
             workflow_name: Saved workflow name for metadata. None = skip.
+            resume_source: Optional Task 164 resume source (built by
+                ``runtime.workflow_trace.load_resume_source``). Rides as a kwarg —
+                the Task 125 ``gate_resolver`` precedent; ``RunnerConfig`` stays
+                execution-config-only. The caller merges ``resume_source.inputs``
+                into ``params`` BEFORE calling; the runner threads the entry node,
+                events, and lineage id to the collector and engine, nothing more.
+                Its ``entry_node_id`` must already be resolved (never ``None``).
 
         Returns:
             ExecutionResult -- always. Never raises (except KeyboardInterrupt/SystemExit).
         """
+        if resume_source is not None and resume_source.entry_node_id is None:
+            # Library-misuse guard (mirrors the engine's resume_from+only_node
+            # ValueError): a between-nodes source must have its entry resolved
+            # by the CLI before run() — threading None would silently run the
+            # whole workflow from the start while claiming a resume.
+            raise ValueError("resume_source.entry_node_id must be resolved before run()")
         params = dict(params)  # Copy at boundary -- never mutate caller's dict
 
         # Resources created in run() scope so finally ALWAYS has them for cleanup.
@@ -167,6 +184,9 @@ class WorkflowRunner:
                 # Task 175: None for every normal run (mint a UUID); a `pflow ui` ▶ launch forces it so
                 # the browser can pin the overlay to the exact run it spawned.
                 execution_id=config.execution_id,
+                # Task 164: attempt-chain lineage. Set at CONSTRUCTION — before
+                # start_streaming — because it rides the meta line (_meta_fields).
+                resumed_from=resume_source.execution_id if resume_source is not None else None,
             )
 
             mcp_pool = MCPConnectionPool()
@@ -187,6 +207,7 @@ class WorkflowRunner:
                 trace_collector,
                 mcp_pool,
                 cache,
+                resume_source,
             )
             return result
 
@@ -258,6 +279,7 @@ class WorkflowRunner:
         trace_collector: Any,
         mcp_pool: Any,
         cache: Any,
+        resume_source: "ResumeSource | None" = None,
     ) -> ExecutionResult:
         """Compile IR, execute flow, build result.
 
@@ -312,6 +334,12 @@ class WorkflowRunner:
             # (resolved file path or synthesized ir-hash:<md5>) so --only's
             # snapshot loader finds this workflow's own most-recent full-run trace.
             workflow_path=_workflow_path_id(resolved),
+            # Task 164: resume re-entry — the failed node K, the source trace's
+            # events to seed upstream from, and the source run's id for the
+            # __execution__ lineage stamp.
+            resume_from=resume_source.entry_node_id if resume_source is not None else None,
+            resume_events=resume_source.events if resume_source is not None else None,
+            resume_source_id=resume_source.execution_id if resume_source is not None else None,
         )
 
         try:

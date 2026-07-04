@@ -40,9 +40,11 @@ logger = logging.getLogger(__name__)
 # Trace format version. 2.5.0 introduced large-string-leaf interning (now written as inline
 # ``{"$pflow_blob": hash}`` refs with the bodies in inline ``blob`` lines per Task 172 — originally a
 # top-level ``blobs`` map) and canonicalized LLM prompt/system into ``llm_prompt``/``llm_system`` by
-# removing redundant LLM copies from node_output/template_resolutions/node_params. Consumers gate on
+# removing redundant LLM copies from node_output/template_resolutions/node_params. 2.6.0 (Task 164,
+# additive) adds ``resumed_from`` to the meta line (attempt-chain lineage) and ``restored: true`` on
+# cached-status events a resumed run re-recorded from its source trace. Consumers gate on
 # ``startswith("2.")``; old traces remain readable.
-TRACE_FORMAT_VERSION = "2.5.0"
+TRACE_FORMAT_VERSION = "2.6.0"
 
 
 def format_trace_filename(workflow_path: str | None, workflow_name: str, timestamp: str) -> str:
@@ -406,6 +408,19 @@ def _read_trace_meta_line(path: Path) -> dict[str, Any] | None:
     return None
 
 
+def _attempt_consumed_work(candidate: dict[str, Any]) -> bool:
+    """Whether a resume attempt's trace shows it EXECUTED anything (Task 164 chain policy).
+
+    "Resume targets the newest attempt in a chain" exists for consumption
+    semantics — a newer attempt means steps ran (side effects may have fired),
+    so the source is no longer the frontier. An attempt whose trace holds no
+    non-``restored`` events did zero work: its only events are the upstream
+    re-records stamped before K would have run. Task 171's ``resume list``
+    should reuse this predicate when it renders chains.
+    """
+    return any(not event.get("restored") for event in candidate.get("nodes") or [])
+
+
 def _raise_resume_source_missing(debug_dir: Path, workflow_path: str | None, execution_id: str | None) -> NoReturn:
     if execution_id is not None:
         raise ResumeSourceMissingError(
@@ -625,8 +640,17 @@ def load_resume_source(
         )
 
     if source_execution_id and isinstance(source_workflow_path, str):
-        for _candidate_path, candidate in _iter_workflow_traces(debug_dir, source_workflow_path):
-            if candidate.get("resumed_from") == source_execution_id:
+        for candidate_path, candidate in _iter_workflow_traces(debug_dir, source_workflow_path):
+            if candidate.get("resumed_from") != source_execution_id:
+                continue
+            # A newer attempt supersedes its source only when it CONSUMED the chain:
+            # it executed at least one real step, or it is live right now (mid-first-
+            # step there is no terminal event yet, but its writer lock is held). A
+            # DEAD zero-work attempt — a refused --force resume, a crash before K —
+            # consumed nothing; counting it would wedge the chain (the source reads
+            # superseded while the empty attempt itself refuses with "no resumable
+            # failed step").
+            if _attempt_consumed_work(candidate) or _is_trace_locked(candidate_path) is True:
                 raise ResumeSupersededError(
                     str(candidate.get("execution_id") or ""),
                     execution_id=source_execution_id,
@@ -891,6 +915,7 @@ class WorkflowTraceCollector:
         stream_to_disk: bool = False,
         content_hash: str | None = None,
         execution_id: str | None = None,
+        resumed_from: str | None = None,
     ):
         """Initialize the trace collector.
 
@@ -941,10 +966,18 @@ class WorkflowTraceCollector:
                 detached child mints its own id and the form can only follow-newest
                 (which reverts to an older still-live run when the new one finishes).
                 Defaults to ``None`` → mint a UUID (every other run path).
+            resumed_from: Task 164 attempt-chain lineage — the SOURCE run's
+                ``execution_id`` when this run is a resume of a prior failed
+                attempt; ``None`` for every normal run. Pure lineage, never a
+                data dependency (Decision 6: an attempt trace is self-contained
+                via re-recorded ``restored`` events). Rides the ``meta`` line
+                (``_meta_fields``), so it MUST be set at construction — before
+                ``start_streaming`` flushes the meta line.
         """
         self.workflow_name = workflow_name
         self.workflow_path = workflow_path
         self.content_hash = content_hash
+        self.resumed_from = resumed_from
         self.is_run_scoped = is_run_scoped
         self.execution_id = execution_id or str(uuid.uuid4())
         self.start_time = datetime.now()
@@ -1053,6 +1086,7 @@ class WorkflowTraceCollector:
         batch_items: list[dict[str, Any]] | None = None,
         sub_workflow_events: list[dict[str, Any]] | None = None,
         cached: bool = False,
+        restored: bool = False,
         frame: _HostFrame | None = None,
     ) -> None:
         """Record detailed node execution data.
@@ -1070,6 +1104,13 @@ class WorkflowTraceCollector:
             batch_items: Per-item trace events for batch nodes
             sub_workflow_events: Child workflow trace events for nested workflows
             cached: Whether this node used cached results (skipped execution)
+            restored: Task 164 (Decision 6) — this event re-records an upstream
+                node's final event from a resumed run's SOURCE trace, so the
+                attempt trace is self-contained (resume-of-a-resume and later
+                ``--only`` runs seed from it alone). Always passed with
+                ``cached=True``: ``status: "cached"`` keeps every cost/UI
+                consumer correct with zero change; ``restored: true`` is the
+                honest marker on top. Excluded from ``nodes_executed``.
         """
         event: dict[str, Any] = {
             "node_id": node_id,
@@ -1078,6 +1119,8 @@ class WorkflowTraceCollector:
             "status": _node_status(success, cached),
             "timestamp": datetime.now().isoformat(),
         }
+        if restored:
+            event["restored"] = True
 
         if error:
             event["error"] = error
@@ -1085,7 +1128,10 @@ class WorkflowTraceCollector:
             event["node_params"] = self._sanitize_for_json(node_params)
         if template_resolutions:
             event["template_resolutions"] = self._sanitize_for_json(template_resolutions)
-        if node_output:
+        # Restored events stamp on ``is not None`` (not truthiness): an upstream node whose
+        # real output was ``{}`` must survive re-record so a SECOND resume seeds ``{}`` rather
+        # than absent — a downstream coalesce distinguishes those (Task 164 §C step 4).
+        if node_output or (restored and node_output is not None):
             event["node_output"] = self._sanitize_for_json(node_output)
         if mutations:
             event["mutations"] = mutations
@@ -1099,32 +1145,38 @@ class WorkflowTraceCollector:
         if is_llm_node_type(node_type):
             _strip_redundant_llm_trace_fields(event)
 
-        # Task 172: stamp emit-time correlation on the run-scoped collector. A `frame`
-        # (sub-workflow host) reuses its reserved seq/parent_id/ancestor_path; every other
-        # record — leaf, cache hit (handle_cached_execution), api-warning (handle_api_warning) —
-        # takes the next seq and nests under the current host (`_host_stack[-1]`) or top level.
-        # Buffer collectors stamp nothing; their children embed as `sub_workflow_events`.
-        if self.is_run_scoped:
-            seq = frame.seq if frame is not None else self._next_seq()
-            parent_id = (
-                frame.parent_id if frame is not None else (self._host_stack[-1].seq if self._host_stack else None)
-            )
-            ancestor_path = frame.ancestor_path if frame is not None else self._current_ancestor_path()
-            self._check_reserved_collision(event, node_id)
-            event |= {
-                "id": seq,
-                "seq": seq,
-                "parent_id": parent_id,
-                "run_id": self.execution_id,
-                "ancestor_path": ancestor_path,
-                "port": None,
-            }
+        self._stamp_correlation(event, node_id, frame)
 
         self.events.append(event)
         # Task 172 step 3: stream this event as a JSONL line the instant it's recorded (run-scoped +
         # stream_to_disk only; a no-op otherwise, and under the pytest gate). Buffer collectors never
         # stream — their children embed and the whole nested tree is written at save_to_file.
         self._flush_event(event)
+
+    def _stamp_correlation(self, event: dict[str, Any], node_id: str, frame: _HostFrame | None) -> None:
+        """Task 172: stamp emit-time correlation on the run-scoped collector.
+
+        A ``frame`` (sub-workflow host) reuses its reserved seq/parent_id/
+        ancestor_path; every other record — leaf, cache hit
+        (``handle_cached_execution``), api-warning (``handle_api_warning``) —
+        takes the next seq and nests under the current host
+        (``_host_stack[-1]``) or top level. Buffer collectors stamp nothing;
+        their children embed as ``sub_workflow_events``.
+        """
+        if not self.is_run_scoped:
+            return
+        seq = frame.seq if frame is not None else self._next_seq()
+        parent_id = frame.parent_id if frame is not None else (self._host_stack[-1].seq if self._host_stack else None)
+        ancestor_path = frame.ancestor_path if frame is not None else self._current_ancestor_path()
+        self._check_reserved_collision(event, node_id)
+        event |= {
+            "id": seq,
+            "seq": seq,
+            "parent_id": parent_id,
+            "run_id": self.execution_id,
+            "ancestor_path": ancestor_path,
+            "port": None,
+        }
 
     def tree(self) -> list[dict[str, Any]]:
         """Nested event view over the store — the derived projection (Task 172).
@@ -1370,6 +1422,7 @@ class WorkflowTraceCollector:
             "only_node": self.only_node,
             "content_hash": self.content_hash,
             "inputs": self.inputs,
+            "resumed_from": self.resumed_from,
         }
 
     def _aggregates(self) -> dict[str, Any]:
@@ -1389,7 +1442,9 @@ class WorkflowTraceCollector:
             # run callout shows it). Small string; unlike json_output/warnings it's wire-safe.
             "execution_id": self.execution_id,
             "final_status": final_status,
-            "nodes_executed": len(self._top_level_events()),
+            # Restored events (Task 164: re-recorded from a resume's source trace) did not
+            # execute this run — the ONE aggregate their cached status doesn't already fix.
+            "nodes_executed": sum(1 for e in self._top_level_events() if not e.get("restored")),
             "nodes_failed": len(failed_node_ids),
             "failed_node_ids": failed_node_ids,
         }
@@ -1743,6 +1798,15 @@ class WorkflowTraceCollector:
             return "failed"
         if final_events is None:
             final_events = final_events_by_node(self._top_level_events())
+        if not final_events:
+            # A run.complete with ZERO node events means nothing executed — the run
+            # crashed or was refused before its first step (every workflow has ≥1
+            # node; gate stops are already handled above). Reporting "success" would
+            # lie to every consumer: the UI run list, resume's status arms, and
+            # analyze-cache's status buckets (Task 164 discovery — previously
+            # "success", which let a refused resume attempt masquerade as a
+            # successful run).
+            return "failed"
         execution_warnings = self.execution_warnings or []
         unrecovered_failures = _unrecovered_failed_node_ids(final_events, execution_warnings)
         if unrecovered_failures:
