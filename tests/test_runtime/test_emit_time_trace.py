@@ -629,14 +629,20 @@ def test_streaming_dead_end_inside_subworkflow_reflushes_to_disk(tmp_path, monke
 @pytest.mark.trace_files
 def test_streaming_zero_event_run_writes_meta_and_run_complete(tmp_path, monkeypatch):
     """Edge case: a zero-event run. finalize() opens the stream (writes meta) even with no events recorded,
-    then writes run.complete → a valid, loadable trace (final_status=success, nodes_executed=0)."""
+    then writes run.complete → a valid, loadable trace (nodes_executed=0).
+
+    Status is "failed", NOT "success" (Task 164): zero events with a run.complete
+    means nothing executed — the run crashed/was refused before its first step
+    (every workflow has ≥1 node). The old "success" was a lie that let a refused
+    resume attempt masquerade as a successful run and wedge its attempt chain.
+    """
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     c = WorkflowTraceCollector("empty", workflow_path="wf", is_run_scoped=True, stream_to_disk=True)
     path = c.finalize()
     assert path is not None and path.exists()
     assert [ln["kind"] for ln in _read_lines(path)] == ["meta", "run.complete"], "no events → meta + run.complete"
     disk = load_trace_file(path)
-    assert disk["nodes"] == [] and disk["nodes_executed"] == 0 and disk["final_status"] == "success"
+    assert disk["nodes"] == [] and disk["nodes_executed"] == 0 and disk["final_status"] == "failed"
 
 
 @pytest.mark.trace_files

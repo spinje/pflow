@@ -7,6 +7,7 @@ One file per top-level command, registered in `main.py` via `cli.add_command()`.
 | File | Command | External deps |
 |------|---------|---------------|
 | `run.py` | (hidden default — workflow execution) | All CLI modules, `pflow.execution.*` |
+| `resume.py` | `pflow resume [TARGET] [KEY=VALUE]...` — resume a failed/interrupted run from the failed step (Task 164) | `run.py` (`execute_json_workflow`), `pflow.runtime.workflow_trace.load_resume_source`, `pflow.runtime.compilation.is_side_effecting` |
 | `list.py` | `pflow list [keyword...]` | `pflow.core.workflow.manager` |
 | `find.py` | `pflow find "description"` | `pflow.core.workflow.discovery` |
 | `describe.py` | `pflow describe <workflow>` | `pflow.core.workflow.manager` |
@@ -132,6 +133,7 @@ LLM model resolution chain (genuinely hard to discover):
 | Command file | Test file(s) | Key mock.patch targets |
 |-------------|-------------|----------------------|
 | `run.py` | `test_workflow_resolution.py`, `test_validate_only.py`, `test_validate_verb_redirect.py`, `test_workflow_commands.py`, `test_dual_mode_stdin.py`, `test_dry_run.py`, `test_approval_gate_cli.py` | `pflow.cli.commands.run.WorkflowManager`, `.execute_json_workflow` |
+| `resume.py` | `test_resume_cli.py` | `pflow.execution.gate_prompt.can_prompt`, `pflow.cli.commands.resume.click.confirm` |
 | `list.py` | `test_workflow_commands.py` | `pflow.cli.commands.list.WorkflowManager` |
 | `describe.py` | `test_workflow_commands.py` | `pflow.cli.commands.describe.WorkflowManager` |
 | `history.py` | `test_workflow_commands.py` | `pflow.cli.commands.history.WorkflowManager` |

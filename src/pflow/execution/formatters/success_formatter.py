@@ -125,6 +125,16 @@ def format_execution_success(
                     not_executed_count = sum(1 for s in steps if s["status"] == "not_executed")
                     execution_dict["nodes_skipped"] = not_executed_count
 
+                # Resume metadata (Task 164 — engine stamps in _prepare_resume).
+                # A machine-readable resume marker: without it a resumed run's JSON
+                # is byte-identical to a full run's, the exact ambiguity the --only
+                # fields exist to prevent. Absent on non-resumed runs.
+                resumed_from_val = exec_state.get("resumed_from")
+                if resumed_from_val:
+                    execution_dict["resumed_from"] = resumed_from_val
+                    execution_dict["nodes_restored"] = len(exec_state.get("restored_nodes", []))
+                    execution_dict["resume_entry_node"] = exec_state.get("resume_entry_node")
+
                 # Aggregate cache stats
                 cache_hit_count = sum(1 for s in steps if s.get("cached"))
                 if cache_hit_count > 0:
@@ -449,7 +459,7 @@ def format_only_indicator(only_node: str, nodes_skipped: int) -> str:
 
     Single source of truth for the ``--only`` indicator text. Used by:
     - CLI text summary (``cli/workflow_output.py::_display_execution_summary``)
-    - CLI ``-p`` mode emission (``cli/workflow_output.py::_emit_only_indicator``)
+    - CLI ``-p`` mode emission (``cli/workflow_output.py::_emit_mode_indicators``)
     - MCP text summary (``_append_execution_steps`` below)
 
     Architecturally, ``--only`` is a **mode signal**, not a summary detail.
@@ -475,6 +485,29 @@ def format_only_indicator(only_node: str, nodes_skipped: int) -> str:
         noun = "node" if nodes_skipped == 1 else "nodes"
         return f"  ⤷ Ran only '{only_node}' (--only), {nodes_skipped} other {noun} not executed"
     return f"  ⤷ Ran only '{only_node}' (--only)"
+
+
+def format_resume_indicator(resumed_from: str, entry_node: str | None, nodes_restored: int) -> str:
+    """Format the resume mode confirmation line (Task 164).
+
+    Single source of truth at parity with ``format_only_indicator`` — same
+    rationale: a resume is a **mode signal**, not a summary detail. Without it
+    a resumed run's text output is byte-identical to a full run's, and an
+    agent doing iterative debugging cannot tell "everything re-ran" from
+    "upstream was restored from the failed attempt". Used by the CLI text
+    summary + ``-p`` emission (``cli/workflow_output.py``) and the MCP text
+    summary (``_append_execution_steps`` below).
+
+    Wording mirrors the ``--only`` line's semantics: restored upstream steps
+    were NOT executed this run — their outputs were seeded from the source
+    attempt's trace. The shorter no-restored form (K was the first step) still
+    announces the mode.
+    """
+    at_clause = f" at '{entry_node}'" if entry_node else ""
+    if nodes_restored > 0:
+        noun = "step" if nodes_restored == 1 else "steps"
+        return f"  ⤷ Resumed from {resumed_from}{at_clause} — {nodes_restored} upstream {noun} restored"
+    return f"  ⤷ Resumed from {resumed_from}{at_clause}"
 
 
 def format_stderr_warnings(steps: list[dict[str, Any]]) -> list[str]:
@@ -538,6 +571,15 @@ def _append_execution_steps(lines: list[str], execution: dict[str, Any]) -> None
     # a full run and agents doing iterative debugging cannot disambiguate.
     if only_node_val:
         lines.append(format_only_indicator(only_node_val, nodes_skipped))
+
+    # Resume mode confirmation (Task 164) — same mode-signal doctrine as --only.
+    resumed_from = execution.get("resumed_from")
+    if resumed_from:
+        lines.append(
+            format_resume_indicator(
+                resumed_from, execution.get("resume_entry_node"), execution.get("nodes_restored", 0)
+            )
+        )
 
     batch_error_lines = _format_batch_errors_section(steps)
     if batch_error_lines:

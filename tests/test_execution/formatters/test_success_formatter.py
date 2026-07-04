@@ -991,7 +991,7 @@ class TestFormatOnlyIndicator:
     PARITY GUARDRAIL — three call sites depend on this formatter producing
     consistent text:
     - CLI default-mode summary (workflow_output.py::_display_execution_summary)
-    - CLI -p mode emission (workflow_output.py::_emit_only_indicator)
+    - CLI -p mode emission (workflow_output.py::_emit_mode_indicators)
     - MCP text summary (success_formatter.py::_append_execution_steps)
     """
 

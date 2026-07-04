@@ -41,6 +41,10 @@ META_KEYS = (
     "only_node",
     "content_hash",
     "inputs",
+    # Task 164 (2.6.0): attempt-chain lineage — the source run's execution_id when this run
+    # resumed a prior failed attempt, else null. Knowable at run start; the resume loader's
+    # superseded check reads it, so a head-only reader must find it on the meta line.
+    "resumed_from",
 )
 # Correlation/line keys the writer derives onto each event line; the reader strips them to restore the
 # exact nested event. A producer must never emit these at an event's top level — the writer asserts this

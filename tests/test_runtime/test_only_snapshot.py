@@ -557,6 +557,65 @@ def test_only_coalesce_silently_uses_snapshot_branch(tmp_path: Path) -> None:
     assert "fallback" not in result.shared_after, "untaken branch must not be addressable"
 
 
+@pytest.mark.trace_files
+def test_only_does_not_seed_a_recovered_failure_upstream(tmp_path: Path) -> None:
+    """Seed fidelity on the ``--only`` surface (review fix 2026-07-04).
+
+    ``seed_snapshot_into_shared`` (workflow_trace.py) excludes failed-final-status
+    nodes from the seed — their real data lived in ``__failures__``, never the store.
+    That filter is a SHARED seam: both resume and ``--only`` reconstruct the store
+    through it. This test pins the ``--only`` consumer so a future "this exclusion is
+    resume-only" refactor cannot silently reopen the coalesce bug here (its sibling is
+    ``test_resume_engine.test_recovered_failure_upstream_is_not_seeded``).
+
+    The full run's ``primary`` FAILS (printing junk) and recovers via ``on-error`` to
+    ``fallback`` — a degraded snapshot. Under ``--only report`` the coalesce
+    ``${primary.stdout ?? fallback.stdout}`` must fall through to ``fallback-data``,
+    exactly as the recovered full run resolved it. Before the fix the failed primary's
+    junk was seeded and the coalesce silently resolved to it (``got primary-junk``).
+    Mutation-verified: dropping the ``status != "failed"`` filter fails only this test
+    plus its resume sibling.
+    """
+    ir = {
+        "nodes": [
+            {
+                "id": "primary",
+                "type": "shell",
+                "purpose": "Fails after emitting junk; recovers via on-error to fallback.",
+                "params": {"next": "report", "on-error": "fallback", "command": "printf primary-junk; exit 1"},
+            },
+            {
+                "id": "fallback",
+                "type": "shell",
+                "purpose": "Error-branch recovery that actually produces the usable value.",
+                "params": {"next": "report", "command": "printf fallback-data"},
+            },
+            {
+                "id": "report",
+                "type": "shell",
+                "purpose": "Coalesces the recovered-failure primary against the fallback.",
+                "params": {"command": "printf 'got ${primary.stdout ?? fallback.stdout}'"},
+            },
+        ],
+    }
+    wf = tmp_path / "recovered-freeze.pflow.md"
+    write_workflow_file(ir, wf)
+
+    full = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert full.success, [d.message for d in full.diagnostics]
+    # Precondition: the run recovered, so the full run already resolved to the fallback.
+    assert full.shared_after["report"]["stdout"] == "got fallback-data"
+    full.trace.save_to_file()
+
+    result = WorkflowRunner().run(str(wf), {}, RunnerConfig(only_node="report"))
+    assert result.success, [d.message for d in result.diagnostics]
+    # The failed primary is NOT seeded, so the coalesce falls through to the fallback —
+    # NOT "got primary-junk" (the pre-fix silent-wrong-data outcome).
+    assert result.shared_after["report"]["stdout"] == "got fallback-data"
+    # Restored set mirrors the resume sibling: the failed-recovered node is excluded.
+    assert result.shared_after["__execution__"]["restored_nodes"] == ["fallback"]
+
+
 def test_only_bare_ref_to_branch_not_in_snapshot_is_loud() -> None:
     """L2 loud sub-case: a bare (non-coalesce) ref to a branch the snapshot
     didn't take fails with an unresolved-reference error.

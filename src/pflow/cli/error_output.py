@@ -25,16 +25,25 @@ def format_error_json(
     metrics_collector: Any = None,
     shared_storage: dict[str, Any] | None = None,
     ir_data: dict[str, Any] | None = None,
+    resume_execution_id: str | None = None,
 ) -> dict[str, Any]:
     """Build unified error JSON from either an exception or an ExecutionResult.
 
     Exactly one of ``exception`` or ``result`` must be provided.
 
     Returns a dict conforming to the unified error shape:
-    {success, status, error, errors, workflow, [duration_ms, metrics, execution]}
+    {success, status, error, errors, workflow,
+     [duration_ms, metrics, execution, execution_id, resume_command]}
+
+    ``resume_execution_id`` (result path only): when the caller knows the failed
+    run left a resumable trace, the document gains ``execution_id`` and the
+    literal ``resume_command`` so a stdout-only agent can act without scraping
+    stderr. MCP builds its error payload elsewhere and never passes this.
     """
     if result is not None:
-        return _format_from_result(result, workflow_metadata, metrics_collector, shared_storage, ir_data)
+        return _format_from_result(
+            result, workflow_metadata, metrics_collector, shared_storage, ir_data, resume_execution_id
+        )
     if exception is not None:
         return _format_from_exception(exception, workflow_metadata, metrics_collector, shared_storage)
     raise ValueError("Either exception or result must be provided")
@@ -46,6 +55,7 @@ def _format_from_result(
     metrics_collector: Any,
     shared_storage: dict[str, Any] | None,
     ir_data: dict[str, Any] | None,
+    resume_execution_id: str | None = None,
 ) -> dict[str, Any]:
     """Format error from ExecutionResult (post-execution failure)."""
     from pflow.execution.formatters.error_formatter import format_execution_errors
@@ -100,6 +110,12 @@ def _format_from_result(
             output["nodes_executed"] = metrics_data["nodes_executed"]
         if "metrics" in metrics_data:
             output["metrics"] = metrics_data["metrics"]
+
+    # Resume affordance (Task 164 agent-UX): machine-readable resume target,
+    # present only when the failed run left a trace to resume from.
+    if resume_execution_id:
+        output["execution_id"] = resume_execution_id
+        output["resume_command"] = f"pflow resume {resume_execution_id}"
 
     return output
 
@@ -164,6 +180,7 @@ def output_error(
     metrics_collector: Any = None,
     shared_storage: dict[str, Any] | None = None,
     ir_data: dict[str, Any] | None = None,
+    resume_execution_id: str | None = None,
 ) -> None:
     """Output an error in the appropriate format (JSON or text).
 
@@ -179,6 +196,7 @@ def output_error(
             metrics_collector=metrics_collector,
             shared_storage=shared_storage,
             ir_data=ir_data,
+            resume_execution_id=resume_execution_id,
         )
         _serialize_json_result(error_dict, verbose)
     else:

@@ -1120,3 +1120,237 @@ class MaxNodeVisitsError(RuntimeError):
                 },
             )
         ]
+
+
+class ResumeSourceError(PflowError):
+    """Base for every ``pflow resume`` refusal (Task 164).
+
+    A resume refusal is agent-first: the message says WHAT stopped the resume
+    and WHY, the suggestions say HOW to proceed. Every refusal carries the
+    source run's ``execution_id`` and its ``trace_path`` in the diagnostic
+    context so a programmatic consumer can correlate the refusal with the exact
+    attempt it inspected. Modeled on ``OnlySnapshotMissingError`` — a class-level
+    default title + a single ``Severity.ERROR`` diagnostic with
+    ``context={"category": "execution_failure"}``. All subclasses exit 1 via
+    ``PflowCLI.invoke``.
+
+    One class per refusal FAMILY, not per message: ``ResumeNotResumableError``
+    carries several distinct messages (denied run, undecided escalation, inline
+    source, edited-away step) because they share one remediation shape (re-run).
+    """
+
+    _TITLE = "Cannot resume"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        execution_id: str | None = None,
+        trace_path: str | None = None,
+        suggestions: list[str] | None = None,
+        node_id: str | None = None,
+    ):
+        self.execution_id = execution_id
+        self.trace_path = trace_path
+        self.suggestions = suggestions or []
+        self.node_id = node_id
+        super().__init__(message)
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        context: dict[str, Any] = {"category": "execution_failure"}
+        if self.execution_id:
+            context["execution_id"] = self.execution_id
+        if self.trace_path:
+            context["trace_path"] = self.trace_path
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title=self._TITLE,
+                node_id=self.node_id,
+                source="runtime",
+                suggestions=self.suggestions or None,
+                context=context,
+            )
+        ]
+
+
+class ResumeSourceMissingError(ResumeSourceError):
+    """No trace was found to resume — the target names no known run (Task 164)."""
+
+    _TITLE = "No run to resume"
+
+
+class ResumeNothingToResumeError(ResumeSourceError):
+    """The newest run already succeeded — there is nothing to resume (Task 164)."""
+
+    _TITLE = "Nothing to resume"
+
+
+class ResumeNotResumableError(ResumeSourceError):
+    """The run exists but cannot be resumed (Task 164).
+
+    The catch-all refusal family whose members share the "re-run instead"
+    remediation: a human-denied gate stop, an undecided escalation in the seed
+    scope, an ambiguous between-nodes successor, an inline/piped source (no file
+    to re-resolve), or a failed step that no longer exists after an edit.
+    """
+
+    _TITLE = "Run cannot be resumed"
+
+
+class ResumeGateStoppedError(ResumeSourceError):
+    """The run stopped at a human gate, not at a failed step (Task 164, Decision 8).
+
+    ``final_status:"failed"`` with no unrecovered failed node means a gate
+    (recovered from the disk-only ``kind:"gate"`` lines) stopped the run. Task
+    171 replaces this refusal arm with a resumable ``paused`` case.
+    """
+
+    _TITLE = "Run stopped at a gate"
+
+    def __init__(
+        self,
+        *,
+        node_id: str,
+        gate_kind: str | None,
+        execution_id: str | None = None,
+        trace_path: str | None = None,
+    ):
+        kind = gate_kind or "approval"
+        super().__init__(
+            f"This run stopped at a human {kind} gate on step '{node_id}', not at a failed step. "
+            "Resume recovers failed steps; a gate stop is a deliberate human checkpoint.",
+            execution_id=execution_id,
+            trace_path=trace_path,
+            node_id=node_id,
+            suggestions=["Re-run the workflow and answer the gate, or run it interactively."],
+        )
+
+
+class ResumeStillRunningError(ResumeSourceError):
+    """The target run is still in progress — its trace is held by a live writer (Task 164)."""
+
+    _TITLE = "Run still in progress"
+
+
+class ResumeSupersededError(ResumeSourceError):
+    """A newer attempt already resumed this run — resume targets the newest (Task 164)."""
+
+    _TITLE = "A newer attempt exists"
+
+    def __init__(
+        self,
+        newer_execution_id: str,
+        *,
+        execution_id: str | None = None,
+        trace_path: str | None = None,
+    ):
+        self.newer_execution_id = newer_execution_id
+        super().__init__(
+            f"This run was already resumed by a newer attempt '{newer_execution_id}'. "
+            "Resume targets the newest attempt in a chain.",
+            execution_id=execution_id,
+            trace_path=trace_path,
+            suggestions=[f"pflow resume {newer_execution_id}"],
+        )
+
+
+class ResumeFidelityError(ResumeSourceError):
+    """A restored upstream value survives the trace only as a lossy placeholder (Task 164, Decision 5).
+
+    The trace stores a genuine raw-``bytes`` value (only a ``code``/python step
+    can produce one) as ``<binary data: N bytes>``, so seeding it would restore
+    corrupt state. Refuse rather than resume with a placeholder in the store.
+    """
+
+    _TITLE = "Cannot resume — unrecoverable data"
+
+    def __init__(
+        self,
+        *,
+        node_id: str,
+        key: str,
+        execution_id: str | None = None,
+        trace_path: str | None = None,
+    ):
+        super().__init__(
+            f"Step '{node_id}' produced binary data (in '{key}') that the saved run stores only as a "
+            "placeholder, so resuming would restore corrupt data. Only a `code` step can produce this.",
+            execution_id=execution_id,
+            trace_path=trace_path,
+            node_id=node_id,
+            suggestions=["Re-run the workflow from the start so the binary value is regenerated."],
+        )
+
+
+class ResumeSideEffectConfirmationError(ResumeSourceError):
+    """Resume would re-run a side-effecting step without confirmation (Task 164, Decision 4).
+
+    A non-interactive (agent / MCP / pipe) resume whose failed step K
+    side-effects (shell / code / claude-code / file-ops / mcp; http reads
+    external state). Resume gives at-least-once execution of K, so its side
+    effects MAY fire again — a non-TTY run refuses loudly rather than prompt or
+    silently repeat them. Mirrors ``GateNotInteractiveError``'s what/why/how
+    shape; ``--force`` bypasses it.
+    """
+
+    _TITLE = "Resume needs confirmation"
+
+    def __init__(
+        self,
+        node_id: str,
+        node_type: str,
+        *,
+        execution_id: str | None = None,
+        trace_path: str | None = None,
+    ):
+        self.node_type = node_type
+        super().__init__(
+            f"Resuming re-runs step '{node_id}' (a {node_type} step), and its side effects may fire again. "
+            "This run is non-interactive (agent/MCP/pipe — no terminal to confirm on), so resume refuses "
+            "rather than repeat them silently.",
+            execution_id=execution_id,
+            trace_path=trace_path,
+            node_id=node_id,
+            suggestions=[
+                "If you are an AI agent: confirm with your human that re-running this step is safe.",
+                "With their OK, re-run with --force to bypass this confirmation.",
+            ],
+        )
+
+
+class ResumeStaleWorkflowError(ResumeSourceError):
+    """The workflow changed (or can't be proven unchanged) since the failed run (Task 164).
+
+    Two messages: a KNOWN hash mismatch states the workflow was edited; a MISSING
+    source hash (a run predating hash tracking) states only that the match cannot
+    be verified — never claiming an edit that may not have happened. Both suggest
+    ``--force``.
+    """
+
+    _TITLE = "Workflow changed since the failed run"
+
+    def __init__(
+        self,
+        *,
+        hash_known: bool,
+        execution_id: str | None = None,
+        trace_path: str | None = None,
+    ):
+        if hash_known:
+            message = (
+                "The workflow was edited since the failed run, so the restored upstream outputs "
+                "may not match the current steps."
+            )
+        else:
+            message = (
+                "Cannot verify the workflow is unchanged — this run predates workflow-hash tracking, "
+                "so the restored upstream outputs may not match the current steps."
+            )
+        super().__init__(
+            message,
+            execution_id=execution_id,
+            trace_path=trace_path,
+            suggestions=["Re-run the workflow from the start, or pass --force to resume anyway."],
+        )

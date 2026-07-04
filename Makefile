@@ -8,6 +8,9 @@ install: ## Install the virtual environment and install the pre-commit hooks
 check: ## Run code quality tools.
 	@echo "🚀 Checking lock file consistency with 'pyproject.toml'"
 	@uv lock --locked
+	@echo "🚀 Linting ALL files (git-agnostic, catches untracked): ruff"
+	@uv run ruff check .
+	@uv run ruff format --check .
 	@echo "🚀 Linting code: Running pre-commit"
 	@uv run pre-commit run -a
 	@echo "🚀 Static type checking: Running mypy"

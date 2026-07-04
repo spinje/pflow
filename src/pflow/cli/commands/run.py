@@ -316,6 +316,9 @@ def execute_json_workflow(  # noqa: C901
             gate_resolver=gate_resolver,
             workflow_manager=WorkflowManager() if ctx.obj.get("workflow_source") == "library" else None,
             workflow_name=workflow_name,
+            # Task 164: `pflow resume` sets this before dispatching here; a normal
+            # run leaves it absent (None) — the runner then behaves exactly as before.
+            resume_source=ctx.obj.get("resume_source"),
         )
         _display_execution_result(ctx, result, output_key, ir_data, output_format, effective_verbose)
 
@@ -346,7 +349,46 @@ def execute_json_workflow(  # noqa: C901
             # block (above the data); JSON and failure paths echo it here.
             text_success = bool(result and result.success and output_format == "text")
             _finalize_trace_and_report(ctx, trace, echo_trace_line=not text_success)
+            _maybe_echo_resume_hint(ctx, result)
         _cleanup_temp_files(stdin_data, effective_verbose)
+
+
+def _maybe_echo_resume_hint(ctx: click.Context, result: Any | None) -> None:
+    """After a FAILED run whose trace was saved, tell the agent how to resume (Task 164, §E step 10).
+
+    Discoverability where it is needed: the failed-run output gains one stderr
+    line naming the exact ``pflow resume <execution-id>`` command. Gated on a
+    saved trace (``ctx.obj["trace_file"]`` — set by ``_finalize_trace_and_report``)
+    so ``--no-trace`` and stream-failed runs (which have no file to resume from)
+    stay silent. Skipped for success, for a clean gate denial (exit 3 is a human
+    stop), and for a gate STOP (a non-interactive unapproved gate finalizes FAILED,
+    not DENIED — but ``load_resume_source`` refuses it as ``ResumeGateStoppedError``,
+    so pointing an agent at ``pflow resume`` there only wastes a round-trip; the
+    gate error already carries the ``--auto-approve`` remedy). Emitted DIRECTLY to
+    stderr — unlike the trace-location line, this survives ``-p``: failure
+    diagnostics must stay visible in print mode (stdout stays data-only), and a
+    ``-p`` agent otherwise has no way to learn the resume target.
+    """
+    from pflow.core.workflow.status import WorkflowStatus
+
+    if not result or result.success or result.status is WorkflowStatus.DENIED:
+        return
+    # A gate stop is a human checkpoint, not a resumable failure — resume refuses it.
+    # Mirror _display_denied_result's gate detection so the two stay consistent.
+    if any(d.context and d.context.get("category") == "gate" for d in (result.diagnostics or ())):
+        return
+    if not ctx.obj.get("trace_file"):
+        return
+    # Only advertise resume when the run actually has a failed step to resume from
+    # (C2): a crash before the first step, or an all-steps-succeed-but-output-
+    # unbuildable failure, produces a trace resume would then REFUSE — a dead-end
+    # command. The collector answers this authoritatively from its own events.
+    if not result.trace or not result.trace.has_resumable_step():
+        return
+    execution_id = getattr(result.trace, "execution_id", None)
+    if not execution_id:
+        return
+    click.echo(f"To resume from the failed step: pflow resume {execution_id}", err=True)
 
 
 def _prepare_gate_resolver(
@@ -506,8 +548,34 @@ def _display_execution_result(
             metrics_collector=result.metrics,
             shared_storage=result.shared_after,
             ir_data=ir_data,
+            resume_execution_id=_resumable_execution_id(ctx, result),
         )
         ctx.exit(1)
+
+
+def _resumable_execution_id(ctx: click.Context, result: Any) -> str | None:
+    """The failed run's execution id, when a trace exists on disk to resume from.
+
+    Feeds the JSON failure document's ``execution_id``/``resume_command`` fields
+    (agent-UX: a ``--output-format json`` consumer must be able to extract the
+    resume target from stdout, not scrape a stderr prose line). Mirrors
+    ``_maybe_echo_resume_hint``'s gate, but must run BEFORE the trace is
+    finalized (the JSON document is emitted first, and JSON mode finalizes in
+    the ``finally``), so it checks trace-enabled + stream health instead of the
+    finalized path.
+    """
+    trace = result.trace
+    if trace is None or not (ctx.obj or {}).get("trace", True):
+        return None
+    if getattr(trace, "_stream_failed", False):
+        return None
+    # Same resumability gate as the stderr hint (C2): don't hand a JSON agent a
+    # resume_command the loader would refuse. Computed in memory, so it holds even
+    # though the trace is not finalized yet on this (pre-finalize) JSON path.
+    if not trace.has_resumable_step():
+        return None
+    execution_id = getattr(trace, "execution_id", None)
+    return execution_id if isinstance(execution_id, str) else None
 
 
 def _echo_diagnostic_group(diagnostics: list[Any], *, blank_line: bool) -> None:
@@ -584,6 +652,8 @@ def _display_plan_result(
             verbose=False,
             only_node=ctx.obj.get("only_node"),
         ),
+        # Task 164: `pflow resume --dry-run` sets this; a normal --dry-run leaves it None.
+        resume_source=ctx.obj.get("resume_source"),
     )
 
     if output_format == "json":

@@ -2470,6 +2470,156 @@ def test_plan_batch_sub_workflow_output_shape_matches_engine(tmp_path) -> None:
             assert "out" in result, f"{side} results[{idx}] missing declared child output 'out'"
 
 
+@pytest.mark.trace_files
+def test_engine_and_planner_walk_entry_state_match(tmp_path) -> None:
+    """Engine↔planner WALK-ENTRY parity — the re-fork net for seed + locate-entry.
+
+    For a flat ``--only`` target, the engine (`_run_only_snapshot`) and the
+    planner (`_resolve_walk_start`) both compose "seed upstream from the
+    snapshot trace, then locate the entry node" from the same helpers. This
+    test pins the call sites, not the helpers: the seeded shared-store state
+    and the located entry node must be identical on both sides, driving the
+    REAL engine run and the REAL planner walk against the same on-disk trace.
+    Task 164's resume paths become additional callers of the same composition
+    (`seed_walk_entry`); the Phase-4 resume parity case extends this test.
+
+    Mutation: re-fork either side — inline the seed call with one output key
+    filtered, or locate the entry differently — and the seeded-value equality
+    or entry-id assertions below fail while the rest of the suite stays green.
+    """
+    ir = {
+        "nodes": [
+            {"id": "first", "type": "shell", "params": {"command": "printf first-v1"}},
+            {"id": "middle", "type": "shell", "params": {"command": "printf 'mid ${first.stdout}'"}},
+            {"id": "last", "type": "shell", "params": {"command": "printf 'tail ${middle.stdout}'"}},
+        ],
+        "edges": [{"from": "first", "to": "middle"}, {"from": "middle", "to": "last"}],
+    }
+    wf = tmp_path / "wf.pflow.md"
+    write_workflow_file(ir, wf)
+    node_ids = [node["id"] for node in ir["nodes"]]
+
+    # Full run (nothing fails) records the snapshot trace both sides read.
+    full = _runner_run(wf)
+    assert full.success, [d.message for d in full.diagnostics]
+    full.trace.save_to_file()
+
+    # ENGINE side: real --only run on the middle node.
+    engine_result = WorkflowRunner().run(str(wf), {}, RunnerConfig(only_node="middle"))
+    assert engine_result.success, [d.message for d in engine_result.diagnostics]
+    engine_shared = engine_result.shared_after
+
+    # PLANNER side: same --only target, exposing the planner's scratch shared.
+    from pflow.execution.plan import _build_plan_with_shared
+
+    compiled, registry = _compile(ir)
+    plan, planner_shared = _build_plan_with_shared(
+        compiled,
+        {},
+        MemoizationCache(),
+        registry,
+        workflow_name="wf",
+        only_node="middle",
+        _parent_workflow_file=str(wf),
+    )
+
+    # Located entry node: the engine executed EXACTLY the target; the plan is
+    # a single entry AT the target.
+    assert engine_shared["__execution__"]["completed_nodes"] == ["middle"]
+    assert [entry.node_id for entry in plan.entries] == ["middle"]
+
+    # Seeded scope: upstream-of-target only, identical on both sides. The
+    # engine records the seeded set in restored_nodes; the planner never
+    # executes, so any workflow-node key in its scratch shared was seeded
+    # (holds because shell nodes are cache-disabled by default — a memo-hit
+    # node type here would make apply_memo_hit write the target's key too).
+    planner_seeded = [nid for nid in node_ids if nid in planner_shared]
+    assert planner_seeded == engine_shared["__execution__"]["restored_nodes"] == ["first"]
+    assert "last" not in engine_shared, "downstream must not be seeded on the engine side"
+
+    # Seeded VALUES: full-dict equality — a re-forked seed that drops or
+    # renames one output key on either side fails here.
+    assert planner_shared["first"] == engine_shared["first"]
+
+
+@pytest.mark.trace_files
+def test_engine_and_planner_resume_entry_state_match(tmp_path) -> None:
+    """Engine↔planner RESUME parity (Task 164 Phase 4) — the same re-fork net for resume.
+
+    Resume seeds upstream from the SOURCE trace and re-enters at the failed step
+    K on both paths: the engine's `_prepare_resume` and the planner's
+    `_resolve_walk_start` (resume arm). This drives the REAL engine run
+    (`run(..., resume_source=)`) and the REAL planner walk (`_build_plan_with_shared(
+    resume_from=...)`) — NOT `seed_walk_entry` directly — and pins EXACTLY (a) the
+    seeded `shared[node_id]` upstream outputs and (b) the located entry-node id.
+    `restored_nodes` stamping + event re-recording have no planner counterpart and
+    are deliberately outside the pin.
+
+    Mutation: re-fork either resume seed call with one output key filtered, or
+    locate K differently, and the seeded-value or entry-id assertions fail while
+    the rest of the suite stays green.
+    """
+    from pflow.execution.plan import _build_plan_with_shared
+    from pflow.runtime.workflow_trace import load_resume_source
+
+    # `middle` fails unless mode=ok — a mode-gated failure gives a clean K=middle.
+    ir = {
+        "inputs": {"mode": {"type": "string", "required": True}},
+        "nodes": [
+            {"id": "first", "type": "shell", "params": {"command": "printf first-v1"}},
+            {
+                "id": "middle",
+                "type": "shell",
+                "params": {"command": "test '${mode}' = ok && printf 'mid ${first.stdout}'"},
+            },
+            {"id": "last", "type": "shell", "params": {"command": "printf 'tail ${middle.stdout}'"}},
+        ],
+        "edges": [{"from": "first", "to": "middle"}, {"from": "middle", "to": "last"}],
+    }
+    wf = tmp_path / "wf.pflow.md"
+    write_workflow_file(ir, wf)
+    node_ids = [node["id"] for node in ir["nodes"]]
+
+    # Run to failure at `middle`, then load the trace as a resume source.
+    failed = WorkflowRunner().run(str(wf), {"mode": "bad"}, RunnerConfig())
+    assert not failed.success
+    trace_path = failed.trace.save_to_file()
+    source = load_resume_source(execution_id=failed.trace.execution_id, debug_dir=trace_path.parent)
+    assert source.entry_node_id == "middle"
+
+    # ENGINE side: real resume (K now succeeds with mode=ok).
+    engine_result = WorkflowRunner().run(str(wf), {"mode": "ok"}, RunnerConfig(), resume_source=source)
+    assert engine_result.success, [d.message for d in engine_result.diagnostics]
+    engine_shared = engine_result.shared_after
+
+    # PLANNER side: same source, exposing the planner's scratch shared.
+    compiled, registry = _compile(ir, {"mode": "ok"})
+    plan, planner_shared = _build_plan_with_shared(
+        compiled,
+        {"mode": "ok"},
+        MemoizationCache(),
+        registry,
+        workflow_name="wf",
+        resume_from=source.entry_node_id,
+        resume_events=source.events,
+        resume_source_id=source.execution_id,
+        _parent_workflow_file=str(wf),
+    )
+
+    # Located entry: engine re-entered AT K; the plan's first entry IS K, and the
+    # walk continues across the tail (resume never sets only_node).
+    assert engine_shared["__execution__"]["resume_entry_node"] == "middle"
+    assert [entry.node_id for entry in plan.entries] == ["middle", "last"]
+    assert plan.resume is not None and plan.resume.entry_node == "middle"
+
+    # Seeded scope: upstream-of-K only, identical on both sides.
+    planner_seeded = [nid for nid in node_ids if nid in planner_shared]
+    assert planner_seeded == engine_shared["__execution__"]["restored_nodes"] == ["first"]
+
+    # Seeded VALUES: full-dict equality of the upstream the helper seeded.
+    assert planner_shared["first"] == engine_shared["first"]
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Cost parity — plan-predicted cost vs engine-actual spend (issue #506)
 #

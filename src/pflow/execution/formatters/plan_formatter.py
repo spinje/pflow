@@ -23,12 +23,34 @@ _TEXT_DURATION_THRESHOLD_MS = 1000.0
 
 def format_plan_json(plan: Plan) -> dict[str, Any]:
     """Render a plan as a JSON-serializable dict."""
-    return {
+    result: dict[str, Any] = {
         "workflow": plan.workflow,
         "plan": [_entry_to_dict(entry) for entry in plan.entries],
         "summary": _summary_to_dict(plan.summary),
         "diagnostics": [diagnostic.to_dict() for diagnostic in plan.diagnostics],
     }
+    # Task 164: a resumed plan covers the tail from K onward only; expose the
+    # resume context so a programmatic consumer knows the cost is not whole-run.
+    if plan.resume is not None:
+        result["resume"] = {
+            "entry_node": plan.resume.entry_node,
+            "restored_nodes": list(plan.resume.restored_nodes),
+            "execution_id": plan.resume.execution_id,
+        }
+    return result
+
+
+def _resume_header_line(plan: Plan) -> str | None:
+    """The resume honesty line (Task 164): a resumed plan starts AT K, so entries + cost cover the tail only."""
+    if plan.resume is None:
+        return None
+    count = len(plan.resume.restored_nodes)
+    noun = "step" if count == 1 else "steps"
+    src = f" from {plan.resume.execution_id}" if plan.resume.execution_id else ""
+    return (
+        f"Resuming from '{plan.resume.entry_node}': {count} upstream {noun} restored{src} "
+        f"(plan + cost cover this step onward)."
+    )
 
 
 def format_plan_text(plan: Plan) -> str:
@@ -41,7 +63,10 @@ def format_plan_text(plan: Plan) -> str:
     # Base name only for readability — JSON keeps the full `plan.workflow` value
     # as a stable agent contract.
     workflow_label = Path(plan.workflow).name if plan.workflow else plan.workflow
-    lines.append(f"Dry-run for {workflow_label}: {', '.join(header_bits)}")
+    header = f"Dry-run for {workflow_label}: {', '.join(header_bits)}"
+    # filter(None, ...) drops the resume line when absent WITHOUT a branch here
+    # (keeps this function under the C901 budget; the resume detail is folded away).
+    lines.extend(filter(None, (header, _resume_header_line(plan))))
     lines.append("")
 
     lines.extend(_render_entries(plan.entries, indent_level=0, boundary_shown=[False]))

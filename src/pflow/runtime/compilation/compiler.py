@@ -640,6 +640,24 @@ def _coerce_retry_backoff(value: Any, node_id: str, node_type: str) -> str:
     )
 
 
+def is_side_effecting(node_type: str) -> bool:
+    """Whether re-running this node type may repeat an external effect (Task 164, Decision 4).
+
+    The inverse of "safe to memo-cache by default": only ``llm`` is pure (its
+    output is a deterministic-enough function of its inputs, and caching it is
+    the default). Every other registry type either side-effects (shell, code,
+    claude-code, file ops, mcp) or reads external state that may have changed
+    (http) — so a resume that re-runs such a node K gives at-least-once
+    execution of its effect, which the confirm/``--force`` policy governs.
+
+    Public predicate (spec Decision 9): CLI resume code calls THIS, never
+    imports the cache-default helper. Consumes IR REGISTRY type names
+    (``"llm"``/``"shell"``/...), NOT trace-event Python class names
+    (``"LLMNode"``) — see the ResumeSource vocabulary rule.
+    """
+    return node_type != "llm"
+
+
 def _default_cache_for_node_type(node_type: str) -> bool:
     """Whether a node defaults to memo-cache-on when no `cache:` field is set.
 
@@ -648,7 +666,7 @@ def _default_cache_for_node_type(node_type: str) -> bool:
     and silently caching their output across runs is unsafe — especially in
     iteration loops where declared inputs may not change but external state has.
     """
-    return node_type == "llm"
+    return not is_side_effecting(node_type)
 
 
 def _extract_prompt_cache_items(node_data: dict[str, Any]) -> tuple[str, ...]:

@@ -8,14 +8,23 @@ import re
 import threading
 import uuid
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, NoReturn, TextIO
 
 from pflow.core.diagnostic import Diagnostic, warning_degrades_status
-from pflow.core.exceptions import OnlySnapshotMissingError
+from pflow.core.exceptions import (
+    OnlySnapshotMissingError,
+    ResumeFidelityError,
+    ResumeGateStoppedError,
+    ResumeNothingToResumeError,
+    ResumeNotResumableError,
+    ResumeSourceMissingError,
+    ResumeStillRunningError,
+    ResumeSupersededError,
+)
 from pflow.core.node_type_display import is_llm_node_type
 from pflow.core.trace_io import (
     RESERVED_LINE_KEYS,
@@ -31,9 +40,11 @@ logger = logging.getLogger(__name__)
 # Trace format version. 2.5.0 introduced large-string-leaf interning (now written as inline
 # ``{"$pflow_blob": hash}`` refs with the bodies in inline ``blob`` lines per Task 172 — originally a
 # top-level ``blobs`` map) and canonicalized LLM prompt/system into ``llm_prompt``/``llm_system`` by
-# removing redundant LLM copies from node_output/template_resolutions/node_params. Consumers gate on
+# removing redundant LLM copies from node_output/template_resolutions/node_params. 2.6.0 (Task 164,
+# additive) adds ``resumed_from`` to the meta line (attempt-chain lineage) and ``restored: true`` on
+# cached-status events a resumed run re-recorded from its source trace. Consumers gate on
 # ``startswith("2.")``; old traces remain readable.
-TRACE_FORMAT_VERSION = "2.5.0"
+TRACE_FORMAT_VERSION = "2.6.0"
 
 
 def format_trace_filename(workflow_path: str | None, workflow_name: str, timestamp: str) -> str:
@@ -297,6 +308,543 @@ def load_snapshot_or_raise(
     return loaded
 
 
+# ── Resume loader (Task 164) ────────────────────────────────────────────────
+# `load_resume_source` is the ONE resume-scoped read: it selects the source
+# trace, applies resume's status/liveness/lineage policy locally (mirroring
+# `_collect_candidate_traces`'s "iterate the shared iterator, own your policy"
+# shape — `_iter_workflow_traces`'s no-final_status-filter invariant is
+# untouched), and returns a `ResumeSource` the engine/planner/CLI consume. It
+# carries NO node-type field: a trace event's `node_type` is a Python CLASS name
+# (`"LLMNode"`), while the side-effect predicate speaks IR REGISTRY names
+# (`"llm"`) — the CLI derives K's type from the resolved IR, never from an event.
+
+_BINARY_PLACEHOLDER_RE = re.compile(r"^<binary data: \d+ bytes>$")
+
+
+@dataclass(frozen=True)
+class ResumeSource:
+    """Everything a resume needs from a prior run's trace (Task 164).
+
+    Self-contained so the engine, planner, and CLI never re-read the trace: the
+    source workflow's own `workflow_path` (so a resume-by-execution-id can
+    re-resolve the workflow without re-opening the trace it just parsed), the
+    entry point (`entry_node_id` = the failed step K, or `None` with
+    `last_completed_node_id` set for an incomplete between-nodes run the CLI
+    resolves post-compile), the full blob-resolved top-level `events` to seed
+    upstream from, the original `inputs` (`None` on pre-175 traces), and the
+    `content_hash` the CLI compares against the current resolved IR.
+    """
+
+    path: Path
+    workflow_path: str | None
+    execution_id: str
+    entry_node_id: str | None
+    last_completed_node_id: str | None
+    events: list[dict[str, Any]]
+    inputs: dict[str, Any] | None
+    content_hash: str | None
+
+
+def _is_trace_locked(path: Path) -> bool | None:
+    """Best-effort advisory-lock liveness probe (local copy of ``ui.run_tailer.is_trace_locked``).
+
+    ``runtime/`` must not import ``ui/``, so this ~15-line probe is duplicated
+    (accepted until a third consumer earns a ``core/`` home — Task 164 plan §B).
+    Same semantics: a SHARED, non-blocking probe on a SEPARATE fd — ``True`` when a
+    live writer holds the producer's EXCLUSIVE lock, ``False`` when free, ``None``
+    when liveness can't be determined (no ``fcntl`` / unopenable).
+    """
+    try:
+        import fcntl
+    except ImportError:
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except OSError:
+                return True
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            return False
+    except OSError:
+        return None
+
+
+def _iter_raw_trace_lines(path: Path) -> Iterator[dict[str, Any]]:
+    """Yield each JSONL line of a trace as a dict, for the disk-only kinds ``load_trace_file`` hides.
+
+    The resume loader's ONLY raw reader (gate-stopped detection needs the
+    disk-only ``kind:"gate"`` lines, which reconstruct drops). Mirrors
+    ``ui.run_node._iter_trace_lines``: skip non-dict lines, tolerate ONE
+    truncated final line (a crash mid-flush), raise on an earlier malformed line.
+    """
+    raw_lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    for index, raw in enumerate(raw_lines):
+        try:
+            line = json.loads(raw)
+        except ValueError:
+            if index == len(raw_lines) - 1:
+                return  # truncated final line — the file is mid-flush; tolerate it
+            raise
+        if isinstance(line, dict):
+            yield line
+
+
+def _read_trace_meta_line(path: Path) -> dict[str, Any] | None:
+    """Return the trace's first (``kind:"meta"``) line without parsing the whole file, else ``None``.
+
+    Used by the by-execution-id scan so matching one run doesn't parse every
+    file's full content. Any read/parse fault → ``None`` (skip this candidate).
+    """
+    try:
+        with open(path, encoding="utf-8") as handle:
+            first = handle.readline()
+    except OSError:
+        return None
+    try:
+        line = json.loads(first)
+    except ValueError:
+        return None
+    if isinstance(line, dict) and line.get("kind") == "meta":
+        return line
+    return None
+
+
+def _dangling_top_level_starts(path: Path) -> list[tuple[int, str]]:
+    """Top-level ``node.start`` lines with no matching terminal ``event`` = nodes killed mid-run.
+
+    Raw-JSONL only: reconstruct drops the disk-only ``node.start`` markers. A leaf's
+    terminal ``event`` REUSES its ``node.start``'s ``id`` (``begin_node`` reserves the
+    seq), so a TOP-LEVEL start (``parent_id is None``) with no ``kind:"event"`` at the
+    same id was killed mid-execution. Top-level scoping is load-bearing — a kill inside
+    a sub-workflow dangles a CHILD start whose id is not in the top-level graph. Returns
+    ``(seq, node_id)`` pairs (empty when nothing dangles). Shared by the incomplete-entry
+    derivation and the chain-consumption check.
+    """
+    started: dict[int, str] = {}
+    completed_ids: set[int] = set()
+    for line in _iter_raw_trace_lines(path):
+        line_id = line.get("id")
+        if not isinstance(line_id, int):
+            continue
+        kind = line.get("kind")
+        if kind == "node.start" and line.get("parent_id") is None:
+            node_id = line.get("node_id")
+            if isinstance(node_id, str):
+                started[line_id] = node_id
+        elif kind == "event":
+            completed_ids.add(line_id)
+    return [(sid, node_id) for sid, node_id in started.items() if sid not in completed_ids]
+
+
+def _attempt_consumed_work(path: Path, candidate: dict[str, Any]) -> bool:
+    """Whether a resume attempt's trace shows it GOT SOMEWHERE (Task 164 chain policy).
+
+    "Resume targets the newest attempt in a chain" exists for consumption
+    semantics — a newer attempt that ran steps (side effects may have fired) means
+    the source is no longer the frontier. An attempt "got somewhere" when EITHER it
+    recorded a non-``restored`` event (a step completed — its only other events are
+    the upstream re-records stamped before the failed step would have run) OR it left
+    a dangling top-level ``node.start`` (a step was killed mid-execution, after its
+    side effect may have fired — and that trace is itself still resumable via the
+    incomplete arm). The negation is a DEAD zero-work attempt (a refused ``--force``
+    resume, a crash before the first step): it consumed nothing, so it must neither
+    supersede its source (would let the source re-run a started step) nor be picked
+    over an older resumable run (would wedge ``resume <workflow>``). Task 171's
+    ``resume list`` should reuse this predicate when it renders chains.
+    """
+    if any(not event.get("restored") for event in candidate.get("nodes") or []):
+        return True
+    return bool(_dangling_top_level_starts(path))
+
+
+def _raise_resume_source_missing(debug_dir: Path, workflow_path: str | None, execution_id: str | None) -> NoReturn:
+    if execution_id is not None:
+        raise ResumeSourceMissingError(
+            f"No run with execution id '{execution_id}' was found in {debug_dir}.",
+            execution_id=execution_id,
+            suggestions=["Check the execution id, or run the workflow so a trace exists to resume."],
+        )
+    raise ResumeSourceMissingError(
+        f"No resumable run was found for workflow '{workflow_path}' in {debug_dir}.",
+        suggestions=["Run the workflow once (without --no-trace) so a failure can be resumed."],
+    )
+
+
+def _select_resume_trace(
+    debug_dir: Path, workflow_path: str | None, execution_id: str | None
+) -> tuple[Path, dict[str, Any]]:
+    """Select the source trace: newest for a workflow, or the exact run by execution id."""
+    if not debug_dir.exists():
+        _raise_resume_source_missing(debug_dir, workflow_path, execution_id)
+    if workflow_path is not None:
+        for trace_file, data in _iter_workflow_traces(debug_dir, workflow_path):
+            # Skip a DEAD zero-work attempt (a refused --force resume / crash before
+            # the first step) so `resume <workflow>` falls through to the older
+            # resumable run instead of wedging on it. A killed-mid-step trace is NOT
+            # dead (it has a dangling start → still resumable) and a LIVE run is not
+            # dead either (selected, then refused as still-running). By-exec-id below
+            # never skips — naming an exact attempt gets a verdict about THAT attempt.
+            if not _attempt_consumed_work(trace_file, data) and _is_trace_locked(trace_file) is not True:
+                continue
+            return trace_file, data  # first non-dead = newest resumable
+        _raise_resume_source_missing(debug_dir, workflow_path, execution_id)
+    for trace_file in sorted(debug_dir.glob("workflow-trace-*.json"), key=_trace_recency_key, reverse=True):
+        meta = _read_trace_meta_line(trace_file)
+        if meta is None or meta.get("execution_id") != execution_id:
+            continue
+        # Mirror _iter_workflow_traces's --only exclusion: an --only run records
+        # only its target, so resuming its exec id would seed an empty scope.
+        if meta.get("only_node") is not None:
+            continue
+        try:
+            return trace_file, load_trace_file(trace_file)
+        except (json.JSONDecodeError, OSError):
+            # Same skip-corrupt posture as _iter_workflow_traces (the workflow_path
+            # arm gets this for free): a matched-but-corrupt trace degrades to a
+            # clean "missing" refusal, never an uncaught JSONDecodeError traceback.
+            logger.debug("Skipping unparseable resume-source trace %s", trace_file, exc_info=True)
+            continue
+    _raise_resume_source_missing(debug_dir, workflow_path, execution_id)
+
+
+def _seedable_final_events(events: list[dict[str, Any]], entry_node_id: str | None) -> dict[str, dict[str, Any]]:
+    """THE seedable set: each node's final event BEFORE the entry, minus failed-final-status nodes.
+
+    The single derivation shared by seeding (``seed_snapshot_into_shared``) and
+    the loader guards (``_guard_seed_scope``), so they cannot drift: the guards
+    scan exactly the values resume will restore — nothing more (a superseded
+    earlier loop-iteration event is never seeded, so its contents must not
+    refuse a resume) and nothing less. Failed-final-status nodes are excluded
+    (seed fidelity — their data lived in ``__failures__``, never the store).
+    ``entry_node_id=None`` (incomplete between-nodes resume) scopes to ALL
+    events. The slice ends before the entry's FIRST event, so the returned map
+    provably never contains the entry itself.
+    """
+    if entry_node_id is None:
+        scope = events
+    else:
+        idx = next((i for i, e in enumerate(events) if e.get("node_id") == entry_node_id), None)
+        scope = events if idx is None else events[:idx]
+    return {nid: ev for nid, ev in final_events_by_node(scope).items() if ev.get("status") != "failed"}
+
+
+def _apply_gate_resolutions(path: Path, events: list[dict[str, Any]]) -> None:
+    """Fold recorded escalation decisions back into the frozen event markers (in place).
+
+    The trace is event-sourced: a node's event freezes its ``node_output`` at
+    record time (engine step 16), while the human's escalation decision — made
+    at step 17.7, AFTER the freeze — is persisted only as a separate disk-only
+    ``kind:"gate"`` resolution line (``run_escalation_gate`` writes the decision
+    into the LIVE store; an already-flushed event line is immutable).
+    Reconstructing "the store as it existed at failure time" therefore folds the
+    resolution lines over the frozen markers. Without this fold every RESOLVED
+    upstream escalation reads as undecided and ``_guard_seed_scope`` false-refuses
+    the resume, claiming no human decided when one did. Mirrors
+    ``run_escalation_gate``'s write shape exactly (dict marker gains
+    ``decision``; string marker becomes ``{"question", "decision"}``). Applied to
+    each node's FINAL event in file order, so a looping node's last resolution
+    wins — pairing with the final event that seeding restores.
+    """
+    final = final_events_by_node(events)
+    for line in _iter_raw_trace_lines(path):
+        if line.get("kind") != "gate" or line.get("phase") != "resolution":
+            continue
+        decision = line.get("decision")
+        if not isinstance(decision, dict):
+            continue  # approval/denied/non-interactive resolutions carry no decision
+        event = final.get(line.get("node_id"))  # type: ignore[arg-type]
+        output = event.get("node_output") if isinstance(event, dict) else None
+        result = output.get("result") if isinstance(output, dict) else None
+        if not isinstance(result, dict):
+            continue
+        marker = result.get("escalation")
+        if isinstance(marker, dict) and marker:
+            marker["decision"] = decision
+        elif isinstance(marker, str) and marker != "":
+            result["escalation"] = {"question": marker, "decision": decision}
+
+
+def _contains_binary_placeholder(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(_BINARY_PLACEHOLDER_RE.match(value))
+    if isinstance(value, dict):
+        return any(_contains_binary_placeholder(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_binary_placeholder(v) for v in value)
+    return False
+
+
+def _raise_gate_stopped_or_generic(path: Path, execution_id: str) -> NoReturn:
+    """A ``failed`` trace with no unrecovered failed node = gate-stopped (or the defensive fallback)."""
+    paused = [
+        line for line in _iter_raw_trace_lines(path) if line.get("kind") == "gate" and line.get("phase") == "pause"
+    ]
+    if paused:
+        last = paused[-1]
+        raise ResumeGateStoppedError(
+            node_id=str(last.get("node_id") or "?"),
+            gate_kind=last.get("gate_kind"),
+            execution_id=execution_id,
+            trace_path=str(path),
+        )
+    # Defensive: `failed` + no unrecovered node + zero gate lines is not
+    # producible today (only gate stops make that combination). Refuse cleanly
+    # rather than fall through to an undefined branch.
+    raise ResumeNotResumableError(
+        "This run is marked failed but has no failed step to resume from.",
+        execution_id=execution_id,
+        trace_path=str(path),
+        suggestions=["Re-run the workflow from the start."],
+    )
+
+
+def _terminal_failure_root(events: list[dict[str, Any]]) -> str | None:
+    """The ROOT of the trace's TERMINAL failure region, or None if there isn't one.
+
+    The earliest failed node with no successful/cached node AFTER it in event
+    order — the "frontier" of what actually completed (Temporal's replay-frontier
+    idea, one pass over the trace). Decision 9 + ADR-0010: a ``K --on-error--> F``
+    chain where BOTH fail resumes at K, not F — re-running K re-evaluates its
+    branch, so a fixed K follows its SUCCESS edge and F never runs. A failure
+    whose recovery genuinely SUCCEEDED (a success sits after it) is excluded —
+    the later, separate failure is the root. NEVER the alphabetical
+    ``failed_node_ids`` trailer. Returns None when no failure sits after the
+    frontier (nothing failed at all, or every failure was followed by a success —
+    e.g. a gate-stopped run).
+
+    Used by BOTH the ``failed`` arm and the ``incomplete`` arm — an interrupted
+    tail that ends in a failure re-enters at the same root a failed run would.
+    Needs no warnings data, which the incomplete arm could never supply (the
+    trailer carrying them is exactly what an interrupted run lacks).
+    """
+    final = final_events_by_node(events)
+    last_index: dict[str, int] = {}
+    for index, event in enumerate(events):
+        nid = event.get("node_id")
+        if isinstance(nid, str):
+            last_index[nid] = index
+    frontier = max(
+        (idx for nid, idx in last_index.items() if final[nid].get("status") in ("success", "cached")),
+        default=-1,
+    )
+    candidates = [
+        (idx, nid) for nid, idx in last_index.items() if final[nid].get("status") == "failed" and idx > frontier
+    ]
+    return min(candidates)[1] if candidates else None
+
+
+def _resolve_resume_entry(path: Path, data: dict[str, Any], execution_id: str) -> tuple[str | None, str | None]:
+    """Apply the status arm: return ``(entry_node_id, last_completed_node_id)`` or refuse."""
+    final_status = str(data.get("final_status") or "")
+    events = data.get("nodes") or []
+    if final_status in ("success", "degraded"):
+        raise ResumeNothingToResumeError(
+            "The most recent run of this workflow already succeeded — there is nothing to resume.",
+            execution_id=execution_id,
+            trace_path=str(path),
+            suggestions=["Run the workflow again if you want a fresh run."],
+        )
+    if final_status == "denied":
+        raise ResumeNotResumableError(
+            "This run was stopped by a human denial at an approval gate, not by a failure.",
+            execution_id=execution_id,
+            trace_path=str(path),
+            suggestions=["Re-run the workflow if you want to try again."],
+        )
+    if final_status == "incomplete":
+        return _resolve_incomplete_entry(path, events, execution_id)
+    if final_status != "failed":
+        raise ResumeNotResumableError(
+            f"This run's status '{final_status or 'unknown'}' is not resumable.",
+            execution_id=execution_id,
+            trace_path=str(path),
+            suggestions=["Re-run the workflow from the start."],
+        )
+    if not _unrecovered_failed_node_ids(final_events_by_node(events), data.get("warnings")):
+        _raise_gate_stopped_or_generic(path, execution_id)
+    # This check is NOT redundant with the frontier scan below: a recovered
+    # failure can be the trace's LAST event when its on-error handler was
+    # gate-stopped before running — the frontier alone would resume at that
+    # failure instead of refusing at the gate. Keep this ordering.
+    entry = _terminal_failure_root(events)
+    if entry is None:
+        # Engine-unproducible (an unrecovered failure stops the walk, so it is
+        # always the last event) — reachable only from a hand-edited trace.
+        # Refuse cleanly rather than crash.
+        _raise_gate_stopped_or_generic(path, execution_id)
+    return entry, None
+
+
+def _resolve_incomplete_entry(
+    path: Path, events: list[dict[str, Any]], execution_id: str
+) -> tuple[str | None, str | None]:
+    """Decision 7: derive the resume entry for an interrupted (Ctrl+C/SIGKILL) run.
+
+    Entry-node identification is possible ONLY via the RAW JSONL — reconstruct
+    drops the disk-only ``node.start`` running markers. A leaf node's terminal
+    ``event`` REUSES its ``node.start``'s ``id`` (``begin_node`` reserves the seq),
+    so a TOP-LEVEL ``node.start`` (``parent_id is None``) with no matching
+    ``kind:"event"`` line marks the node that was killed MID-execution — that is K.
+    Top-level scoping is load-bearing: a kill inside a sub-workflow leaves a
+    dangling CHILD start too, whose id is not in the top-level graph. When nothing
+    dangles and the tail ENDS in a failure, the run was killed while failing (or
+    heading down an on-error edge) — re-enter at the terminal-failure root,
+    exactly like the failed arm. Only a SUCCESS-ending tail was killed cleanly
+    between nodes — entry is ``None`` and the CLI resolves the unambiguous
+    successor of the last completed node post-compile (§E step 4). A meta-only
+    file (crashed before step 1) has nothing to resume.
+    """
+    dangling = _dangling_top_level_starts(path)
+    if dangling:
+        # A sequential walk has exactly one in-flight top-level node at a kill; if
+        # more ever appear, the most-recently-started (highest seq) was running.
+        _, killed = max(dangling, key=lambda pair: pair[0])
+        return killed, None
+    root = _terminal_failure_root(events)
+    if root is not None:
+        # The tail ends in a FAILURE — the run was failing when it was killed.
+        # The successor path below is for success-ending tails ONLY: a failed
+        # last node's taken route may have been its ERROR edge, so its single
+        # default successor is provably the wrong branch (and continuing past an
+        # unrecovered failure would resume as if it had succeeded).
+        return root, None
+    if events:
+        last_completed = events[-1].get("node_id")
+        if isinstance(last_completed, str):
+            return None, last_completed
+    raise ResumeNothingToResumeError(
+        "This run was interrupted before its first step completed — there is nothing to resume.",
+        execution_id=execution_id,
+        trace_path=str(path),
+        suggestions=["Run the workflow again from the start."],
+    )
+
+
+def _guard_seed_scope(scope: Iterable[dict[str, Any]], execution_id: str, path: Path) -> None:
+    """Refuse if any node resume would SEED carries undecided escalation (Decision 8) or lossy binary (Decision 5).
+
+    ``scope`` is the ``_seedable_final_events`` values — exactly what seeding
+    restores. Escalation markers were already folded with their recorded
+    decisions (``_apply_gate_resolutions``), so an undecided marker here means
+    the run genuinely never resolved it (e.g. killed between the node's event
+    and the gate resolution) — never a resolved-but-frozen fidelity artifact.
+    """
+    for event in scope:
+        output = event.get("node_output")
+        if not isinstance(output, dict):
+            continue
+        node_id = event.get("node_id")
+        node_id_str = node_id if isinstance(node_id, str) else None
+        result = output.get("result")
+        if isinstance(result, dict):
+            escalation = result.get("escalation")
+            # Mirror engine.gate.detect_escalation EXACTLY: a non-empty dict without
+            # a "decision" key, or any non-"" string, is undecided. Do NOT .strip()
+            # the string — production pauses on a whitespace-only marker too, so
+            # stripping here would seed a marker the run actually paused on.
+            undecided = (isinstance(escalation, dict) and escalation and "decision" not in escalation) or (
+                isinstance(escalation, str) and escalation != ""
+            )
+            if undecided:
+                raise ResumeNotResumableError(
+                    f"Step '{node_id_str}' has an unresolved escalation in the saved run — resuming "
+                    "would replay it as if a human had already decided.",
+                    execution_id=execution_id,
+                    trace_path=str(path),
+                    node_id=node_id_str,
+                    suggestions=["Re-run the workflow and resolve the escalation."],
+                )
+        for key, value in output.items():
+            if _contains_binary_placeholder(value):
+                raise ResumeFidelityError(
+                    node_id=str(node_id_str or "?"),
+                    key=str(key),
+                    execution_id=execution_id,
+                    trace_path=str(path),
+                )
+
+
+def load_resume_source(
+    workflow_path: str | None = None,
+    execution_id: str | None = None,
+    *,
+    debug_dir: Path | None = None,
+) -> ResumeSource:
+    """Load and vet a prior run's trace as a resume source, or raise a typed refusal (Task 164).
+
+    Exactly one of ``workflow_path`` (→ newest reusable run of that workflow) or
+    ``execution_id`` (→ that exact attempt) is given. Refusal/derivation policy,
+    in order (each a ``ResumeSourceError`` subclass): inline source → not
+    resumable; live writer → still running; a newer attempt exists → superseded;
+    then the status arm (``success``/``degraded`` → nothing to resume; ``denied``
+    → not resumable; ``failed`` → entry is the terminal-failure root, or
+    gate-stopped when none; ``incomplete`` → Decision 7 derivation); then
+    recorded escalation decisions are folded into the frozen event markers
+    (``_apply_gate_resolutions``); finally the seed-scope guards (undecided
+    escalation, lossy binary) scan exactly the seedable set. ``content_hash`` is
+    RETURNED for the CLI to compare — the loader has no workflow IR to check it.
+    """
+    if (workflow_path is None) == (execution_id is None):
+        raise ValueError("load_resume_source requires exactly one of workflow_path / execution_id")
+    debug_dir = debug_dir if debug_dir is not None else (Path.home() / ".pflow" / "debug")
+
+    path, data = _select_resume_trace(debug_dir, workflow_path, execution_id)
+    source_execution_id = str(data.get("execution_id") or "")
+    source_workflow_path = data.get("workflow_path")
+
+    if isinstance(source_workflow_path, str) and source_workflow_path.startswith("ir-hash:"):
+        raise ResumeNotResumableError(
+            "Inline or piped workflows cannot be resumed — there is no source file to re-resolve.",
+            execution_id=source_execution_id,
+            trace_path=str(path),
+            suggestions=["Save the workflow to a file and re-run it so future failures can be resumed."],
+        )
+
+    if _is_trace_locked(path) is True:
+        raise ResumeStillRunningError(
+            "This run is still in progress.",
+            execution_id=source_execution_id,
+            trace_path=str(path),
+            suggestions=["Wait for the run to finish (or stop it), then resume."],
+        )
+
+    if source_execution_id and isinstance(source_workflow_path, str):
+        for candidate_path, candidate in _iter_workflow_traces(debug_dir, source_workflow_path):
+            if candidate.get("resumed_from") != source_execution_id:
+                continue
+            # A newer attempt supersedes its source only when it CONSUMED the chain:
+            # it executed at least one real step, or it is live right now (mid-first-
+            # step there is no terminal event yet, but its writer lock is held). A
+            # DEAD zero-work attempt — a refused --force resume, a crash before K —
+            # consumed nothing; counting it would wedge the chain (the source reads
+            # superseded while the empty attempt itself refuses with "no resumable
+            # failed step").
+            if _attempt_consumed_work(candidate_path, candidate) or _is_trace_locked(candidate_path) is True:
+                raise ResumeSupersededError(
+                    str(candidate.get("execution_id") or ""),
+                    execution_id=source_execution_id,
+                    trace_path=str(path),
+                )
+
+    entry_node_id, last_completed_node_id = _resolve_resume_entry(path, data, source_execution_id)
+
+    events = list(data.get("nodes") or [])
+    _apply_gate_resolutions(path, events)
+    _guard_seed_scope(_seedable_final_events(events, entry_node_id).values(), source_execution_id, path)
+
+    return ResumeSource(
+        path=path,
+        workflow_path=source_workflow_path if isinstance(source_workflow_path, str) else None,
+        execution_id=source_execution_id,
+        entry_node_id=entry_node_id,
+        last_completed_node_id=last_completed_node_id,
+        events=events,
+        inputs=data.get("inputs"),
+        content_hash=data.get("content_hash"),
+    )
+
+
 @dataclass
 class _LLMSummaryAccumulator:
     """Accumulator for ``WorkflowTraceCollector._collect_llm_summary``.
@@ -434,10 +982,16 @@ def seed_snapshot_into_shared(
 
     Mirrors ``apply_memo_hit``'s restore shape: each in-scope node's terminal
     ``node_output`` is written to ``shared[node_id]`` with the engine-injected
-    reserved keys (``_SNAPSHOT_RESERVED``) filtered out. Nodes with no captured
-    output are skipped (a failed node forces the trace to ``"failed"`` → already
-    rejected by the loader, so the only no-output case here is a node that
-    genuinely produced nothing).
+    reserved keys (``_SNAPSHOT_RESERVED``) filtered out.
+
+    Seeding reconstructs the shared store AS IT EXISTED in the source run. A node
+    whose final event is ``failed`` is therefore skipped entirely: its data lived
+    in ``__failures__``, never in the store, so seeding it would resolve template
+    paths (e.g. ``${primary.x ?? fallback.x}``) that the original run — and a
+    fresh run — resolve to the fallback instead. This matters whenever a
+    RECOVERED failure sits in scope: a resume tail downstream of an on-error
+    chain, or an ``--only`` run against a DEGRADED snapshot. Nodes with no
+    captured output are also skipped (they genuinely produced nothing).
 
     Scope = nodes that executed BEFORE ``exclude`` (the ``--only`` target) in the
     snapshot's execution order. pflow templates can only reference EARLIER steps,
@@ -451,16 +1005,14 @@ def seed_snapshot_into_shared(
     genuinely missing one then surfaces as the normal loud unresolved-reference
     error.
 
-    NEVER seeds ``exclude`` itself — the target must execute fresh, never read a
-    stale copy of itself. Returns the ``final_events_by_node`` map (restricted to
-    the seeded scope) so callers can derive ``restored_nodes`` without a second pass.
+    NEVER seeds ``exclude`` itself — ``_seedable_final_events``'s slice ends
+    before the target's first event, so the target must execute fresh, never
+    read a stale copy of itself. Returns that seedable map (failed-final-status
+    nodes excluded), so callers derive ``restored_nodes`` — and the resume
+    re-record loop — from exactly what was seeded, without a second pass.
     """
-    target_idx = next((i for i, e in enumerate(events) if e.get("node_id") == exclude), None)
-    in_scope = events if target_idx is None else events[:target_idx]
-    final = final_events_by_node(in_scope)
+    final = _seedable_final_events(events, exclude)
     for nid, ev in final.items():
-        if nid == exclude:
-            continue
         output = ev.get("node_output")
         if output is None:
             continue
@@ -538,6 +1090,7 @@ class WorkflowTraceCollector:
         stream_to_disk: bool = False,
         content_hash: str | None = None,
         execution_id: str | None = None,
+        resumed_from: str | None = None,
     ):
         """Initialize the trace collector.
 
@@ -588,10 +1141,18 @@ class WorkflowTraceCollector:
                 detached child mints its own id and the form can only follow-newest
                 (which reverts to an older still-live run when the new one finishes).
                 Defaults to ``None`` → mint a UUID (every other run path).
+            resumed_from: Task 164 attempt-chain lineage — the SOURCE run's
+                ``execution_id`` when this run is a resume of a prior failed
+                attempt; ``None`` for every normal run. Pure lineage, never a
+                data dependency (Decision 6: an attempt trace is self-contained
+                via re-recorded ``restored`` events). Rides the ``meta`` line
+                (``_meta_fields``), so it MUST be set at construction — before
+                ``start_streaming`` flushes the meta line.
         """
         self.workflow_name = workflow_name
         self.workflow_path = workflow_path
         self.content_hash = content_hash
+        self.resumed_from = resumed_from
         self.is_run_scoped = is_run_scoped
         self.execution_id = execution_id or str(uuid.uuid4())
         self.start_time = datetime.now()
@@ -700,6 +1261,7 @@ class WorkflowTraceCollector:
         batch_items: list[dict[str, Any]] | None = None,
         sub_workflow_events: list[dict[str, Any]] | None = None,
         cached: bool = False,
+        restored: bool = False,
         frame: _HostFrame | None = None,
     ) -> None:
         """Record detailed node execution data.
@@ -717,6 +1279,13 @@ class WorkflowTraceCollector:
             batch_items: Per-item trace events for batch nodes
             sub_workflow_events: Child workflow trace events for nested workflows
             cached: Whether this node used cached results (skipped execution)
+            restored: Task 164 (Decision 6) — this event re-records an upstream
+                node's final event from a resumed run's SOURCE trace, so the
+                attempt trace is self-contained (resume-of-a-resume and later
+                ``--only`` runs seed from it alone). Always passed with
+                ``cached=True``: ``status: "cached"`` keeps every cost/UI
+                consumer correct with zero change; ``restored: true`` is the
+                honest marker on top. Excluded from ``nodes_executed``.
         """
         event: dict[str, Any] = {
             "node_id": node_id,
@@ -725,6 +1294,8 @@ class WorkflowTraceCollector:
             "status": _node_status(success, cached),
             "timestamp": datetime.now().isoformat(),
         }
+        if restored:
+            event["restored"] = True
 
         if error:
             event["error"] = error
@@ -732,7 +1303,10 @@ class WorkflowTraceCollector:
             event["node_params"] = self._sanitize_for_json(node_params)
         if template_resolutions:
             event["template_resolutions"] = self._sanitize_for_json(template_resolutions)
-        if node_output:
+        # Restored events stamp on ``is not None`` (not truthiness): an upstream node whose
+        # real output was ``{}`` must survive re-record so a SECOND resume seeds ``{}`` rather
+        # than absent — a downstream coalesce distinguishes those (Task 164 §C step 4).
+        if node_output or (restored and node_output is not None):
             event["node_output"] = self._sanitize_for_json(node_output)
         if mutations:
             event["mutations"] = mutations
@@ -746,32 +1320,38 @@ class WorkflowTraceCollector:
         if is_llm_node_type(node_type):
             _strip_redundant_llm_trace_fields(event)
 
-        # Task 172: stamp emit-time correlation on the run-scoped collector. A `frame`
-        # (sub-workflow host) reuses its reserved seq/parent_id/ancestor_path; every other
-        # record — leaf, cache hit (handle_cached_execution), api-warning (handle_api_warning) —
-        # takes the next seq and nests under the current host (`_host_stack[-1]`) or top level.
-        # Buffer collectors stamp nothing; their children embed as `sub_workflow_events`.
-        if self.is_run_scoped:
-            seq = frame.seq if frame is not None else self._next_seq()
-            parent_id = (
-                frame.parent_id if frame is not None else (self._host_stack[-1].seq if self._host_stack else None)
-            )
-            ancestor_path = frame.ancestor_path if frame is not None else self._current_ancestor_path()
-            self._check_reserved_collision(event, node_id)
-            event |= {
-                "id": seq,
-                "seq": seq,
-                "parent_id": parent_id,
-                "run_id": self.execution_id,
-                "ancestor_path": ancestor_path,
-                "port": None,
-            }
+        self._stamp_correlation(event, node_id, frame)
 
         self.events.append(event)
         # Task 172 step 3: stream this event as a JSONL line the instant it's recorded (run-scoped +
         # stream_to_disk only; a no-op otherwise, and under the pytest gate). Buffer collectors never
         # stream — their children embed and the whole nested tree is written at save_to_file.
         self._flush_event(event)
+
+    def _stamp_correlation(self, event: dict[str, Any], node_id: str, frame: _HostFrame | None) -> None:
+        """Task 172: stamp emit-time correlation on the run-scoped collector.
+
+        A ``frame`` (sub-workflow host) reuses its reserved seq/parent_id/
+        ancestor_path; every other record — leaf, cache hit
+        (``handle_cached_execution``), api-warning (``handle_api_warning``) —
+        takes the next seq and nests under the current host
+        (``_host_stack[-1]``) or top level. Buffer collectors stamp nothing;
+        their children embed as ``sub_workflow_events``.
+        """
+        if not self.is_run_scoped:
+            return
+        seq = frame.seq if frame is not None else self._next_seq()
+        parent_id = frame.parent_id if frame is not None else (self._host_stack[-1].seq if self._host_stack else None)
+        ancestor_path = frame.ancestor_path if frame is not None else self._current_ancestor_path()
+        self._check_reserved_collision(event, node_id)
+        event |= {
+            "id": seq,
+            "seq": seq,
+            "parent_id": parent_id,
+            "run_id": self.execution_id,
+            "ancestor_path": ancestor_path,
+            "port": None,
+        }
 
     def tree(self) -> list[dict[str, Any]]:
         """Nested event view over the store — the derived projection (Task 172).
@@ -1017,6 +1597,7 @@ class WorkflowTraceCollector:
             "only_node": self.only_node,
             "content_hash": self.content_hash,
             "inputs": self.inputs,
+            "resumed_from": self.resumed_from,
         }
 
     def _aggregates(self) -> dict[str, Any]:
@@ -1036,7 +1617,9 @@ class WorkflowTraceCollector:
             # run callout shows it). Small string; unlike json_output/warnings it's wire-safe.
             "execution_id": self.execution_id,
             "final_status": final_status,
-            "nodes_executed": len(self._top_level_events()),
+            # Restored events (Task 164: re-recorded from a resume's source trace) did not
+            # execute this run — the ONE aggregate their cached status doesn't already fix.
+            "nodes_executed": sum(1 for e in self._top_level_events() if not e.get("restored")),
             "nodes_failed": len(failed_node_ids),
             "failed_node_ids": failed_node_ids,
         }
@@ -1390,6 +1973,15 @@ class WorkflowTraceCollector:
             return "failed"
         if final_events is None:
             final_events = final_events_by_node(self._top_level_events())
+        if not final_events:
+            # A run.complete with ZERO node events means nothing executed — the run
+            # crashed or was refused before its first step (every workflow has ≥1
+            # node; gate stops are already handled above). Reporting "success" would
+            # lie to every consumer: the UI run list, resume's status arms, and
+            # analyze-cache's status buckets (Task 164 discovery — previously
+            # "success", which let a refused resume attempt masquerade as a
+            # successful run).
+            return "failed"
         execution_warnings = self.execution_warnings or []
         unrecovered_failures = _unrecovered_failed_node_ids(final_events, execution_warnings)
         if unrecovered_failures:
@@ -1397,6 +1989,33 @@ class WorkflowTraceCollector:
         if execution_warnings and any(warning_degrades_status(warning) for warning in execution_warnings):
             return "degraded"
         return "success"
+
+    def has_resumable_step(self) -> bool:
+        """Whether this run has a failed step to resume from — the failure surface's resume gate (C2).
+
+        A SOUND SUPPRESSOR of the common dead-ends, NOT a full oracle: ``False`` means
+        ``load_resume_source`` will DEFINITELY refuse (so the resume hint / JSON
+        ``resume_command`` must stay silent), while ``True`` is
+        necessary-but-not-sufficient (resume usually works). It answers only the
+        loader's STATUS arm on the IN-MEMORY events — ``_determine_trace_status(...) ==
+        "failed"`` AND a non-empty unrecovered set — which catches every case the C2
+        report named: a zero-step crash (nothing ran), an all-steps-succeed-but-
+        declared-output-unbuildable failure (status is then ``success``/``degraded``),
+        and a gate-stopped run (``failed`` with no unrecovered step).
+
+        It DELIBERATELY does not replicate the loader's seed-scope guards (lossy-binary,
+        undecided-escalation): those can only be evaluated against the disk-only
+        gate-resolution lines (``_apply_gate_resolutions``), and replaying that fold in
+        memory would FALSE-refuse a resolved escalation — a false negative that would
+        hide the hint on a genuinely resumable run (the dangerous direction). So a rare
+        lossy-upstream failure may still show a hint that then refuses — an actionable
+        refusal, not a dead crash. Computed in memory so it holds on the JSON path,
+        which runs BEFORE the trace is finalized.
+        """
+        final_events = final_events_by_node(self._top_level_events())
+        if self._determine_trace_status(final_events) != "failed":
+            return False
+        return bool(_unrecovered_failed_node_ids(final_events, self.execution_warnings or []))
 
     def _collect_llm_summary(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         """Recursively collect LLM call data from tree-structured events.

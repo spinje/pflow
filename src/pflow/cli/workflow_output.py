@@ -771,9 +771,11 @@ def _emit_summary_or_only_indicator(
     if not metrics_collector:
         return
 
-    only_node = shared_storage.get("__execution__", {}).get("only_node") if shared_storage else None
-    if print_flag and not only_node:
-        return  # -p mode without --only: nothing to emit
+    exec_state = shared_storage.get("__execution__", {}) if shared_storage else {}
+    only_node = exec_state.get("only_node")
+    resumed_from = exec_state.get("resumed_from")
+    if print_flag and not only_node and not resumed_from:
+        return  # -p mode without a mode flag (--only / resume): nothing to emit
 
     from pflow.execution.formatters.success_formatter import format_execution_success
 
@@ -789,8 +791,8 @@ def _emit_summary_or_only_indicator(
     )
 
     if print_flag:
-        # -p + --only: emit just the mode confirmation, nothing else
-        _emit_only_indicator(formatted)
+        # -p + a mode flag (--only / resume): emit just the mode confirmation, nothing else
+        _emit_mode_indicators(formatted)
         return
 
     # Default mode: full summary (which already includes the --only line
@@ -802,7 +804,7 @@ def _emit_summary_or_only_indicator(
 def _only_indicator_line(formatted_result: dict[str, Any]) -> str | None:
     """Build the ``--only`` mode confirmation line, or ``None`` if not active.
 
-    Shared by ``_emit_only_indicator`` (the ``-p`` path) and the default
+    Shared by ``_emit_mode_indicators`` (the ``-p`` path) and the default
     summary block so the indicator text has one source — see
     ``format_only_indicator`` in ``success_formatter.py``.
     """
@@ -815,20 +817,35 @@ def _only_indicator_line(formatted_result: dict[str, Any]) -> str | None:
     return format_only_indicator(only_node, execution.get("nodes_skipped", 0))
 
 
-def _emit_only_indicator(formatted_result: dict[str, Any]) -> None:
-    """Emit the ``--only`` mode confirmation line to stderr (``-p`` path).
+def _resume_indicator_line(formatted_result: dict[str, Any]) -> str | None:
+    """Build the resume mode confirmation line (Task 164), or ``None`` if not a resumed run.
 
-    Why this exists: ``--only`` is a mode signal, not a summary detail.
-    Without this emission, ``pflow -p foo --only target`` produces zero
-    bytes on stderr, leaving agents unable to disambiguate constrained
-    runs from full runs. Verbosity flags hide details; mode flags
-    survive verbosity (matches ``make -k``, ``pytest --maxfail``,
-    ``rsync --dry-run``, ``apt-get --simulate``, ``kubectl --dry-run``,
-    etc.).
+    Same one-source pattern as ``_only_indicator_line`` — see
+    ``format_resume_indicator`` in ``success_formatter.py``.
     """
-    line = _only_indicator_line(formatted_result)
-    if line:
-        click.echo(line, err=True)
+    from pflow.execution.formatters.success_formatter import format_resume_indicator
+
+    execution = formatted_result.get("execution", {})
+    resumed_from = execution.get("resumed_from")
+    if not resumed_from:
+        return None
+    return format_resume_indicator(resumed_from, execution.get("resume_entry_node"), execution.get("nodes_restored", 0))
+
+
+def _emit_mode_indicators(formatted_result: dict[str, Any]) -> None:
+    """Emit the ``--only`` / resume mode confirmation lines to stderr (``-p`` path).
+
+    Why this exists: ``--only`` and resume are mode signals, not summary
+    details. Without this emission, ``pflow -p foo --only target`` (or a
+    ``-p`` resumed run) produces zero bytes on stderr, leaving agents unable
+    to disambiguate constrained runs from full runs. Verbosity flags hide
+    details; mode flags survive verbosity (matches ``make -k``,
+    ``pytest --maxfail``, ``rsync --dry-run``, ``apt-get --simulate``,
+    ``kubectl --dry-run``, etc.).
+    """
+    for line in (_only_indicator_line(formatted_result), _resume_indicator_line(formatted_result)):
+        if line:
+            click.echo(line, err=True)
 
 
 def _display_execution_summary(
@@ -876,11 +893,14 @@ def _display_execution_summary(
             )
         ])
 
-    # --only mode confirmation: always emit when --only is active, even when no
-    # downstream nodes were skipped (e.g. --only targeted the last node).
+    # Mode confirmations (--only / resume): always emit when active, even when
+    # nothing was skipped/restored (e.g. --only targeted the last node).
     only_line = _only_indicator_line(formatted_result)
     if only_line:
         blocks.append([only_line])
+    resume_line = _resume_indicator_line(formatted_result)
+    if resume_line:
+        blocks.append([resume_line])
 
     if steps:
         blocks.append(_as_block(format_batch_errors_section(steps)))

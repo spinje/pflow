@@ -27,6 +27,7 @@ from pflow.core.exceptions import (
     GateResolverError,
     LoopCarryError,
     LoopConditionError,
+    ResumeNotResumableError,
 )
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_cache import CacheRenderContext
@@ -541,6 +542,38 @@ def find_node_by_id(start_node: Any, node_id: str) -> Any:
     )
 
 
+def seed_walk_entry(
+    shared: dict[str, Any],
+    events: list[dict[str, Any]],
+    *,
+    entry: str,
+    start_node: Any,
+) -> tuple[Any, dict[str, dict[str, Any]]]:
+    """Seed upstream outputs from a prior run's events and locate the walk entry node.
+
+    The shared "seed + locate-entry" composition (Task 164 Phase 0), used by
+    BOTH the runtime engine (``_run_only_snapshot``) and the dry-run planner
+    (``execution/plan.py::_resolve_walk_start``) so entry/seeding semantics
+    cannot drift between the preview and the run — pinned by
+    ``test_engine_and_planner_walk_entry_state_match``. Resume (engine
+    re-entry + planner resume view) becomes additional callers of this exact
+    composition.
+
+    Returns ``(entry_node, seeded_final_events_by_node)`` — the seeded map
+    provably never contains ``entry`` itself (its scope slice ends before the
+    entry's first event), so callers use its keys as ``restored_nodes``
+    directly. Deliberately NOTHING else is shared here (scope guard: if this
+    grows a mode flag or callback, back off): loading events,
+    ``initialize_execution_state``, ``restored_nodes``/``only_node`` stamping,
+    and degraded advisories all stay caller-side — they differ per surface by
+    design.
+    """
+    from pflow.runtime.workflow_trace import seed_snapshot_into_shared
+
+    final = seed_snapshot_into_shared(shared, events, exclude=entry)
+    return find_node_by_id(start_node, entry), final
+
+
 def build_snapshot_degraded_diagnostic(this_only: str, *, source: Literal["planner", "runtime"]) -> Diagnostic:
     """Build the ``only.snapshot-degraded`` WARNING ``Diagnostic``.
 
@@ -582,7 +615,12 @@ class WorkflowEngine:
         only_node: str | None = None,
         workflow_path: str | None = None,
         snapshot_events: list[dict] | None = None,
+        resume_from: str | None = None,
+        resume_events: list[dict] | None = None,
+        resume_source_id: str | None = None,
     ):
+        if resume_from is not None and only_node is not None:
+            raise ValueError("resume_from and only_node are mutually exclusive")
         self.metrics = metrics_collector
         self.trace = trace_collector
         self.only_node = only_node
@@ -594,6 +632,15 @@ class WorkflowEngine:
         # ``None`` — many construction sites rely on the defaults.
         self.workflow_path = workflow_path
         self.snapshot_events = snapshot_events
+        # Task 164: resume re-entry, mirroring the only_node/snapshot_events
+        # precedent. ``resume_from`` = the failed node K to re-enter the walk at;
+        # ``resume_events`` = the source trace's top-level events to seed
+        # upstream from (``ResumeSource.events``); ``resume_source_id`` = the
+        # source run's execution_id, stamped into ``__execution__`` for the
+        # display/JSON surface. All default ``None`` (normal full run).
+        self.resume_from = resume_from
+        self.resume_events = resume_events
+        self.resume_source_id = resume_source_id
 
     def _run_node_with_child_only(
         self, node: Any, config: NodeConfig, shared: dict[str, Any], child_only: str | None
@@ -686,8 +733,10 @@ class WorkflowEngine:
         if "__execution__" in shared and "node_visit_counts" in shared["__execution__"]:
             shared["__execution__"]["node_visit_counts"] = {}
 
-        # 2. Walk graph
-        curr = workflow.start_node
+        # 2. Walk graph, entering at the start node — or at the failed node K
+        # when resuming (Task 164: a parameterized entry into the one loop,
+        # never a second traversal).
+        curr = self._walk_entry(workflow, shared)
         last_action = None
         # issue #445: per-node loop iteration counters (the loop's OWN count,
         # distinct from the hard ``node_visit_counts`` guard) and resolved caps.
@@ -775,20 +824,19 @@ class WorkflowEngine:
         for data-flow: templates, coalesce, and ``## Cache`` rendering SHOULD see
         the restored values).
         """
-        from pflow.runtime.workflow_trace import load_snapshot_or_raise, seed_snapshot_into_shared
+        from pflow.runtime.workflow_trace import load_snapshot_or_raise
 
         events, source_status = load_snapshot_or_raise(
             self.workflow_path, this_only, snapshot_events=self.snapshot_events
         )
-        final = seed_snapshot_into_shared(shared, events, exclude=this_only)
+        target_node, final = seed_walk_entry(shared, events, entry=this_only, start_node=workflow.start_node)
 
         initialize_execution_state(shared)
-        shared["__execution__"]["restored_nodes"] = [nid for nid in final if nid != this_only]
+        shared["__execution__"]["restored_nodes"] = list(final)
 
         if source_status == "degraded":
             self._emit_snapshot_degraded_advisory(shared, this_only)
 
-        target_node = find_node_by_id(workflow.start_node, this_only)
         config = workflow.node_configs[this_only]
         is_loop = config.loop_config is not None
         with loop_runtime_scope(shared, is_loop, iteration=1 if is_loop else None, clear_iteration_on_exit=True):
@@ -800,6 +848,63 @@ class WorkflowEngine:
         # --only by _populate_outputs.
         self._populate_outputs(workflow, shared, last_action)
         return str(last_action) if last_action else "default"
+
+    def _walk_entry(self, workflow: CompiledWorkflow, shared: dict[str, Any]) -> Any:
+        """Return the walk's entry node: ``start_node``, or K when resuming (Task 164)."""
+        if self.resume_from is not None:
+            return self._prepare_resume(workflow, shared)
+        return workflow.start_node
+
+    def _prepare_resume(self, workflow: CompiledWorkflow, shared: dict[str, Any]) -> Any:
+        """Seed upstream from the source trace and return the walk entry node K (Task 164).
+
+        Runs inside ``_run_inner`` on the main thread, after ``start_streaming()``
+        — the re-recorded restored events flush right after the meta line. The
+        seed → ``initialize_execution_state`` → stamp ordering mirrors
+        ``_run_only_snapshot``'s load-bearing prologue. Deliberately does NOT set
+        ``__execution__["only_node"]`` (outputs route across the whole resumed
+        tail) and adds no ``loop_runtime_scope`` (that's the snapshot's
+        single-shot pattern; the walk wraps every node itself).
+        """
+        try:
+            entry_node, final = seed_walk_entry(
+                shared, self.resume_events or [], entry=str(self.resume_from), start_node=workflow.start_node
+            )
+        except CompilationError:
+            # Without this wrap, a --force resume after K was renamed/removed
+            # surfaces find_node_by_id's "compiler/graph bug" error — misattributed.
+            raise ResumeNotResumableError(
+                f"Step '{self.resume_from}' no longer exists in the workflow — it was renamed or "
+                f"removed since the failed run.",
+                execution_id=self.resume_source_id,
+                suggestions=["Re-run the workflow from the start instead of resuming."],
+            ) from None
+        initialize_execution_state(shared)
+        restored = list(final)
+        # Engine-only keys, stamped here per the node_state pattern — never added
+        # to new_execution_state(). The display/JSON surface reads all three.
+        shared["__execution__"]["restored_nodes"] = restored
+        shared["__execution__"]["resumed_from"] = self.resume_source_id
+        shared["__execution__"]["resume_entry_node"] = self.resume_from
+        # Decision 6: re-record each restored node's final event into THIS attempt's
+        # trace so it is self-contained — resume-of-a-resume and later --only runs
+        # seed from the newest attempt alone. cached=True supplies status "cached"
+        # (cost exclusion + UI rendering follow with zero further change); no
+        # sub_workflow_events/batch_items (seeding never reads them; a childless
+        # cached host is safe for tree()/cost).
+        if self.trace is not None:
+            for nid in restored:
+                ev = final[nid]
+                self.trace.record_node_execution(
+                    node_id=nid,
+                    node_type=ev.get("node_type", "unknown"),
+                    duration_ms=0.0,
+                    success=True,
+                    node_output=ev.get("node_output"),
+                    cached=True,
+                    restored=True,
+                )
+        return entry_node
 
     @staticmethod
     def _emit_snapshot_degraded_advisory(shared: dict[str, Any], this_only: str) -> None:
