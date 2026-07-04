@@ -15,7 +15,7 @@ import time
 import webbrowser
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import NoReturn
+from typing import NamedTuple, NoReturn
 from urllib.parse import urlencode
 
 import click
@@ -32,6 +32,31 @@ _OPEN_TIMEOUT_S = 15.0
 _OPEN_INTERVAL_S = 0.25
 # A typo must not synthesize a 10-minute clip. 1500 chars is ~90-100s of audio.
 _SAY_MAX_CHARS = 1500
+
+
+class Narration(NamedTuple):
+    """The outcome of resolving ``--say``: caption + optional audio + failure report.
+
+    All-``None`` when ``--say`` was not given. ``duration_s`` (clip length from the
+    WAV header) drives the pacing sleep so a sequence of ``--say`` commands
+    self-paces; ``None`` when there is no audio.
+    """
+
+    caption: str | None
+    audio_b64: str | None
+    reason: str | None
+    reason_kind: str | None
+    duration_s: float | None
+
+    @property
+    def report(self) -> dict[str, object]:
+        """The ``payload["narration"]`` field JSON consumers see."""
+        return {
+            "audio": self.audio_b64 is not None,
+            "reason": self.reason,
+            "reason_kind": self.reason_kind,
+            "duration_s": self.duration_s,
+        }
 
 
 class UiGroup(click.Group):
@@ -404,29 +429,29 @@ def _prepare_say(say: str) -> str:
     return caption
 
 
-def _synthesize_say(say: str) -> tuple[str | None, str | None, str | None]:
-    """Synthesize ``--say`` to base64 audio. Returns ``(audio_b64, reason, reason_kind)``.
+def _synthesize_say(say: str) -> tuple[str | None, str | None, str | None, float | None]:
+    """Synthesize ``--say`` to base64 audio. Returns ``(audio_b64, reason, reason_kind, duration_s)``.
 
-    Success: ``(b64, None, None)``. NEVER raises — this seam enforces the locked
-    "synthesis failure is a report note, never an error" decision, so the catch is
-    ``except Exception`` (a belt to ``synthesize()``'s own totality). A missing key
-    is ``reason_kind="missing_key"``; any other failure (``TTSSynthesisError`` or a
+    Success: ``(b64, None, None, <clip seconds>)``. NEVER raises — this seam enforces
+    the locked "synthesis failure is a report note, never an error" decision, so the
+    catch is ``except Exception`` (a belt to ``synthesize()``'s own totality). A missing
+    key is ``reason_kind="missing_key"``; any other failure (``TTSSynthesisError`` or a
     stray crash) is ``"synthesis_failed"`` — the point is never dropped.
     """
     from pflow.core.exceptions import MissingApiKeyError
     from pflow.core.llm_config import inject_settings_env_vars
     from pflow.core.settings import SettingsManager
-    from pflow.core.tts import synthesize
+    from pflow.core.tts import synthesize, wav_duration
 
     inject_settings_env_vars()  # push settings-stored keys into os.environ (ui.py never called this)
     llm = SettingsManager().load().llm
     try:
         audio = synthesize(say, model=llm.tts_model, voice=llm.tts_voice)
-        return base64.b64encode(audio).decode("ascii"), None, None
+        return base64.b64encode(audio).decode("ascii"), None, None, wav_duration(audio)
     except MissingApiKeyError as exc:
-        return None, str(exc), "missing_key"
+        return None, str(exc), "missing_key", None
     except Exception as exc:
-        return None, str(exc), "synthesis_failed"
+        return None, str(exc), "synthesis_failed", None
 
 
 def _say_request(
@@ -454,16 +479,17 @@ def _say_request(
     )
 
 
-def _resolve_narration(say: str | None) -> tuple[str | None, str | None, str | None, str | None]:
-    """Prepare + synthesize a ``--say`` request. Returns ``(caption, audio_b64, reason, reason_kind)``;
-    an all-None tuple when ``--say`` was not given. ``_prepare_say`` may raise ``click.BadParameter``
-    (a usage error the caller lets propagate); ``_synthesize_say`` never raises (caption-only degrade).
+def _resolve_narration(say: str | None) -> Narration:
+    """Prepare + synthesize a ``--say`` request. Returns an all-None :class:`Narration`
+    when ``--say`` was not given. ``_prepare_say`` may raise ``click.BadParameter``
+    (a usage error the caller lets propagate); ``_synthesize_say`` never raises
+    (caption-only degrade).
     """
     if say is None:
-        return None, None, None, None
+        return Narration(None, None, None, None, None)
     caption = _prepare_say(say)
-    audio_b64, reason, reason_kind = _synthesize_say(say)
-    return caption, audio_b64, reason, reason_kind
+    audio_b64, reason, reason_kind, duration_s = _synthesize_say(say)
+    return Narration(caption, audio_b64, reason, reason_kind, duration_s)
 
 
 def _send_point(
@@ -483,6 +509,55 @@ def _send_point(
     if caption is not None:
         return _say_request(ctx, port, workflow, command_type, target, caption, audio_b64, output_json=output_json)
     return _point_request(ctx, port, workflow, command_type, target, output_json=output_json)
+
+
+# The blocked-hold: how often to re-check a silent (autoplay-blocked) Viewer, and for how long.
+# 240 polls x 0.5s = a 2-minute ceiling — a demo user is present; an absent one shouldn't hang
+# an agent forever.
+_BLOCKED_POLL_INTERVAL_S = 0.5
+_BLOCKED_MAX_POLLS = 240
+
+
+def _await_narration_turn(port: int) -> None:
+    """Wait for this ``--say``'s turn to speak: the previous clip done, playback not blocked.
+
+    The pacing seam: it runs AFTER this command's synthesis (which therefore overlaps the
+    playing clip) and BEFORE its dispatch, so sequential ``--say`` commands play back-to-back
+    with ~no dead air instead of interrupting each other. State comes from the server's
+    ``/api/health`` (broadcast-time estimate, refined by the Viewer's playback beacons).
+
+    When the Viewer reported autoplay-BLOCKED playback, the walkthrough HOLDS here — polling
+    until the user's click on the caption's ▶ button starts the clip (which clears the flag) —
+    instead of marching on past a silent window. Bounded: after ~2 minutes it proceeds anyway.
+    An unreachable server skips the wait entirely (the dispatch that follows owns that failure).
+    All notes go to stderr: in JSON mode stdout must stay a pure payload, and these print
+    BEFORE it.
+    """
+    noted = False
+    for _ in range(_BLOCKED_MAX_POLLS):
+        health = _probe_health(port)
+        if health is None:
+            return
+        if health.get("narration_blocked") is True:
+            if not noted:
+                click.echo(
+                    "note: narration is blocked in the Viewer (browser autoplay policy) — holding the "
+                    "walkthrough; click the caption's ▶ button to hear it and resume.",
+                    err=True,
+                )
+                noted = True
+            time.sleep(_BLOCKED_POLL_INTERVAL_S)
+            continue
+        if noted:
+            click.echo("note: narration unblocked — resuming.", err=True)
+        remaining = health.get("narration_s_remaining")
+        if isinstance(remaining, (int, float)) and remaining > 0:
+            time.sleep(min(float(remaining), 120.0))
+        return
+    click.echo(
+        "note: the Viewer is still blocked after 2 minutes — continuing without sound (captions still show).",
+        err=True,
+    )
 
 
 @click.group(cls=UiGroup, name="ui", invoke_without_command=True)
@@ -634,8 +709,17 @@ _say_option = click.option(
     help=(
         "Narrate this text aloud in the Viewer with an on-canvas caption. Delivery direction goes in "
         '[brackets] (e.g. "[excited] this node..."); bracketed tags shape the voice and are stripped '
-        "from the caption."
+        "from the caption. Waits for the previous clip to finish before pointing, so a sequence of "
+        "--say commands plays back-to-back (--no-wait to interrupt instead)."
     ),
+)
+
+_no_wait_option = click.option(
+    "--no-wait",
+    "wait",
+    flag_value=False,
+    default=True,
+    help="Don't wait for the previous narration clip to finish (point immediately; the new clip interrupts it).",
 )
 
 
@@ -644,6 +728,7 @@ _say_option = click.option(
 @click.argument("target")
 @click.option("--open", "open_if_absent", is_flag=True, help="Open a Viewer when no window is connected.")
 @_say_option
+@_no_wait_option
 @click.option(
     "--output-format",
     "output_json",
@@ -660,6 +745,7 @@ def focus_cmd(
     target: str,
     open_if_absent: bool,
     say: str | None,
+    wait: bool,
     output_json: bool,
     port: int,
 ) -> None:
@@ -673,8 +759,13 @@ def focus_cmd(
 
     ``--say "text"`` also narrates the text aloud with an on-canvas caption.
     """
-    caption, audio_b64, narration_reason, narration_kind = _resolve_narration(say)
-    payload = _send_point(ctx, port, workflow, "focus", target, caption, audio_b64, output_json=output_json)
+    n = _resolve_narration(say)
+    if say is not None and wait:
+        # Wait for the PREVIOUS clip to finish before pointing — after synthesis (above), so the
+        # synth time overlapped the playing clip. Holds while the Viewer is autoplay-blocked.
+        # `--no-wait` interrupts instead.
+        _await_narration_turn(port)
+    payload = _send_point(ctx, port, workflow, "focus", target, n.caption, n.audio_b64, output_json=output_json)
     opened = False
     timed_out = False
     if open_if_absent and _int_field(payload, "sent_to") == 0 and _int_field(_resolution(payload), "matched") == 1:
@@ -697,16 +788,12 @@ def focus_cmd(
         # reported "didn't connect"), and an edge focus can ONLY arrive over SSE — the
         # opened URL carries no edge focus. Re-send reuses the SAME audio_b64 (do NOT
         # re-synthesize). Applying a bare focus once is harmless.
-        payload = _send_point(ctx, port, workflow, "focus", target, caption, audio_b64, output_json=output_json)
+        payload = _send_point(ctx, port, workflow, "focus", target, n.caption, n.audio_b64, output_json=output_json)
         timed_out = _int_field(payload, "sent_to") == 0
 
     if say is not None:
         # CLI-merged so JSON consumers see the narration outcome without substring-matching prose.
-        payload["narration"] = {
-            "audio": audio_b64 is not None,
-            "reason": narration_reason,
-            "reason_kind": narration_kind,
-        }
+        payload["narration"] = n.report
     _emit_payload(payload, output_json)
     if not output_json and not timed_out:
         _render_dispatch(
@@ -725,11 +812,11 @@ def focus_cmd(
             f"→ re-run `pflow ui focus {workflow} {target!r}` now that it may be up.",
             err=output_json,
         )
-    if narration_reason is not None:
+    if n.reason is not None:
         # A top-level statement (NOT gated by the timed_out/text-mode block above): the point still
         # delivered, so the caption showed — only the voice is missing. err=output_json keeps stdout
         # parseable in JSON mode (the exact `timed_out` routing precedent). Never exits non-zero.
-        click.echo(f"narration unavailable: {narration_reason}", err=output_json)
+        click.echo(f"narration unavailable: {n.reason}", err=output_json)
     if _dispatch_failed(payload):
         ctx.exit(1)
 
@@ -738,6 +825,7 @@ def focus_cmd(
 @click.argument("workflow")
 @click.argument("target")
 @_say_option
+@_no_wait_option
 @click.option(
     "--output-format",
     "output_json",
@@ -748,26 +836,32 @@ def focus_cmd(
 )
 @click.option("--port", default=_DEFAULT_PORT, type=int, help="Viewer server port (default: 8765).")
 @click.pass_context
-def frame_cmd(ctx: click.Context, workflow: str, target: str, say: str | None, output_json: bool, port: int) -> None:
+def frame_cmd(
+    ctx: click.Context,
+    workflow: str,
+    target: str,
+    say: str | None,
+    wait: bool,
+    output_json: bool,
+    port: int,
+) -> None:
     """Frame TARGET without changing focus state.
 
     TARGET uses the same names as ``pflow ui focus``. ``--say "text"`` also
     narrates the text aloud with an on-canvas caption.
     """
-    caption, audio_b64, narration_reason, narration_kind = _resolve_narration(say)
-    payload = _send_point(ctx, port, workflow, "frame", target, caption, audio_b64, output_json=output_json)
+    n = _resolve_narration(say)
+    if say is not None and wait:
+        _await_narration_turn(port)
+    payload = _send_point(ctx, port, workflow, "frame", target, n.caption, n.audio_b64, output_json=output_json)
     if say is not None:
-        payload["narration"] = {
-            "audio": audio_b64 is not None,
-            "reason": narration_reason,
-            "reason_kind": narration_kind,
-        }
+        payload["narration"] = n.report
     _emit_payload(payload, output_json)
     if not output_json:
         _render_dispatch("frame", workflow, target, payload)
-    if narration_reason is not None:
+    if n.reason is not None:
         # Top-level: the caption showed even when synthesis failed. err=output_json keeps stdout clean.
-        click.echo(f"narration unavailable: {narration_reason}", err=output_json)
+        click.echo(f"narration unavailable: {n.reason}", err=output_json)
     if _dispatch_failed(payload):
         ctx.exit(1)
 

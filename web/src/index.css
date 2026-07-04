@@ -2308,7 +2308,8 @@ textarea.run-field-input {
   color: var(--text);
   line-height: 1.45;
 }
-.say-unlock {
+.say-unlock,
+.say-replay {
   margin-top: 8px;
   padding: 4px 10px;
   background: transparent;
@@ -2318,7 +2319,8 @@ textarea.run-field-input {
   font-size: 12px;
   cursor: pointer;
 }
-.say-unlock:hover {
+.say-unlock:hover,
+.say-replay:hover {
   border-color: var(--text-muted);
 }
 

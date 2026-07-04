@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { reportInteraction, subscribe } from "./events";
+import { reportInteraction, reportNarration, subscribe } from "./events";
 import type { RFRef } from "../types";
 
 class FakeEventSource {
@@ -429,6 +429,27 @@ describe("subscribe say dispatch (Task 174)", () => {
     source.emit({ type: "clear" });
     expect(h.clear).toHaveBeenCalledOnce();
     unsubscribe();
+  });
+});
+
+describe("reportNarration", () => {
+  it("extracts the audio id from the url and posts the beacon", () => {
+    reportNarration("/api/audio/abc123", "started");
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/narration",
+      expect.objectContaining({
+        method: "POST",
+        keepalive: true,
+        body: JSON.stringify({ audio_id: "abc123", event: "started" }),
+      }),
+    );
+  });
+
+  it("swallows transport rejection", async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError("offline"));
+    expect(() => reportNarration("/api/audio/x", "blocked")).not.toThrow();
+    await Promise.resolve();
   });
 });
 

@@ -242,6 +242,21 @@ export function subscribe(
   };
 }
 
+// Playback beacon (Task 174 pacing): tell the server what the audio element ACTUALLY did with a
+// `say` clip — "started" re-anchors the pacing rendezvous to real playback, "blocked" flags an
+// autoplay-refused (silent) window so the CLI's next --say warns the agent, "ended" frees the
+// next --say from waiting. Fire-and-forget like reportInteraction; never awaited.
+export function reportNarration(audioUrl: string, event: "started" | "blocked" | "ended"): void {
+  const audioId = audioUrl.split("/").pop();
+  if (!audioId) return;
+  void fetch("/api/narration", {
+    method: "POST",
+    keepalive: true,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ audio_id: audioId, event }),
+  }).catch(() => undefined);
+}
+
 /** Report user intent without ever surfacing a transport failure into the UI. */
 export function reportInteraction(workflow: string, report: InteractionReport): void {
   void fetch("/api/interaction", {

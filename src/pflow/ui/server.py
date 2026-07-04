@@ -72,6 +72,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from pflow.core.diagnostic import exception_to_diagnostics
 from pflow.core.exceptions import PflowError
+from pflow.core.tts import wav_duration
 from pflow.core.workflow.graph import render_react_flow
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution.graph_service import (
@@ -90,6 +91,10 @@ logger = logging.getLogger(__name__)
 # expands containers client-side, so the server always ships the full tree.
 _MAX_DEPTH = 5
 _ACTIVITY_MAX = 200
+# Task 174 pacing: how far past the broadcast the browser typically STARTS playing a `say` clip
+# (SSE delivery + /api/audio fetch + play() init; larger on a cold page). Added to the clip's
+# duration in the pacing rendezvous so the next `--say` never clips the last words.
+_NARRATION_START_LAG_S = 0.75
 # Task 174 (`say` narration): the audio store's bounds. `say` uploads a decoded WAV; the store keeps
 # the last few clips so the browser can GET them by id. A clip is played once within seconds of upload,
 # so a small insertion-order LRU is enough. The upload bound keeps the loopback worst-case benign
@@ -680,6 +685,11 @@ async def health(request: Request) -> Response:
     """
     hub: _Hub = request.app.state.hub
     body: dict[str, object] = {"service": "pflow-ui"}
+    # Task 174 pacing: seconds of `say` narration still playing (0.0 when idle). The CLI reads this
+    # BEFORE dispatching a `--say` and waits its turn, so sequential narration never interrupts
+    # itself and synthesis overlaps the playing clip (no dead air).
+    body["narration_s_remaining"] = round(max(0.0, request.app.state.narration_until - time.monotonic()), 3)
+    body["narration_blocked"] = request.app.state.narration_blocked
     workflow = request.query_params.get("workflow")
     if workflow:
         workflow_key = _workflow_key(workflow)
@@ -708,6 +718,9 @@ async def command(request: Request) -> Response:
 
     hub: _Hub = request.app.state.hub
     if command_type == "clear":
+        # Clear = "stop talking": the browser pauses the clip, so the pacing rendezvous must not make
+        # the next `--say` wait for audio that is no longer playing.
+        request.app.state.narration_until = 0.0
         # Issue #539: latch the cleared state (stamped with its epoch) so a returning/new tab catches up to
         # the clear rather than replaying a stale highlight.
         cleared = hub.set_point(workflow_key, {"type": "clear"})
@@ -845,8 +858,63 @@ async def say(request: Request) -> Response:
         say_message["audio_url"] = audio_url
     hub.broadcast(workflow_key, say_message)
 
+    # Pacing rendezvous: remember when this clip stops playing so the NEXT `--say` can wait for its
+    # turn BEFORE dispatching (the CLI reads the remainder off /api/health — synthesis then overlaps
+    # the playing clip instead of adding dead air between steps). Overwrite, never max: a new clip
+    # interrupts the prior one in the browser, so its own end is the truth. Global, not per-workflow
+    # (one machine has one speaker). Loop-affine like the hub — only async handlers touch it.
+    # _NARRATION_START_LAG_S: the browser starts playing AFTER this broadcast (SSE delivery + audio
+    # fetch + play()), so the end estimate must err PAST the true end or the next say clips the
+    # last words (observed live 2026-07-04). A beacon reporting actual play-start would be exact —
+    # add it only if the fixed allowance proves insufficient.
+    duration = wav_duration(decoded) if decoded is not None else 0.0
+    if duration > 0 and conns:  # unplayable bytes (duration 0) never mark narration busy
+        request.app.state.narration_until = time.monotonic() + duration + _NARRATION_START_LAG_S
+
     response.update(_dispatch_report(workflow_key, conns))
     return _json(response)
+
+
+async def narration(request: Request) -> Response:
+    """Playback beacons from the Viewer (Task 174 pacing): what the audio element ACTUALLY did.
+
+    The say broadcast can only ESTIMATE when its clip stops playing (duration + a start-lag
+    guess) — and it cannot know the browser refused to play at all (autoplay policy). The Viewer
+    reports the truth here, fire-and-forget:
+
+    - ``started``: playback began — re-anchor ``narration_until`` to now + the clip's real
+      duration (replaces the start-lag estimate with the exact end), and clear the blocked flag.
+    - ``blocked``: the autoplay policy rejected ``play()`` — set the blocked flag so
+      ``/api/health`` can tell the CLI (whose next ``--say`` warns the agent that the window is
+      silent until a click). ``narration_until`` is left alone: another window may be playing.
+    - ``ended``: playback finished (or the user dismissed the talking box) — clear the window so
+      the next ``--say`` doesn't wait for silence.
+
+    ``async def``: touches the loop-affine narration state and reads the ``_AudioStore``.
+    """
+    body = await _json_body(request)
+    if isinstance(body, Response):
+        return body
+    audio_id = _string_field(body, "audio_id")
+    event = _string_field(body, "event")
+    if audio_id is None or event not in {"started", "blocked", "ended"}:
+        return _json(
+            {"error": "Fields 'audio_id' and event ('started', 'blocked', or 'ended') are required."},
+            status_code=400,
+        )
+    state = request.app.state
+    if event == "blocked":
+        state.narration_blocked = True
+        return _json({})
+    state.narration_blocked = False  # started/ended: sound demonstrably works
+    if event == "ended":
+        state.narration_until = 0.0
+        return _json({})
+    clip = state.audio.get(audio_id)
+    duration = wav_duration(clip) if clip is not None else 0.0
+    if duration > 0:
+        state.narration_until = time.monotonic() + duration
+    return _json({})
 
 
 async def audio(request: Request) -> Response:
@@ -1218,6 +1286,7 @@ def create_app() -> Starlette:
         Route("/api/health", health),
         Route("/api/command", command, methods=["POST"]),
         Route("/api/say", say, methods=["POST"]),
+        Route("/api/narration", narration, methods=["POST"]),
         Route("/api/audio/{audio_id}", audio),
         Route("/api/interaction", interaction, methods=["POST"]),
         Route("/api/visibility", visibility, methods=["POST"]),
@@ -1251,6 +1320,12 @@ def create_app() -> Starlette:
     app.add_middleware(_LoopbackOnly)
     app.state.hub = _Hub()
     app.state.audio = _AudioStore()
+    # Monotonic instant the current `say` clip stops playing (0.0 = idle). The pacing rendezvous for
+    # sequential `--say` commands; loop-affine like the hub — only async handlers read/write it.
+    app.state.narration_until = 0.0
+    # The Viewer reported an autoplay-blocked play() and no playback has succeeded since — surfaced
+    # via /api/health so the CLI can warn that the window is silent until a click.
+    app.state.narration_blocked = False
     return app
 
 

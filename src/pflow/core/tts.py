@@ -125,6 +125,21 @@ def synthesize(text: str, *, model: str, voice: str, timeout: float = 30.0) -> b
         raise TTSSynthesisError(f"TTS synthesis failed: {exc}") from exc
 
 
+def wav_duration(wav: bytes) -> float:
+    """Seconds of audio in a WAV blob.
+
+    TOTAL: returns ``0.0`` on any unparseable/empty input (mirrors
+    :func:`synthesize`'s totality — a bad blob must never crash the caller's
+    pacing, and the CLI sleeps for this value after dispatching a ``--say``).
+    """
+    try:
+        with wave.open(io.BytesIO(wav)) as reader:
+            frames, rate = reader.getnframes(), reader.getframerate()
+        return frames / rate if rate else 0.0
+    except Exception:
+        return 0.0
+
+
 def _gemini_api_key() -> str | None:
     """First non-empty Gemini key from the environment (canonical-first).
 

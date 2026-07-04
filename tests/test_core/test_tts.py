@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 from pflow.core.exceptions import MissingApiKeyError, TTSSynthesisError
-from pflow.core.tts import strip_delivery_tags, synthesize
+from pflow.core.tts import strip_delivery_tags, synthesize, wav_duration
 
 # A few PCM16 frames (signed 16-bit little-endian, mono): 3 samples.
 _PCM = b"\x01\x00\x02\x00\x03\x00"
@@ -140,6 +140,25 @@ class TestSynthesizeFailures:
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
         with pytest.raises(MissingApiKeyError, match="settings set-env"):
             synthesize("hi", model="m", voice="Kore")
+
+
+class TestWavDuration:
+    def test_real_wav_reports_its_duration(self) -> None:
+        # 24000 mono PCM16 frames at 24 kHz = exactly 1.0s (frames/rate is exact, no float fuzz).
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as writer:
+            writer.setnchannels(1)
+            writer.setsampwidth(2)
+            writer.setframerate(24000)
+            writer.writeframes(b"\x00\x00" * 24000)
+        assert wav_duration(buffer.getvalue()) == 1.0
+
+    def test_not_a_wav_is_zero(self) -> None:
+        # Totality: the CLI sleeps for this value — a bad blob must never crash pacing.
+        assert wav_duration(b"not a wav") == 0.0
+
+    def test_empty_bytes_is_zero(self) -> None:
+        assert wav_duration(b"") == 0.0
 
 
 class TestStripDeliveryTags:

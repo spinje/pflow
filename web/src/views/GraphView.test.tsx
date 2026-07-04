@@ -7,7 +7,7 @@
 // determinism; real ELK layout is covered in graph/flow.test.ts.
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 import { installReactFlowJsdomMocks } from "../test/rf-jsdom";
 import type { FlowNode } from "../graph/flow";
@@ -22,6 +22,7 @@ vi.mock("../api/client", async (importOriginal) => {
 const live = vi.hoisted(() => ({
   handlers: null as import("../api/events").PointHandlers | null,
   report: vi.fn(),
+  narration: vi.fn(),
 }));
 vi.mock("../api/events", () => ({
   subscribe: vi.fn((_workflow: string, handlers: import("../api/events").PointHandlers) => {
@@ -29,6 +30,7 @@ vi.mock("../api/events", () => ({
     return vi.fn();
   }),
   reportInteraction: live.report,
+  reportNarration: live.narration,
 }));
 // Stub ELK so the component test is deterministic; overridable per-test.
 vi.mock("../graph/layout", () => ({ layoutGraph: vi.fn() }));
@@ -1078,13 +1080,16 @@ describe("GraphView — Run panel (Task 175)", () => {
   });
 });
 
-describe("agent say callout (Task 174)", () => {
+describe("agent say callout (Task 174 + persistent-captions follow-up)", () => {
   // jsdom has no Audio/play() — stub a class whose play() returns a FRESH deferred promise per call
   // (the real HTMLMediaElement contract), so tests can resolve (autoplay allowed) or reject
   // (blocked / pause-aborted) each attempt on cue: resolvePlay(n)/rejectPlay(e, n) settle call n.
+  // pause() does NOT fire onended (the real contract) — interruption transitions are driven by
+  // startClip's sweep, natural finishes by fireEnded().
   class FakeAudio {
     static instances: FakeAudio[] = [];
     readonly src: string;
+    onended: (() => void) | null = null;
     private readonly settlers: Array<{ res: () => void; rej: (e: unknown) => void }> = [];
     play = vi.fn(
       () =>
@@ -1099,6 +1104,9 @@ describe("agent say callout (Task 174)", () => {
     rejectPlay(error: unknown, call = 0): void {
       this.settlers[call]!.rej(error);
     }
+    fireEnded(): void {
+      this.onended?.();
+    }
     constructor(src: string) {
       this.src = src;
       FakeAudio.instances.push(this);
@@ -1107,6 +1115,7 @@ describe("agent say callout (Task 174)", () => {
 
   beforeEach(() => {
     FakeAudio.instances = [];
+    live.narration.mockClear();
     vi.stubGlobal("Audio", FakeAudio);
     // Earlier tests leak `?run=` into the URL through the component's own syncUrl (see the note at
     // the density test above) — which would open the RUN callout here too. Start clean.
@@ -1120,10 +1129,12 @@ describe("agent say callout (Task 174)", () => {
     await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
     await waitFor(() => expect(live.handlers).not.toBeNull());
   };
-  const say = (caption: string, audioUrl: string | null = "/api/audio/x"): void =>
-    act(() => live.handlers!.say!({ kind: "node", ref: GRAPH.nodes[0]!.ref }, caption, audioUrl));
+  const say = (caption: string, audioUrl: string | null = "/api/audio/x", ref = GRAPH.nodes[0]!.ref): void =>
+    act(() => live.handlers!.say!({ kind: "node", ref }, caption, audioUrl));
+  const boxOf = (caption: string): HTMLElement => screen.getByText(caption).closest(".node-callout")! as HTMLElement;
+  const replayButtons = (): HTMLElement[] => screen.queryAllByRole("button", { name: "↻ Replay" });
 
-  it("anchors a persistent caption and starts the clip", async () => {
+  it("anchors a persistent caption and starts the clip — no Replay button while playing", async () => {
     await mountWithGraph();
     say("this is the LLM call");
 
@@ -1132,14 +1143,18 @@ describe("agent say callout (Task 174)", () => {
     expect(FakeAudio.instances).toHaveLength(1);
     expect(FakeAudio.instances[0]!.src).toBe("/api/audio/x");
     expect(FakeAudio.instances[0]!.play).toHaveBeenCalledOnce();
+    // Pins the sweep excluding its OWN key: a just-started box must be "playing", not "done".
+    expect(replayButtons()).toHaveLength(0);
   });
 
-  it("a caption-only say (no audio url) renders without creating a clip", async () => {
+  it("a caption-only say renders a persistent box with no clip and no dead Replay button", async () => {
     await mountWithGraph();
     say("just the words", null);
 
     expect(screen.getByText("just the words")).toBeTruthy();
     expect(FakeAudio.instances).toHaveLength(0);
+    // status "done" + null audioUrl must not render a Replay button (nothing to replay).
+    expect(replayButtons()).toHaveLength(0);
   });
 
   it("an edge-target say anchors at the target-side endpoint and shows the caption", async () => {
@@ -1167,13 +1182,13 @@ describe("agent say callout (Task 174)", () => {
     const clip = FakeAudio.instances[0]!;
 
     // The say callout's OWN ✕ (scoped via the caption — the run callout shares the shell class).
-    fireEvent.click(screen.getByText("dismiss me").closest(".node-callout")!.querySelector(".node-callout-close")!);
+    fireEvent.click(boxOf("dismiss me").querySelector(".node-callout-close")!);
 
     expect(screen.queryByText("dismiss me")).toBeNull();
     expect(clip.pause).toHaveBeenCalled();
   });
 
-  it("a blocked autoplay shows the unlock button; clicking it replays and clears the block", async () => {
+  it("a blocked autoplay shows the unlock button; the gesture starts the clip fresh", async () => {
     await mountWithGraph();
     say("locked out");
     const clip = FakeAudio.instances[0]!;
@@ -1183,18 +1198,16 @@ describe("agent say callout (Task 174)", () => {
     });
     const unlock = await screen.findByRole("button", { name: "▶ Play narration" });
 
-    fireEvent.click(unlock);
-    await act(async () => {
-      clip.resolvePlay(1); // settle the SECOND play() call — the gesture replay
-      await Promise.resolve();
-    });
+    fireEvent.click(unlock); // startClip: the gesture creates a FRESH Audio for the same url
 
-    expect(clip.play).toHaveBeenCalledTimes(2); // autoplay attempt + the gesture replay
-    await waitFor(() => expect(screen.queryByRole("button", { name: "▶ Play narration" })).toBeNull());
+    const replayClip = FakeAudio.instances[1]!;
+    expect(replayClip.src).toBe("/api/audio/x");
+    expect(replayClip.play).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "▶ Play narration" })).toBeNull(); // playing now
     expect(screen.getByText("locked out")).toBeTruthy(); // the caption stays
   });
 
-  it("a second say replaces the caption, pauses the prior clip, and the stale AbortError never flips the unlock on (currency guard)", async () => {
+  it("a second say to the SAME target replaces just that box, pauses the prior clip, and the stale AbortError never flips it to blocked (currency guard)", async () => {
     await mountWithGraph();
     say("first line");
     say("second line");
@@ -1215,19 +1228,135 @@ describe("agent say callout (Task 174)", () => {
     expect(screen.queryByRole("button", { name: "▶ Play narration" })).toBeNull();
   });
 
-  it("the agent's clear verb dismisses the caption and pauses; a bare focus does not", async () => {
+  it("says to DIFFERENT targets coexist as separate boxes; closing one leaves the other", async () => {
+    await mountWithGraph();
+    say("box one");
+    say("box two", "/api/audio/y", GRAPH.nodes[1]!.ref);
+
+    expect(screen.getByText("box one")).toBeTruthy();
+    expect(screen.getByText("box two")).toBeTruthy();
+
+    fireEvent.click(boxOf("box one").querySelector(".node-callout-close")!);
+    expect(screen.queryByText("box one")).toBeNull();
+    expect(screen.getByText("box two")).toBeTruthy();
+  });
+
+  it("a new say flips the interrupted box to done — replayable, not lost", async () => {
+    await mountWithGraph();
+    say("interrupted");
+    say("interrupter", "/api/audio/y", GRAPH.nodes[1]!.ref);
+
+    expect(FakeAudio.instances[0]!.pause).toHaveBeenCalled();
+    // The interrupted box grew a Replay button (done); the interrupter is playing (no button on it).
+    expect(within(boxOf("interrupted")).getByRole("button", { name: "↻ Replay" })).toBeTruthy();
+    expect(replayButtons()).toHaveLength(1);
+  });
+
+  it("a clip that finishes naturally grows a Replay button that starts it again", async () => {
+    await mountWithGraph();
+    say("finished line");
+    const clip = FakeAudio.instances[0]!;
+    await act(async () => {
+      clip.resolvePlay();
+      await Promise.resolve();
+    });
+    expect(replayButtons()).toHaveLength(0); // still playing
+
+    act(() => clip.fireEnded());
+    fireEvent.click(screen.getByRole("button", { name: "↻ Replay" }));
+
+    expect(FakeAudio.instances).toHaveLength(2); // replay re-creates the Audio
+    expect(FakeAudio.instances[1]!.play).toHaveBeenCalledOnce();
+    expect(replayButtons()).toHaveLength(0); // playing again
+  });
+
+  it("a replay whose clip was evicted (play rejects) expires the button but keeps the caption", async () => {
+    await mountWithGraph();
+    say("old news");
+    act(() => FakeAudio.instances[0]!.fireEnded());
+    fireEvent.click(screen.getByRole("button", { name: "↻ Replay" }));
+
+    const replayClip = FakeAudio.instances[1]!;
+    await act(async () => {
+      replayClip.rejectPlay(new Error("NotSupportedError")); // 404 — evicted from the server LRU
+      await Promise.resolve();
+    });
+
+    expect(replayButtons()).toHaveLength(0); // expired
+    expect(screen.queryByRole("button", { name: "▶ Play narration" })).toBeNull();
+    expect(screen.getByText("old news")).toBeTruthy(); // the caption is the baseline — it stays
+  });
+
+  it("replaying one box while another is playing finishes the playing one (never stuck 'playing')", async () => {
+    await mountWithGraph();
+    say("box A");
+    act(() => FakeAudio.instances[0]!.fireEnded()); // A done → Replay
+    say("box B", "/api/audio/y", GRAPH.nodes[1]!.ref); // B playing
+
+    fireEvent.click(within(boxOf("box A")).getByRole("button", { name: "↻ Replay" }));
+
+    expect(FakeAudio.instances[1]!.pause).toHaveBeenCalled(); // B's clip paused...
+    expect(within(boxOf("box B")).getByRole("button", { name: "↻ Replay" })).toBeTruthy(); // ...and B is done, not stuck
+    expect(within(boxOf("box A")).queryByRole("button", { name: "↻ Replay" })).toBeNull(); // A playing again
+  });
+
+  it("playback beacons report started and ended truthfully", async () => {
+    await mountWithGraph();
+    say("beacon check");
+    const clip = FakeAudio.instances[0]!;
+    await act(async () => {
+      clip.resolvePlay();
+      await Promise.resolve();
+    });
+    expect(live.narration).toHaveBeenCalledWith("/api/audio/x", "started");
+
+    act(() => clip.fireEnded());
+    expect(live.narration).toHaveBeenCalledWith("/api/audio/x", "ended");
+  });
+
+  it("an autoplay-blocked play beacons 'blocked'; an expired replay does NOT", async () => {
+    await mountWithGraph();
+    say("silent window");
+    const clip = FakeAudio.instances[0]!;
+    await act(async () => {
+      clip.rejectPlay(new Error("NotAllowedError"));
+      await Promise.resolve();
+    });
+    expect(live.narration).toHaveBeenCalledWith("/api/audio/x", "blocked");
+
+    live.narration.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "▶ Play narration" }));
+    const replayClip = FakeAudio.instances[1]!;
+    await act(async () => {
+      replayClip.rejectPlay(new Error("NotSupportedError")); // evicted clip, not a silent window
+      await Promise.resolve();
+    });
+    expect(live.narration).not.toHaveBeenCalledWith("/api/audio/x", "blocked");
+  });
+
+  it("closing the playing box beacons 'ended' so the next say need not wait it out", async () => {
+    await mountWithGraph();
+    say("stop talking");
+    fireEvent.click(boxOf("stop talking").querySelector(".node-callout-close")!);
+    expect(live.narration).toHaveBeenCalledWith("/api/audio/x", "ended");
+  });
+
+  it("the agent's clear verb dismisses ALL boxes and pauses; a bare focus does not", async () => {
     await mountWithGraph();
     say("sticky caption");
-    const clip = FakeAudio.instances[0]!;
+    say("second box", "/api/audio/y", GRAPH.nodes[1]!.ref);
+    const playing = FakeAudio.instances[1]!;
 
-    // A bare focus (no --say) leaves the caption alone — captions persist until dismissed (locked).
+    // A bare focus (no --say) leaves the boxes alone — captions persist until dismissed (locked).
     act(() => live.handlers!.focus({ kind: "node", ref: GRAPH.nodes[1]!.ref }));
     expect(screen.getByText("sticky caption")).toBeTruthy();
-    expect(clip.pause).not.toHaveBeenCalled();
+    expect(screen.getByText("second box")).toBeTruthy();
+    expect(playing.pause).not.toHaveBeenCalled();
 
     act(() => live.handlers!.clear());
     expect(screen.queryByText("sticky caption")).toBeNull();
-    expect(clip.pause).toHaveBeenCalled();
+    expect(screen.queryByText("second box")).toBeNull();
+    expect(playing.pause).toHaveBeenCalled();
   });
 
   it("unmounting the view pauses a playing clip (Back to catalog must stop the voice)", async () => {
