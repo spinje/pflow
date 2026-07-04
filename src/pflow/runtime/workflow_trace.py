@@ -8,7 +8,7 @@ import re
 import threading
 import uuid
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -343,7 +343,6 @@ class ResumeSource:
     events: list[dict[str, Any]]
     inputs: dict[str, Any] | None
     content_hash: str | None
-    final_status: str
 
 
 def _is_trace_locked(path: Path) -> bool | None:
@@ -466,22 +465,61 @@ def _select_resume_trace(
     _raise_resume_source_missing(debug_dir, workflow_path, execution_id)
 
 
-def _seed_scope_events(events: list[dict[str, Any]], entry_node_id: str | None) -> list[dict[str, Any]]:
-    """Top-level events that WILL be seeded — everything before the entry, or all when entry is None.
+def _seedable_final_events(events: list[dict[str, Any]], entry_node_id: str | None) -> dict[str, dict[str, Any]]:
+    """THE seedable set: each node's final event BEFORE the entry, minus failed-final-status nodes.
 
-    Mirrors ``seed_snapshot_into_shared`` so the escalation/fidelity guards scan
-    exactly what resume will restore: the ``events[:target_idx]`` slice, MINUS
-    every node whose final event in that slice is ``failed`` (seed fidelity —
-    those are never seeded, so refusing on their contents would block a
-    legitimate resume).
+    The single derivation shared by seeding (``seed_snapshot_into_shared``) and
+    the loader guards (``_guard_seed_scope``), so they cannot drift: the guards
+    scan exactly the values resume will restore — nothing more (a superseded
+    earlier loop-iteration event is never seeded, so its contents must not
+    refuse a resume) and nothing less. Failed-final-status nodes are excluded
+    (seed fidelity — their data lived in ``__failures__``, never the store).
+    ``entry_node_id=None`` (incomplete between-nodes resume) scopes to ALL
+    events. The slice ends before the entry's FIRST event, so the returned map
+    provably never contains the entry itself.
     """
     if entry_node_id is None:
         scope = events
     else:
         idx = next((i for i, e in enumerate(events) if e.get("node_id") == entry_node_id), None)
         scope = events if idx is None else events[:idx]
-    failed = {nid for nid, ev in final_events_by_node(scope).items() if ev.get("status") == "failed"}
-    return [e for e in scope if e.get("node_id") not in failed]
+    return {nid: ev for nid, ev in final_events_by_node(scope).items() if ev.get("status") != "failed"}
+
+
+def _apply_gate_resolutions(path: Path, events: list[dict[str, Any]]) -> None:
+    """Fold recorded escalation decisions back into the frozen event markers (in place).
+
+    The trace is event-sourced: a node's event freezes its ``node_output`` at
+    record time (engine step 16), while the human's escalation decision — made
+    at step 17.7, AFTER the freeze — is persisted only as a separate disk-only
+    ``kind:"gate"`` resolution line (``run_escalation_gate`` writes the decision
+    into the LIVE store; an already-flushed event line is immutable).
+    Reconstructing "the store as it existed at failure time" therefore folds the
+    resolution lines over the frozen markers. Without this fold every RESOLVED
+    upstream escalation reads as undecided and ``_guard_seed_scope`` false-refuses
+    the resume, claiming no human decided when one did. Mirrors
+    ``run_escalation_gate``'s write shape exactly (dict marker gains
+    ``decision``; string marker becomes ``{"question", "decision"}``). Applied to
+    each node's FINAL event in file order, so a looping node's last resolution
+    wins — pairing with the final event that seeding restores.
+    """
+    final = final_events_by_node(events)
+    for line in _iter_raw_trace_lines(path):
+        if line.get("kind") != "gate" or line.get("phase") != "resolution":
+            continue
+        decision = line.get("decision")
+        if not isinstance(decision, dict):
+            continue  # approval/denied/non-interactive resolutions carry no decision
+        event = final.get(line.get("node_id"))  # type: ignore[arg-type]
+        output = event.get("node_output") if isinstance(event, dict) else None
+        result = output.get("result") if isinstance(output, dict) else None
+        if not isinstance(result, dict):
+            continue
+        marker = result.get("escalation")
+        if isinstance(marker, dict) and marker:
+            marker["decision"] = decision
+        elif isinstance(marker, str) and marker != "":
+            result["escalation"] = {"question": marker, "decision": decision}
 
 
 def _contains_binary_placeholder(value: Any) -> bool:
@@ -553,8 +591,8 @@ def _terminal_failure_root(events: list[dict[str, Any]]) -> str | None:
     return min(candidates)[1] if candidates else None
 
 
-def _resolve_resume_entry(path: Path, data: dict[str, Any], execution_id: str) -> tuple[str | None, str | None, str]:
-    """Apply the status arm: return ``(entry_node_id, last_completed_node_id, final_status)`` or refuse."""
+def _resolve_resume_entry(path: Path, data: dict[str, Any], execution_id: str) -> tuple[str | None, str | None]:
+    """Apply the status arm: return ``(entry_node_id, last_completed_node_id)`` or refuse."""
     final_status = str(data.get("final_status") or "")
     events = data.get("nodes") or []
     if final_status in ("success", "degraded"):
@@ -592,12 +630,12 @@ def _resolve_resume_entry(path: Path, data: dict[str, Any], execution_id: str) -
         # always the last event) — reachable only from a hand-edited trace.
         # Refuse cleanly rather than crash.
         _raise_gate_stopped_or_generic(path, execution_id)
-    return entry, None, "failed"
+    return entry, None
 
 
 def _resolve_incomplete_entry(
     path: Path, events: list[dict[str, Any]], execution_id: str
-) -> tuple[str | None, str | None, str]:
+) -> tuple[str | None, str | None]:
     """Decision 7: derive the resume entry for an interrupted (Ctrl+C/SIGKILL) run.
 
     Entry-node identification is possible ONLY via the RAW JSONL — reconstruct
@@ -632,7 +670,7 @@ def _resolve_incomplete_entry(
         # A sequential walk has exactly one in-flight top-level node at a kill; if
         # more ever appear, the most-recently-started (highest seq) was running.
         _, killed = max(dangling, key=lambda pair: pair[0])
-        return killed, None, "incomplete"
+        return killed, None
     root = _terminal_failure_root(events)
     if root is not None:
         # The tail ends in a FAILURE — the run was failing when it was killed.
@@ -640,11 +678,11 @@ def _resolve_incomplete_entry(
         # last node's taken route may have been its ERROR edge, so its single
         # default successor is provably the wrong branch (and continuing past an
         # unrecovered failure would resume as if it had succeeded).
-        return root, None, "incomplete"
+        return root, None
     if events:
         last_completed = events[-1].get("node_id")
         if isinstance(last_completed, str):
-            return None, last_completed, "incomplete"
+            return None, last_completed
     raise ResumeNothingToResumeError(
         "This run was interrupted before its first step completed — there is nothing to resume.",
         execution_id=execution_id,
@@ -653,8 +691,15 @@ def _resolve_incomplete_entry(
     )
 
 
-def _guard_seed_scope(scope: list[dict[str, Any]], execution_id: str, path: Path) -> None:
-    """Refuse if any node resume would SEED carries undecided escalation (Decision 8) or lossy binary (Decision 5)."""
+def _guard_seed_scope(scope: Iterable[dict[str, Any]], execution_id: str, path: Path) -> None:
+    """Refuse if any node resume would SEED carries undecided escalation (Decision 8) or lossy binary (Decision 5).
+
+    ``scope`` is the ``_seedable_final_events`` values — exactly what seeding
+    restores. Escalation markers were already folded with their recorded
+    decisions (``_apply_gate_resolutions``), so an undecided marker here means
+    the run genuinely never resolved it (e.g. killed between the node's event
+    and the gate resolution) — never a resolved-but-frozen fidelity artifact.
+    """
     for event in scope:
         output = event.get("node_output")
         if not isinstance(output, dict):
@@ -703,9 +748,11 @@ def load_resume_source(
     in order (each a ``ResumeSourceError`` subclass): inline source → not
     resumable; live writer → still running; a newer attempt exists → superseded;
     then the status arm (``success``/``degraded`` → nothing to resume; ``denied``
-    → not resumable; ``failed`` → entry is the earliest failed node in event
-    order, or gate-stopped when none; ``incomplete`` → Phase-1 stub); finally the
-    seed-scope guards (undecided escalation, lossy binary). ``content_hash`` is
+    → not resumable; ``failed`` → entry is the terminal-failure root, or
+    gate-stopped when none; ``incomplete`` → Decision 7 derivation); then
+    recorded escalation decisions are folded into the frozen event markers
+    (``_apply_gate_resolutions``); finally the seed-scope guards (undecided
+    escalation, lossy binary) scan exactly the seedable set. ``content_hash`` is
     RETURNED for the CLI to compare — the loader has no workflow IR to check it.
     """
     if (workflow_path is None) == (execution_id is None):
@@ -750,10 +797,11 @@ def load_resume_source(
                     trace_path=str(path),
                 )
 
-    entry_node_id, last_completed_node_id, final_status = _resolve_resume_entry(path, data, source_execution_id)
+    entry_node_id, last_completed_node_id = _resolve_resume_entry(path, data, source_execution_id)
 
     events = list(data.get("nodes") or [])
-    _guard_seed_scope(_seed_scope_events(events, entry_node_id), source_execution_id, path)
+    _apply_gate_resolutions(path, events)
+    _guard_seed_scope(_seedable_final_events(events, entry_node_id).values(), source_execution_id, path)
 
     return ResumeSource(
         path=path,
@@ -764,7 +812,6 @@ def load_resume_source(
         events=events,
         inputs=data.get("inputs"),
         content_hash=data.get("content_hash"),
-        final_status=final_status,
     )
 
 
@@ -928,18 +975,14 @@ def seed_snapshot_into_shared(
     genuinely missing one then surfaces as the normal loud unresolved-reference
     error.
 
-    NEVER seeds ``exclude`` itself — the target must execute fresh, never read a
-    stale copy of itself. Returns the ``final_events_by_node`` map restricted to
-    the SEEDABLE scope (failed-final-status nodes excluded), so callers derive
-    ``restored_nodes`` — and the resume re-record loop — from exactly what was
-    seeded, without a second pass.
+    NEVER seeds ``exclude`` itself — ``_seedable_final_events``'s slice ends
+    before the target's first event, so the target must execute fresh, never
+    read a stale copy of itself. Returns that seedable map (failed-final-status
+    nodes excluded), so callers derive ``restored_nodes`` — and the resume
+    re-record loop — from exactly what was seeded, without a second pass.
     """
-    target_idx = next((i for i, e in enumerate(events) if e.get("node_id") == exclude), None)
-    in_scope = events if target_idx is None else events[:target_idx]
-    final = {nid: ev for nid, ev in final_events_by_node(in_scope).items() if ev.get("status") != "failed"}
+    final = _seedable_final_events(events, exclude)
     for nid, ev in final.items():
-        if nid == exclude:
-            continue
         output = ev.get("node_output")
         if output is None:
             continue

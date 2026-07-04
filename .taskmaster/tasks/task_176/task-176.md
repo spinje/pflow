@@ -6,7 +6,8 @@ Close the approval loop in the browser: once Task 125 ships the gate primitive a
 durable pause/resume, the live overlay will *show* a paused gate (the `gate` trace event) but offer
 no way to *act* on it — this task adds approve/deny controls that spawn `pflow resume
 <execution-id> --approve yes|no`, the same ADR-0008-conformant observe-and-spawn pattern as the
-shipped `POST /api/run`.
+shipped `POST /api/run`. It also owns the **Resume button on failed/interrupted runs** (folded in
+2026-07-04 — same UI→`pflow resume` plumbing, different entry arm; see the section below).
 
 > **Deliberately thin draft (2026-07-02).** This task exists so the bridge has a home and a place in
 > the build order — NOT as a design. Every mechanism named below is ASSUMED from the 2026-07-02
@@ -71,6 +72,33 @@ honestly during 125 planning:
   practical answer to "how does the human stay in the loop when an agent runs the workflow"
   — convenience + audit, not enforcement.
 
+## Resume button on failed/interrupted runs (folded in from the 164 wrap-up, owner decision 2026-07-04)
+
+164 shipped resume as CLI-only; 171 makes chains *visible* in the UI (its "UI attempt-chain
+rendering" section); this task makes them *actionable* — a Resume control on a run whose
+`final_status` is `failed` or `incomplete`, spawning `pflow resume <execution-id>` via the same
+observe-and-spawn seam as the approval controls (one spawn helper serves both; that's why the
+button lives here and not in 171).
+
+Design notes recorded now so the designer doesn't hit them cold (verify against shipped code at
+task start, per this draft's standing caveat):
+
+- **The spawn is non-TTY by construction** (`stdin=subprocess.DEVNULL`), so a side-effecting
+  entry step K makes bare `pflow resume` hard-error (`ResumeSideEffectConfirmationError`,
+  Decision 4 — deliberate agent-safety posture). The browser confirmation dialog therefore IS
+  the confirmation: render K + its registry type + "its side effects may fire again" (the same
+  what/why the CLI confirm shows), and spawn with `--force` only after explicit user ack. Never
+  pass `--force` without the dialog. Same handling for the stale-workflow gate
+  (`ResumeStaleWorkflowError`): surface "edited since the failed run" and require the ack.
+- **Refusals are the UX, not errors to swallow**: the loader's typed refusal family
+  (superseded → offer the newer attempt; gate-stopped/denied; nothing-to-resume; still-running)
+  maps to specific panel states. Exit-code-1 spawn output must reach the panel (the 175
+  "spawn failures surface, never a silent no-op" rule).
+- **Idempotent K (llm) resumes without a dialog** — mirror the CLI's silent path; don't
+  blanket-confirm every resume.
+- Whether the button also serves `paused` runs (171's arm) with approve/deny folded into one
+  control is a task-start design call — the plumbing is shared either way.
+
 ## Explicitly out of scope
 
 - **Slack / email / webhook / any external surface.** Deliberately NOT tasked (Core Directive:
@@ -85,6 +113,11 @@ honestly during 125 planning:
 
 - **Task 125** — the gate primitive, `GateRequest`, the `gate` trace event.
 - **Task 164** — the resume machinery (`load_resume_source`, engine re-entry, attempt chains).
+  **Read `.taskmaster/tasks/task_164/task-review.md` first** (shipped-substrate handoff:
+  refusal family, side-effect policy, invariants). One fact for the merged-control design call
+  above, written nowhere else UI-adjacent: `--auto-approve` pre-approves APPROVAL gates only
+  (`gate_prompt.py`, kind-checked) — escalations always need a delivered decision, so an
+  escalation-paused run can never be resumed by a flag alone.
 - **Task 171** — durable pause (`paused` trailer), `execution_id` token, the `pflow resume` verb.
 - Shipped substrate: Task 169 SSE + #529 robustness; Task 175 `/api/run` spawn pattern +
   `_require_local_origin`.
@@ -96,6 +129,9 @@ honestly during 125 planning:
   surfaced in the UI.
 - The approve POST is rejected without a local Host header; spawn failures surface in the panel,
   never a silent no-op.
+- Failed-run Resume button: side-effecting K → confirmation dialog naming K + type, then resumes
+  (spawn carries `--force`); idempotent K resumes without a dialog; a superseded source surfaces
+  the newer attempt instead of resuming; refusals render as panel states, never silent.
 - Real-browser verification required (CLI cannot see the UI) — same posture as Tasks 173/175.
 
 ## References

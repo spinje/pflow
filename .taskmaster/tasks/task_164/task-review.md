@@ -2,9 +2,11 @@
 
 ## Metadata
 - Implemented 2026-07-04 on branch `feat/resume-failed-node` (spec/decisions locked 2026-07-03).
-- Commits: `66652b83` (Phases 0+1), `34324519` (Phase 2 + wedge fix), `cf11e281` (Phases 3–6);
-  the post-implementation **review-fixes batch is uncommitted** at time of writing (3 proven-bug
-  fixes + agent-UX pass — see progress log entries "Review-fixes batch" onward). Not merged.
+- Commits: `66652b83` (Phases 0+1), `34324519` (Phase 2 + wedge fix), `cf11e281` (Phases 3–6),
+  `717fe445`+`04474c30` (review-fixes batch: 3 proven-bug fixes + agent-UX pass — see progress
+  log entries "Review-fixes batch" onward). A post-merge-prep **deep-review batch** followed
+  (2026-07-04, 5-agent battery): escalation-fold fix + seed-scope consolidation — see the
+  progress-log deep-review entry. Not merged.
 - Verification at close: `make test` **8489 passed, 0 failed**; `make check` green; every subtle
   assertion mutation-verified (Edit + revert, never `git stash`).
 - Pending human items: sign-off on (1) seed-fidelity reaching `--only` degraded snapshots,
@@ -41,10 +43,20 @@ attempt writes a new self-contained trace linked via `resumed_from`.
   type to the predicate force-confirms the idempotent-llm path (`is_side_effecting("LLMNode")` is
   True). `ResumeSource` deliberately carries NO node-type field; the CLI derives K's type from
   `resolved.ir["nodes"]` only.
-- **Seed = the seedable set, everywhere.** `seed_snapshot_into_shared` excludes failed-final-status
-  nodes (their data lived in `__failures__`, never the store) and returns exactly that map; the
-  loader guards (`_seed_scope_events`), `restored_nodes`, and the re-record loop all derive from
-  it. Filtering at a call site instead re-opens the silent-wrong-data coalesce bug.
+- **Seed = the seedable set, everywhere.** `_seedable_final_events` (deep-review consolidation)
+  is the ONE derivation — final events before the entry, minus failed-final-status nodes (their
+  data lived in `__failures__`, never the store). `seed_snapshot_into_shared` writes from it and
+  returns it; the loader guards scan its values; `restored_nodes` and the re-record loop derive
+  from the returned map. Filtering at a call site instead re-opens the silent-wrong-data
+  coalesce bug; scanning more than it (e.g. superseded loop-iteration events) re-opens the
+  guard-superset false-refusal.
+- **Escalation markers fold BEFORE the guards run.** A node's event freezes its marker UNDECIDED
+  (engine records at step 16; the gate writes the decision into the live store at 17.7); the
+  decision survives only as a disk-only gate resolution line. `_apply_gate_resolutions` folds
+  resolutions into the events at load time — remove it and every resume with a RESOLVED upstream
+  escalation false-refuses (`test_resolved_escalation_upstream_resumes_end_to_end` is the
+  real-collector pin), and attempt traces stop carrying the decided marker (breaking
+  resume-of-a-resume without re-joining gate lines).
 - **`resumed_from` is set on the collector at CONSTRUCTION** (before `start_streaming`) — it rides
   the meta line. `_meta_fields` + `core/trace_io.META_KEYS` + the test fixture builder move
   together or the field misroutes to the trailer.
@@ -160,6 +172,9 @@ knowledge is:
   `paused_node_id`); `_attempt_consumed_work` is reusable for `resume list`; the CLI subcommand
   extends with token addressing. **Before adding the arm, extract the loader into
   `runtime/resume_source.py`** — the accretion note + trigger is recorded in task-171.md.
+  **UI attempt-chain rendering is folded into 171** (owner decision 2026-07-04): surface
+  `resumed_from` in `/api/runs` + link/group a chain's attempts in the run selector — see
+  task-171.md "UI attempt-chain rendering" for the scoped list.
 - **Contracts changed:** trace format → **2.6.0** (meta `resumed_from`, event `restored`;
   additive — `startswith("2.")` gates unaffected); zero-event runs now trail `failed` (all trace
   consumers); `--only` no longer seeds failed-recovered nodes from degraded snapshots; JSON
@@ -196,6 +211,11 @@ anything above. The ones guarding real regressions (★ = mutation-verified):
 - ★ `test_attempt_trace…`/`test_resume_of_a_resume…`/`--only`-after-resume poisoning regression —
   Decision 6 self-containment (disable the re-record loop → exactly these fail).
 - ★ `test_refused_attempt_does_not_wedge_the_chain` — writer honesty + consumption predicate.
+- ★ `test_resolved_escalation_upstream_resumes_end_to_end` + the three synthetic fold pins
+  (dict/string/last-resolution-wins) — the escalation false-refusal (deep-review); disabling
+  `_apply_gate_resolutions` fails exactly these four.
+  `test_superseded_iteration_escalation_does_not_refuse` pins the guard-scans-seedable-set-only
+  consolidation (`_seedable_final_events`).
 - `test_real_failed_run_is_resumable_end_to_end` — the keystone that makes the ~30 synthetic
   loader fixtures trustworthy (a loader reading fields production never writes would refuse here).
 - `test_llm_failed_node_resumes_without_confirmation` + the `is_side_effecting` matrix — pins the

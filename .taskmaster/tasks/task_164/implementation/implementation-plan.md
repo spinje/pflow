@@ -523,6 +523,7 @@ re-verify the file:line anchors in this plan against HEAD (symbols are authorita
 Nested/sub-workflow entry (top-level K only); gate re-entry from gate-stopped traces (171's
 `paused` arm — the refusal arm is its plug-in point); the `pflow run` rename (Task 151); the
 4-glob run-query consolidation (deferred; recorded in Phase 0); UI chain-join rendering
-(171/176 — `resumed_from` is on the meta line for them); a bare `pflow resume` with no target
+(folded into 171, owner decision 2026-07-04 — `resumed_from` is on the meta line for it; see
+task-171.md "UI attempt-chain rendering"); a bare `pflow resume` with no target
 (deliberate: ambiguous scope); flock-probe extraction to `core/` (accepted 15-line duplication
 until a third consumer).

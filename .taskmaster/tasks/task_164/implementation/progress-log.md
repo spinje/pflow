@@ -1286,3 +1286,138 @@ no-hang test is `e2e`, verified separately — 1 passed in ~1s, and failed-as-de
 mutation); `make check` green (ruff / ruff format / pre-commit / mypy 244 files / deptry); zero stray
 mutations. Files added: `tests/test_cli/test_resume_no_hang_subprocess.py`; files changed:
 `tests/test_runtime/test_only_snapshot.py` (+1 test). Uncommitted (standing rule).
+
+## 2026-07-04 — Deep-review batch (5-agent battery): escalation-fold fix + seed-scope consolidation
+
+Owner-requested `/deep-review` over the full branch. Battery: review-impact-completeness,
+review-silent-failures, review-feature-interactions, review-test-fidelity (owner-picked 4) +
+review-simplicity (owner-added). Verdicts: **3 dimensions fully clean** (impact-completeness —
+all 5 shared-pattern changes traced to every consumer; feature-interactions — all 7 combinations
+pinned e2e; test-fidelity — fixtures production-faithful, the two previously-bitten shapes
+verified), 1 confirmed Critical-adjacent Warning (silent-failures), 1 confirmed simplicity
+Warning that turned out to be the same code region. Both fixed in this batch.
+
+**Confirmed bug — escalation-gate resume false-refusal.** Every resume with a RESOLVED
+escalation upstream refused with a message asserting the opposite of what happened. Mechanism +
+landed fix (`_apply_gate_resolutions` load-time fold; Decision 8 intent preserved) are canonical
+in the **ADR-0010 third amendment** — not restated here. The journey knowledge that lives only
+in this log:
+- Found by the silent-failures agent; its 3-file causal chain (record-freeze at engine 16 vs
+  decision-write at 17.7, gate.py:175) was verified by a dedicated code-trace agent BEFORE being
+  accepted — worth repeating for cross-layer claims.
+- Masked by `test_decided_escalation_in_seed_scope_is_fine` — its hand-built decided shape was
+  one production never writes to a live run's trace (pitfall #19, **third bite** this task).
+- **First-derived fix was wrong-shaped and rejected under the owner lens** (simplicity of the
+  FINAL code / writer honesty over reader compensation): a guard-side gate-line join would have
+  re-joined on every chain hop and leaked stale markers into attempt traces. The load-time fold
+  is one mechanism, N unchanged consumers — and Decision 6's re-record persists the decided
+  marker for free (resume-of-a-resume stays join-free). Same re-derivation pattern as the wedge
+  fix; the first instinct compensated at the reader again.
+- Fold subtlety worth keeping: last resolution wins via UNCONDITIONAL overwrite — an
+  only-if-undecided fold would stick resolution 1 to a looping node's iteration-2 marker.
+
+**Simplicity Warning (same region) — guard/seeder scope consolidated** into
+`_seedable_final_events` (see task-review.md invariants for the resulting rule). The guard had
+scanned a SUPERSET of what seeding restores — a superseded loop iteration's undecided marker
+could refuse a resume. Riders landed with it (recorded only here): dead
+`ResumeSource.final_status` dropped (`_resolve_resume_entry` returns a pair now), and the
+provably-dead `!= entry` filters at the three `restored = …` call sites collapsed to
+`list(final)` (invariant stated on `seed_walk_entry`'s docstring).
+
+**Tests: 5 new** (real-collector e2e + 3 synthetic fold pins + guard-scope pin — named in
+task-review.md "Tests That Matter"). Mutation outcomes: fold disabled → exactly the 4 fold tests
+fail; guard reverted to superset scan → exactly 2 fail (superseded-iteration + last-wins). Zero
+stray mutations. `test_decided_escalation_in_seed_scope_is_fine` re-docstringed rather than
+deleted: its decided shape is now the POST-FOLD / attempt-trace re-record shape —
+production-real again.
+
+⚠️ Process incident (own goal, logged for honesty): a mutation-verification shell one-liner
+included `git checkout src/pflow/runtime/workflow_trace.py`, wiping the batch's uncommitted edits
+to that file mid-session. All edits were reapplied from context and re-verified (the 4 new fold
+tests failing against the reverted file was itself the confirmation the pins work). Rule
+reinforced: mutations are applied AND reverted via Edit only — no git commands in mutation
+scripts, ever.
+
+**Deep-review suggestions deliberately deferred (non-gating, recorded here):** real-emission
+coverage for the dangling-`node.start` mid-node branch (mitigated by seq-reuse pins in
+test_emit_time_trace); a resume-AT-a-batch-host-K e2e (generic `_execute_node` path, gated by
+`is_side_effecting`); S2's redundant exit-code-only assertion in
+`test_side_effect_force_bypass_runs` (covered by its stdout-checking sibling).
+
+**Verification vs baseline:** `make test` **8496 passed, 0 failed** (8491 + exactly the 5 new
+tests); `make check` green; docs updated: ADR-0010 third amendment, task-164.md Decision 8
+refinement annotation, task-review.md (seedable-set invariant bullet + escalation-fold invariant
++ tests list + metadata). Uncommitted (standing rule).
+
+## 2026-07-04 — Deep-review batch loose-end sweep (owner asked "fully happy?")
+
+Re-audited the batch; three loose ends found, all closed:
+1. **Sub-workflow gate-line collision — verified structurally impossible, not just unlikely.**
+   The fold's `final[node_id]` lookup could in theory cross-match a nested gate's node_id onto a
+   same-named top-level node. Verified: child collectors are buffer collectors
+   (`_stream_to_disk = stream_to_disk and is_run_scoped`, workflow_trace.py:1134) — nested gate
+   resolution lines NEVER reach the file, so the fold only ever sees top-level lines. A nested
+   escalation exposed through its host carries the DECIDED marker already (the host event records
+   after the child resolved). Documented in runtime/CLAUDE.md.
+2. **e2e gate not run this batch** — `test_resume_no_hang_subprocess.py` exercises the loader the
+   batch changed; ran it: 1 passed.
+3. **runtime/CLAUDE.md accuracy** (directory-doc convention): seed-fidelity bullet rewritten
+   around `_seedable_final_events` as the single derivation + escalation-fold sentence added.
+
+Accepted, deliberately (unchanged from the batch entry): fold gates on `phase=="resolution"` +
+decision-dict presence rather than `gate_kind` (only escalation choice writes `decision` today;
+docstring pins the mirror to `run_escalation_gate`); ResumeSource docstring doesn't restate the
+fold (documented at the fold + loader); up to three raw-line passes per load (CLI-scale file, not
+a hot path).
+
+## 2026-07-04 — Owner verification: real-TTY escalation resume + the plan-designated browser check
+
+Owner-driven, live (demo: `scratchpads/task-164-verify/escalation-resume-demo.pflow.md`):
+- **Escalation fold, real TTY**: owner answered the escalation prompt with `hold` (deliberately
+  NOT the recommendation), run failed at `deploy`, `pflow resume` (a) did NOT refuse (the
+  pre-fix false-refusal), (b) fired the Decision-4 side-effect confirm naming step+type,
+  (c) printed the ⤷ indicator, and (d) `announce` output carried `decision.chosen == "hold"` —
+  the owner's answer restored from the gate-resolution fold, with `agent` never re-executed.
+  Failure surface's `pflow resume <execution-id>` hint confirmed live.
+- **Browser check (closes the Phase-2 reviewer to-do)**: `make ui-build` + `pflow ui`,
+  screenshots over both attempts. Resumed attempt: pill "Run success · 2 nodes" with 3 steps
+  listed (nodes_executed exclusion), restored `agent` at 0ms with cached/✓ styling, tail with
+  real timings; source run: "Run failed · 2 nodes · 1 failed", untouched. `/api/runs` lists
+  both attempts; `resumed_from` tolerated; no tailer/console errors. Attempts render as
+  separate runs (chain-join = 171/176, expected).
+
+All pending manual items are now closed. Demo kept in `scratchpads/task-164-verify/` (also
+useful for Task 171 verification); `/tmp/pflow-164-demo.flag` is owner-local cleanup.
+
+## 2026-07-04 — Scoping decision: UI attempt-chain rendering folded into Task 171
+
+During the browser check the owner asked where richer resume UI lives (resumed badge, chain
+grouping). Finding: it was pointed at "171/176" but owned by NEITHER spec — an unowned gap
+(and `/api/runs` doesn't surface `resumed_from` yet). Owner decision: **fold into 171**
+(it already touches run-status rendering for `paused` and builds the chain walk for
+`resume list` — one pass renders failed- and paused-chains). Recorded: task-171.md gains a
+"UI attempt-chain rendering" requirements section; the 164 plan's out-of-scope line and
+task-review.md's 171 handoff bullet now point at it.
+
+Follow-up (same sitting): a **Resume BUTTON** for failed runs is an ACTION, not rendering —
+owner-decided into **176** (it already builds UI→`pflow resume` spawn plumbing for approvals;
+one spawn helper serves both). task-176.md gains a "Resume button on failed/interrupted runs"
+section carrying the non-obvious constraint discovered here: the UI server's spawn is non-TTY,
+so a side-effecting K hard-errors by design (Decision 4) — the browser dialog IS the
+confirmation and the spawn must carry `--force` after it. Layering: 164 = data, 171 = see
+chains, 176 = act on them.
+
+## 2026-07-04 — Handoff decision: NO braindump to 171/176; pointers + two tacit one-liners instead
+
+Owner asked whether 171/176 need a /braindump handoff. Decision: no — this task distilled
+contemporaneously into durable homes (spec annotations, ADR-0010, task-review, directory
+CLAUDE.mds, forward sections written directly into 171/176), so a braindump would be ~90%
+duplication of maintained artifacts (and braindumps go stale; 176's own header carries that
+lesson). A tacit-knowledge inventory found exactly three unwritten items, each placed at its
+point of use instead:
+- 171 + 176 Dependencies now say "read 164's task-review.md FIRST" (the review declared itself
+  the read-first handoff, but neither successor spec pointed at it — discoverability gap).
+- 171: seed scope excludes the entry node, so a paused gate's own undecided marker never trips
+  the seed guards — the `paused` arm composes with `_apply_gate_resolutions` unchanged.
+- 176: `--auto-approve` is approval-kind-only (gate_prompt.py) — an escalation-paused run can
+  never be resumed by flag alone; load-bearing for the merged resume/approve control call.

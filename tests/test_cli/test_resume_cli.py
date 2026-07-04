@@ -313,7 +313,6 @@ def test_stale_unverifiable_message_when_hash_absent(tmp_path):
         events=[],
         inputs=None,
         content_hash=None,
-        final_status="failed",
     )
     with pytest.raises(ResumeStaleWorkflowError) as exc:
         _check_content_hash(resolved, source, force=False)
@@ -526,7 +525,6 @@ def _between_source(last_completed: str) -> Any:
         events=[],
         inputs=None,
         content_hash=None,
-        final_status="incomplete",
     )
 
 

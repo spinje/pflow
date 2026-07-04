@@ -525,7 +525,7 @@ def _resolve_walk_start(
                 execution_id=resume_source_id,
                 suggestions=["Re-run the workflow from the start instead of resuming."],
             ) from None
-        restored = [nid for nid in final if nid != resume_from]
+        restored = list(final)
         return entry_node, ResumePlanInfo(
             entry_node=resume_from, restored_nodes=restored, execution_id=resume_source_id or ""
         )

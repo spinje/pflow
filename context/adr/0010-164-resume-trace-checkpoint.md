@@ -68,6 +68,25 @@ re-entry point, it does not bound how many side-effecting steps the resumed tail
    never a wrong-branch guess — is preserved; strictly more tails become resumable instead of
    wrong.
 
+**Amended 2026-07-04 (deep-review, one proven-bug fix): resolved escalations fold at load time.**
+A node's trace event freezes its `node_output` at record time (engine step 16) — BEFORE the
+escalation gate writes the human's decision into the live store (step 17.7). The decision is
+persisted, but as a separate disk-only `kind:"gate"` resolution line; the frozen event keeps the
+UNDECIDED marker forever. Reading the frozen marker as store-state therefore false-refused every
+resume whose seed scope held a RESOLVED escalation ("unresolved escalation" — the opposite of what
+happened), making resume unusable for escalation-gated workflows with a later failure. The fix is
+event-sourced reconstruction, not reader compensation: `load_resume_source` folds recorded gate
+resolutions back into the events ONCE at load time (`_apply_gate_resolutions`, mirroring
+`run_escalation_gate`'s write shape; a looping node's LAST resolution pairs with its final event),
+so the seed, the guards, and Decision 6's re-record all see the decided store the run actually
+had — and the attempt trace persists the decided marker, keeping resume-of-a-resume join-free.
+Decision 8's intent is preserved verbatim: an undecided marker still refuses — "undecided" is now
+determined from the WHOLE trace (event + resolution lines) instead of a frozen partial, so it
+fires only when the run genuinely never resolved it (e.g. killed between the node's event and the
+gate resolution). Companion consolidation: the guard scope and the seeder now share one derivation
+(`_seedable_final_events` — final events before the entry, minus failed), closing the
+guard-scans-a-superset drift where a superseded loop iteration's contents could refuse a resume.
+
 ## Considered options
 
 - **Dedicated snapshot store (ADR-0002's reserved escape hatch)** — rejected. ADR-0002 built

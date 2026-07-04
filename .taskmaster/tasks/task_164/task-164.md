@@ -323,7 +323,13 @@ accepted by the owner). This ledger is the durable record.
    all three with an actionable error naming the gate (recovered from raw `kind:"gate"` lines,
    which are disk-only), with the refusal arm shaped so Task 171 adds `paused` as the resumable
    case. An undecided escalation marker anywhere in the seed scope is a refusal, not valid
-   upstream state.
+   upstream state. *Mechanism refined 2026-07-04 (intent unchanged): "undecided" is determined
+   from the WHOLE trace, not the frozen event alone — the event records the marker BEFORE the
+   gate writes the decision (engine 16 vs 17.7), and the decision persists only as a disk-only
+   gate resolution line, so the frozen marker false-refused every RESOLVED upstream escalation.
+   The loader folds recorded resolutions back into the events at load time
+   (`_apply_gate_resolutions`); the refusal now fires only for genuinely unresolved markers;
+   see ADR-0010 amendment.*
 9. **Smaller calls locked at the same sitting:** entry node = **earliest failed node in EVENT
    order** (`failed_node_ids` is alphabetically sorted on disk — "first of the list" is wrong; with
    K-failed→fallback-F-failed chains, resume at K and F never runs if K now succeeds). *Mechanism

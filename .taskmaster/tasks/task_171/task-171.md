@@ -113,7 +113,13 @@ CLI verb.
 - **Task 164: Resume Workflow From a Failed Node** — builds the restore+continue substrate
   (shared walk-entry helper, resume-scoped seeding, `load_resume_source`) this task triggers.
   Under trace-as-checkpoint there is no separate format to coordinate: the trace is 164's
-  source, and the restore contract is whatever 164 ships.
+  source, and the restore contract is whatever 164 ships. **Read
+  `.taskmaster/tasks/task_164/task-review.md` FIRST** — it is the shipped-substrate handoff
+  (invariants that must not break, the `paused` insertion point, gotchas); 164 shipped, so
+  trust it over any pre-implementation phrasing in this spec. One interplay noted here because
+  it is written nowhere else: the seed scope EXCLUDES the entry node, so a paused gate's own
+  undecided escalation marker is never scanned by the seed guards — the `paused` arm composes
+  with the escalation-resolution fold (`_apply_gate_resolutions`) with zero changes.
 - **Task 125: Human-in-the-Loop Approval Gates (blocking)** — the gate primitive
   (`approval:` on NodeConfig), the agent-escalation trigger, and the structured decision
   payload this task persists.
@@ -154,6 +160,20 @@ CLI verb.
 - Consumption via attempt-chain lineage (a newer attempt exists = consumed); retention is
   status-aware per the #542 interplay decision — never prune `paused` by default; an explicit
   pause-expiry policy may be added; no auto-cancel by default.
+
+### UI attempt-chain rendering (folded in from 164, owner decision 2026-07-04)
+Task 164 left `resumed_from` on the meta line and deliberately shipped NO chain UI — one
+logical execution currently renders as separate, unlinked runs. This task owns closing that
+(natural fit: it already touches run-status rendering for `paused` and builds the chain-walk
+for `resume list` — render failed-chains and paused-chains in the same pass):
+- Surface `resumed_from` in `/api/runs` (`ui/run_tailer.scan_traces` reads the meta line
+  already; the field is a one-line addition — verified absent 2026-07-04).
+- Run list/selector: mark resumed attempts (e.g. `⤷ resumed from <short-id>`) and group or
+  visually link a chain's attempts; chain membership = walk `resumed_from` (reuse/port
+  `_attempt_consumed_work` semantics for "which attempt is current").
+- Consider an honest `restored` node style instead of piggybacking on `cached` (the frontend
+  strips the event's `restored` flag in the tailer projection today; keeping cached-style is
+  acceptable if a distinct style doesn't earn its keep).
 
 ### Security (decide, don't default silently)
 - Token/state tamper-resistance was raised in the original discussion (signed/encrypted

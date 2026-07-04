@@ -246,7 +246,6 @@ def test_incomplete_killed_mid_node_enters_at_dangling_start(tmp_path: Path) -> 
         killed_node="c",
     )
     source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
-    assert source.final_status == "incomplete"
     assert source.entry_node_id == "c"
     assert source.last_completed_node_id is None
 
@@ -443,12 +442,123 @@ def test_whitespace_only_escalation_string_refused(tmp_path: Path) -> None:
 
 
 def test_decided_escalation_in_seed_scope_is_fine(tmp_path: Path) -> None:
+    """A marker already carrying ``decision`` passes the guard. This shape appears in a
+    RESUMED attempt's trace (the re-record loop persists the folded, decided marker) —
+    a live run's own trace freezes the undecided shape and relies on the fold below."""
     _write_trace(
         tmp_path,
         execution_id="esc-ok",
         timestamp="20260101-000000",
         nodes=[
             _node("review", output={"result": {"escalation": {"decision": {"chosen": "yes", "notes": ""}}}}),
+            _node("k", status="failed", output={}),
+        ],
+    )
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert source.entry_node_id == "k"
+
+
+def _escalation_resolution(node_id: str, decision: dict[str, Any]) -> dict[str, Any]:
+    """A ``kind:"gate"`` escalation-resolution line, shaped as ``record_gate`` writes it."""
+    return {
+        "kind": "gate",
+        "node_id": node_id,
+        "phase": "resolution",
+        "gate_kind": "escalation",
+        "resolution": "choice",
+        "resolved_via": "prompt",
+        "decision": decision,
+    }
+
+
+def test_resolved_escalation_dict_marker_is_folded_and_resumable(tmp_path: Path) -> None:
+    """Escalation false-refusal fix (review 2026-07-04): the node's event freezes the marker
+    UNDECIDED (recorded at engine step 16, before step 17.7 writes the decision into the
+    LIVE store only), and the decision is persisted as a disk-only gate resolution line.
+    The loader folds it back — a RESOLVED upstream escalation must never refuse the resume."""
+    _write_trace(
+        tmp_path,
+        execution_id="esc-folded",
+        timestamp="20260101-000000",
+        nodes=[
+            _node("review", output={"result": {"escalation": {"question": "merge?"}, "work": "partial"}}),
+            _node("k", status="failed", output={}),
+        ],
+        gate_lines=[
+            {"kind": "gate", "node_id": "review", "phase": "pause", "gate_kind": "escalation"},
+            _escalation_resolution("review", {"chosen": "merge", "notes": None}),
+        ],
+    )
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert source.entry_node_id == "k"
+    review = next(e for e in source.events if e["node_id"] == "review")
+    assert review["node_output"]["result"]["escalation"] == {
+        "question": "merge?",
+        "decision": {"chosen": "merge", "notes": None},
+    }
+    # The rest of the frozen work product is untouched by the fold.
+    assert review["node_output"]["result"]["work"] == "partial"
+
+
+def test_resolved_escalation_string_marker_is_folded(tmp_path: Path) -> None:
+    """A string marker folds to the same ``{question, decision}`` shape ``run_escalation_gate``
+    writes into the live store."""
+    _write_trace(
+        tmp_path,
+        execution_id="esc-str",
+        timestamp="20260101-000000",
+        nodes=[
+            _node("review", output={"result": {"escalation": "which db?"}}),
+            _node("k", status="failed", output={}),
+        ],
+        gate_lines=[_escalation_resolution("review", {"chosen": "postgres", "notes": None})],
+    )
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert source.entry_node_id == "k"
+    review = next(e for e in source.events if e["node_id"] == "review")
+    assert review["node_output"]["result"]["escalation"] == {
+        "question": "which db?",
+        "decision": {"chosen": "postgres", "notes": None},
+    }
+
+
+def test_looping_escalation_last_resolution_wins(tmp_path: Path) -> None:
+    """A looping node escalates once per iteration, each with its own resolution line. The
+    fold pairs the node's FINAL event (what seeding restores) with the LAST resolution —
+    an early-wins fold would seed iteration 1's decision as iteration 2's."""
+    _write_trace(
+        tmp_path,
+        execution_id="esc-loop",
+        timestamp="20260101-000000",
+        nodes=[
+            _node("review", output={"result": {"escalation": {"question": "round 1?"}}}),
+            _node("review", output={"result": {"escalation": {"question": "round 2?"}}}),
+            _node("k", status="failed", output={}),
+        ],
+        gate_lines=[
+            _escalation_resolution("review", {"chosen": "first", "notes": None}),
+            _escalation_resolution("review", {"chosen": "second", "notes": None}),
+        ],
+    )
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    final_review = [e for e in source.events if e["node_id"] == "review"][-1]
+    assert final_review["node_output"]["result"]["escalation"]["decision"] == {
+        "chosen": "second",
+        "notes": None,
+    }
+
+
+def test_superseded_iteration_escalation_does_not_refuse(tmp_path: Path) -> None:
+    """The guards scan the SEEDABLE set — final events only. An undecided marker frozen in an
+    earlier loop iteration's event is never seeded (only the final event is), so it must not
+    refuse the resume even with no resolution recorded for it."""
+    _write_trace(
+        tmp_path,
+        execution_id="esc-superseded",
+        timestamp="20260101-000000",
+        nodes=[
+            _node("review", output={"result": {"escalation": {"question": "iteration 1?"}}}),
+            _node("review", output={"result": {"done": True}}),
             _node("k", status="failed", output={}),
         ],
     )
@@ -526,7 +636,6 @@ def test_resume_source_fields_populated(tmp_path: Path) -> None:
     assert source.last_completed_node_id is None
     assert source.content_hash == "hash-abc"
     assert source.inputs == {"repo": "acme/widgets"}
-    assert source.final_status == "failed"
     assert [e["node_id"] for e in source.events] == ["clone", "build"]
 
 
@@ -633,7 +742,6 @@ def test_real_failed_run_is_resumable_end_to_end(tmp_path: Path) -> None:
 
     # Entry: real failed-event status detection (proves the on-disk key is `status`,
     # not `success: bool` — a wrong assumption would find zero failed nodes and refuse).
-    assert source.final_status == "failed"
     assert source.entry_node_id == "boom"
     # Seeding: the upstream event carries its REAL shell output shape.
     assert [e["node_id"] for e in source.events] == ["prep", "boom"]

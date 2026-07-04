@@ -559,11 +559,14 @@ def seed_walk_entry(
     re-entry + planner resume view) becomes additional callers of this exact
     composition.
 
-    Returns ``(entry_node, seeded_final_events_by_node)``. Deliberately
-    NOTHING else is shared here (scope guard: if this grows a mode flag or
-    callback, back off): loading events, ``initialize_execution_state``,
-    ``restored_nodes``/``only_node`` stamping, and degraded advisories all
-    stay caller-side — they differ per surface by design.
+    Returns ``(entry_node, seeded_final_events_by_node)`` — the seeded map
+    provably never contains ``entry`` itself (its scope slice ends before the
+    entry's first event), so callers use its keys as ``restored_nodes``
+    directly. Deliberately NOTHING else is shared here (scope guard: if this
+    grows a mode flag or callback, back off): loading events,
+    ``initialize_execution_state``, ``restored_nodes``/``only_node`` stamping,
+    and degraded advisories all stay caller-side — they differ per surface by
+    design.
     """
     from pflow.runtime.workflow_trace import seed_snapshot_into_shared
 
@@ -829,7 +832,7 @@ class WorkflowEngine:
         target_node, final = seed_walk_entry(shared, events, entry=this_only, start_node=workflow.start_node)
 
         initialize_execution_state(shared)
-        shared["__execution__"]["restored_nodes"] = [nid for nid in final if nid != this_only]
+        shared["__execution__"]["restored_nodes"] = list(final)
 
         if source_status == "degraded":
             self._emit_snapshot_degraded_advisory(shared, this_only)
@@ -877,7 +880,7 @@ class WorkflowEngine:
                 suggestions=["Re-run the workflow from the start instead of resuming."],
             ) from None
         initialize_execution_state(shared)
-        restored = [nid for nid in final if nid != self.resume_from]
+        restored = list(final)
         # Engine-only keys, stamped here per the node_state pattern — never added
         # to new_execution_state(). The display/JSON surface reads all three.
         shared["__execution__"]["restored_nodes"] = restored

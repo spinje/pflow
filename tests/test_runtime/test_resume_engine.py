@@ -151,7 +151,6 @@ def test_runner_rejects_unresolved_entry_node(tmp_path) -> None:
         events=[],
         inputs=None,
         content_hash=None,
-        final_status="incomplete",
     )
     with pytest.raises(ValueError, match="entry_node_id"):
         WorkflowRunner().run(
@@ -1008,7 +1007,6 @@ def test_incomplete_tail_ending_in_unrecovered_failure_reenters_at_the_failure(t
     _truncate_trace(p1, first_dropped_node=None)  # drop only the trailer
 
     source = load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
-    assert source.final_status == "incomplete"
     assert source.entry_node_id == "boom"
     assert source.last_completed_node_id is None
 
@@ -1032,7 +1030,6 @@ def test_incomplete_tail_killed_before_the_error_handler_reenters_at_the_recover
     _truncate_trace(p1, first_dropped_node="fallback")
 
     source = load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
-    assert source.final_status == "incomplete"
     assert source.entry_node_id == "primary"
     assert source.last_completed_node_id is None
 
@@ -1040,3 +1037,61 @@ def test_incomplete_tail_killed_before_the_error_handler_reenters_at_the_recover
     # primary fails again → error edge re-taken → fallback runs → use reads the fallback.
     assert resumed.shared_after["__execution__"]["completed_nodes"] == ["fallback", "use"]
     assert resumed.shared_after["use"]["stdout"] == "used=fallback-data"
+
+
+# --- Escalation-gate resume (review fix 2026-07-04) ---------------------------
+
+
+def test_resolved_escalation_upstream_resumes_end_to_end(tmp_path) -> None:
+    """The escalation false-refusal fix, driven through the REAL collector: the agent's
+    event freezes the marker UNDECIDED (engine step 16 records it before step 17.7 writes
+    the human's decision into the LIVE store), and the decision is persisted only as a
+    disk-only gate resolution line. The loader must fold that resolution back into the
+    event — refusing here ("unresolved escalation") would contradict what happened and
+    make resume unusable for every escalation-gated workflow with a later failure."""
+    from pflow.core.gate import GateResolution
+
+    def resolver(request: Any, *, allow_prompt: bool) -> GateResolution:
+        return GateResolution(approved=True, resolved_via="prompt", chosen="ship", notes="looks good")
+
+    flag = tmp_path / "flag.txt"
+    ir = {
+        "nodes": [
+            {
+                "id": "agent",
+                "type": "code",
+                "params": {"code": "result: dict = {'escalation': {'question': 'Ship it?'}, 'work': 'done'}"},
+            },
+            {"id": "boom", "type": "shell", "params": {"command": f"cat {flag}"}},
+        ],
+    }
+    wf = tmp_path / "wf.pflow.md"
+    write_workflow_file(ir, wf)
+
+    run1 = WorkflowRunner().run(str(wf), {}, RunnerConfig(), gate_resolver=resolver)
+    assert not run1.success, "run 1 was supposed to fail at boom (flag file absent)"
+    trace_path = run1.trace.save_to_file()
+    assert trace_path is not None
+
+    # The loader folds the recorded resolution into the frozen marker instead of refusing.
+    source = load_resume_source(execution_id=run1.trace.execution_id, debug_dir=trace_path.parent)
+    assert source.entry_node_id == "boom"
+    agent_event = next(e for e in source.events if e["node_id"] == "agent")
+    assert agent_event["node_output"]["result"]["escalation"]["decision"] == {
+        "chosen": "ship",
+        "notes": "looks good",
+    }
+
+    flag.write_text("ready\n", encoding="utf-8")
+    resumed = WorkflowRunner().run(str(wf), {}, RunnerConfig(), resume_source=source)
+    assert resumed.success, [str(d) for d in resumed.diagnostics]
+    assert resumed.shared_after["__execution__"]["completed_nodes"] == ["boom"]
+    # The seeded store carries the DECIDED marker, and the attempt trace re-records it —
+    # a resume-of-a-resume seeds the decision without re-joining gate lines.
+    assert resumed.shared_after["agent"]["result"]["escalation"]["decision"]["chosen"] == "ship"
+    attempt_path = resumed.trace.save_to_file()
+    assert attempt_path is not None
+    attempt = load_trace_file(attempt_path)
+    restored_agent = next(e for e in attempt["nodes"] if e["node_id"] == "agent")
+    assert restored_agent["restored"] is True
+    assert restored_agent["node_output"]["result"]["escalation"]["decision"]["chosen"] == "ship"
