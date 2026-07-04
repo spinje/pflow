@@ -4,8 +4,9 @@
 // (mirrors the spine-avoiding Tines layout). On show it frames the camera over anchor ∪ callout.
 //
 // THE REUSABLE PRIMITIVE (Task 175 + 174): the run-progress stream drops in as children now; Task 174's
-// agent "say" bubble reuses the same shell (anchor a styled box to any node + center on it). Content-
-// agnostic by design — it owns anchoring + chrome + framing, never what's inside.
+// agent "say" bubble reuses the same shell (anchor a styled box to any node) but passes
+// frameOnMount={false} — the point message that precedes a say already owns the camera. Content-
+// agnostic by design — it owns anchoring + chrome + (optional) framing, never what's inside.
 
 import { useEffect, useRef } from "react";
 import type { CSSProperties, ReactNode } from "react";
@@ -25,11 +26,16 @@ export function NodeCallout({
   icon,
   title,
   subtitle,
+  frameOnMount = true,
   onClose,
+  className,
   children,
 }: {
   anchorId: string;
   direction: Direction;
+  // An optional extra class on the outer box — the shell stays content-agnostic, but a caller can
+  // add a state modifier (Task 174's say bubble adds `say-playing` while its clip is speaking).
+  className?: string;
   // An optional leading header element (rendered before the title) — the run callout passes the pflow
   // chevrons; the shell stays content-agnostic, so Task 174's "say" bubble can pass its own mark or none.
   icon?: ReactNode;
@@ -37,6 +43,10 @@ export function NodeCallout({
   // An optional muted header slot between the title and the ✕ (the run callout puts the run id here;
   // Task 174's "say" bubble can use it for a label). Absent → just title + ✕.
   subtitle?: ReactNode;
+  // Whether opening this callout frames the camera over anchor ∪ callout (the one-shot effect below).
+  // Default true (the run callout's behavior); the say bubble passes false — its point message owns
+  // the camera.
+  frameOnMount?: boolean;
   onClose: () => void;
   children: ReactNode;
 }): JSX.Element | null {
@@ -67,7 +77,7 @@ export function NodeCallout({
   // a NEW launch remounts the callout (runCalloutOpen false→true) and re-arms it.
   const framedRef = useRef(false);
   useEffect(() => {
-    if (framedRef.current || !rect) return;
+    if (!frameOnMount || framedRef.current || !rect) return;
     framedRef.current = true;
     const bounds =
       direction === "TD"
@@ -97,7 +107,10 @@ export function NodeCallout({
       {/* `nopan`/`nodrag`: the callout lives inside the RF viewport, whose d3-drag pan handler would
           otherwise swallow the pointer (the ✕ and the step buttons wouldn't click). `nowheel` lets the
           body scroll without zooming the canvas. */}
-      <div className="node-callout nopan nodrag nowheel" style={{ position: "absolute", ...style }}>
+      <div
+        className={`node-callout nopan nodrag nowheel${className ? ` ${className}` : ""}`}
+        style={{ position: "absolute", ...style }}
+      >
         <div className="node-callout-head">
           {icon != null ? <span className="node-callout-lead">{icon}</span> : null}
           <span className="node-callout-title">{title}</span>

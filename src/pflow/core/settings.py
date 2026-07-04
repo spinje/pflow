@@ -103,6 +103,14 @@ class LLMSettings(BaseModel):
         default=None,
         description="Model for smart field filtering. Overrides default_model for filtering only.",
     )
+    tts_model: str = Field(
+        default="gemini-3.1-flash-tts-preview",
+        description="TTS model for `pflow ui --say` narration.",
+    )
+    tts_voice: str = Field(
+        default="Kore",
+        description="TTS voice name for `pflow ui --say` narration.",
+    )
 
 
 class PflowSettings(BaseModel):

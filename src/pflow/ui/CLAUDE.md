@@ -195,13 +195,54 @@ is `run_node.read_run_inputs`; sync handler, threadpooled, touches no hub state)
   `boot_id` change) so the replay is idempotent. `select-run` is **not** latched — each
   tab keeps its own `?run=` pin — so a `select-run` to a hidden tab is dropped (it reaches
   a visible tab, or `--run` opens one).
+- `POST /api/say` (Task 174) is `command()`'s point-with-narration sibling: same
+  validate→resolve scaffolding (deliberately ~15 duplicated lines — two call sites with
+  different field sets; extract only when a third verb-with-payload appears), accepting
+  `{workflow, type: focus|frame, target, caption, audio_b64?}`. It stores the decoded WAV
+  in the `_AudioStore` then emits TWO broadcasts in order: (1) the ordinary stamped+latched
+  point (byte-identical to `/api/command` semantics — reconnect replay still works), then
+  (2) a transient un-stamped `{"type": "say", target, caption, audio_url?}` — NEVER
+  latched, so a reconnecting window replays the point but not stale audio. **The point→say
+  per-queue ordering holds only because there is NO `await` between the two broadcasts** —
+  never insert one. Audio is stored only after a unique resolve (no orphan bytes on a bad
+  target); the response shape matches `/api/command` so the CLI renderers work unchanged.
+  **Pacing rendezvous (follow-up v2):** a DELIVERED audio say records
+  `app.state.narration_until = monotonic() + wav_duration + _NARRATION_START_LAG_S` (the lag
+  covers SSE delivery + audio fetch + play() init in the browser — the estimate must err PAST
+  the true end or the next say clips the last words; observed live). Overwrite, never max (a
+  new clip interrupts the prior); global, not per-workflow (one machine, one speaker);
+  caption-only / zero-window / unplayable-bytes says never mark it busy. The say records
+  `narration_audio_id` alongside the window so beacons can be scoped to the current clip (below).
+  `clear` resets the WHOLE rendezvous — `narration_until`, `narration_blocked`, and
+  `narration_audio_id` (clear = stop talking, window-independent: it releases a stuck blocked flag
+  even when every tab is gone). Loop-affine like the hub — only async handlers touch it.
+- `POST /api/narration` (Task 174 follow-up v2) — playback beacons: the Viewer reports what the
+  audio element ACTUALLY did with a say clip (`{audio_id, event: started|blocked|ended}`,
+  fire-and-forget from `reportNarration`). `started` re-anchors `narration_until` to now + the
+  clip's real duration (replaces the broadcast-time start-lag estimate); `blocked` sets
+  `narration_blocked` (surfaced via health — the CLI's next `--say` warns the agent the window
+  is silently captioning until a click); `ended` clears the window. `started`/`ended` clear the
+  blocked flag (sound demonstrably works, for ANY clip). **`started`/`ended` only move
+  `narration_until` when their `audio_id` matches `narration_audio_id` (the current clip)** — a
+  beacon for a superseded clip (a rapid `--no-wait` interrupt, a late/multi-window beacon) clears
+  the blocked flag but leaves pacing untouched, so the frontend can beacon `ended` from every stop
+  path (interrupt, per-box close, unmount) without racing a newer say. An evicted `audio_id` on
+  `started` is harmless (duration unknown → no window). Async (loop-affine narration state + store read).
+- `GET /api/audio/{audio_id}` serves a stored clip (`audio/wav`) or 404. The
+  `_AudioStore` is a loop-only `OrderedDict` LRU (16 clips, 10 MB decoded upload bound,
+  no lock, no TTL, no read-touch — clips are played once within seconds); like the hub it
+  is lock-free ONLY because every accessor is `async def` on the event loop — the audio
+  route must stay async for STORE AFFINITY, not "no blocking IO".
 - `POST /api/interaction` records deliberate user actions; `GET /api/activity`
   returns the bounded, newest-first snapshot. `POST /api/visibility` updates one
   connection. All POSTs require `application/json`.
 - `GET /api/health` is the cheap liveness + identity probe for discovery/reuse:
-  `{"service": "pflow-ui"}` always, plus `{"workflow_key", "windows"}` when a
-  resolvable `workflow` is supplied (`windows = len(windows_for(key))`, **no graph
-  build**). An unresolvable workflow reports identity only (no 404 — a liveness probe
+  `{"service": "pflow-ui", "narration_s_remaining": <float>, "narration_blocked": <bool>}`
+  always (seconds of `say` narration still playing — the CLI's `--say` waits its turn BEFORE
+  dispatching, so sequential narration never interrupts itself — and whether the Viewer
+  beaconed an autoplay-blocked play with no successful playback since), plus
+  `{"workflow_key", "windows"}` when a resolvable `workflow` is supplied
+  (`windows = len(windows_for(key))`, **no graph build**). An unresolvable workflow reports identity only (no 404 — a liveness probe
   must answer regardless, unlike `events()`/`command()`). It reads the hub, so it is
   `async def` per the invariant below. **`windows` can transiently over-count**
   for up to one `_KEEPALIVE_S` cycle after a Viewer reconnects to *this* server (the
@@ -242,7 +283,11 @@ well as the mutating POSTs (`command`/`interaction`/`visibility`/`/api/run`). Be
 middleware, not a per-handler call, it covers every future endpoint by default — there is
 **no** "route it through `_json_body`" invariant to remember. `/api/run` (Task 175) spawns
 a real `pflow run` behind this same posture: resolvable name/path only (never inline
-content), the normal CLI spawned detached, no in-process execution.
+content), the normal CLI spawned detached, no in-process execution. `/api/say` (Task 174)
+is mutating but its worst cross-origin case is storing/playing benign local bytes —
+synthesis is CLI-side, the server makes NO outbound call — bounded by
+`_AUDIO_MAX_BYTES × _AUDIO_STORE_MAX`; `/api/audio/<id>` joins the `/api/source`
+read-exposure class. Both sit behind `_LoopbackOnly` automatically.
 
 ### Static bundle (`/` + assets)
 The SPA builds into `src/pflow/ui/static/` (Vite `build.outDir`, `base = "./"`

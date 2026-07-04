@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import subprocess
 import sys
@@ -16,7 +17,15 @@ from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from pflow.core.workflow.manager import WorkflowManager
-from pflow.ui.server import _ACTIVITY_MAX, _Hub, _workflow_key, create_app, events
+from pflow.ui.server import (
+    _ACTIVITY_MAX,
+    _AUDIO_STORE_MAX,
+    _AudioStore,
+    _Hub,
+    _workflow_key,
+    create_app,
+    events,
+)
 from tests.shared.markdown_utils import write_workflow_file
 
 
@@ -165,16 +174,31 @@ class TestHealthEndpoint:
 
         body = _client(app).get("/api/health", params={"workflow": "discoverable"}).json()
 
-        assert body == {"service": "pflow-ui", "workflow_key": key, "windows": 2}
+        # narration_s_remaining / narration_blocked (Task 174 follow-up) ride every health body.
+        assert body == {
+            "service": "pflow-ui",
+            "narration_s_remaining": 0.0,
+            "narration_blocked": False,
+            "workflow_key": key,
+            "windows": 2,
+        }
 
     def test_identity_only_without_a_workflow(self) -> None:
-        assert _client().get("/api/health").json() == {"service": "pflow-ui"}
+        assert _client().get("/api/health").json() == {
+            "service": "pflow-ui",
+            "narration_s_remaining": 0.0,
+            "narration_blocked": False,
+        }
 
     def test_unknown_workflow_is_identity_only_not_404(self) -> None:
         # A liveness probe must answer regardless — unlike command()/activity(), which 404.
         response = _client().get("/api/health", params={"workflow": "no-such-workflow-xyz"})
         assert response.status_code == 200
-        assert response.json() == {"service": "pflow-ui"}
+        assert response.json() == {
+            "service": "pflow-ui",
+            "narration_s_remaining": 0.0,
+            "narration_blocked": False,
+        }
 
 
 class TestInteractionEndpoints:
@@ -340,7 +364,7 @@ class TestInteractionEndpoints:
         workflow = _workflow(tmp_path)
         client = _client()
 
-        for path in ("/api/command", "/api/interaction", "/api/visibility"):
+        for path in ("/api/command", "/api/say", "/api/narration", "/api/interaction", "/api/visibility"):
             response = client.post(path, content=json.dumps({"workflow": str(workflow)}))
             assert response.status_code == 415
             assert "application/json" in response.json()["error"]
@@ -439,6 +463,409 @@ def _workflow_with_input(tmp_path: Path, *, required: bool) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+_GREET_DESCRIPTOR = {"kind": "node", "ref": {"node_id": "greet", "ancestor_path": [], "port": None}}
+
+
+class TestSayEndpoint:
+    """``POST /api/say`` (Task 174) — store audio + broadcast the point then the caption; ``GET
+    /api/audio/<id>`` serves stored clips."""
+
+    def test_say_broadcasts_point_then_caption_with_audio(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        key = str(workflow.resolve())
+        conn = app.state.hub.register(key, "visible")
+        clip = b"\x00\x01\x02\x03fake-wav-bytes"
+
+        response = _client(app).post(
+            "/api/say",
+            json={
+                "workflow": str(workflow),
+                "type": "focus",
+                "target": "greet",
+                "caption": "this is the LLM call",
+                "audio_b64": base64.b64encode(clip).decode(),
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["resolved"] == {"matched": 1, "address": "greet"}
+        assert body["sent_to"] == 1
+
+        # Order is load-bearing: the ordinary stamped point arrives BEFORE the transient caption.
+        point = conn.queue.get_nowait()
+        assert point == {"type": "focus", "target": _GREET_DESCRIPTOR, "epoch": 1}
+        say_msg = conn.queue.get_nowait()
+        assert say_msg["type"] == "say"
+        assert say_msg["target"] == _GREET_DESCRIPTOR
+        assert say_msg["caption"] == "this is the LLM call"
+        assert "epoch" not in say_msg  # transient — never latched/replayed
+
+        audio_url = say_msg["audio_url"]
+        assert audio_url.startswith("/api/audio/")
+        got = _client(app).get(audio_url)
+        assert got.status_code == 200
+        assert got.headers["content-type"] == "audio/wav"
+        assert got.content == clip
+
+    def test_say_without_audio_omits_audio_url(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        conn = app.state.hub.register(str(workflow.resolve()), "visible")
+
+        response = _client(app).post(
+            "/api/say",
+            json={"workflow": str(workflow), "type": "focus", "target": "greet", "caption": "hi"},
+        )
+
+        assert response.status_code == 200
+        conn.queue.get_nowait()  # the point
+        say_msg = conn.queue.get_nowait()
+        assert say_msg["type"] == "say"
+        assert "audio_url" not in say_msg
+
+    def test_say_point_is_replayed_to_a_reconnecting_window_but_the_caption_is_not(self, tmp_path: Path) -> None:
+        """The plan's most-debated deep-review decision, verified through the REAL replay path (not just the
+        latch): a window connecting AFTER a say catches up to the POINT (latched like any focus) but is NEVER
+        replayed the caption/audio. Reconnecting to stale audio would be worse than silence. This is the
+        demo-critical scenario — the presenter's tab was backgrounded during the say and reopens. Drives the
+        events() generator directly (same technique as test_events_replays_the_latched_point_to_a_new_connection)."""
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        key = str(workflow.resolve())
+        caption = "this is the LLM call"
+
+        # Agent says at a node while NO tab of this workflow is connected.
+        _client(app).post(
+            "/api/say",
+            json={
+                "workflow": str(workflow),
+                "type": "focus",
+                "target": "greet",
+                "caption": caption,
+                "audio_b64": base64.b64encode(b"clip").decode(),
+            },
+        )
+
+        # The point is latched (set_point); the say is fire-and-forget (stored in no latch).
+        assert app.state.hub.point_for(key) == {"type": "focus", "target": _GREET_DESCRIPTOR, "epoch": 1}
+
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/events",
+            "query_string": urlencode({"workflow": str(workflow), "visibility": "visible"}).encode(),
+            "headers": [],
+            "app": app,
+        }
+
+        async def _drive() -> list[str]:
+            response = await events(Request(scope))
+            body = response.body_iterator
+            # Replay is exactly: connected -> run-snapshot -> latched point (run_for is None, so no 4th
+            # replay frame; a 4th __anext__ would block until keepalive). The say is NOT in this sequence.
+            frames = [await asyncio.wait_for(body.__anext__(), timeout=2.0) for _ in range(3)]
+            await body.aclose()
+            return frames
+
+        connected, snapshot, latched = asyncio.run(_drive())
+
+        assert '"type": "connected"' in connected
+        assert '"type": "run-snapshot"' in snapshot
+        payload = json.loads(latched.removeprefix("data: ").strip())
+        assert payload == {"type": "focus", "target": _GREET_DESCRIPTOR, "epoch": 1}  # the point, no caption
+        # The caption text and the say envelope never enter the replay — a reconnecting window can't
+        # receive stale audio because there is no latch to replay it from.
+        assert all(caption not in frame and '"type": "say"' not in frame for frame in (connected, snapshot, latched))
+
+    def test_say_frame_uses_frame_verb(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        conn = app.state.hub.register(str(workflow.resolve()), "visible")
+
+        _client(app).post(
+            "/api/say",
+            json={"workflow": str(workflow), "type": "frame", "target": "greet", "caption": "hi"},
+        )
+
+        assert conn.queue.get_nowait()["type"] == "frame"
+
+    def test_say_missing_caption_is_400(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        response = _client().post("/api/say", json={"workflow": str(workflow), "type": "focus", "target": "greet"})
+        assert response.status_code == 400
+
+    def test_say_bad_base64_is_400(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        response = _client().post(
+            "/api/say",
+            json={
+                "workflow": str(workflow),
+                "type": "focus",
+                "target": "greet",
+                "caption": "hi",
+                "audio_b64": "!!!not-base64!!!",
+            },
+        )
+        assert response.status_code == 400
+
+    def test_say_rejects_non_point_verb(self, tmp_path: Path) -> None:
+        # Only focus/frame carry a caption; clear/select-run are not say verbs.
+        workflow = _workflow(tmp_path)
+        response = _client().post(
+            "/api/say",
+            json={"workflow": str(workflow), "type": "clear", "target": "greet", "caption": "hi"},
+        )
+        assert response.status_code == 400
+
+    def test_say_unknown_workflow_is_404(self) -> None:
+        response = _client().post(
+            "/api/say",
+            json={"workflow": "does-not-exist", "type": "focus", "target": "greet", "caption": "hi"},
+        )
+        assert response.status_code == 404
+
+    def test_say_oversize_audio_is_400_stating_the_limit(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        # Patch the constant in the namespace the RUNNING handler reads (`create_app.__globals__`), not
+        # via a `"pflow.ui.server._AUDIO_MAX_BYTES"` string — a sibling test reloads that module
+        # (test_ui.py pops it from sys.modules), so the string form would target a fresh module object
+        # while `create_app` (imported at file top) still runs the original one (tests/CLAUDE.md #21).
+        with patch.dict(create_app.__globals__, {"_AUDIO_MAX_BYTES": 4}):
+            response = _client().post(
+                "/api/say",
+                json={
+                    "workflow": str(workflow),
+                    "type": "focus",
+                    "target": "greet",
+                    "caption": "hi",
+                    "audio_b64": base64.b64encode(b"12345").decode(),
+                },
+            )
+        assert response.status_code == 400
+        assert "max 4" in response.json()["error"]
+
+    def test_say_failed_resolve_does_not_broadcast_or_store_audio(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        conn = app.state.hub.register(str(workflow.resolve()), "visible")
+
+        response = _client(app).post(
+            "/api/say",
+            json={
+                "workflow": str(workflow),
+                "type": "focus",
+                "target": "grete",  # typo → matched 0
+                "caption": "hi",
+                "audio_b64": base64.b64encode(b"clip").decode(),
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["resolved"]["matched"] == 0
+        assert response.json()["sent_to"] == 0
+        assert conn.queue.empty()  # neither point nor say broadcast
+        assert app.state.audio._clips == {}  # audio is NOT stored on a failed resolve
+
+    def test_audio_unknown_id_is_404(self) -> None:
+        response = _client().get("/api/audio/no-such-id")
+        assert response.status_code == 404
+
+
+class TestNarrationPacingRendezvous:
+    """``app.state.narration_until`` (Task 174 follow-up v2): a delivered audio ``say`` records when
+    its clip stops playing; ``/api/health`` reports the remainder (``narration_s_remaining``) so the
+    NEXT ``--say`` can wait its turn BEFORE dispatching; ``clear`` resets it (clear = stop talking)."""
+
+    @staticmethod
+    def _wav_b64(seconds: float) -> str:
+        import io
+        import wave
+
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as writer:
+            writer.setnchannels(1)
+            writer.setsampwidth(2)
+            writer.setframerate(24000)
+            writer.writeframes(b"\x00\x00" * int(24000 * seconds))
+        return base64.b64encode(buffer.getvalue()).decode()
+
+    def _say(self, app: Starlette, workflow: Path, **extra: str) -> None:
+        response = _client(app).post(
+            "/api/say",
+            json={"workflow": str(workflow), "type": "focus", "target": "greet", "caption": "hi", **extra},
+        )
+        assert response.status_code == 200
+
+    def test_delivered_audio_say_sets_the_remaining_window(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        app.state.hub.register(str(workflow.resolve()), "visible")
+
+        self._say(app, workflow, audio_b64=self._wav_b64(2.0))
+
+        # clip duration + the start-lag allowance (the browser starts playing AFTER the broadcast;
+        # the estimate must err past the true end or the next say clips the last words).
+        remaining = _client(app).get("/api/health").json()["narration_s_remaining"]
+        assert 2.25 < remaining <= 2.75
+
+    def test_health_reports_zero_when_idle(self) -> None:
+        assert _client().get("/api/health").json()["narration_s_remaining"] == 0.0
+
+    def test_caption_only_say_does_not_mark_narration_busy(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        app.state.hub.register(str(workflow.resolve()), "visible")
+
+        self._say(app, workflow)  # no audio_b64
+
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] == 0.0
+
+    def test_zero_window_say_does_not_mark_narration_busy(self, tmp_path: Path) -> None:
+        # Nothing received the clip, so nothing is playing — the next say must not wait for it.
+        workflow = _workflow(tmp_path)
+        app = create_app()
+
+        self._say(app, workflow, audio_b64=self._wav_b64(2.0))
+
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] == 0.0
+
+    def test_clear_resets_the_rendezvous(self, tmp_path: Path) -> None:
+        # clear pauses the clip in the browser — a stale window must not stall the next say.
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        app.state.hub.register(str(workflow.resolve()), "visible")
+        self._say(app, workflow, audio_b64=self._wav_b64(5.0))
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] > 0
+
+        response = _client(app).post("/api/command", json={"workflow": str(workflow), "type": "clear"})
+
+        assert response.status_code == 200
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] == 0.0
+
+    def test_clear_also_resets_a_stuck_blocked_flag(self, tmp_path: Path) -> None:
+        # A window autoplay-blocked a clip and the user walked away without clicking ▶. `clear` must
+        # release the stuck flag too (window-independent — a frontend `ended` would only fire if a tab
+        # were still open), else the next unrelated --say holds for the full blocked-poll cap.
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        app.state.hub.register(str(workflow.resolve()), "visible")
+        _client(app).post("/api/narration", json={"audio_id": "x", "event": "blocked"})
+        assert _client(app).get("/api/health").json()["narration_blocked"] is True
+
+        _client(app).post("/api/command", json={"workflow": str(workflow), "type": "clear"})
+
+        assert _client(app).get("/api/health").json()["narration_blocked"] is False
+
+    def test_started_beacon_reanchors_to_real_playback(self, tmp_path: Path) -> None:
+        # Broadcast-time estimate = duration + the start-lag guess; the Viewer's `started` beacon
+        # replaces it with the exact end measured from REAL playback (no lag pad).
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        conn = app.state.hub.register(str(workflow.resolve()), "visible")
+        self._say(app, workflow, audio_b64=self._wav_b64(2.0))
+        conn.queue.get_nowait()  # the point
+        audio_id = conn.queue.get_nowait()["audio_url"].rsplit("/", 1)[1]
+
+        response = _client(app).post("/api/narration", json={"audio_id": audio_id, "event": "started"})
+
+        assert response.status_code == 200
+        remaining = _client(app).get("/api/health").json()["narration_s_remaining"]
+        assert 1.5 < remaining <= 2.0
+
+    def test_blocked_beacon_flags_health_until_playback_succeeds(self) -> None:
+        app = create_app()
+        assert _client(app).get("/api/health").json()["narration_blocked"] is False
+
+        _client(app).post("/api/narration", json={"audio_id": "x", "event": "blocked"})
+        assert _client(app).get("/api/health").json()["narration_blocked"] is True
+
+        _client(app).post("/api/narration", json={"audio_id": "x", "event": "started"})
+        assert _client(app).get("/api/health").json()["narration_blocked"] is False
+
+    def test_ended_beacon_clears_the_window(self, tmp_path: Path) -> None:
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        conn = app.state.hub.register(str(workflow.resolve()), "visible")
+        self._say(app, workflow, audio_b64=self._wav_b64(5.0))
+        conn.queue.get_nowait()  # the point
+        audio_id = conn.queue.get_nowait()["audio_url"].rsplit("/", 1)[1]
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] > 0
+
+        _client(app).post("/api/narration", json={"audio_id": audio_id, "event": "ended"})
+
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] == 0.0
+
+    def test_a_stale_ended_beacon_does_not_free_the_current_clip(self, tmp_path: Path) -> None:
+        # A late `ended` for a SUPERSEDED clip (a rapid --no-wait interrupt, a multi-window or delayed
+        # beacon) must not zero the live clip's window — that would clip the current narration. This is
+        # what lets the frontend beacon `ended` from every stop path without racing a newer say.
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        app.state.hub.register(str(workflow.resolve()), "visible")
+        self._say(app, workflow, audio_b64=self._wav_b64(5.0))
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] > 0
+
+        _client(app).post("/api/narration", json={"audio_id": "not-the-current-clip", "event": "ended"})
+
+        # The window stands — only an `ended` for the CURRENT audio_id frees pacing.
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] > 0
+
+    def test_a_stale_started_beacon_does_not_reanchor_pacing(self, tmp_path: Path) -> None:
+        # Symmetric to the stale `ended`: a `started` for a superseded clip must not re-arm pacing to a
+        # window that is no longer current (it would stretch the wait to the wrong clip's length).
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        conn = app.state.hub.register(str(workflow.resolve()), "visible")
+        self._say(app, workflow, audio_b64=self._wav_b64(2.0))
+        conn.queue.get_nowait()  # the point
+        current_id = conn.queue.get_nowait()["audio_url"].rsplit("/", 1)[1]
+        # A different, longer clip that is real in the store but NOT the current say.
+        stale_id = app.state.audio.put(base64.b64decode(self._wav_b64(9.0)))
+        assert stale_id != current_id
+
+        _client(app).post("/api/narration", json={"audio_id": stale_id, "event": "started"})
+
+        # Ignored: the window stays the ~2s current clip, never stretched to the 9s stale clip.
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] < 3.0
+
+    def test_narration_beacon_validates_body(self) -> None:
+        assert _client().post("/api/narration", json={"audio_id": "x", "event": "nope"}).status_code == 400
+        assert _client().post("/api/narration", json={"event": "started"}).status_code == 400
+
+    def test_started_beacon_for_an_evicted_clip_is_harmless(self) -> None:
+        # The clip may already be LRU-evicted when the beacon lands — duration unknown → no window.
+        app = create_app()
+        response = _client(app).post("/api/narration", json={"audio_id": "gone", "event": "started"})
+        assert response.status_code == 200
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] == 0.0
+
+    def test_unparseable_audio_bytes_degrade_to_zero_not_a_stall(self, tmp_path: Path) -> None:
+        # wav_duration is TOTAL: fake bytes → 0.0 → the rendezvous never blocks on garbage.
+        workflow = _workflow(tmp_path)
+        app = create_app()
+        app.state.hub.register(str(workflow.resolve()), "visible")
+
+        self._say(app, workflow, audio_b64=base64.b64encode(b"not-a-wav").decode())
+
+        assert _client(app).get("/api/health").json()["narration_s_remaining"] == 0.0
+
+
+class TestAudioStore:
+    def test_put_get_round_trip(self) -> None:
+        store = _AudioStore()
+        audio_id = store.put(b"clip")
+        assert store.get(audio_id) == b"clip"
+
+    def test_evicts_oldest_beyond_max(self) -> None:
+        store = _AudioStore()
+        ids = [store.put(bytes([i % 256])) for i in range(_AUDIO_STORE_MAX + 1)]
+        assert store.get(ids[0]) is None  # oldest evicted once over the bound
+        assert store.get(ids[1]) is not None
+        assert store.get(ids[-1]) is not None
 
 
 class TestRunEndpoint:
@@ -549,6 +976,20 @@ class TestHostGuard:
             == 403
         )
         assert (
+            _client()
+            .post(
+                "/api/say",
+                json={"workflow": workflow, "type": "focus", "target": "greet", "caption": "hi"},
+                headers=evil,
+            )
+            .status_code
+            == 403
+        )
+        assert (
+            _client().post("/api/narration", json={"audio_id": "x", "event": "blocked"}, headers=evil).status_code
+            == 403
+        )
+        assert (
             _client().post("/api/interaction", json={"workflow": workflow, "type": "x"}, headers=evil).status_code
             == 403
         )
@@ -567,6 +1008,7 @@ class TestHostGuard:
             ("/api/graph", {"workflow": workflow}),
             ("/api/source", {"workflow": workflow}),
             ("/api/catalog", {}),
+            ("/api/audio/some-id", {}),
         ):
             assert _client().get(path, params=params, headers=evil).status_code == 403, path
             assert _client().get(path, params=params).status_code != 403, path

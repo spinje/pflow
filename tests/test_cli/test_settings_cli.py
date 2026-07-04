@@ -519,6 +519,9 @@ class TestLLMShowCommand:
         assert "default_model:" in result.output
         assert "discovery_model:" in result.output
         assert "filtering_model:" in result.output
+        # TTS narration settings (Task 174) surface here with their concrete defaults.
+        assert "tts_model:        gemini-3.1-flash-tts-preview" in result.output
+        assert "tts_voice:        Kore" in result.output
 
     def test_llm_show_with_configured_default(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test llm show when default_model is configured."""
@@ -776,6 +779,42 @@ class TestLLMSettingsPersistence:
 
         assert loaded.llm.default_model == "openai/gpt-5.2"
         assert loaded.llm.discovery_model == "anthropic/claude-sonnet-4-5"
+
+    def test_tts_setters_round_trip_and_unset_restores_defaults(
+        self, runner: CliRunner, isolated_settings: Path
+    ) -> None:
+        """set-tts-model / set-tts-voice persist verbatim (no LiteLLM prefix normalization —
+        TTS ids aren't LiteLLM-routed) and `unset` restores the BUILT-IN defaults (these fields
+        have concrete defaults, unlike the model trio's revert-to-auto-detection)."""
+        set_model = runner.invoke(settings, ["llm", "set-tts-model", "gemini-4-tts"])
+        set_voice = runner.invoke(settings, ["llm", "set-tts-voice", "Puck"])
+        assert set_model.exit_code == 0 and "tts_model: gemini-4-tts" in set_model.output
+        assert set_voice.exit_code == 0 and "tts_voice: Puck" in set_voice.output
+
+        shown = runner.invoke(settings, ["llm", "show"])
+        assert "tts_model:        gemini-4-tts" in shown.output
+        assert "tts_voice:        Puck" in shown.output
+
+        unset_voice = runner.invoke(settings, ["llm", "unset", "tts-voice"])
+        assert unset_voice.exit_code == 0 and "Kore" in unset_voice.output
+        loaded = SettingsManager(settings_path=isolated_settings).load()
+        assert loaded.llm.tts_voice == "Kore"
+        assert loaded.llm.tts_model == "gemini-4-tts"  # untouched by the voice unset
+
+    def test_llm_unset_all_also_resets_tts_to_defaults(self, runner: CliRunner, isolated_settings: Path) -> None:
+        runner.invoke(settings, ["llm", "set-tts-voice", "Puck"])
+        runner.invoke(settings, ["llm", "unset", "all"])
+
+        loaded = SettingsManager(settings_path=isolated_settings).load()
+        assert loaded.llm.tts_voice == "Kore"
+        assert loaded.llm.tts_model == "gemini-3.1-flash-tts-preview"
+
+    def test_llm_show_names_the_tts_setters(self, runner: CliRunner, isolated_settings: Path) -> None:
+        # The "To configure:" block must cover EVERY field show displays — displaying config
+        # without naming its setter strands the agent (the pre-followup gap).
+        result = runner.invoke(settings, ["llm", "show"])
+        assert "set-tts-model" in result.output
+        assert "set-tts-voice" in result.output
 
     def test_llm_settings_in_show_output(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test that LLM settings appear in global settings show."""

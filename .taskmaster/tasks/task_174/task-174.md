@@ -10,7 +10,18 @@ of the conversation metaphor Task 169 was designed around ("the agent points, sa
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-07-04
+
+> All phases (1–5) plus the pacing/persistence follow-up and the live-demo iteration session
+> (pacing v2 wait-before-dispatch, playback beacons, blocked-hold, persistent replayable captions,
+> TTS settings setters, ADRs 0011/0012, guide rewrite) implemented, tested, and verified live with
+> the user hearing a full paced walkthrough. Python 8495+ passed / web 719 passed / `make check`
+> green. v1 committed (`66220404`, `c1063ef0`); the follow-up work is uncommitted on the branch.
+> See `task-review.md` (distilled) and `implementation/progress-log.md` (journey).
 
 ## Priority
 

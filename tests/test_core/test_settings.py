@@ -144,6 +144,15 @@ class TestEnvManagement:
         assert original_value == "value"
 
 
+class TestLLMDefaults:
+    """Defaults for the TTS narration settings (Task 174)."""
+
+    def test_tts_defaults(self) -> None:
+        settings = PflowSettings()
+        assert settings.llm.tts_model == "gemini-3.1-flash-tts-preview"
+        assert settings.llm.tts_voice == "Kore"
+
+
 class TestMaskValue:
     """Test the _mask_value static method."""
 

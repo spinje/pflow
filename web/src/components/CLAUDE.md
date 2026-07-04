@@ -22,7 +22,13 @@ and the ChipRail's old status slot; three node surfaces now coexist — corner S
 `EdgePanel`, `IoPanel`, `Chip` (+ `ConnectionSections`), `PanelHeader`, `BatchItems`,
 `Markdown`, `CodeBlock`. **Shell:** `Toolbar`, `ErrorBoundary`, `PanelResizer`, `SourcePane`,
 `interaction.ts` (the click-callback context + hover-set channel — keeps node `data`
-callback-free).
+callback-free), `NodeCallout` (the content-agnostic node-anchored flow-space box, Task 175 —
+the run-progress callout AND Task 174's agent "say" bubbles both ride it; `frameOnMount?`
+(default `true`) gates its one-shot camera frame — say bubbles pass `false` because the
+point message that precedes a say already owns the camera. Say bubbles are PERSISTENT and
+per-target — a Map in GraphView, status model in `web/CLAUDE.md`'s overlay seam; each shows
+the caption plus at most one button, unlock (`blocked`) or ↻ Replay (`done`) — the same
+start-this-clip gesture; `expired` and caption-only boxes render no button).
 
 ## The leaf node — one component, two densities (`WorkflowNode`)
 

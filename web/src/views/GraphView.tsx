@@ -15,7 +15,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { reportInteraction, subscribe, type PointHandlers } from "../api/events";
+import { reportInteraction, reportNarration, subscribe, type PointHandlers } from "../api/events";
 import { collapsibleGroupIds, initialCollapsed, revealNodes } from "../graph/collapse";
 import { autoDirection } from "../graph/direction";
 import { consumedReadPaths, ioOwners, refKey, rowTouches, runSteps, topLevelSteps, type Density, type Direction, type FlowEdge, type FlowNode } from "../graph/flow";
@@ -39,7 +39,7 @@ import {
   readViewParams,
   writeViewParams,
 } from "../utils/viewParams";
-import type { InteractionTarget, NodeRunState, PointTarget, RFEdge, RFGraph, RFNode, RunComplete, RunEvent, SourceFiles } from "../types";
+import type { InteractionTarget, NodeRunState, PointTarget, RFEdge, RFGraph, RFNode, RFRef, RunComplete, RunEvent, SourceFiles } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
 import { HoverMarksProvider, InteractionProvider, NO_HOVER } from "../components/interaction";
@@ -69,6 +69,29 @@ const eventState = (e: RunEvent): NodeRunState => ({ status: e.status, durationM
 // `unrecorded` (absent from a stale-version replay) are excluded; `pending` is the absence of any status. A
 // status-driven CONDITIONAL render (not CSS-hide), so a loop's next iteration remounts → refetches the latest.
 const TERMINAL_RUN_STATUSES = new Set<string>(["success", "cached", "failed"]);
+
+// Task 174 follow-up: one persistent say box per anchored target (keyed by refKey of the anchor).
+// playing → (clip ends) → done (Replay button); an initial play() rejection is the autoplay policy
+// → blocked (unlock button); a REPLAY rejection means the clip is gone from the server's LRU
+// → expired (button gone, caption stays — caption is the baseline channel, audio the enhancement).
+type SayItem = {
+  anchorRef: RFRef;
+  caption: string;
+  audioUrl: string | null;
+  status: "playing" | "blocked" | "done" | "expired";
+};
+
+// A say box's anchor node, re-resolved from the CURRENT graph (flat ids renumber on a live-reload
+// rebuild); null (box hidden) when the ref no longer resolves.
+function sayAnchorIdFor(
+  graph: RFGraph,
+  anchorRef: RFRef,
+  representativeFor: (node: RFNode) => string,
+): string | null {
+  const flatId = flatIdForRef(graph, anchorRef);
+  const node = flatId ? graph.nodes.find((candidate) => candidate.id === flatId) : undefined;
+  return node ? representativeFor(node) : null;
+}
 
 // The pflow ">>" chevrons before the run callout's "RUN" title (its leading mark).
 const RUN_CHEVRONS = (
@@ -134,6 +157,16 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // Whether THIS page load was a `?run=` deep-link (immutable). The run callout then frames the initial
   // camera on its anchor, so the camera hook skips the competing one-shot whole-graph fit.
   const runDeepLinkRef = useRef(Boolean(new URLSearchParams(window.location.search).get("run")));
+  // Task 174 follow-up: the agent's say captions — PERSISTENT per-target annotations. One box per
+  // anchor, keyed by refKey of the STRUCTURAL ref (never the resolved flat id: flat ids are
+  // positional and renumber on an auto-update rebuild, so each box's anchor is re-resolved from
+  // `graph` every render — sayAnchorIdFor; a vanished ref hides that box). A new say to an anchored
+  // target replaces just that box; different targets coexist; the user closes each (or the agent's
+  // `clear` closes all). Playback status is per box; ONE clip plays at a time — `currentClipRef`
+  // holds it plus the box `key` it belongs to, so a per-box close can tell whether it owns the
+  // live clip (and so every stop path frees the server's pacing rendezvous — see stopCurrentClip).
+  const [sayCallouts, setSayCallouts] = useState<Map<string, SayItem>>(() => new Map());
+  const currentClipRef = useRef<{ key: string; url: string; audio: HTMLAudioElement } | null>(null);
   // Hover marks a SET of canvas subjects — a panel chip marks its one resolved
   // node, a canvas row marks its edges + their far ends. Pure highlight, no
   // focus / expansion / camera change (user decision 2026-06-11). Own context
@@ -620,6 +653,109 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     },
     [graph, ioOwnership],
   );
+
+  const setSayStatus = useCallback((key: string, status: SayItem["status"]) => {
+    setSayCallouts((prev) => {
+      const item = prev.get(key);
+      if (!item || item.status === status) return prev;
+      const next = new Map(prev);
+      next.set(key, { ...item, status });
+      return next;
+    });
+  }, []);
+  // The mirror of startClip: stop the one current clip and tell the server it ended. Every stop
+  // path — an interrupt, a per-box close, the `clear` verb, unmount — funnels through here so the
+  // `ended` beacon is never forgotten and the server's pacing rendezvous is freed (else the next
+  // `--say` waits out audio that already stopped). Safe to over-call: the server ignores an `ended`
+  // whose audio_id is no longer the current clip, so this never races a newer say. A detached Audio
+  // is not DOM — React unmount won't stop it, hence the explicit pause.
+  const stopCurrentClip = useCallback(() => {
+    const current = currentClipRef.current;
+    currentClipRef.current = null;
+    if (!current) return;
+    current.audio.pause();
+    reportNarration(current.url, "ended");
+  }, []);
+  // ONE function starts every clip — the first play AND a replay — so the interruption sweep and
+  // the currency guards live in exactly one place. `failStatus` is the only difference between the
+  // two gestures: an initial play() rejection is the autoplay policy ("blocked" → unlock button);
+  // a user-gesture replay can't be policy-blocked, so its rejection means the clip is gone from
+  // the server's LRU ("expired" → button gone, caption stays).
+  const startClip = useCallback(
+    (key: string, url: string | null, failStatus: "blocked" | "expired") => {
+      stopCurrentClip(); // interrupt: pause + `ended` the prior clip (server ignores it once stale)
+      setSayCallouts((prev) => {
+        const next = new Map(prev);
+        // Any OTHER box that was playing is now finished — interrupted means replayable, not lost.
+        for (const [k, item] of next) {
+          if (k !== key && item.status === "playing") next.set(k, { ...item, status: "done" });
+        }
+        // This box's status is owned here, not by the caller: a caption-only box is immediately
+        // "done" (a persistent caption + close button — nothing to (re)play, no dead button).
+        const item = next.get(key);
+        if (item) next.set(key, { ...item, status: url ? "playing" : "done" });
+        return next;
+      });
+      if (!url) return;
+      const clip = new Audio(url);
+      currentClipRef.current = { key, url, audio: clip };
+      // CURRENCY GUARD (deep-review critical in v1): pause() rejects the PRIOR clip's still-pending
+      // play() with AbortError — as a microtask AFTER this new clip has started. Each callback
+      // checks the clip is still current, or a stale rejection would flip the NEW clip's box.
+      clip.onended = () => {
+        if (currentClipRef.current?.audio === clip) {
+          currentClipRef.current = null; // natural end: a later stopCurrentClip must not double-beacon
+          setSayStatus(key, "done");
+          reportNarration(url, "ended");
+        }
+      };
+      clip
+        .play()
+        .then(() => {
+          // Playback beacon: re-anchors the server's pacing rendezvous to REAL playback (the
+          // broadcast-time estimate can only guess when the clip starts).
+          if (currentClipRef.current?.audio === clip) reportNarration(url, "started");
+        })
+        .catch(() => {
+          if (currentClipRef.current?.audio === clip) {
+            setSayStatus(key, failStatus);
+            // Only an INITIAL play can be autoplay-blocked; a gesture replay's rejection means
+            // the clip is gone (expired), not a silent window. Keep currentClipRef pointing at the
+            // blocked clip so closing its box still frees the server's blocked flag (via stopCurrentClip).
+            if (failStatus === "blocked") reportNarration(url, "blocked");
+          }
+        });
+    },
+    [setSayStatus, stopCurrentClip],
+  );
+  const replaySay = useCallback((key: string, url: string) => startClip(key, url, "expired"), [startClip]);
+  // Close ONE box (the callout's ✕): if this box owns the live clip — playing, OR a blocked clip
+  // that never played — stop it and free the server (pacing + blocked flag) via stopCurrentClip.
+  // A stale box (a `done`/`blocked` box already superseded by a newer say) never owns the current
+  // clip, so closing it just removes the box and must not touch whatever is playing now.
+  const closeSay = useCallback(
+    (key: string) => {
+      if (currentClipRef.current?.key === key) stopCurrentClip();
+      setSayCallouts((prev) => {
+        if (!prev.has(key)) return prev;
+        const next = new Map(prev);
+        next.delete(key);
+        return next;
+      });
+    },
+    [stopCurrentClip],
+  );
+  // Close ALL boxes: the agent's `clear` verb (clearing the point clears its annotations — locked);
+  // a bare focus/frame deliberately does NOT dismiss (spec: captions persist until the user dismisses).
+  const dismissAllSays = useCallback(() => {
+    stopCurrentClip();
+    setSayCallouts(new Map());
+  }, [stopCurrentClip]);
+  // The clip is a detached Audio object, not DOM — React unmount doesn't stop it. Without this,
+  // leaving the graph mid-narration (Back to catalog, workflow switch) keeps the voice playing with
+  // no way to stop it (deep-review finding, 2026-07-04) AND strands the server's pacing rendezvous —
+  // stopCurrentClip both pauses and beacons `ended`. It is stable, so this fires only on unmount.
+  useEffect(() => () => stopCurrentClip(), [stopCurrentClip]);
   // Search-select behaves like CLICKING the node: REVEAL it (expand the collapsed
   // ancestor chain so a buried target becomes visible), then focus + SELECT +
   // camera its representative (a host → its group; a leaf → itself). Passing the
@@ -697,6 +833,25 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     clear: () => {
       setFocus(null);
       setSelectedId(null);
+      // Task 174 (locked): clearing the agent's point also clears its annotations — dismiss ALL
+      // say boxes and stop the clip. `selectRun` and a bare focus/frame leave the boxes alone.
+      dismissAllSays();
+    },
+    // Task 174: anchor a persistent caption box + play the clip. Camera/selection ride the stamped
+    // point message that PRECEDES this on the same SSE queue — say does neither. An edge target
+    // anchors at its target-side endpoint; a stale ref drops silently (applyPoint's behavior for
+    // stale Viewers). A say to an already-annotated target replaces just that box.
+    say: (target, caption, audioUrl) => {
+      if (!graph) return;
+      const anchorRef = target.kind === "node" ? target.ref : target.target;
+      if (!flatIdForRef(graph, anchorRef)) return;
+      const key = refKey(anchorRef);
+      setSayCallouts((prev) => {
+        const next = new Map(prev);
+        next.set(key, { anchorRef, caption, audioUrl, status: audioUrl ? "playing" : "done" });
+        return next;
+      });
+      startClip(key, audioUrl, "blocked");
     },
     // Task 175: the agent's select-run verb switches this open Viewer to a run — reuses the SAME selectRun
     // the RunSelector pin / launch use (its `if (next === runId) return` guard makes a re-pick a no-op; a
@@ -719,6 +874,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       frame: (target) => pointHandlers.current?.frame(target),
       clear: () => pointHandlers.current?.clear(),
       selectRun: (runId) => pointHandlers.current?.selectRun(runId),
+      say: (target, caption, audioUrl) => pointHandlers.current?.say?.(target, caption, audioUrl),
       // Task 173 live overlay. setState identities are stable + refKey is pure, so these never
       // re-subscribe. The status map is keyed by structural ref-key (survives a flat-id renumber).
       runSnapshot: (events, run, stopped, stale) => {
@@ -981,6 +1137,59 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
                 />
               </NodeCallout>
             )}
+            {/* Task 174: the agent's say bubbles — caption always, voice when it can. One PERSISTENT
+                box per anchored target; each coexists with the others and with the run callout (say
+                renders after, so it stacks on top when both anchor the same node — accepted; every
+                box has a close button). frameOnMount={false}: each say's point message already framed
+                the camera. Buttons: blocked → unlock ("▶", the gesture satisfies the autoplay policy);
+                done → "↻ Replay"; both are the same start-this-clip gesture (startClip). */}
+            {graph &&
+              [...sayCallouts].map(([key, item]) => {
+                const anchorId = sayAnchorIdFor(graph, item.anchorRef, representativeFor);
+                if (!anchorId) return null; // vanished node → hide that box (ref may resolve again)
+                const url = item.audioUrl;
+                return (
+                  <NodeCallout
+                    key={key}
+                    anchorId={anchorId}
+                    direction={direction}
+                    title="Agent"
+                    frameOnMount={false}
+                    className={item.status === "playing" ? "say-playing" : undefined}
+                    onClose={() => closeSay(key)}
+                  >
+                    <p className="say-caption">{item.caption}</p>
+                    {/* ONE fixed-height affordance slot for the whole life of an audio box (a
+                        caption-only box has no url → no slot, so it never had one to jump). The row
+                        swaps content by status — playing indicator / ▶ unlock / ↻ replay / expired —
+                        but its box-model is constant, so the box never resizes on play/stop. */}
+                    {url &&
+                      (item.status === "playing" ? (
+                        <span className="say-affordance say-playing-indicator" aria-label="Playing narration">
+                          <span className="say-eq" aria-hidden="true">
+                            <i />
+                            <i />
+                            <i />
+                            <i />
+                          </span>
+                          playing
+                        </span>
+                      ) : item.status === "blocked" ? (
+                        <button className="say-affordance say-unlock" onClick={() => replaySay(key, url)}>
+                          ▶ Play narration
+                        </button>
+                      ) : item.status === "done" ? (
+                        <button className="say-affordance say-replay" onClick={() => replaySay(key, url)}>
+                          ↻ Replay
+                        </button>
+                      ) : (
+                        <span className="say-affordance say-expired" aria-label="Narration clip expired">
+                          clip expired
+                        </span>
+                      ))}
+                  </NodeCallout>
+                );
+              })}
           </ReactFlow>
           </div>
           {(rightPanelOpen || (runPanelOpen && graph)) && (
