@@ -186,6 +186,14 @@ High-level flow (single request — see Design Decisions for why not two):
   no run-event schema — Task 133/173 boundary).
 - On a `say` message: focus the target (existing `applyPoint` path), render the caption text near
   the target, play the audio. The caption persists and has a close/dismiss control.
+  **Reuse `NodeCallout` for the caption (verified 2026-07-04) — do NOT build node-relative
+  positioning fresh.** `web/src/components/NodeCallout.tsx` is a content-agnostic node-anchored box
+  primitive built by Task 175 with THIS task named as a co-target in its header ("Task 174's agent
+  'say' bubble reuses the same shell"). It owns anchoring/framing/chrome; pass the bracket-stripped
+  text as `children` + a `title`/`onClose`. Sole current usage wraps `RunProgress`
+  (`GraphView.tsx:956-983`). Wiring trap: a `say` callout and the run callout can coexist and both
+  fire the one-shot `setCenter` — reconcile the camera framing at the GraphView level (not by
+  editing `NodeCallout`).
 - A one-time **autoplay unlock** affordance handles the browser autoplay policy (audio is blocked
   before a user gesture) so the first clip in a freshly opened window isn't silently dropped.
 - Caption shows the bracket-stripped text (stripping may be done at the source before broadcast;
@@ -231,8 +239,12 @@ High-level flow (single request — see Design Decisions for why not two):
 - `src/pflow/core/llm_client.py` — completion-only today (no TTS). Add a new `synthesize()` here or
   in a sibling module; do NOT try to reuse `complete()`.
 - `web/src/api/events.ts` — learns the `say` envelope type.
-- `web/src/views/GraphView.tsx` — `applyPoint` gains caption render + close button + WAV playback +
-  autoplay unlock.
+- `web/src/components/NodeCallout.tsx` — the reusable node-anchored box the caption rides (built
+  Task 175, co-targeted at 174). `web/src/components/RunProgress.tsx` — the execution-specific
+  child that models what the `say` text-body replaces.
+- `web/src/views/GraphView.tsx` — `applyPoint` gains a `say`-callout state pair + WAV playback +
+  autoplay unlock (render a second `NodeCallout` with a text body; caption positioning is reused,
+  not rebuilt — see Frontend note re: the coexisting-callout camera-framing trap).
 
 ## Verification
 

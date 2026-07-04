@@ -92,10 +92,16 @@ debt cluster that must be *seen* even when it's deliberately deferred.
 uv run pflow git-worktree-task-creator \
   task_description='<Task N — title | #NNN — title>' \
   work_type=task|issue \
-  copy_folder=scratchpads/<subject>
+  copy_folder=scratchpads/<subject> \
+  model=<model>
 ```
 (`work_type=issue` for GitHub issues — prevents task scaffolding. Create worktrees sequentially,
-not in one parallel shot. Verify the brief landed in the worktree after.)
+not in one parallel shot. Verify the brief landed in the worktree after. Prefer `/worktree-pflow`.)
+**Worktree-builder model is a SEPARATE choice from the §3 research-subagent rule** (user-clarified
+2026-07-03): the "never override to fable" rule governs the orchestrator's *research/search
+subagents*; the *worktree builder* is a different, more important role — **`model=fable` is
+best-in-class there and the user's preference for judgement-heavy builds/plan design**. Don't
+mis-flag a `fable` build request as contradicting §3; they're different roles.
 
 **Collision analysis before parallelizing — two dimensions, both verified, never assumed:**
 1. **File surfaces**: grep what each piece of work actually touches; disjoint trees → parallel-safe.

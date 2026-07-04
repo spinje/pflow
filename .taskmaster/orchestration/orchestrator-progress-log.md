@@ -8,9 +8,31 @@ entry first). Every claim here is a pointer — verify against git/gh/`./scripts
 
 **Current arc: resume/HITL — build order 125 ✅ → 164 (next) → 171 → 176 (→ 174).**
 
-**Next action: create the Task 164 worktree** (resume-from-failed-node) — all prep done, awaiting
-user go. 125 shipped clean (#554); the checkpoint→restore→continue substrate is now 164's to build.
-Launch-ready inputs (all on `main`, uncommitted where noted):
+**IN FLIGHT: Task 164 building** in worktree `feat-resume-failed-node`
+(`/Users/andfal/projects/pflow-worktrees/feat-resume-failed-node`, branch `feat/resume-failed-node`,
+launched on **fable** 2026-07-03). Brief + braindump verified present in the tree. **164 is the sole
+engine toucher — keep it that way** (no parallel `runtime/engine/` work; #546 held, Task 170 must not
+start alongside). On merge: verify the merged reality personally, close **#255**, write the
+`pflow guide` resume topic if not done, and reconcile CLAUDE.md roadmap (164 → ✅, unblocks 171).
+
+**PARALLEL LANE: Task 174** (Agent Voice Narration / "Point & Say") — prepped + launching on **fable**
+alongside 164. **Collision-verified disjoint** (file-level map): 174 owns the UI channel + TTS
+(`cli/commands/ui.py`, `ui/server.py`, `core/llm_client.py`, `web/events.ts`+`GraphView.tsx`); it
+never touches the engine or the trace format, so the "serialize engine work" rule doesn't bind it.
+One conditional overlap held closed by brief guard: **neither 174 nor 164 implements the ADR-0010
+`resumed_from` run-list UI** (that's Task 173 overlay's). Prep this session: verified the Gemini TTS
+model (`gemini-3.1-flash-tts-preview`) is current + PCM16/24k matches spec (request shape bifurcated
+→ builder pins at impl time); found the caption's home — **`web/src/components/NodeCallout.tsx`**, a
+content-agnostic node-anchored box Task 175 built with 174 as a named co-target (reuse note folded
+into task-174.md + brief; shrinks 174's frontend). No decision session/braindump/ADR needed (spec
+complete). Brief: `scratchpads/task-174-voice-narration/BRIEF.md`.
+
+**Next action after 164 merges: Task 171** (durable resume tokens / non-TTY gates) — second consumer
+of 164's substrate; `pflow resume` subcommand extends to token addressing; `paused` becomes the 2nd
+terminal status alongside `failed`. ADR-0010 already covers its lineage model.
+
+**Prep record for 164 (all committed `0ffd9266`; build launched after):** 125 shipped clean (#554);
+the checkpoint→restore→continue substrate is 164's to build. Launch-ready inputs were:
 - **Spec re-audited 2026-07-03** against `1d9c6b2c` (3 parallel opus audits: engine/trace/planner).
   Substrate structurally intact post-125 + post-#557; `task-164.md` banner + run-query section
   updated (the "five consumers" claim was wrong — corrected to 3 independent + 1 delegating).
@@ -71,6 +93,34 @@ prune so nobody builds on it.
   implementation time.
 
 ## Log (append-only, newest first)
+
+### 2026-07-04 — Task 174 parallel-lane prep + launch
+User asked whether 174 could run parallel to the in-flight 164. Ran the two-dimension collision
+analysis (file-surface map + semantic): **disjoint** — 174 is UI-channel/TTS, never touches engine
+or trace format; only conditional overlap (`ui/server.py` run-list) is out of both tasks' committed
+scope (ADR-0010 → Task 173). Verified the one load-bearing external assumption (Gemini TTS model
+current; request shape drifted → builder-pins). User flagged a reuse opportunity ("boxes beside
+nodes"); verified → `NodeCallout` (Task 175, 174 named co-target) — folded reuse note into spec +
+brief, shrinking 174's frontend. Right-sized prep: thin brief only, NO decision session / braindump
+/ pre-written ADR (spec complete; flagged a ship-time ADR for the LiteLLM-TTS-bypass). Launched 174
+on fable in parallel. **Left off: 164 + 174 both building; #546 held; #541 verify+close pending;
+`feat-unified-node-storage` prune candidate.**
+
+### 2026-07-03 — Task 164 decision session + launch
+Ran the 164-start sitting. Re-audited the spec against `1d9c6b2c` (3 parallel opus audits) — substrate
+intact post-125/#557; corrected the run-query "five consumers" claim (→ 3 independent + 1 delegating,
+`report.py` had been missed). Locked all 5 decisions as a DECIDED ledger; two shifted at the table:
+**#3 incomplete-trace resume flipped from rec-NO to preferred-IN** (complexity assessed at plan time —
+a real scope expansion, surface-then-decide), and **#4 non-TTY side-effecting-K = hard error, not a
+prompt** (owner correction: agents can't answer y/n → error telling them to confirm with their user +
+re-run `--force`; mirrors 125's `GateNotInteractiveError`). A verification killed the heavyweight #5
+option: binary round-trips losslessly (base64-before-store), so the dedicated snapshot store is
+declined — fidelity guard is a narrow backstop only. Wrote **ADR-0010**, brief + braindump. Committed
+`0ffd9266`, then launched the worktree on **fable**. **Model-rule clarification from the owner:** the
+"never fable" rule governs the orchestrator's *research subagents*; the *worktree builder* is a
+different, more important role where **fable is best-in-class and preferred** (folded into kickoff §5).
+**Left off: 164 building; #546 still held; #541 still needs verify+close; `feat-unified-node-storage`
+worktree still a prune candidate.**
 
 ### 2026-07-03 — boot: reconciled state after 125 shipped
 Boot verification found `## Now` stale on two counts. (1) **Task 125 shipped clean** (#554, merged
