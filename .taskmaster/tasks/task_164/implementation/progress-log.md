@@ -1161,3 +1161,19 @@ spec-primed eyes — "K" was invisible to a reviewer who had just read the task 
 lint of guide prose should grep for single-letter shorthand explicitly.
 
 Verification: `make test` 8489 passed, `make check` green.
+
+## 2026-07-04 — TASK CLOSED: review written, PR created
+
+- Task review written: `.taskmaster/tasks/task_164/task-review.md` (the distilled forward
+  reference — invariants, actual-vs-planned, gotchas, integration points, the tests that matter).
+  Spec `## Status` → done, `## Completed` 2026-07-04.
+- Review-fixes batch committed as `717fe445` (entry rule / seed fidelity / incomplete tails /
+  agent UX); branch pushed.
+- Retroactive problem-statement issue (project convention, #504 precedent): **GH #558**.
+- **PR #559**: https://github.com/spinje/pflow/pull/559 — fixes #558 + #255. 43 files,
+  +6632/−116, 6 commits. Verified on the exact pushed tree: `make test` 8489 passed / 0 failed,
+  `make check` green.
+- Still outstanding for the human reviewer (also listed in the PR + task-review): the four
+  sign-off items (seed fidelity reaching `--only` degraded snapshots; Decision 6/7/9 letter
+  refinements; JSON failure-doc fields; zero-event traces now `failed`) and the manual browser
+  check (`make ui-build` + `pflow ui` over a resumed run).
