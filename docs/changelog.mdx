@@ -121,6 +121,8 @@ rss: true
     ### MCP Result Access
     MCP nodes no longer copy top-level result fields into `${node.field}` or create a `{server}_{tool}_result` alias. Access tool output through the canonical `${node.result.field}` path instead.
   </Accordion>
+
+  [View the full v0.14.0 changelog with PR references on GitHub →](https://github.com/spinje/pflow/blob/main/CHANGELOG.md#v0140-2026-07-03)
 </Update>
 
 <Update label="May 2026" description="v0.13.0" tags={["New releases", "Improvements", "Breaking changes"]}>
@@ -261,6 +263,8 @@ rss: true
     ### Caching flag behavior
     The `--no-cache` CLI flag now only bypasses local pflow memoization reads. It does not disable LLM provider-level prompt caching.
   </Accordion>
+
+  [View the full v0.13.0 changelog with PR references on GitHub →](https://github.com/spinje/pflow/blob/main/CHANGELOG.md#v0130-2026-05-26)
 </Update>
 
 <Update label="April 2026" description="v0.12.0" tags={["New releases", "Improvements", "Breaking changes"]}>
@@ -371,6 +375,8 @@ rss: true
     ### Batch result filtering
     When `error_handling: continue` is used, the `results` list in the batch output no longer contains `None` or error objects for failed items; it only contains successful results.
   </Accordion>
+
+  [View the full v0.12.0 changelog with PR references on GitHub →](https://github.com/spinje/pflow/blob/main/CHANGELOG.md#v0120-2026-04-22)
 </Update>
 
 <Update label="April 2026" description="v0.11.0" tags={["New releases", "Improvements", "Breaking changes"]}>
@@ -504,6 +510,8 @@ rss: true
     ### Trace format and LLM calls
     The parallel `__llm_calls__` accumulator was removed. Trace events are now the single source of truth for LLM costs. Trace format has been bumped to 2.0.0, removing all value truncation and replacing full-store snapshots (`shared_before`/`shared_after`) with focused per-node parameters.
   </Accordion>
+
+  [View the full v0.11.0 changelog with PR references on GitHub →](https://github.com/spinje/pflow/blob/main/CHANGELOG.md#v0110-2026-04-05)
 </Update>
 
 <Update label="March 2026" description="v0.10.0" tags={["New releases", "Improvements", "Bug fixes", "Breaking changes"]}>
@@ -620,6 +628,8 @@ rss: true
     ### Removed registry run timeout flag
     The `--timeout` flag on the `pflow registry run` command has been removed as it was redundant. Timeouts can be passed directly as a per-node parameter (e.g., `timeout=30`).
   </Accordion>
+
+  [View the full v0.10.0 changelog with PR references on GitHub →](https://github.com/spinje/pflow/blob/main/CHANGELOG.md#v0100-2026-03-17)
 </Update>
 
 <Update label="March 2026" description="v0.9.0" tags={["New releases", "Improvements", "Bug fixes", "Breaking changes"]}>
@@ -728,6 +738,8 @@ rss: true
     ### Python code node results
     The `result` output variable is now optional in Python code nodes as long as `next` is declared.
   </Accordion>
+
+  [View the full v0.9.0 changelog with PR references on GitHub →](https://github.com/spinje/pflow/blob/main/CHANGELOG.md#v090-2026-03-14)
 </Update>
 
 <Update label="February 2026" description="v0.8.0" tags={["New releases", "Improvements", "Bug fixes"]}>
@@ -797,6 +809,8 @@ rss: true
     pipx install pflow-cli
     ```
   </Accordion>
+
+  [View the full v0.8.0 changelog with PR references on GitHub →](https://github.com/spinje/pflow/blob/main/CHANGELOG.md#v080-2026-02-10)
 </Update>
 
 <Update label="February 2026" description="v0.7.0" tags={["New releases", "Breaking changes"]}>
@@ -914,6 +928,8 @@ rss: true
       description from the Markdown content (text after the H1 header).
     - Metadata is now stored in YAML frontmatter rather than a `rich_metadata` wrapper.
   </Accordion>
+
+  [View the full v0.7.0 changelog with PR references on GitHub →](https://github.com/spinje/pflow/blob/main/CHANGELOG.md#v070-2026-02-04)
 </Update>
 
 <Update label="January 2026" description="v0.5.0" tags={["New releases", "Improvements"]}>
