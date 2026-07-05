@@ -6,12 +6,14 @@
 
 ## Metadata
 
-- Implemented 2026-07-04 → 2026-07-05, branch `feat/durable-resume-tokens` (not merged).
-- Commits: `a8066f15` (Phase 0, loader extraction), `cf60b197` (Phase 1, producer),
-  `8125454a` (Phase 2, loader answer arm). Phase 3 (CLI) + the inline producer refusal were
-  implemented and gated.
+- Implemented 2026-07-04 → 2026-07-05, branch `feat/durable-resume-tokens` (not merged, unpushed).
+- Commits (9): `a8066f15` (P0 loader extraction), `cf60b197` (P1 producer), `8125454a`
+  (P2 loader answer arm), `ddb078e5` (P3 CLI — carries the inline producer refusal),
+  `3db03f0e`+`fde74150` (P4 UI), `6ba7b7cd` (P5 docs + task close), `7713f138` (deep-review
+  fixes — the `is_durable_pause` durability home + the `--only` producer conjunct),
+  `c1440930` (agent-UX wording on 3 surfaces).
 - Follow-up filed: **#562** (make inline workflows resumable — workflow content in the trace).
-- Gates at draft time: `make check` green, `make test` 8657 passed, `make test-e2e` 44 passed.
+- Gates (final, whole branch): `make check` green, `make test` **8662 passed**, `make test-e2e` 44.
 
 ## Read First — the load-bearing block
 
@@ -36,8 +38,9 @@ state file, no second serializer.
 **Invariants that must NOT break:**
 - **Pause is a promise.** Every `paused` stamp must yield a token the resume path accepts. The
   producer mirrors the resume-side refusals conjunct-for-conjunct: nested/batch gates,
-  loop/`code`/terminal escalations, `--no-trace`, and inline (`ir-hash:`/`None` workflow_path)
-  runs all stay `failed`. Breaking the mirror strands humans with dead tokens.
+  loop/`code`/terminal escalations, `--no-trace`, `--only` (its snapshot trace is excluded from
+  every resume consumer), and inline (`ir-hash:`/`None` workflow_path) runs all stay `failed`.
+  Breaking the mirror strands humans with dead tokens.
 - **One consumption policy.** `_find_consuming_attempt` (backed by `_attempt_consumed_work`)
   serves the loader's superseded check, by-name selection, AND `resume list`. A fork here means
   "list says answerable, resume says superseded" — or a chain that forks (two answerable tokens
@@ -84,6 +87,34 @@ the reason it beat the plan:
 Phase 3e (`resume list`) was implemented by a full-context fork subagent against a frozen
 interface; its diff was reviewed line-by-line by the primary implementer.
 
+**Post-review hardening** (deep review — 6 agents — then adversarial manual E2E; commits
+`7713f138`, `c1440930`). No Critical findings; the confirmed issues were pause-promise holes on
+secondary surfaces. What a future agent must know:
+
+- **`ExecutionResult.is_durable_pause` (`execution/result.py`) is THE durability home.** A gate can
+  stamp `paused` in memory (`gate_outcome == "paused"`) while the streamed trace dies mid-run
+  (full/read-only `~/.pflow/debug` → `_stream_failed`, no `run.complete` trailer) — the token would
+  never resolve. Both the CLI paused branch AND the MCP paused branch now gate on this ONE property
+  (`status is PAUSED ∧ trace ∧ not _stream_failed`). The CLI's old `_durable_pause` helper was
+  deleted; MCP previously checked a bare `status is PAUSED` and handed out a dead token on a disk
+  fault. A non-durable pause falls through to the failure/remediation path. `--no-trace` never
+  reaches here (the runner's `trace_enabled` conjunct maps it to FAILED first).
+- **`--only` is the sixth producer conjunct** (`only_node is None`, in the engine arm). An `--only`
+  gate used to stamp `paused` and print a token no resume consumer can resolve (all exclude
+  `only_node` traces). `--only` is now named in `GateNotInteractiveError`'s remediation. Pinned by
+  `test_gate_pause.py::TestOnlyPausePromise`.
+- **`masked_gate_dict` (`core/gate.py`) is the dict-form gate-masking home.** The mask-only policy
+  was mirrored 3 ways (paused JSON doc, `ResumeAnswerRequiredError.to_diagnostics`,
+  `exceptions._masked_gate_payload`); all now delegate. `_masked_gate_payload` is the object-form
+  twin (`request.to_dict()` → `masked_gate_dict`).
+- **Three agent-UX wording fixes (no correctness impact; pflow is agent-first, so emitted strings
+  must not misdirect).** (1) `--dry-run` + an answer flag no longer advertises the just-answered
+  gate — `format_plan_text(plan, answered_gate_ids=)` drops gates in `auto_approve ∪ gate_deny`
+  from the footer (general win: `--dry-run --auto-approve X` omits X too). (2) `--only <gated>`
+  pre-flight says "fail at", not "pause at" (verb keys on `trace AND only_node`, matching
+  `_gate_pausable`). (3) `ResumeStaleWorkflowError` reads "since the original run" (serves failed /
+  interrupted / paused alike), not "since the failed run".
+
 ## Patterns & Anti-Patterns
 
 **Patterns to propagate:**
@@ -92,9 +123,11 @@ interface; its diff was reviewed line-by-line by the primary implementer.
   gate RE-FIRES in the resume run and records an honest resolution line — trace stays truthful,
   zero new delivery paths. `--choose` needs no resolver at all: the loader folds the decision
   into the restored event and the engine's existing re-record loop persists it.
-- **One rule, one home, N consumers**: `option_labels`, `format_resume_answer_command`,
-  `format_gate_lines`, `_fold_decision_into_event`, `_find_consuming_attempt`. When two
-  surfaces must agree on a rule, extract the rule — don't mirror it.
+- **One rule, one home, N consumers**: `option_labels`, `masked_gate_dict`,
+  `format_resume_answer_command`, `format_gate_lines`, `_fold_decision_into_event`,
+  `_find_consuming_attempt`, `is_durable_pause`. When two surfaces must agree on a rule, extract
+  the rule — don't mirror it. (`masked_gate_dict` and `is_durable_pause` were extracted in the
+  deep-review round precisely because CLI and MCP had each mirrored the policy — see below.)
 - **Mutation-verify every subtle pin** (Edit + revert, never stash). Each ★ assertion in this
   task was proven to fail under its target mutation; several fail ALONE (see Tests).
 - **Registry injection for CLI-level custom test nodes**: `test_paused_cli.py::
@@ -116,9 +149,10 @@ interface; its diff was reviewed line-by-line by the primary implementer.
 
 ## Gotchas & Non-Obvious Coupling
 
-- **The engine gate arm is the highest-precision edit surface in the feature.** Conjunct order:
-  `isinstance GateNotInteractiveError → not parallel_batch → originating → not nested →
-  workflow_path real → _gate_pausable`. The isinstance guard short-circuits attribute access
+- **The engine gate arm is the highest-precision edit surface in the feature.** Conjunct order
+  (6, all AND-ed): `isinstance GateNotInteractiveError → not parallel_batch → originating →
+  not nested → only_node is None → workflow_path real (not ir-hash:/None) → _gate_pausable`.
+  The isinstance guard short-circuits attribute access
   for `GateDenied`/`GateResolverError`; `_gate_pausable`'s approval early-return keeps the arm
   safe at step 7.5 where `action` would otherwise be unbound (a pre-bound `action: Any = None`
   default exists for exactly this — Phase 1 found the plan's snippet crashed without it).
@@ -171,8 +205,13 @@ interface; its diff was reviewed line-by-line by the primary implementer.
 - **`resume_source.py` exports grew**: `PausedRun`, `list_paused_runs` (consumed by the `list`
   renderer); `ResumeSource` grew `paused_node_id`/`gate_request` (planner consumes the same
   object — parity by construction, pinned).
-- **The trace format is unchanged since 2.7.0** (Phase 1); Phases 2–3 added zero producer
-  changes beyond the inline conjunct.
+- **The trace format is unchanged since 2.7.0** (Phase 1). The only producer-logic changes after
+  Phase 1 were two pause-promise conjuncts — inline `ir-hash:`/None (`ddb078e5`) and `--only`
+  (`7713f138`) — both keeping a non-resumable run `failed`; neither touches the format.
+- **`ExecutionResult.is_durable_pause`** (`execution/result.py`) is a new cross-surface contract:
+  the CLI paused branch (`run.py::_display_execution_result`) and the MCP paused branch
+  (`execution_service.py::execute_workflow`) both consume it. A third paused surface (e.g. the
+  Task-176 web bridge) must gate on it too, never on a bare `status is PAUSED`.
 - **Depends on (unchanged 164/125 machinery)**: `seed_walk_entry`, `_seedable_final_events`,
   re-record loop, `_apply_gate_resolutions`, hash gate, `run_approval_gate`/17.7 escalation
   seam — all consumed, none modified.
@@ -200,6 +239,10 @@ were proven by Edit+revert:
   branch is dropped.
 - `test_gate_pause.py::TestInlinePausePromise` (both) — fail exactly when the inline conjuncts
   are removed; they FLIP when #562 lands.
+- `test_gate_pause.py::TestOnlyPausePromise` — fails when the `--only` conjunct is dropped (the
+  deep-review producer fix); also pins that the remediation names `--only`.
+- `test_execution_workflow.py::...test_stream_faulted_pause_raises_not_a_dead_token` — the MCP
+  `is_durable_pause` pin: dropping the `_stream_failed` conjunct returns a dead token instead.
 - Keystones (real producer traces, not synthetic):
   `test_resume_engine.py::test_non_interactive_gate_pause_loads_with_answer_and_resumes_e2e`
   (approval, full WorkflowRunner), `test_gate_pause.py::test_paused_escalation_real_trace_
@@ -266,7 +309,7 @@ and driven by the `/release` process; the feature is unreleased on this branch. 
 retention comment was skipped (its substance is already on the issue).
 
 ---
-*Distilled from the implementation context of Task 171 (Phases 0–3). The chronological journey —
+*Distilled from the implementation context of Task 171 (Phases 0–5 + post-review hardening). The chronological journey —
 decision provenance, mutation transcripts, delegation record — lives in
 `implementation/progress-log.md`; the build contract in `implementation/implementation-plan.md`;
 the planning tacit knowledge in `starting-context/braindump-2026-07-05-planning-session.md`.*
