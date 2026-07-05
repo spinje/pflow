@@ -29,7 +29,7 @@ from pflow.core.exceptions import (
 
 if TYPE_CHECKING:
     from pflow.execution.result import ResolvedWorkflow
-    from pflow.runtime.workflow_trace import ResumeSource
+    from pflow.runtime.resume_source import ResumeSource
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ def _load_source_and_workflow(target: str) -> tuple[ResumeSource, ResolvedWorkfl
     """Disambiguate TARGET (existence-based) into (source, resolved_workflow) — §E step 2."""
     from pflow.execution.runner import workflow_path_id
     from pflow.execution.workflow_resolver import resolve_workflow
-    from pflow.runtime.workflow_trace import load_resume_source
+    from pflow.runtime.resume_source import load_resume_source
 
     if _UUID_RE.match(target):
         try:

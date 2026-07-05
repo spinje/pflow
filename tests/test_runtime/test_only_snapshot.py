@@ -27,11 +27,11 @@ from pflow.execution.result import RunnerConfig, WorkflowStatus
 from pflow.execution.runner import WorkflowRunner
 from pflow.runtime.engine.engine import WorkflowEngine
 from pflow.runtime.engine.types import CompiledWorkflow, LoopConfig, NodeConfig, TemplateConfig
+from pflow.runtime.resume_source import seed_snapshot_into_shared
 from pflow.runtime.workflow_trace import (
     format_trace_filename,
     load_full_run_events,
     load_snapshot_or_raise,
-    seed_snapshot_into_shared,
 )
 from tests.shared.markdown_utils import write_workflow_file
 from tests.shared.trace_jsonl import write_trace_jsonl
@@ -561,7 +561,7 @@ def test_only_coalesce_silently_uses_snapshot_branch(tmp_path: Path) -> None:
 def test_only_does_not_seed_a_recovered_failure_upstream(tmp_path: Path) -> None:
     """Seed fidelity on the ``--only`` surface (review fix 2026-07-04).
 
-    ``seed_snapshot_into_shared`` (workflow_trace.py) excludes failed-final-status
+    ``seed_snapshot_into_shared`` (resume_source.py) excludes failed-final-status
     nodes from the seed — their real data lived in ``__failures__``, never the store.
     That filter is a SHARED seam: both resume and ``--only`` reconstruct the store
     through it. This test pins the ``--only`` consumer so a future "this exclusion is

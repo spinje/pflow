@@ -33,12 +33,12 @@ from pflow.core.exceptions import (
     ResumeStillRunningError,
     ResumeSupersededError,
 )
-from pflow.runtime.workflow_trace import (
+from pflow.runtime.resume_source import (
     ResumeSource,
     _iter_raw_trace_lines,
-    format_trace_filename,
     load_resume_source,
 )
+from pflow.runtime.workflow_trace import format_trace_filename
 from tests.shared.trace_jsonl import flatten_trace_to_lines, write_trace_jsonl
 
 WF = "/work/project/wf.pflow.md"

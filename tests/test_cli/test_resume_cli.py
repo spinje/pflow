@@ -299,7 +299,7 @@ def test_stale_unverifiable_message_when_hash_absent(tmp_path):
     from pflow.cli.commands.resume import _check_content_hash
     from pflow.core.exceptions import ResumeStaleWorkflowError
     from pflow.execution.result import ResolvedWorkflow
-    from pflow.runtime.workflow_trace import ResumeSource
+    from pflow.runtime.resume_source import ResumeSource
 
     resolved = ResolvedWorkflow(
         ir={"nodes": [{"id": "a", "type": "shell", "params": {"command": "true"}}]}, source="file"
@@ -553,7 +553,7 @@ def _resolved(ir: dict) -> Any:
 
 
 def _between_source(last_completed: str) -> Any:
-    from pflow.runtime.workflow_trace import ResumeSource
+    from pflow.runtime.resume_source import ResumeSource
 
     return ResumeSource(
         path=Path("/x/t.json"),

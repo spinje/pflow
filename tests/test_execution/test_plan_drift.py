@@ -2560,7 +2560,7 @@ def test_engine_and_planner_resume_entry_state_match(tmp_path) -> None:
     the rest of the suite stays green.
     """
     from pflow.execution.plan import _build_plan_with_shared
-    from pflow.runtime.workflow_trace import load_resume_source
+    from pflow.runtime.resume_source import load_resume_source
 
     # `middle` fails unless mode=ok — a mode-gated failure gives a clean K=middle.
     ir = {

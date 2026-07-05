@@ -342,17 +342,23 @@ class MemoizationCache:
         try:
             conn = self._connect()
             try:
+                # `rowid DESC` is the deterministic tiebreak: `created_at` (wall clock,
+                # from time.time() at put) can TIE at coarse-clock resolution or even go
+                # BACKWARD across two writes (NTP step), leaving "newest" ambiguous — SQLite
+                # would then return an arbitrary row for the tie. rowid is the monotonic
+                # insertion counter, so the last-WRITTEN entry wins, which is what "latest"
+                # means here (the planner's historical cost/duration = the most recent run).
                 if workflow_path is not None:
                     cursor = conn.execute(
                         "SELECT cache_key, output, created_at FROM cache_entries "
                         "WHERE node_id = ? AND workflow_path = ? "
-                        "ORDER BY created_at DESC LIMIT 1",
+                        "ORDER BY created_at DESC, rowid DESC LIMIT 1",
                         (node_id, workflow_path),
                     )
                 else:
                     cursor = conn.execute(
                         "SELECT cache_key, output, created_at FROM cache_entries "
-                        "WHERE node_id = ? ORDER BY created_at DESC LIMIT 1",
+                        "WHERE node_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
                         (node_id,),
                     )
                 row = cursor.fetchone()

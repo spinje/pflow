@@ -204,15 +204,50 @@ def test_get_latest_for_node_returns_newest_entry(tmp_path):
     cache = MemoizationCache(db_path=db_path)
 
     cache.put("old-key", "node-a", "/wf.pflow.md", "default", {"version": 1})
-    time.sleep(0.01)
     cache.put("new-key", "node-a", "/wf.pflow.md", "default", {"version": 2})
+    # Pin recency deterministically instead of via the wall clock: two sub-10ms
+    # puts left ordering to time.time() resolution, which tied/inverted under load
+    # (-n 4) and returned the older row. Mirrors the explicit-created_at idiom the
+    # TTL tests use; offsets stay within the default 24h TTL so neither expires.
+    now = time.time()
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE cache_entries SET created_at = ? WHERE cache_key = ?", (now - 10, "old-key"))
+    conn.execute("UPDATE cache_entries SET created_at = ? WHERE cache_key = ?", (now - 5, "new-key"))
+    conn.commit()
+    conn.close()
 
     result = cache.get_latest_for_node("node-a")
 
     assert result is not None
     output, created_at = result
     assert output == {"version": 2}
-    assert isinstance(created_at, float)
+    assert created_at == now - 5
+
+
+def test_get_latest_for_node_breaks_created_at_ties_by_insertion_order(tmp_path):
+    """On an equal created_at, the most-recently-WRITTEN row wins (rowid tiebreak).
+
+    created_at is a wall-clock time.time() stamp taken at put(): two writes can tie
+    at coarse-clock resolution or even invert on an NTP step, so ordering by it alone
+    leaves "newest" ambiguous. get_latest must still return the last-inserted entry —
+    the planner's "most recent run" contract. Without the `rowid DESC` tiebreak this
+    returns the OLDER row (the index orders a created_at tie by rowid ASC).
+    """
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path)
+
+    cache.put("key-old", "node-a", "/wf.pflow.md", "default", {"version": 1})
+    cache.put("key-new", "node-a", "/wf.pflow.md", "default", {"version": 2})
+    # Force an exact created_at tie so ordering must fall through to the rowid tiebreak.
+    tie = time.time()
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("UPDATE cache_entries SET created_at = ? WHERE node_id = ?", (tie, "node-a"))
+    conn.commit()
+    conn.close()
+
+    # Both the node-only and workflow-scoped arms must return the newer insert.
+    assert cache.get_latest_for_node("node-a") == ({"version": 2}, tie)
+    assert cache.get_latest_for_node("node-a", workflow_path="/wf.pflow.md") == ({"version": 2}, tie)
 
 
 def test_get_latest_for_node_returns_two_tuple_unchanged(tmp_path):

@@ -33,7 +33,7 @@ from .result import ExecutionResult, Plan, ResolvedWorkflow, RunnerConfig, Valid
 from .workflow_resolver import resolve_workflow
 
 if TYPE_CHECKING:
-    from pflow.runtime.workflow_trace import ResumeSource
+    from pflow.runtime.resume_source import ResumeSource
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ class WorkflowRunner:
             workflow_manager: For metadata update on saved workflows. None = skip.
             workflow_name: Saved workflow name for metadata. None = skip.
             resume_source: Optional Task 164 resume source (built by
-                ``runtime.workflow_trace.load_resume_source``). Rides as a kwarg —
+                ``runtime.resume_source.load_resume_source``). Rides as a kwarg —
                 the Task 125 ``gate_resolver`` precedent; ``RunnerConfig`` stays
                 execution-config-only. The caller merges ``resume_source.inputs``
                 into ``params`` BEFORE calling; the runner threads the entry node,

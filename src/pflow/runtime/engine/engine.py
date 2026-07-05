@@ -568,7 +568,7 @@ def seed_walk_entry(
     and degraded advisories all stay caller-side — they differ per surface by
     design.
     """
-    from pflow.runtime.workflow_trace import seed_snapshot_into_shared
+    from pflow.runtime.resume_source import seed_snapshot_into_shared
 
     final = seed_snapshot_into_shared(shared, events, exclude=entry)
     return find_node_by_id(start_node, entry), final

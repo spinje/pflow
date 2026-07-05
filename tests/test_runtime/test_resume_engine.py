@@ -31,12 +31,12 @@ from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
 from pflow.execution.workflow_resolver import resolve_workflow
 from pflow.runtime.engine import WorkflowEngine
-from pflow.runtime.workflow_trace import (
+from pflow.runtime.resume_source import (
     ResumeSource,
-    WorkflowTraceCollector,
     load_resume_source,
     seed_snapshot_into_shared,
 )
+from pflow.runtime.workflow_trace import WorkflowTraceCollector
 from tests.shared.markdown_utils import write_workflow_file
 
 pytestmark = pytest.mark.trace_files
