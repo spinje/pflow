@@ -89,6 +89,37 @@ The failed run prints the exact command to use (`To resume from the failed step:
 
 The failed step runs again from the start, so if it already partly side-effected (an HTTP POST that sent but timed out on the response), resuming re-fires it — at-least-once execution. A side-effecting step (`shell`/`code`/`claude-code`/file-ops/`mcp`) asks for confirmation at a terminal and refuses for non-interactive agents unless you pass `--force`; an idempotent `llm` step resumes silently. See [`pflow guide resume`](/reference/cli/guide) for the full behavior (loop restart, gate re-prompting, top-level granularity, interrupted-run handling).
 
+## Answer a paused gate
+
+An [approval gate](/how-it-works/approval-gates) reached in a non-interactive run — a pipe, CI, an MCP call, a browser-launched run — doesn't fail and doesn't hang. The run **pauses**, saves its state to the trace, and exits with code **4** with a resume token on stdout:
+
+```
+Paused at 'notify-slack'. Resume token: 7a9e4afb-2095-447e-8043-0660438104f9 (exit 4)
+```
+
+The gate's content follows on stderr — an approval's resolved preview, or an escalation's question, options, and recommendation — so a calling process can compose the answer from the output alone. With `--output-format json`, the paused document carries `status: "paused"`, `execution_id`, `paused_node_id`, `gate_request`, and `resume_command`.
+
+Answer it later — hours or days on — and the run continues from the gated step without re-running anything upstream:
+
+```bash
+pflow resume 7a9e4afb-2095-447e-8043-0660438104f9 --approve yes        # run the gated step and continue
+pflow resume 7a9e4afb-2095-447e-8043-0660438104f9 --approve no         # deny cleanly (exit 3), no side effects
+pflow resume 7a9e4afb-2095-447e-8043-0660438104f9 --choose "per-env"   # answer an escalation (or --choose 2)
+pflow resume list                                                      # pending pauses waiting for an answer
+```
+
+| Option | Description |
+|--------|-------------|
+| `--approve yes\|no` | Answer an approval gate — run the gated step, or deny and end the run |
+| `--choose "<answer>"` | Answer an agent escalation — free text, or an option number from the question |
+| `resume list` | List pending unanswered pauses (token, workflow, gated step, gate kind, age) |
+
+Nothing upstream re-runs — completed steps are restored from the paused trace. An approval gate fires *before* its step, so an approved step runs for the first time (no confirmation prompt, no re-fired side effect); an answered escalation continues at the next step with the decision folded in, so the agent step is never re-paid. Answering consumes the token: the resumed attempt supersedes the paused run, and a second answer refuses and names the newer attempt. Resuming without an answer flag refuses and prints the pending question with the exact command. The edited-workflow refusal and `--force` apply the same as a failed resume.
+
+<Note>
+  Durable pause needs the trace. A gate under `--no-trace`, inside a parallel batch item, in a sub-workflow child, or in an inline/piped workflow (no file to reload) can't pause — it fails at the gate instead. Save the workflow to a file and run it by name or path so its gates can pause.
+</Note>
+
 ## Global options
 
 | Option | Description |

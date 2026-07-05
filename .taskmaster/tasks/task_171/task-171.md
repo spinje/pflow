@@ -25,7 +25,15 @@ checkpoint→restore→continue substrate Task 164 builds.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-07-05 (branch `feat/durable-resume-tokens`, commits `a8066f15`→`fde74150`). All five
+phases shipped: loader extraction, paused producer (exit 4 + token), loader answer arm,
+`pflow resume --approve/--choose` + `resume list`, UI chain/paused rendering, and docs.
+See `task-review.md` for the shipped surface and `implementation/progress-log.md` for the
+chronology. Follow-on: #562 (resumable inline workflows), Task 176 (web-UI approval bridge).
 
 ## Priority
 

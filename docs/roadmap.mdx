@@ -18,6 +18,7 @@ Where pflow is today (v0.14.0):
 - **Dry-run execution plans** — `--dry-run` previews cost, duration, and cache boundaries before execution
 - **Workflow visualization** — `pflow mermaid` generates Mermaid flowcharts of workflow topology, and `pflow ui` serves an interactive React Flow canvas with a live execution overlay and run-from-browser controls
 - **Human-in-the-loop approval gates** — pause a workflow before a step with `approval: required`, plus agent-raised escalations and a `--auto-approve` pre-approval flag
+- **Resume and durable gate pause** — `pflow resume` continues a failed, interrupted, or gate-paused run from where it stopped without re-running completed steps; a gate hit in a non-interactive run (CI, MCP, pipe, browser) pauses durably — exit 4 with a resume token — and resumes hours later with `--approve`/`--choose`, with `pflow resume list` showing pending pauses
 - **Stateful loops** — the `loop:` modifier runs a node repeatedly with `while:`/`until:` conditions and a `carry:` block to thread state across iterations
 - **Streamable traces** — execution traces stream to disk as JSONL for crash-tail resilience, with per-node retry/backoff via the `retry:` block
 - **Batch processing** — process arrays through nodes, sequential or parallel, with per-item parameter overrides and error handling modes
@@ -36,7 +37,7 @@ Where pflow is today (v0.14.0):
 
 ## <Icon icon="hammer" size={24} color="#f97316" /> Now
 
-**Resume workflows from a failed node** — when a long workflow fails partway through, pick up from the failed step instead of re-running everything from the top. Paired with durable resume tokens so approval gates can pause and resume across process restarts and non-interactive runs.
+**Approval gates in the browser** — answer a paused gate from the `pflow ui` canvas instead of the CLI, so human-in-the-loop review works without leaving the run view. Builds on the durable pause tokens above.
 
 ## <Icon icon="lightbulb" size={24} color="#f97316" /> Next
 

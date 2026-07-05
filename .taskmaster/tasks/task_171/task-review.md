@@ -1,8 +1,8 @@
 # Task 171 Review: Durable Resume Tokens & Non-TTY Gates
 
-> **DRAFT — covers Phases 0–3 + the inline-pause decision (2026-07-05).** Phases 4 (UI) and 5
-> (docs) are NOT done; the agent finishing them extends the marked section at the end and then
-> flips the task spec to done. Written by the Phase-2/3 implementer while the context was live.
+> **COMPLETE — all five phases shipped (2026-07-05).** Phases 0–3 + the inline-pause decision
+> were written by the Phase-2/3 implementer while context was live; the Phase 4 (UI) and Phase 5
+> (docs) sections at the end were filled by the finisher. Task spec status is `done`.
 
 ## Metadata
 
@@ -233,15 +233,37 @@ old server before verifying server-side changes.
 Gates: `make check` green; full `make test` **8658 passed, 0 failed** (+1, the new
 `/api/runs` lineage test); vitest 727 passed (+4), `tsc --noEmit` clean.
 
-## Pending — to be filled by the Phase 5 finisher
+## Phase 5 (docs) — shipped 2026-07-05
 
-- **Phase 5 (docs)**: the registration-sweep inventory of every `pflow resume` usage line
-  (guide/docs/CLAUDE.md) is in the progress log's Phase-3 entry. Record here: CLAUDE.md/ADR
-  deltas, the #542 retention comment, guide prose. Note: the `/api/runs` block in
-  `ui/CLAUDE.md` is already updated (Phase 4); the remaining status-vocab staleness
-  (`ui/run_tailer.py:110` docstring, `src/pflow/ui/CLAUDE.md` elsewhere) is still Phase 5's.
-- On completion: set the task spec `## Status` to done + `## Completed` date, tick CLAUDE.md's
-  roadmap if listed, and remove this section + the DRAFT banner.
+Two sessions. The first (committed in `fde74150`) did every doc the implementer could write
+first-hand, having run the real pause/approve/choose flows:
+- **Stale "MCP never streams" family, all sites**: `mcp_server/tools/execution_tools.py`
+  (Field description, Built-in behaviors, a new Paused arm in Returns matched to the real
+  `_format_paused_text`), `mcp_server/CLAUDE.md` (tool line + Agent-Optimized Defaults +
+  ADR-0008 misattribution correction), `execution/CLAUDE.md` (RunnerConfig finalize +
+  PAUSED/exit-4/render-shape note), `runtime/CLAUDE.md` (Task-172 bullets + a new 2.7.0
+  trace-format bullet), `runtime/engine/CLAUDE.md` (except-arm now denied/paused/failed + the
+  pause conjuncts), `runner.py:234` comment, `ui/run_tailer.py:110` docstring.
+- **CLI CLAUDE.mds**: `cli/CLAUDE.md` exit-code paragraph (exit 4 + ResumeGroup);
+  `cli/commands/CLAUDE.md` resume row (group routing, `--approve`/`--choose`, `resume list`,
+  fixed the stale `workflow_trace.load_resume_source` → `resume_source` pointer).
+- **ADR-0008**: "MCP runs stream too (Task 171)" note, aligning with its any-run-watchable intent.
+- **Guide prose**: `features/resume.md` (retitled + new "Answering a paused gate" section),
+  `features/approval.md` (durable-pause reality; the old "cannot hold a gate open" / "work is
+  discarded" claims removed), `entry.md` resume topic line. Rendering verified via real
+  `pflow guide resume|approval`.
+
+The second session (the deferred `docs/` Mintlify pages — 164 set the precedent that resume is
+user-documented there):
+- **`docs/reference/cli/index.mdx`**: new "Answer a paused gate" section (exit 4, token,
+  `--approve`/`--choose`/`resume list`, the nothing-re-runs/consumption/no-answer-refusal
+  behavior, and the non-pausable list — `--no-trace`/batch/child/inline).
+- **`docs/roadmap.mdx`**: durable resume moved from **Now** into **Current status** (shipped);
+  **Now** repointed to the web-UI approval bridge (Task 176), the natural follow-on.
+
+Deliberately **not** done: a `changelog.mdx` `<Update>` entry — the changelog is version-tied
+and driven by the `/release` process; the feature is unreleased on this branch. The #542
+retention comment was skipped (its substance is already on the issue).
 
 ---
 *Distilled from the implementation context of Task 171 (Phases 0–3). The chronological journey —

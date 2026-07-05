@@ -918,3 +918,51 @@ ran the real pause/approve/choose flows live, so behavior claims are first-hand)
   - `src/pflow/runtime/CLAUDE.md` — UPDATED (2.7.0 bullet + Task-172 bullet corrections).
   - `docs/reference/cli/index.mdx:72–90` ("Resume a failed run") — **PENDING, owner scope call**.
   - `docs/roadmap.mdx:39` ("durable resume tokens" listed as planned) — **PENDING, owner call**.
+
+## 2026-07-05 — Phase 5 finished + task closed (the two deferred docs + bookkeeping)
+
+Owner chose "write the docs/ Mintlify pages now" (over letting docs/ lag). Closes the last two
+deferred items and the close-out bookkeeping. Doc-only — no code, no test changes.
+
+**docs/ Mintlify (the deferred owner-scope items):**
+- `docs/reference/cli/index.mdx` — new **"Answer a paused gate"** section after "Resume a
+  failed run": the exit-4 token line, the stderr/JSON gate content, the three answer forms
+  (`--approve yes|no`, `--choose`, `resume list`) as runnable commands + an options table, the
+  nothing-re-runs / token-consumption / no-answer-refusal behavior, and a `<Note>` listing the
+  non-pausable positions (`--no-trace`, batch item, sub-workflow child, inline). Links
+  `/how-it-works/approval-gates`. Voice matches the surrounding failed-resume prose.
+- `docs/roadmap.mdx` — durable resume moved **Now → Current status** (a shipped bullet pairing
+  resume + durable gate pause); **Now** repointed to "Approval gates in the browser" (Task 176,
+  the documented follow-on). Per docs/CLAUDE.md's "update Current status when major features
+  ship."
+- Deliberately NOT touched: `changelog.mdx` — version-tied, driven by `/release`; unreleased on
+  this branch. #542 retention comment skipped (substance already on the issue).
+
+**Bookkeeping (task close):**
+- `task-171.md` `## Status` `not started` → **done** + a `## Completed` block (phase list,
+  commit span `a8066f15`→`fde74150`, #562 / Task 176 follow-ons).
+- `task-review.md` — DRAFT banner → COMPLETE; the "Pending" section replaced with the shipped
+  **Phase 5 (docs)** record (both sessions).
+- Root `CLAUDE.md` — Task 171 moved from Planned Features "Next?" into Recently Completed (✅);
+  "Next?" now leads with Task 176.
+
+**Gate:** doc/markdown-only; no code touched, so `make test` baseline (8658) is unaffected.
+Nothing committed (repo rule — awaiting owner go-ahead; suggested as its own "phase 5 / docs +
+close" commit).
+
+**Live doc-verification (docs/CLAUDE.md mandates runnable examples — drove the REAL CLI, not
+just tests):** `uv run pflow resume --help` matches the documented surface verbatim
+(`--approve yes|no`, `--choose "ANSWER"`, `list`, deny-exits-3, the reserved run/list names).
+Full round-trip on a real gated shell workflow (non-TTY via `</dev/null`; NOT an empty pipe —
+that trips stdin-routing):
+- Pause → **EXIT 4**, stdout `Paused at 'notify'. Resume token: <id> (exit 4)`; stderr carried
+  the `command:` gate preview + `To answer: pflow resume <id> --approve yes|no`.
+- `pflow resume list` → the documented `TOKEN  WORKFLOW  PAUSED AT  GATE  AGE` row (AGE `0s`,
+  GATE `approval`) + per-kind footer; empty state `No paused runs.` / `[]`.
+- `pflow resume <id> --approve yes` → **EXIT 0**, gated step ran once (`sending notification`);
+  `resume list` afterward empty (token consumed by the resumed attempt).
+Confirms the new `docs/reference/cli/index.mdx` "Answer a paused gate" section and the guide
+prose are accurate. Gotcha recorded for the next agent: `.pflow.md` shell nodes take the
+command via a ```command fence (```bash → "Unknown parameter 'bash'"); nodes live under
+`## Steps` with `- type:`/`- approval: required` attributes. Throwaway `gated` demo traces
+(+ two stale `gated-demo` ones from prior sessions) cleaned from `~/.pflow/debug`.
