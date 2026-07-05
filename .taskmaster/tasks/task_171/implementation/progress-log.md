@@ -86,6 +86,12 @@ disposition — the fixes themselves are specified in the plan, not here:
    listed at the end of the plan review summary (extraction fan-out, trailer round-trip,
    version gates, MCP test sweep, batch/only/nested/caching interactions).
 
+## 2026-07-05 — Orchestration map added to the plan (owner-approved)
+
+Owner discussed phase sizing / model tiers / agent-handoff seams; the agreed map is recorded in
+the plan ("Orchestration map" section, before Phase 0) — including the do-not-split rule for
+Phases 2+3 and the optional Phase-4 parallel lane.
+
 ## State at handoff
 
 - **Done**: planning complete; 5 decisions settled + recorded; plan deep-reviewed with fixes

@@ -65,6 +65,49 @@ sources (confirm-skip above) — do not reintroduce it.
 
 ---
 
+## Orchestration map — sizing, model tiers, and agent-handoff seams (owner-approved 2026-07-05)
+
+How to staff the phases if implementation is split across agents. Content of the phases lives
+below — this section only records the seams and the reasoning that isn't obvious from the
+phase text.
+
+| Phase | Diff size | Cognitive load | Model tier |
+|---|---|---|---|
+| 0 extraction | big (~600 moved) | low — mechanical | small/mid (or same agent as P1, see below) |
+| 1 producer | medium | **highest in task** | **big — non-negotiable** |
+| 2 loader arm | small | high (164 seams) | big |
+| 3 CLI | biggest | mixed (3c subtle; 3a/3e mechanical) | big for core; mid ok for group+list |
+| 4 UI | small | low — fully specified | small/mid |
+| 5 docs | prose | medium (guide quality) | mid |
+
+**Handoff seams:**
+- **After Phase 0 (strong)** — one commit, zero behavior change, mutation-gate passed. The
+  incoming agent MUST re-grep symbol locations: the `workflow_trace.py:NNN` refs in Phases 1-3
+  describe the pre-extraction file (see braindump staleness warning).
+- **After Phase 1 (strongest, most valuable)** — the trace format is frozen; everything after
+  CONSUMES the paused trailer. The next agent should build test fixtures from REAL paused
+  traces generated here, not synthetic ones (164 review, tests/CLAUDE.md pitfall #19).
+- **After Phase 3 (strong)** — feature-complete CLI-side; 4+5 are a downhill glide.
+- **Between Phases 2 and 3: DO NOT SPLIT.** They are two sides of one contract
+  (`gate_answer` shape ↔ flag parsing; `ResumeAnswerRequiredError` rendering ↔ CLI UX;
+  loader-vs-CLI validation split). Different agents on each side invites mid-flight contract
+  drift — one agent, one block.
+- **Phase 4 may run in PARALLEL with 2+3** (optional): it touches only `ui/`+`web/` — no
+  engine/trace collision, so the standing serialize rule doesn't bind. The `resumed_from`
+  chain marker doesn't even depend on 171 code (works against 164 traces today); only the
+  paused-badge REAL-BROWSER verification needs Phase 1's output. Same branch — a subagent in
+  this worktree, never a second worktree.
+
+**Recommended shape:** Agent A (big): 0→1 — doing the extraction itself warms A up on every
+symbol Phase 1 builds on, and P1 is the one edit where a plausible "simplification" ships a
+latent bug (the id-collision pin exists because the simple version passes every other test).
+Agent B (big): 2+3 as one block. Agent C (small/mid): 4, any time after 1. Phase 5 goes to
+whoever lands last (docs written from the real diff beat docs written from this plan).
+Handoff protocol per switch: outgoing agent updates the progress log; incoming agent reads the
+4-doc package (spec → plan → progress log → braindump) before touching code.
+
+---
+
 ## Phase 0 — Extract the resume loader to `runtime/resume_source.py` (zero behavior change)
 
 Own commit. The `paused` arm is the third consumer-shaped growth spurt — the extraction trigger
