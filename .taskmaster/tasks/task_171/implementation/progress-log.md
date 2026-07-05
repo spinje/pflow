@@ -731,3 +731,59 @@ covers Phases 0–3 + the inline decision; carries a DRAFT banner and a "Pending
 explicit instructions for the Phase-4/5 finisher (fill their sections, THEN flip the spec
 status to done and drop the banner). The task spec status was deliberately NOT changed —
 the task is not done.
+
+## 2026-07-05 — Phase 4 implemented (UI: resumed_from chain + paused status) — DONE, awaiting review
+
+Implemented per plan Phase 4, no deviations. All file:line refs from the plan verified live
+before editing.
+
+**Server/API:**
+- `ui/server.py::_run_entry` — projects `"resumed_from": meta.get("resumed_from")` (the meta
+  line carries it since 2.6.0; `run_tailer._read_meta` verified to pass it through — only
+  `inputs` is popped). `ui/CLAUDE.md`'s `/api/runs` contract updated in the same edit (field
+  list + `paused` in the final_status vocabulary + the resumed_from sentence); the broader
+  status-vocab doc sweep (run_tailer docstring, ui/CLAUDE.md:105 elsewhere) stays Phase 5.
+
+**Frontend (all four plan items):**
+- `web/src/types.ts` `RunInfo` gains `resumed_from: string | null` (4 test fixtures updated:
+  RunSelector/RunPanel/CatalogView/GraphView tests).
+- `RunProgress.tsx::runBadgeStatus` — the REQUIRED regression fix: `paused` arm before the
+  success fallthrough, mirroring the denied arm (amber "stopped" badge; outcome text carries
+  the word). Without it a UI-launched gated run rendered the green ✓.
+- `RunSelector.tsx::runMark` — `paused` branch before the grey stale fallback: `⏸` /
+  `run-paused` / "paused". Chain marker: a resumed run renders `⤷ resumed from <first-8>`
+  under its label; when the source run is in the current list the marker is a jump link
+  (stopPropagation → pick(source)); absent source → plain text, click falls through to the
+  row's own pick. No grouping/collapsing (v1 scope per plan).
+- `index.css` — `.run-paused` beside each of the three verified `.run-denied` sites
+  (run-banner ~:737 / run-mark ~:871 / run-progress-outcome ~:2553, all amber) +
+  `.run-menu-resumed`/-link styles. `events.ts` RUN_STATUSES untouched (per-NODE allowlist).
+- Defensive `paused` arms beside the denied arms in
+  `execution/formatters/success_formatter.py` (⏸ line) and
+  `cli/workflow_output.py::_format_workflow_completion_status` (⏸ line + docstring
+  vocabulary) — same "never render a pending question as ✓" intent.
+
+**Tests (all green):**
+- API: `test_ui.py::test_run_entry_projects_resumed_from_chain_lineage` (`_write_trace` grew a
+  `resumed_from` kwarg; pins set→id, absent→None, and `paused` riding the raw-fact projection).
+- Components: RunSelector paused-mark test (amber ⏸, never stale), chain-marker jump test
+  (stopPropagation → source id, not the row's own), marker-plain-when-source-absent test;
+  RunProgress paused-never-green test (mirrors the Task-125 denied test).
+- Full suites: `npx tsc --noEmit` clean; vitest 727 passed (51 files, was 723 — +4);
+  `make check` green.
+
+**Real-surface check (screenshot-pflow-web-ui skill, headless Chrome, rebuilt bundle):**
+Real traces produced by a real run (approval-gated workflow, non-TTY → exit 4 + token
+d398bef5…; `resume <id> --approve yes` → completed attempt 2c1e178c… with
+`resumed_from` on its meta). Verified in-browser:
+1. `/api/runs` returns `resumed_from: "d398bef5…"` on the attempt, null on the source
+   (first probe hit a STALE pre-edit server process on 8765 — killed and restarted; worth
+   remembering: the reuse-if-up probe happily reuses an old-code server).
+2. Run-selector menu screenshot: amber ⏸ "paused" mark on the source run + "⤷ resumed from
+   d398bef5" secondary line on the attempt.
+3. Pinned paused run (`&run=d398bef5…`): canvas banner "Run paused · 1 nodes" AMBER
+   (run-paused border), RunProgress callout amber ■ badge + "Run paused" text, `gated` step
+   "pending" — the green-✓ regression is gone.
+
+**Gates:** `make check` green; full `make test` **8658 passed, 0 failed** (+1 vs the 8657
+Phase-3 baseline — the new `/api/runs` lineage test). Phase 5 (docs) remains.

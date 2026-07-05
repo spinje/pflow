@@ -710,7 +710,7 @@ def _format_workflow_completion_status(
 
     Args:
         duration_s: Execution duration in seconds
-        status: Workflow status ("success", "degraded", "failed", "denied")
+        status: Workflow status ("success", "degraded", "failed", "denied", "paused")
         has_stderr_warnings: Whether any shell node produced stderr with exit_code=0
         cache_hits: Number of nodes served from cache (0 = no cache stats shown)
         nodes_executed: Total completed nodes (used to compute fresh executions)
@@ -728,6 +728,10 @@ def _format_workflow_completion_status(
         # render a human's "no" as ✓. (The denied CLI path has its own display;
         # this guards any other caller passing the status through.)
         return f"✗ Workflow denied at gate after {duration_s:.3f}s{cache_suffix}"
+    if status == "paused":
+        # Task 171: same defense as denied — the paused CLI path has its own
+        # display (exit 4 + token); a pending human answer must never render ✓.
+        return f"⏸ Workflow paused at gate after {duration_s:.3f}s{cache_suffix}"
     if status == "failed":
         if warning_count:
             return f"❌ Workflow failed ({warning_count} warnings) after {duration_s:.3f}s{cache_suffix}"

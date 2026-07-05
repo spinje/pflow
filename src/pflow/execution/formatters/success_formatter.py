@@ -330,6 +330,11 @@ def format_success_as_text(  # noqa: C901
         # intercepts DENIED before this formatter; MCP goes via success=False),
         # but a denied run must never render the success ✓ if that ever changes.
         lines.append(f"⊘ Workflow denied at an approval gate after {duration_sec:.3f}s{cache_suffix}")
+    elif status == "paused":
+        # Defensive (Task 171): paused results have their own surfaces (CLI
+        # _display_paused_result / MCP _format_paused_result), but a run waiting
+        # on a human's answer must never render the success ✓ if that changes.
+        lines.append(f"⏸ Workflow paused at a gate after {duration_sec:.3f}s{cache_suffix}")
     elif status == "failed":
         if warning_count:
             lines.append(f"❌ Workflow failed ({warning_count} warnings) after {duration_sec:.3f}s{cache_suffix}")

@@ -40,6 +40,7 @@ function aRun(id: string): RunInfo {
     only_node: null,
     trace_file: "/t.json",
     git_root: null,
+    resumed_from: null,
   };
 }
 

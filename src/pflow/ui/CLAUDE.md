@@ -99,15 +99,17 @@ fixing save).
 
 ### `GET /api/runs[?workflow=<name|path>]`
 → `200` `[{run_id, workflow_name, workflow_path, start_time, complete, final_status, live,
-only_node, trace_file, git_root}]` — runs scanned from `~/.pflow/debug`, newest-first (Task 173 D6 run
+only_node, trace_file, git_root, resumed_from}]` — runs scanned from `~/.pflow/debug`, newest-first (Task 173 D6 run
 navigation). Bare = every run; `?workflow=X` = that workflow's history (matched on the recorded
 `meta.workflow_path`). RAW facts (the UI composes the badge): `complete` = has a `run.complete`
-trailer; `final_status` = that trailer's outcome (`success`/`degraded`/`failed`/`denied` — the last via Task 125's gate_outcome channel) or `null` while
+trailer; `final_status` = that trailer's outcome (`success`/`degraded`/`failed`/`denied`/`paused` — the last two via the gate_outcome channel, Tasks 125/171) or `null` while
 not complete; `live` = not complete AND the writer still holds the trace's advisory lock (EXACT
 `flock` liveness via `is_trace_locked` — the old `_STALE_RUN_S` mtime heuristic is deleted; a
 no-`fcntl` FS falls back to "incomplete = live"); `only_node` LABELS `--only` runs (they are kept
 here, unlike the live overlay which excludes them); `git_root` = the run's enclosing git repo (cached;
-buckets ad-hoc runs by project in the catalog) or `null`. Inline/stdin/MCP runs carry `workflow_path =
+buckets ad-hoc runs by project in the catalog) or `null`; `resumed_from` = attempt-chain lineage
+(Task 171 — the source run's `execution_id` from the trace meta when this run resumed a prior
+attempt, else `null`; the RunSelector renders the `⤷ resumed from` jump marker off it). Inline/stdin/MCP runs carry `workflow_path =
 "ir-hash:<md5>"` (a content fingerprint, not a file): they appear in the bare listing and a
 `?workflow=<file>` query can't match them. `404` on an unresolvable `?workflow=`; `200 []` for zero
 runs (a hard scan failure also degrades to `[]` — the scanner is shared non-throwing with the live

@@ -226,6 +226,7 @@ describe("GraphView mount", () => {
         only_node: null,
         trace_file: "/t/r1.json",
         git_root: null,
+        resumed_from: null,
       },
     ]);
     window.history.replaceState({}, "", "/?workflow=demo&run=r1"); // runId reads ?run= once at mount

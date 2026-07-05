@@ -207,15 +207,39 @@ were proven by Edit+revert:
   `test_paused_cli.py::test_escalation_pause_choose_answers_and_completes` (real CLI).
 - Parity nets: `test_plan_drift.py::test_engine_and_planner_paused_{approval,escalation}_entry_state_match`.
 
-## Pending — to be filled by the Phase 4/5 finisher
+## Phase 4 (UI) — shipped 2026-07-05
 
-- **Phase 4 (UI)**: the `RunProgress.runBadgeStatus` green-✓-for-paused regression EXISTS IN
-  TREE since Phase 1 and must merge with this work (plan Phase 4 has the full file list:
-  `run_tailer`→`/api/runs` `resumed_from`, `RunProgress`, `RunSelector`, CSS, defensive
-  formatter arms). Record here: what shipped, the real-browser check result.
+What shipped (plan followed exactly; details + file list in the progress log's Phase-4 entry):
+- `/api/runs` entries gain `resumed_from` (`ui/server.py::_run_entry`; the meta line already
+  carried it — `run_tailer._read_meta` pops only `inputs`); `RunInfo` mirrors it in
+  `web/src/types.ts`; the `/api/runs` contract block in `ui/CLAUDE.md` updated with the edit.
+- **The green-✓-for-paused regression is FIXED**: `RunProgress.runBadgeStatus` gains a
+  `paused` arm (amber, mirroring denied) before the success fallthrough; `.run-paused` CSS
+  beside all three `.run-denied` sites; defensive `paused` arms in
+  `success_formatter.py`/`workflow_output.py` (⏸ lines, same never-✓ intent).
+- `RunSelector.runMark`: `⏸`/`run-paused`/"paused" before the grey stale fallback. Chain
+  marker: `⤷ resumed from <first-8>` under a resumed attempt's label — a jump link (selects
+  the source run, stopPropagation) when the source is in the list, plain text otherwise. No
+  grouping/collapsing UI (v1 scope); chain currency analysis stays server-side.
+
+Real-browser check (screenshot-pflow-web-ui, rebuilt bundle, REAL traces from a real
+pause→`--approve yes` chain): run-menu shows the amber ⏸ paused mark + the "⤷ resumed from
+d398bef5" marker; pinning the paused run renders the amber "Run paused · 1 nodes" banner and
+the amber ■ callout badge with `gated` "pending" — screenshots in the Phase-4 progress-log
+entry's session. One operational gotcha recorded there: the first `/api/runs` probe hit a
+STALE pre-edit `pflow ui` process (the reuse-if-up probe reuses old-code servers) — kill the
+old server before verifying server-side changes.
+
+Gates: `make check` green; full `make test` **8658 passed, 0 failed** (+1, the new
+`/api/runs` lineage test); vitest 727 passed (+4), `tsc --noEmit` clean.
+
+## Pending — to be filled by the Phase 5 finisher
+
 - **Phase 5 (docs)**: the registration-sweep inventory of every `pflow resume` usage line
   (guide/docs/CLAUDE.md) is in the progress log's Phase-3 entry. Record here: CLAUDE.md/ADR
-  deltas, the #542 retention comment, guide prose.
+  deltas, the #542 retention comment, guide prose. Note: the `/api/runs` block in
+  `ui/CLAUDE.md` is already updated (Phase 4); the remaining status-vocab staleness
+  (`ui/run_tailer.py:110` docstring, `src/pflow/ui/CLAUDE.md` elsewhere) is still Phase 5's.
 - On completion: set the task spec `## Status` to done + `## Completed` date, tick CLAUDE.md's
   roadmap if listed, and remove this section + the DRAFT banner.
 

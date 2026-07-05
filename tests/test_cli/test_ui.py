@@ -890,6 +890,7 @@ class TestRunsEndpoint:
         final_status: str = "success",
         only_node: str | None = None,
         execution_id: str = "x",
+        resumed_from: str | None = None,
     ) -> None:
         # Synthetic, but the CONSUMED keys mirror the producer: meta ← workflow_trace.py `_meta_fields`,
         # run.complete.final_status ← `_aggregates`. If the producer renames those, this stays green while
@@ -905,6 +906,8 @@ class TestRunsEndpoint:
         }
         if only_node is not None:
             meta["only_node"] = only_node
+        if resumed_from is not None:
+            meta["resumed_from"] = resumed_from
         lines: list[dict] = [
             meta,
             {"kind": "node.start", "node_id": "a", "id": 0, "ancestor_path": [], "port": None, "status": "running"},
@@ -1008,6 +1011,35 @@ class TestRunsEndpoint:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         resp = _local(create_app()).get("/api/runs", params={"workflow": "no-such-workflow-xyz"})
         assert resp.status_code == 404
+
+    def test_run_entry_projects_resumed_from_chain_lineage(self, tmp_path, monkeypatch) -> None:
+        """Task 171: `/api/runs` surfaces attempt-chain lineage — a resumed attempt reports its source
+        run's id in `resumed_from`; a plain run (and a pre-2.6.0 trace lacking the meta key) reports
+        None. Also pins the `paused` final_status riding through the raw-fact projection."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        debug = tmp_path / ".pflow" / "debug"
+        debug.mkdir(parents=True)
+        wf = str(tmp_path / "wf.pflow.md")
+        self._write_trace(
+            debug,
+            "workflow-trace-aaa-wf-20260101-000000-000001.json",
+            wf,
+            complete=True,
+            final_status="paused",
+            execution_id="source-run",
+        )
+        self._write_trace(
+            debug,
+            "workflow-trace-aaa-wf-20260101-000000-000002.json",
+            wf,
+            complete=True,
+            execution_id="attempt-2",
+            resumed_from="source-run",
+        )
+        by_id = {r["run_id"]: r for r in _local(create_app()).get("/api/runs").json()}
+        assert by_id["attempt-2"]["resumed_from"] == "source-run"
+        assert by_id["source-run"]["resumed_from"] is None  # no lineage key on the meta → None
+        assert by_id["source-run"]["final_status"] == "paused"  # the raw fact the UI composes the mark from
 
     def test_run_entry_buckets_runs_by_git_root(self, tmp_path, monkeypatch) -> None:
         """`git_root` lets the catalog bucket ad-hoc runs by repo (Task 173 D6): a run under a `.git`-bearing

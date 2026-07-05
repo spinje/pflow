@@ -25,6 +25,7 @@ function run(partial: Partial<RunInfo> & { run_id: string }): RunInfo {
     only_node: null,
     trace_file: "t.json",
     git_root: null,
+    resumed_from: null,
     ...partial,
   };
 }
@@ -92,6 +93,50 @@ describe("RunSelector", () => {
     fireEvent.click(screen.getByLabelText("Runs"));
     fireEvent.click(await screen.findByText("Live — follow newest"));
     expect(onSelect).toHaveBeenCalledWith(null);
+  });
+
+  it("marks a durably paused run amber ⏸ 'paused' — never the grey stale fallthrough (Task 171)", async () => {
+    mockFetchRuns.mockResolvedValue([run({ run_id: "r-paused", final_status: "paused" })]);
+    render(<RunSelector workflow="wf" runId={null} onSelect={vi.fn()} />);
+
+    fireEvent.click(screen.getByLabelText(/^Runs/));
+    const label = await screen.findByText("paused");
+    const item = label.closest(".run-menu-item")!;
+    const mark = item.querySelector(".run-mark")!;
+    expect(mark.className).toContain("run-paused");
+    expect(mark.className).not.toContain("run-stale");
+    expect(mark.textContent).toBe("⏸");
+  });
+
+  it("renders the attempt-chain marker on a resumed run, and clicking it jumps to the source run (Task 171)", async () => {
+    const onSelect = vi.fn();
+    mockFetchRuns.mockResolvedValue([
+      run({ run_id: "b2b2b2b2-attempt", resumed_from: "a1a1a1a1-source" }),
+      run({ run_id: "a1a1a1a1-source", final_status: "paused" }),
+    ]);
+    render(<RunSelector workflow="wf" runId={null} onSelect={onSelect} />);
+
+    fireEvent.click(screen.getByLabelText(/^Runs/));
+    // The marker shows the source id's first 8 chars; the source IS in the list → it's a jump link.
+    const marker = await screen.findByText("⤷ resumed from a1a1a1a1");
+    expect(marker.className).toContain("run-menu-resumed-link");
+    fireEvent.click(marker);
+    // stopPropagation: the jump selects the SOURCE, not the row's own run.
+    expect(onSelect).toHaveBeenCalledWith("a1a1a1a1-source");
+    expect(onSelect).not.toHaveBeenCalledWith("b2b2b2b2-attempt");
+  });
+
+  it("renders the chain marker plain (no jump link) when the source run is absent from the list", async () => {
+    const onSelect = vi.fn();
+    mockFetchRuns.mockResolvedValue([run({ run_id: "attempt-2", resumed_from: "gone-run-1" })]);
+    render(<RunSelector workflow="wf" runId={null} onSelect={onSelect} />);
+
+    fireEvent.click(screen.getByLabelText(/^Runs/));
+    const marker = await screen.findByText(/⤷ resumed from gone-run/);
+    expect(marker.className).not.toContain("run-menu-resumed-link");
+    // No jump handler: a click bubbles to the row and picks the row's OWN run.
+    fireEvent.click(marker);
+    expect(onSelect).toHaveBeenCalledWith("attempt-2");
   });
 
   it("the trigger flags a pinned run (active), and an empty list says so", async () => {
