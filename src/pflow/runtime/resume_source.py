@@ -699,7 +699,10 @@ def _map_choose_answer(chosen: str, gate_request: dict[str, Any]) -> str:
     answer = chosen.strip()
     options = [option for option in gate_request.get("options") or () if isinstance(option, dict)]
     labels = option_labels(options)
-    if answer.isdigit() and 1 <= int(answer) <= len(labels):
+    # isdecimal(), NOT isdigit(): isdigit() is True for numeric-but-non-decimal
+    # chars (superscripts like "²") that int() then REJECTS with ValueError —
+    # an agent-supplied `--choose "²"` must fold as free text, never crash.
+    if answer.isdecimal() and 1 <= int(answer) <= len(labels):
         return labels[int(answer) - 1]
     return answer
 

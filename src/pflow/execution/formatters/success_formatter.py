@@ -332,7 +332,7 @@ def format_success_as_text(  # noqa: C901
         lines.append(f"⊘ Workflow denied at an approval gate after {duration_sec:.3f}s{cache_suffix}")
     elif status == "paused":
         # Defensive (Task 171): paused results have their own surfaces (CLI
-        # _display_paused_result / MCP _format_paused_result), but a run waiting
+        # _display_paused_result / MCP _format_paused_text), but a run waiting
         # on a human's answer must never render the success ✓ if that changes.
         lines.append(f"⏸ Workflow paused at a gate after {duration_sec:.3f}s{cache_suffix}")
     elif status == "failed":

@@ -901,6 +901,7 @@ def test_answer_flag_on_non_paused_source_refuses(tmp_path: Path) -> None:
         ("3", "option 3"),  # label-less option → the shared fallback label
         ("4", "4"),  # out of range → free text
         ("postgres", "postgres"),  # free text passes through
+        ("²", "²"),  # unicode-numeric: isdigit() True but int() rejects → free text, never a crash
     ],
 )
 def test_choose_answer_maps_numbers_to_labels(tmp_path: Path, chosen: str, expected: str) -> None:

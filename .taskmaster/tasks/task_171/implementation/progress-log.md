@@ -1083,3 +1083,34 @@ agent-first, so the emitted strings must not misdirect an agent):
 **Gates:** `make check` green (ruff/format/mypy 246 files/deptry); full `make test`
 **8662 passed, 0 failed** (8661 + 1 net new pin); all three fixes re-verified against the live
 CLI. Committed as `deep review fixes` follow-up.
+
+## 2026-07-05 — PR #563 opened + automated-review evaluation + 2 fixes
+
+Opened the PR (`feat: durable resume tokens & non-TTY gates (Task 171)`, task-referenced — no
+GitHub issue). The `claude[bot]` code review returned NO Critical, 1 Warning, 2 Suggestions.
+Evaluated each against live code (verdicts before acting):
+
+1. **★ Warning CONFIRMED — `--choose "<unicode-numeric>"` → uncaught `ValueError`.**
+   `str.isdigit()` is `True` for numeric-but-non-decimal chars (superscript `²`, …) that
+   `int()` then REJECTS. `_map_choose_answer` (`resume_source.py`) and `_prompt_escalation`
+   (`gate_prompt.py`) both did `if answer.isdigit() and 1 <= int(answer) …` — so `--choose "²"`
+   (or an interactive `²`) raised. On the durable path the broad `except Exception` at
+   `resume.py:603` swallowed it into a generic error (a legitimate free-text answer REFUSED
+   instead of folded); on the interactive path it surfaced as a resolver crash. Fix: `isdigit()`
+   → **`isdecimal()`** at BOTH sites (isdecimal is exactly the set `int()` accepts; keeps the one
+   numbering rule in parity). Pins: `test_resume_source.py::test_choose_answer_maps_numbers_to_labels`
+   gained a `("²", "²")` matrix row; new `test_gate_prompt.py::...test_escalation_unicode_numeric_
+   answer_is_free_text_not_a_crash`. Mutation-verified — reverting to `isdigit()` fails BOTH with
+   the exact `ValueError: invalid literal for int() with base 10: '²'`.
+2. **Suggestion (nit) CONFIRMED — comment drift.** `success_formatter.py:335` named the MCP
+   renderer `_format_paused_result`; the real function is `_format_paused_text`
+   (`execution_service.py:228`). Fixed the comment. (The reviewer also flagged `run.py`, but that
+   file correctly uses `_display_paused_result` throughout — no change there.)
+3. **Suggestion NO ACTION (intended) — MCP now streams traces.** Reverses Task-172's
+   traceless-MCP rationale, but this is Decision 2 (owner) + ADR-0008, already documented; MCP
+   full runs becoming `--only`/analyze-cache candidates is the accepted consequence (retention =
+   #542). Reviewer flagged it only for visibility.
+
+**Gates:** `make check` green (mypy 246 files, deptry); affected suites
+(`test_resume_source` / `test_gate_prompt` / `test_paused_cli` / `test_success_formatter`)
+185 passed. Committed with `[skip review]` (review already evaluated + addressed).

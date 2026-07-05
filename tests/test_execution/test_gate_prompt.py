@@ -167,6 +167,15 @@ class TestPromptFlows:
         resolution = resolver(_escalation(question="?", options=({"label": "a"},)))
         assert resolution.chosen == "keep both, gate on env var"
 
+    def test_escalation_unicode_numeric_answer_is_free_text_not_a_crash(self, monkeypatch):
+        # "²".isdigit() is True but int("²") raises ValueError — the guard uses
+        # isdecimal() so a stray unicode-numeric answer folds as free text (mirrors
+        # resume_source._map_choose_answer's durable --choose rule).
+        monkeypatch.setattr(click, "prompt", lambda *a, **k: "²")
+        resolver = build_gate_resolver(frozenset(), _FakeOC())
+        resolution = resolver(_escalation(question="?", options=({"label": "a"},)))
+        assert resolution.chosen == "²"
+
     def test_out_of_range_number_is_free_text_not_crash(self, monkeypatch):
         monkeypatch.setattr(click, "prompt", lambda *a, **k: "9")
         resolver = build_gate_resolver(frozenset(), _FakeOC())

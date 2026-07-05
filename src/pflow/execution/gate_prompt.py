@@ -143,7 +143,10 @@ def _prompt_escalation(request: GateRequest) -> GateResolution:
     else:
         answer = click.prompt("   Type an answer", err=True)
     answer = str(answer).strip()
-    if answer.isdigit() and 1 <= int(answer) <= len(labels):
+    # isdecimal(), NOT isdigit(): isdigit() accepts numeric-but-non-decimal chars
+    # (e.g. superscript "²") that int() then rejects with ValueError — mirrors the
+    # durable --choose rule in resume_source._map_choose_answer (one numbering rule).
+    if answer.isdecimal() and 1 <= int(answer) <= len(labels):
         return GateResolution(approved=True, resolved_via="prompt", chosen=labels[int(answer) - 1])
     return GateResolution(approved=True, resolved_via="prompt", chosen=answer)
 
