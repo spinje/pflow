@@ -787,3 +787,134 @@ d398bef5…; `resume <id> --approve yes` → completed attempt 2c1e178c… with
 
 **Gates:** `make check` green; full `make test` **8658 passed, 0 failed** (+1 vs the 8657
 Phase-3 baseline — the new `/api/runs` lineage test). Phase 5 (docs) remains.
+
+## 2026-07-05 — Phase 4 owner-testing fix: chain marker swallowed row clicks
+
+Owner drove the live UI and couldn't switch FROM the paused run TO its resumed attempt via
+the run menu. Cause: `.run-menu-label` is a column flex whose children STRETCH — the
+"⤷ resumed from" jump-link span filled the row's full width, so clicks on the attempt row's
+lower half hit the LINK (jump to the source = the already-pinned run → no-op, menu closes)
+instead of the row. Fix: `align-self: flex-start` on `.run-menu-resumed` (span shrinks to its
+text; the comment in index.css records the trap). New pin:
+`RunSelector.test.tsx::clicking a resumed row's OWN label picks that run` (pinned-to-source →
+click "success" → onSelect(attempt), never the source). Vitest 9/9 in file (728 total),
+bundle rebuilt, menu re-screenshotted (visually identical — only the hit box shrank).
+
+## 2026-07-05 — Steer-latch trap found during owner testing + fixed (events.ts, UNCOMMITTED)
+
+Owner testing surfaced a PRE-EXISTING Task-175/#539 bug that 171's chain UX makes acute: after an
+agent steers a tab (`select-run` — latched server-side, replayed on every subscribe), the user can
+NEVER manually switch runs in that tab. Mechanism (reproduced headlessly both ways): GraphView
+re-subscribes on every run switch; the client's epoch-dedup baselines (`applied`) lived INSIDE the
+subscribe() closure, so each re-subscribe reset them and the replayed latch was admitted as new —
+selectRun(steered-run) reverted every manual pick within ~100ms, until a server restart cleared
+the per-process latch.
+
+Fix (`web/src/api/events.ts`): hoisted the baselines to MODULE scope, keyed per workflow
+(`appliedByWorkflow` Map) — keyed because the server stamps ALL workflows' latches from ONE
+process-wide counter (`_point_epoch`, server.py:156), so a flat baseline would let workflow A's
+high epoch reject workflow B's older-but-unseen latch after SPA navigation. `serverBootId` also
+module-scoped; a boot change resets every workflow's baselines IN PLACE (never Map.clear() — live
+subscriptions hold references). `_resetEpochBaselines()` exported test-only. Three new pins in
+`events.test.ts` (re-subscribe keeps baseline / per-workflow keying / boot re-base across
+re-subscribe) + `_resetEpochBaselines()` in the file's beforeEach (module state now deliberately
+survives re-subscribes — tests need explicit resets). Vitest 731 passed (+3), tsc clean.
+
+E2E proof: latch armed via bare `POST /api/command` select-run on a fresh server, then the
+click-success browser repro — pre-fix the pick reverted to the steered run; post-fix urlAfter
+carries the picked run + "Run success" banner.
+
+Also this session (both UNCOMMITTED per owner instruction; the earlier fix-commit was
+`git reset` back into the working tree): the chain-marker click-target fix + its pin, and the
+owner's ⏸-frontier-badge + un-run-greying idea folded into task-176.md as a scoped section
+(canvas truth for paused/replayed runs — the badge is the anchor 176's approve controls attach to).
+
+## 2026-07-05 — Phase 5 (docs) — context-optimized subset done, three items DEFERRED (all UNCOMMITTED)
+
+Audit first (pflow-codebase-searcher, thorough): findings that corrected the plan — the plan's
+"engine/CLAUDE.md except-arm already updated post-Phase-1, verify don't redo" was FALSE (still
+denied/failed only); the Phase-3 "resume usage-line inventory" was never actually transcribed
+into this log (the entry only asserts it exists — the audit reconstructed it by grep, list in
+the audit output); a NEW stale spot outside every checklist: runner.py:234 "MCP's trace never
+streams". Also: 164 DID ship user docs (docs/reference/cli/index.mdx "Resume a failed run"), so
+docs/ coverage for 171 is a genuine gap, not convention.
+
+**Done this session** (owner directive: do what this context is optimized for — the implementer
+ran the real pause/approve/choose flows live, so behavior claims are first-hand):
+- Stale "MCP never streams" family, all 7 sites: `mcp_server/tools/execution_tools.py` (Field
+  description + Built-in behaviors + a new Paused arm in Returns — matched to the REAL
+  `_format_paused_text` shape), `mcp_server/CLAUDE.md` (:76 tool line + the Agent-Optimized
+  Defaults bullet incl. the ADR-0008 misattribution correction), `execution/CLAUDE.md`
+  (RunnerConfig finalize comment + a PAUSED/exit-4/render-shape note beside the DENIED one in
+  the gate_prompt.py block), `runtime/CLAUDE.md` (Task-172 bullet ×2: trace_enabled gate +
+  "finalize CLI-only"), `runner.py:234` comment, `runtime/engine/CLAUDE.md` (except-arm:
+  denied/paused/failed + the full pause-conjunct description).
+- `runtime/CLAUDE.md`: new **2.7.0** trace-format bullet (paused trailer, producer decision
+  point, resume_source consumers, consumption policy, exit 4).
+- `cli/CLAUDE.md` exit-code paragraph: exit 4 + the paused branch's output shape + ResumeGroup
+  pointer. `cli/commands/CLAUDE.md` resume row: group routing, --approve/--choose, resume list,
+  bare-resume help, and the stale `workflow_trace.load_resume_source` pointer →
+  `resume_source.load_resume_source`/`list_paused_runs`.
+- `ui/run_tailer.py:110` docstring: + denied/paused.
+- ADR-0008: "Update — MCP runs stream too (Task 171)" section (aligns with A1's "any run is
+  watchable"; names the Task-172 misattribution).
+- Guide prose: `features/resume.md` retitled ("failed, interrupted, or paused at a gate") + new
+  "Answering a paused gate" section (token line verbatim from a real run, JSON fields, all four
+  answer commands, nothing-re-runs/consumption/no-answer-refusal/hash-gate bullets);
+  `features/approval.md` — playbook item 1's now-false "re-executes everything upstream on
+  retry" replaced, the "fails loudly (exit 1) … cannot yet hold a gate open" paragraph rewritten
+  to the durable-pause reality (with the exact non-pausable list: --no-trace, parallel-batch
+  item, sub-workflow child, inline), the escalation bullet rewritten (pauses, --choose, work
+  never re-paid, loop/code/final-step refusals), Observability gains the paused line;
+  `entry.md` resume topic line updated. Rendering verified via real `pflow guide resume|approval`.
+
+**Gates**: make check green; make test 8658 passed (unchanged baseline — doc-only).
+
+**DEFERRED (not lack of importance — lack of loaded context / owner decisions):**
+1. `docs/` Mintlify user docs — owner scope call (extend docs/reference/cli/index.mdx with the
+   pause flow + move roadmap.mdx:39 out of planned). 164 set the precedent that resume IS
+   documented there.
+2. Optional #542 "171 landed" confirmation comment (substance already on the issue).
+3. Task close bookkeeping — root CLAUDE.md roadmap tick, task-171.md Status flip, task-review
+   DRAFT banner drop + Phase-5 section — blocked on item 1's decision (can't close with docs/
+   undecided).
+
+## State at 2026-07-05 session end (Phase 4 + 5 sessions, one implementer)
+
+- **Committed** (branch `feat/durable-resume-tokens`, unpushed): phases 0–4 as one commit each
+  (`a8066f15` / `cf60b197` / `8125454a` / `ddb078e5` / `3db03f0e`). NOTHING after `3db03f0e` —
+  owner instructed no further commits without explicit go-ahead (a fix-commit made in between
+  was `git reset` back into the working tree on that instruction).
+- **Uncommitted working tree** (all green together: make check ✓, make test 8658 ✓, vitest 731 ✓,
+  tsc ✓), three logical change sets awaiting owner review + commit-shaping:
+  1. **Chain-marker click-target fix** (Phase-4 followup, owner-caught): `web/src/index.css`
+     (.run-menu-resumed align-self) + `RunSelector.test.tsx` pin.
+  2. **Steer-latch fix** (pre-existing Task-175/#539 bug, owner-caught): `web/src/api/events.ts`
+     (module-scoped per-workflow epoch baselines + `_resetEpochBaselines`) + `events.test.ts`
+     (+3 pins). Suggested commit shape: separate from 171 phases (it's 175 territory).
+  3. **Phase 5 docs subset**: guide (entry.md, features/resume.md, features/approval.md),
+     CLAUDE.mds (cli, cli/commands, execution, runtime, runtime/engine, mcp_server), ADR-0008
+     update note, `execution_tools.py` docstrings, `runner.py:234` comment,
+     `run_tailer.py:110` docstring — plus `task-176.md` (owner's ⏸-badge/greying idea folded
+     in) and this log.
+- **UI bundle**: rebuilt with the fixes; `pflow ui` on :8765 may still be running locally
+  (throwaway demo traces for `paused-ui-demo` live in ~/.pflow/debug — harmless).
+- **Open owner decisions** (blocking task close): (a) docs/ Mintlify scope — extend
+  `docs/reference/cli/index.mdx` with the pause flow + move `roadmap.mdx:39` out of planned,
+  or explicitly let docs/ lag; (b) commit shaping/timing for the three change sets above.
+  After (a): roadmap tick in root CLAUDE.md, task-171.md Status → done, task-review.md
+  Phase-5 section + DRAFT banner removal (Phase-4 section is already written).
+- **Read-first for a fresh agent**: task-review.md (load-bearing block) → this log's Phase-4,
+  steer-latch, and Phase-5 entries.
+- **The resume usage-line inventory, transcribed at last** (the Phase-3 claim it was already
+  here was wrong; the Phase-5 audit reconstructed it by grep — state AFTER this session's edits):
+  - `src/pflow/guide/entry.md:60` — UPDATED (topic line covers paused answers).
+  - `src/pflow/guide/features/resume.md` — UPDATED (retitled; "Answering a paused gate" section).
+  - `src/pflow/guide/features/approval.md:42,46,70,101ff` — UPDATED (pause reality; the stale
+    "cannot hold a gate open" / "work is discarded" claims are gone).
+  - `src/pflow/cli/CLAUDE.md` exit-code paragraph — UPDATED (exit 4 + ResumeGroup pointer).
+  - `src/pflow/cli/commands/CLAUDE.md:10` resume row — UPDATED (group, flags, list; fixed the
+    stale `workflow_trace.load_resume_source` pointer).
+  - `src/pflow/runtime/CLAUDE.md` — UPDATED (2.7.0 bullet + Task-172 bullet corrections).
+  - `docs/reference/cli/index.mdx:72–90` ("Resume a failed run") — **PENDING, owner scope call**.
+  - `docs/roadmap.mdx:39` ("durable resume tokens" listed as planned) — **PENDING, owner call**.

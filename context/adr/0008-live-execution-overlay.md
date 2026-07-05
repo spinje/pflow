@@ -30,6 +30,15 @@ also shipped (Task 172). The consumer-derivation contract (status read directly;
 last-wins by `id`) is overlay-validated end-to-end.
 **Canonical as-built schema:** `.taskmaster/tasks/task_133/design/d1-event-schema.md`.
 
+## Update — MCP runs stream too (Task 171, 2026-07-05)
+
+MCP's `workflow_execute` now streams traces exactly like the CLI (`execution_service` no longer
+passes `trace_enabled=False`) — a durable gate pause (`final_status: "paused"` + resume token)
+persists ON the trace, so gated MCP runs need one. This aligns with this ADR's original intent
+("any run … is watchable", A1 above); the interim CLI-only behavior was a Task-172 code-comment
+scoping decision that some module docs misattributed to this ADR. Only `--no-trace` opts out
+(its gates keep the hard error).
+
 ## Considered options
 
 - **A1 — incremental trace stream + file-tail (chosen).** One event source serves the live overlay,

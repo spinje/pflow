@@ -126,6 +126,22 @@ describe("RunSelector", () => {
     expect(onSelect).not.toHaveBeenCalledWith("b2b2b2b2-attempt");
   });
 
+  it("clicking a resumed row's OWN label picks that run — the chain marker must not swallow the row click", async () => {
+    // User-caught: pinned to the paused source, clicking the success attempt's row must switch to it.
+    // The marker link only jumps when the marker ITSELF is clicked (CSS shrinks it to its text).
+    const onSelect = vi.fn();
+    mockFetchRuns.mockResolvedValue([
+      run({ run_id: "b2b2b2b2-attempt", resumed_from: "a1a1a1a1-source" }),
+      run({ run_id: "a1a1a1a1-source", final_status: "paused" }),
+    ]);
+    render(<RunSelector workflow="wf" runId="a1a1a1a1-source" onSelect={onSelect} />);
+
+    fireEvent.click(screen.getByLabelText(/^Runs/));
+    fireEvent.click(await screen.findByText("success"));
+    expect(onSelect).toHaveBeenCalledWith("b2b2b2b2-attempt");
+    expect(onSelect).not.toHaveBeenCalledWith("a1a1a1a1-source");
+  });
+
   it("renders the chain marker plain (no jump link) when the source run is absent from the list", async () => {
     const onSelect = vi.fn();
     mockFetchRuns.mockResolvedValue([run({ run_id: "attempt-2", resumed_from: "gone-run-1" })]);

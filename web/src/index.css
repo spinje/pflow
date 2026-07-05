@@ -838,10 +838,13 @@ button.active {
   font-size: 11px;
 }
 /* Attempt-chain marker (Task 171): "⤷ resumed from <id>" under a resumed attempt's label; the
-   -link variant (source run present in this list) is a click-to-jump, styled like a quiet link. */
+   -link variant (source run present in this list) is a click-to-jump, styled like a quiet link.
+   `align-self: flex-start` shrinks the span to its text — the label column stretches children, and a
+   full-width marker swallowed row clicks (jumping to the source instead of picking the row; user-caught). */
 .run-menu-resumed {
   color: var(--text-faint);
   font-size: 11px;
+  align-self: flex-start;
 }
 .run-menu-resumed-link {
   cursor: pointer;

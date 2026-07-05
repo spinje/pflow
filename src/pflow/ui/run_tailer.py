@@ -107,8 +107,9 @@ def read_run_status(path: Path) -> tuple[bool, str | None]:
     """The cheap-tail terminal state of a streamed trace: ``(complete, final_status)`` (deep-review DR-2).
 
     ``complete`` is True iff the LAST non-empty line is a ``run.complete`` trailer (the run FINISHED);
-    ``final_status`` is that trailer's ``final_status`` (``success``/``degraded``/``failed`` — the
-    producer's vocabulary), or ``None`` when the run is not complete (still live, or crashed). Reads only a
+    ``final_status`` is that trailer's ``final_status`` (``success``/``degraded``/``failed``/``denied``/
+    ``paused`` — the producer's vocabulary; the last two via the gate_outcome channel, Tasks 125/171),
+    or ``None`` when the run is not complete (still live, or crashed). Reads only a
     bounded 64 KB tail so a multi-MB trace isn't loaded to answer "is this run live?". A truncated/partial
     final line (a run mid-flush) doesn't parse → ``(False, None)`` (live), the safe direction. Lets
     ``/api/runs`` report a finished run's status WITHOUT a full ``load_trace_file`` parse.

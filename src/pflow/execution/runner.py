@@ -231,8 +231,8 @@ class WorkflowRunner:
             # library caller that just inspects the result — ends with a COMPLETE, closed trace rather
             # than an open handle + a trailer-less "incomplete" file. Idempotent + suppressed so it can
             # never mask the run result. The CLI opts out (finalize_trace=False) because it finalizes
-            # itself AFTER mutating the trace post-run (set_json_output); MCP's trace never streams, so
-            # finalize is a harmless no-op there.
+            # itself AFTER mutating the trace post-run (set_json_output); MCP relies on this default
+            # (it streams since Task 171) so each tool call ends with a complete, closed trace file.
             if config.finalize_trace and trace_collector is not None:
                 with contextlib.suppress(Exception):
                     trace_collector.finalize()

@@ -139,7 +139,7 @@ Error output is unified: `output_error()` in `error_output.py` handles JSON/text
 
 ### Exit Codes
 
-Completed workflows exit `0`, including `WorkflowStatus.DEGRADED` runs with runtime warnings. Failed workflows exit `1`; interrupted workflows exit `130`; a run DENIED at an approval gate exits `3` (Task 125 — a human verdict, not a failure; click owns `2` for usage errors). The denied branch in `_display_execution_result` renders its own output (text prose on stderr, or a JSON document with the `gate` payload on stdout) and never routes through `output_error`/`_emit_failure_tag`. Warning/degraded status remains visible through stderr, JSON, trace, and reports.
+Completed workflows exit `0`, including `WorkflowStatus.DEGRADED` runs with runtime warnings. Failed workflows exit `1`; interrupted workflows exit `130`; a run DENIED at an approval gate exits `3` (Task 125 — a human verdict, not a failure; click owns `2` for usage errors); a run PAUSED durably at a gate exits `4` (Task 171 — non-TTY + tracing on: the run is waiting for an answer, not finished; stdout carries the parseable token line `Paused at '<step>'. Resume token: <execution_id> (exit 4)`, stderr the gate content + the exact `pflow resume <id> --approve yes|no` / `--choose` command). The denied and paused branches in `_display_execution_result` render their own output (text on stderr + the token/JSON document with the gate payload on stdout) and never route through `output_error`/`_emit_failure_tag`. Warning/degraded status remains visible through stderr, JSON, trace, and reports. The `resume` command is a `click.Group` (`ResumeGroup`) — see `commands/CLAUDE.md`.
 
 ## Command Flags
 
