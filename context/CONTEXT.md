@@ -81,9 +81,11 @@ every *prior* step's output reused from the most recent full run, so only the ta
 re-executes and upstream side effects never re-fire. Requires a prior full run.
 _Avoid_: replay, restore, checkpoint.
 
-**Resume** — continuing a Failed or interrupted Run as a new Attempt: every step that completed
-in the source Run is Restored, and execution re-enters at the failed step and continues to the
-end. The re-entered step runs at-least-once — its side effects may re-fire.
+**Resume** — continuing a Failed, interrupted, or Paused Run as a new Attempt: every step that
+completed in the source Run is Restored, and execution re-enters where work stopped — at the
+failed step, or at the Gate (an Approval's gated step now runs; an answered Escalation continues
+after its already-completed step) — and continues to the end. The re-entered step runs
+at-least-once — its side effects may re-fire.
 _Avoid_: retry (in-Run, same step), replay, restart (from scratch).
 
 **Attempt** — one Run in a resume chain: the original Run plus each Resume of it. Attempts are
@@ -109,6 +111,16 @@ work. Unpredictable — zero to many per Run. _Avoid_: interrupt, question, exce
 
 **Denial** — the human's "no" at an Approval: the Run stops cleanly before the gated step
 runs. A human verdict, not a Failed run — nothing broke. _Avoid_: rejection, abort, failure.
+
+**Paused** — a Run halted at a Gate with no human there to answer: the Run's completed work is
+preserved and the decision is delivered later — hours or days — through a Resume. An obligation
+awaiting an answer, not an ended run — distinct from Failed (something broke) and Denial (a
+human answered no). _Avoid_: suspended, blocked, waiting, stopped.
+
+**Resume token** — the identifier a Paused Run hands its caller for answering later; presenting
+it with the decision resumes the Run. Spent by lineage: once a newer Attempt exists, answering
+the same token again is refused. _Avoid_: ticket, token (unqualified — collides with LLM
+tokens), id (unqualified).
 
 **Prompt cache** — provider-side reuse of a static prompt *prefix* across LLM calls, declared
 in a workflow's `## Cache` block (or per-step `prompt_cache:`). Discounts input tokens; the
@@ -215,6 +227,10 @@ advance).
 
 **Denial vs Failed** — both end a Run early. Discriminator: Denial is a human's verdict at a
 Gate (the gated step never ran; nothing broke); Failed is a fatal error (something did).
+
+**Paused vs Denial** — both stop a Run at a Gate. Discriminator: a Denial is an *answered* Gate
+(the verdict was no; the Run is cleanly over); Paused is an *unanswered* Gate (the verdict is
+pending; the Run continues once it arrives).
 
 **Workflow vs Run** — both name "the thing that ran." Discriminator: the Workflow is the reusable
 `.pflow.md` *definition* (authored once); a Run is one *execution* of it (one per `pflow run`). One
