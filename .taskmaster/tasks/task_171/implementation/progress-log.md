@@ -586,4 +586,148 @@ an empty/whitespace `--choose` would have "decided" the escalation with an empty
 a shape the blocking prompt cannot produce (click re-prompts on empty input).
 `_validate_gate_answer` now treats it as ``missing_answer``; pinned by
 `test_empty_choose_answer_is_treated_as_missing` (both `""` and `"   "`). Suites re-run green;
-Phase 2 committed by owner instruction ("commit phase 2").
+Phase 2 committed by owner instruction ("commit phase 2") as `8125454a`.
+
+## 2026-07-05 — Phase 3 implemented (CLI: group, --approve/--choose, resume list) — DONE, awaiting review
+
+Owner authorized delegation (incl. same-model forks). Orchestration actually used:
+- **Wave 0 (parallel):** a `code-implementer` spike burned down the braindump's 70%-sure
+  click-routing risk (scratchpad prototype, 11 invocations × 4 configs); two
+  `pflow-codebase-searcher` sweeps (registration/help fan-out; dry-run path + age helpers +
+  tail-seek mechanics). I read `test_resume_cli.py` in full meanwhile.
+- **Wave 1 (me):** 3a group restructure, 3b flags, 3c resolver deny + priming + consumption
+  clauses + `_find_consuming_attempt` extraction, 3d message parameterization, the e2e
+  answer-flow battery, deny unit pins.
+- **Wave 2 (parallel):** a FORK (full-context subagent) implemented 3e (`resume list`) end to
+  end — including its own mutation verification of the oversized-trailer pin — while I wrote
+  the battery. File-ownership split held (fork: resume_source.py + resume.py appends + new
+  test_resume_list_cli.py; me: everything else). I reviewed the fork's full diff before
+  accepting it.
+
+**Spike findings that shaped 3a (recorded because the plan flagged them 70%-sure):**
+`ignore_unknown_options = True` as a CLASS ATTR on `ResumeGroup` is the one load-bearing
+setting; `allow_interspersed_args` belongs on the hidden `run` SUBCOMMAND (a group-level
+setting is inert); `invoke_without_command` stays default. Verified consequences: options
+before the target work; unknown flags forward to `_split_target_and_params`'s existing
+UsageError (the GH#454 pattern, same as the root group); `resume <target> --help` shows the
+run option list; workflows literally named `run`/`list` are reserved (resume by path/id —
+documented in the group help).
+
+**What was built (per plan 3a–3e):**
+- 3a: `ResumeGroup` + `resume` group whose docstring IS the discoverability surface (forms,
+  full flag inventory, a worked paused-gate example, the reserved-names note); hidden `run`
+  subcommand = the old `resume_cmd` body; `main.py` imports/registers `resume`.
+- 3b: `--approve [yes|no]` / `--choose ANSWER`; `_build_gate_answer` (mutual-exclusion
+  UsageError + the frozen Phase-2 shapes); `gate_answer` threaded through ALL THREE
+  `load_resume_source` call sites in `_load_source_and_workflow`.
+- 3c: `build_gate_resolver(..., deny=frozenset())` keyword-only (all 17 existing call sites
+  unaffected — verified by sweep); deny checked BEFORE auto-approve (backstop; CLI rejects the
+  contradiction up front); `_prime_approval_delivery` (yes → auto_approve + paused node;
+  no → gate_deny tuple; contradiction → UsageError); `ctx.obj["gate_deny"]` set in BOTH
+  `_dispatch_resume` and run.py per plan; `_prepare_gate_resolver` reads it;
+  `_attempt_consumed_work` gained clause (a) (gate VERDICT lines `approved`/`denied`/`choice`
+  — never `non_interactive`/`error`) and clause (b) (`paused ⇒ consumed`); superseded scan
+  extracted to `_find_consuming_attempt` (one policy, loader + list); paused sources skip
+  `_confirm_or_refuse_side_effect` (ledger rationale in a comment).
+- 3d: `_resolve_between_nodes_entry` speaks the source's real state ("is paused" vs "was
+  interrupted"); paused terminal-step case gets the plan's specific refusal ("was the final
+  step — its answer has nothing left to run"), reachable only via edit+`--force`.
+- 3e (fork): `PausedRun`, `_scan_tail_for_trailer`/`_read_trailer_line` (64KB tail +
+  oversized-trailer full re-read, mirroring `run_tailer.read_run_status` — the accepted
+  `runtime/ ↛ ui/` duplication, documented), `list_paused_runs` (skips --only, `ir-hash:`
+  inline [pause-promise gap comment points here], corrupt records, consumed tokens);
+  `resume list` renderer (aligned columns TOKEN/WORKFLOW/PAUSED AT/GATE/AGE, local
+  `_format_age` s/m/h/d — no shared helper exists, verified — per-kind footer via
+  `format_resume_answer_command`, JSON array with kind-correct `resume_command`, empty state
+  `No paused runs.` / literal `[]`).
+
+**Behavior change (deliberate, replaces a pinned contract):** bare `pflow resume` now renders
+the GROUP HELP (exit 0) instead of "Missing TARGET" (exit 2) — consistent with sibling groups
+(mcp/settings/skill) and it puts the flag inventory where an agent lands first;
+`resume --force` (flag, no target) still hard-errors "Missing TARGET" exit 2. Test renamed
+`test_bare_resume_shows_group_help_with_answer_flags` and pins both halves.
+
+**Test-writing discoveries (recorded for the next agent):**
+- Registry injection for CLI-level custom nodes needs the full scanner entry shape — the
+  runner pipeline reads `entry["interface"]` (bare `compile_workflow` does not). Pattern in
+  `test_paused_cli.py::escalating_registry`. NOTE: outside pytest, `Registry()` hits the REAL
+  `~/.pflow/registry.json` — never run the injection snippet in a bare `uv run python`.
+- Output auto-detect's `result > stdout` priority surfaces a restored escalation marker over
+  the consumer's stdout — identical to an uninterrupted run, so the e2e fixtures declare
+  `## Outputs` to pin the consumer's line.
+
+**New/updated tests (+27 net; full suite 8628 → 8655):** the e2e answer battery in
+`test_paused_cli.py` (16 tests: ★approve keystone with uninterrupted-run stdout equality,
+★deny + ★double-deny-superseded, answer-required rendering, wrong-flag both directions,
+both-flags UsageError, deny-vs-auto-approve UsageError, ★dry-run-without-answer pin,
+dry-run-with-answer plans-only, stale-hash + --force, ★first-node pause by-path,
+multi-gate 3-trace chain, ★escalation --choose keystone through the REAL CLI incl.
+numeric→label mapping, ★restored-only-paused-attempt chain-fork prevention,
+edited-final-step paused refusal); `TestDeny` unit pins in `test_gate_prompt.py` (4);
+fork's `test_resume_list_cli.py` (6, incl. ★oversized-trailer); bare-resume group-help pin.
+
+**Mutation verification (Edit + revert):** clause (b) dropped → exactly the first-node-by-name
++ chain-fork pins fail; clause (a) dropped → exactly the double-deny pin fails (the
+"passes-every-other-test" trap it exists for); resolver deny check dropped → 2 unit pins + the
+deny e2e fail; fork independently mutation-verified the oversized-trailer re-read (its pin
+fails alone). All reverted; `git diff` carries zero mutation residue.
+
+**Real-surface e2e** (actual `uv run pflow` subprocesses, isolated HOME): gated run → exit 4 +
+token; `resume list` renders the row (age `7s`, approval footer); `--approve yes` → upstream
+restored, gated executed, `⤷ Resumed from` indicator, exit 0; `resume list` → "No paused
+runs."; `--output-format json` → `[]`. Plus the pre-existing real-subprocess routing test
+(`test_resume_no_hang_subprocess`) green through the new group.
+
+**Gates (all green):** `make check` fully green; full `make test` **8655 passed, 0 failed**;
+`make test-e2e` 44 passed. Nothing committed (Phase-3 commit not yet authorized).
+
+**Not done (scope):** Phases 4–5 untouched. Phase 4's RunProgress green-✓ regression still in
+tree (must merge with this work — see the Phase-1/Phase-4 banners). Phase 5 docs inventory is
+ready-made: the registration-sweep agent enumerated every `pflow resume` usage line in
+guide/docs/CLAUDE.md files (no tests validate those snippets).
+
+## 2026-07-05 — Inline pause-promise gap CLOSED (owner decision: option a) + issue #562
+
+Owner picked option (a): an INLINE run's gate never pauses — pause is a promise, and resume
+ALWAYS refuses an inline token (no source file to re-resolve). Option (b) — make inline runs
+resumable by storing the workflow content in the trace — is filed as **GH issue #562** with
+the design sketch, interactions (#542 retention, Task 176), and the two pins that flip when
+it lands.
+
+**What changed:**
+- Engine pause arm (the ONLY producer decision point) gained two conjuncts:
+  `workflow_path is not None` and `not workflow_path.startswith("ir-hash:")` — same principle
+  as `_gate_pausable`'s loop/code/terminal refusals; comment points at #562. The root engine
+  always receives `workflow_path` from the runner (`_workflow_path_id(resolved)` — verified),
+  so `None` occurs only in direct-engine embedding, which also has no re-resolvable identity.
+- `GateNotInteractiveError.to_diagnostics()` suggestion now names the inline cause with its
+  remedy ("save it and run by name/path to pause instead") beside `--no-trace`.
+- `resume list` already excluded `ir-hash:` traces (fork's 3e); no change needed there.
+
+**Test fallout (the change surfaced a harness gap, not a behavior bug):** engine-level
+producer tests constructed ROOT engines without `workflow_path` — a shape production never
+produces (the runner always passes it). All such constructions in `test_gate_pause.py`,
+`test_gate_trace.py`, and the plan-drift escalation parity now pass `workflow_path`,
+which also keeps the id-collision pin honest (with `None` it would have read `failed` for
+the WRONG reason and gone dead — re-verified: the naive-id-heuristic mutation still fails
+EXACTLY that pin post-change).
+- `test_cli_mcp_parity.py::test_mcp_gated_workflow_pauses_with_resume_token` encoded the gap
+  itself (dict-IR inline pause with an unhonorable token) → rewritten as
+  `test_mcp_gated_workflow_pauses_by_path_but_fails_inline`: file-based MCP run pauses with a
+  token; the SAME workflow inline gets the ladder naming the inline cause.
+
+**New pins** (`test_gate_pause.py::TestInlinePausePromise`, both mutation-verified — dropping
+the inline conjuncts fails exactly these two): inline gated run through the REAL runner
+(ir-hash synthesis path) → FAILED, no `pause_request`; rootless engine (workflow_path=None) →
+never pauses.
+
+**Gates:** `make check` green; full `make test` **8657 passed, 0 failed** (+2);
+`make test-e2e` 44 passed. Phase-3 work remains uncommitted.
+
+## 2026-07-05 — DRAFT task review written (owner-requested, ahead of Phase 4/5)
+
+`task-review.md` drafted by the Phase-2/3 implementer while the tacit context was live —
+covers Phases 0–3 + the inline decision; carries a DRAFT banner and a "Pending" section with
+explicit instructions for the Phase-4/5 finisher (fill their sections, THEN flip the spec
+status to done and drop the banner). The task spec status was deliberately NOT changed —
+the task is not done.

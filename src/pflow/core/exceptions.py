@@ -1036,9 +1036,10 @@ class GateNotInteractiveError(PflowError):
         # an agent reads "drop the flag", not "gates don't work here".
         suggestions.append(
             "Gates pause durably when tracing is on (the run exits with a resume token). "
-            "This error means tracing was explicitly disabled (--no-trace — drop the flag to pause instead) "
-            "or the gate is in an unsupported position (parallel batch item, sub-workflow child, "
-            "or a loop-/code-node/final-step escalation)."
+            "This error means tracing was explicitly disabled (--no-trace — drop the flag to pause instead), "
+            "the workflow was submitted inline (no source file to resume from — save it and run by name/path "
+            "to pause instead), or the gate is in an unsupported position (parallel batch item, "
+            "sub-workflow child, or a loop-/code-node/final-step escalation)."
         )
         return [
             Diagnostic(

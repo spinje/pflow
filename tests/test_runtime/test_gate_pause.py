@@ -86,7 +86,9 @@ def _run_gated(ir: dict[str, Any], shared: dict[str, Any] | None = None) -> Work
     collector = WorkflowTraceCollector("gated", workflow_path="gated.pflow.md", is_run_scoped=True)
     compiled = compile_workflow(ir, _registry_with_escalating_node())
     with pytest.raises(GateNotInteractiveError):
-        WorkflowEngine(trace_collector=collector).run(compiled, shared if shared is not None else {})
+        WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(
+            compiled, shared if shared is not None else {}
+        )
     return collector
 
 
@@ -222,7 +224,7 @@ class TestNestingGuard:
         # Gate exceptions are exempted (retriable=False, re-raised untouched) at
         # the batch retry loop too — the original exception reaches the root.
         with pytest.raises(GateNotInteractiveError) as exc_info:
-            WorkflowEngine(trace_collector=collector).run(compiled, {"items": [1, 2]})
+            WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(compiled, {"items": [1, 2]})
         assert exc_info.value.parallel_batch is True
         assert collector.gate_outcome == "failed"
         assert collector.pause_request is None
@@ -285,7 +287,7 @@ def test_failed_child_gate_stop_still_refuses_naming_the_gate(tmp_path, monkeypa
     collector = WorkflowTraceCollector("parent", workflow_path=str(wf_path), is_run_scoped=True, stream_to_disk=True)
     compiled = compile_workflow(ir, Registry())
     with pytest.raises(GateNotInteractiveError):
-        WorkflowEngine(trace_collector=collector).run(compiled, {})
+        WorkflowEngine(trace_collector=collector, workflow_path=str(wf_path)).run(compiled, {})
     path = collector.finalize()
     assert path is not None
     assert load_trace_file(path)["final_status"] == "failed"
@@ -320,7 +322,7 @@ def test_torn_paused_trailer_degrades_to_incomplete_and_resumes(tmp_path, monkey
     collector = WorkflowTraceCollector("gated", workflow_path=str(wf_path), is_run_scoped=True, stream_to_disk=True)
     compiled = compile_workflow(ir, Registry())
     with pytest.raises(GateNotInteractiveError):
-        WorkflowEngine(trace_collector=collector).run(compiled, {})
+        WorkflowEngine(trace_collector=collector, workflow_path=str(wf_path)).run(compiled, {})
     path = collector.finalize()
     assert path is not None
     assert load_trace_file(path)["final_status"] == "paused"
@@ -357,7 +359,9 @@ def test_paused_escalation_real_trace_choose_answer_roundtrip(tmp_path, monkeypa
     registry = _registry_with_escalating_node()
     collector = WorkflowTraceCollector("gated", workflow_path="gated.pflow.md", is_run_scoped=True, stream_to_disk=True)
     with pytest.raises(GateNotInteractiveError):
-        WorkflowEngine(trace_collector=collector).run(compile_workflow(ir, registry), {})
+        WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(
+            compile_workflow(ir, registry), {}
+        )
     path = collector.finalize()
     assert path is not None
 
@@ -393,3 +397,39 @@ def test_paused_escalation_real_trace_choose_answer_roundtrip(tmp_path, monkeypa
     assert re_recorded["restored"] is True
     assert re_recorded["node_output"]["result"]["escalation"]["decision"] == {"chosen": "b", "notes": None}
     assert attempt._determine_trace_status() == "success"
+
+
+class TestInlinePausePromise:
+    """Owner decision 2026-07-05 (option a): an INLINE run's gate never pauses.
+
+    An inline source (dict IR / piped content) records only the synthesized
+    ``ir-hash:<md5>`` identity — no file to re-resolve — so resume ALWAYS
+    refuses its token. Pause = promise: the producer must not issue one. Making
+    inline runs resumable (workflow content in the trace) is the tracked
+    follow-up issue; when that lands, these pins flip.
+    """
+
+    def test_inline_gated_run_stays_failed_without_a_token(self):
+        """Through the REAL runner, so the ir-hash synthesis path is the one exercised."""
+        from pflow.core.workflow.status import WorkflowStatus
+        from pflow.execution.result import RunnerConfig
+        from pflow.execution.runner import WorkflowRunner
+
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "guarded", "type": "shell", "params": {"command": "echo x"}, "approval": "required"}],
+            "edges": [],
+        }
+        result = WorkflowRunner().run(ir, {}, RunnerConfig())
+        assert result.status is WorkflowStatus.FAILED  # never PAUSED
+        assert result.trace.gate_outcome == "failed"
+        assert result.trace.pause_request is None
+
+    def test_engine_without_workflow_path_never_pauses(self):
+        """A rootless engine (workflow_path=None) has no re-resolvable identity either."""
+        collector = WorkflowTraceCollector("gated", workflow_path="gated.pflow.md", is_run_scoped=True)
+        compiled = compile_workflow(_escalation_ir(successor=True), _registry_with_escalating_node())
+        with pytest.raises(GateNotInteractiveError):
+            WorkflowEngine(trace_collector=collector).run(compiled, {})
+        assert collector.gate_outcome == "failed"
+        assert collector.pause_request is None

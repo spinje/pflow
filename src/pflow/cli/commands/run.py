@@ -458,7 +458,10 @@ def _prepare_gate_resolver(
                 err=True,
             )
 
-    return build_gate_resolver(auto_approve, output_controller)
+    # Task 171: `gate_deny` is set only by resume's `--approve no` (_dispatch_resume);
+    # normal runs default it empty here via .get — there is no deny flag on `pflow run`.
+    deny = frozenset(ctx.obj.get("gate_deny") or ())
+    return build_gate_resolver(auto_approve, output_controller, deny=deny)
 
 
 def _display_denied_result(ctx: click.Context, result: Any, output_format: str) -> None:
@@ -1328,6 +1331,8 @@ def run(
         ctx.obj["cache"] = cache
         ctx.obj["only_node"] = only_node
         ctx.obj["auto_approve"] = auto_approve
+        # Task 171: only resume's `--approve no` populates this (no deny flag on run).
+        ctx.obj["gate_deny"] = ()
 
         print_flag = ctx.obj.get("print_flag", False)
         output_format = ctx.obj.get("output_format", "text")

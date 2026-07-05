@@ -2717,7 +2717,7 @@ def test_engine_and_planner_paused_escalation_entry_state_match(tmp_path, monkey
 
     collector = WorkflowTraceCollector("gated", workflow_path="gated.pflow.md", is_run_scoped=True, stream_to_disk=True)
     with pytest.raises(GateNotInteractiveError):
-        WorkflowEngine(trace_collector=collector).run(compiled, {})
+        WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(compiled, {})
     trace_path = collector.finalize()
     assert trace_path is not None
     source = load_resume_source(

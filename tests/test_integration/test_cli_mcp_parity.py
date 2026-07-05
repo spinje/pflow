@@ -265,18 +265,29 @@ def _gated_ir() -> dict[str, Any]:
     }
 
 
-def test_mcp_gated_workflow_pauses_with_resume_token():
-    """Pre-171 this raised the remediation-ladder RuntimeError; the ladder text
-    itself stays pinned by the CLI --no-trace path (test_paused_cli) and the
-    gate unit tests — MCP's contract is now the durable pause."""
+def test_mcp_gated_workflow_pauses_by_path_but_fails_inline(tmp_path):
+    """Task 171 (+ owner decision 2026-07-05, option a): a FILE-based MCP gated
+    run pauses durably with a token; the SAME workflow submitted INLINE (dict IR
+    — workflow_path is the synthesized ir-hash, no source file to re-resolve)
+    keeps the remediation-ladder hard error, whose text names the inline cause.
+    Pause is a promise: resume would ALWAYS refuse an inline token, so none is
+    issued (the follow-up — workflow content in the trace — flips this pin)."""
     from pflow.mcp_server.services.execution_service import ExecutionService
+    from tests.shared.markdown_utils import write_workflow_file
 
-    text = ExecutionService.execute_workflow(_gated_ir(), {})
+    wf = tmp_path / "gated_parity.pflow.md"
+    write_workflow_file(_gated_ir(), wf)
+    text = ExecutionService.execute_workflow(str(wf), {})
     assert "status: paused" in text
     assert "paused_node_id: guarded-step" in text
     assert "resume_command: pflow resume" in text
     # The gate content is self-contained (resolved preview, not the template).
     assert "posting-hello" in text
+
+    with pytest.raises(RuntimeError) as exc:
+        ExecutionService.execute_workflow(_gated_ir(), {})
+    assert "submitted inline" in str(exc.value)
+    assert "status: paused" not in str(exc.value)
 
 
 def test_mcp_auto_approve_pre_approves_off_main_thread():

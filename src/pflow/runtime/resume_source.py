@@ -184,25 +184,74 @@ def _dangling_top_level_starts(path: Path) -> list[tuple[int, str]]:
     return [(sid, node_id) for sid, node_id in started.items() if sid not in completed_ids]
 
 
+# Gate resolution lines that carry a HUMAN VERDICT (Task 171 consumption clause (a)).
+# `non_interactive` (no human channel — the run re-paused or hard-failed) and `error`
+# (a resolver bug) are deliberately excluded: counting them would let a no-verdict
+# re-pause or a broken resolver installation wedge the chain as "consumed".
+_GATE_VERDICT_RESOLUTIONS = frozenset({"approved", "denied", "choice"})
+
+
 def _attempt_consumed_work(path: Path, candidate: dict[str, Any]) -> bool:
-    """Whether a resume attempt's trace shows it GOT SOMEWHERE (Task 164 chain policy).
+    """Whether a resume attempt's trace shows it GOT SOMEWHERE (Task 164/171 chain policy).
 
     "Resume targets the newest attempt in a chain" exists for consumption
     semantics — a newer attempt that ran steps (side effects may have fired) means
-    the source is no longer the frontier. An attempt "got somewhere" when EITHER it
-    recorded a non-``restored`` event (a step completed — its only other events are
-    the upstream re-records stamped before the failed step would have run) OR it left
-    a dangling top-level ``node.start`` (a step was killed mid-execution, after its
-    side effect may have fired — and that trace is itself still resumable via the
-    incomplete arm). The negation is a DEAD zero-work attempt (a refused ``--force``
-    resume, a crash before the first step): it consumed nothing, so it must neither
-    supersede its source (would let the source re-run a started step) nor be picked
-    over an older resumable run (would wedge ``resume <workflow>``). Task 171's
-    ``resume list`` should reuse this predicate when it renders chains.
+    the source is no longer the frontier. An attempt "got somewhere" when ANY of:
+
+    - it recorded a non-``restored`` event (a step completed — its only other
+      events are the upstream re-records stamped before the entry would have run);
+    - it is PAUSED (Task 171 clause (b)): it reached a gate, so the chain frontier
+      moved to it. This is also what makes a run paused at its FIRST node — zero
+      events, no dangling start — selectable by workflow name, and what stops a
+      restored-only paused attempt (an answered escalation whose successor is
+      itself gated) from leaving BOTH itself and its source pending;
+    - it left a dangling top-level ``node.start`` (a step was killed mid-execution,
+      after its side effect may have fired — itself resumable via the incomplete arm);
+    - its trace carries a gate RESOLUTION line with a human VERDICT (Task 171
+      clause (a), ``_GATE_VERDICT_RESOLUTIONS``): a decision was delivered through
+      it — the case that matters is a DENIED attempt, which executes ZERO nodes
+      (the gate fires before ``node.start``) yet must consume the token, or a
+      second ``--approve no`` would re-deliver a verdict the human already gave.
+
+    The negation is a DEAD zero-work attempt (a refused ``--force`` resume, a
+    crash before the first step): it consumed nothing, so it must neither
+    supersede its source (would let the source re-run a started step) nor be
+    picked over an older resumable run (would wedge ``resume <workflow>``).
+    ``resume list`` shares this predicate via ``_find_consuming_attempt``.
     """
     if any(not event.get("restored") for event in candidate.get("nodes") or []):
         return True
-    return bool(_dangling_top_level_starts(path))
+    if candidate.get("final_status") == "paused":
+        return True  # clause (b): reached a gate — zero extra IO, the dict is loaded
+    if _dangling_top_level_starts(path):
+        return True
+    return any(
+        line.get("kind") == "gate"
+        and line.get("phase") == "resolution"
+        and line.get("resolution") in _GATE_VERDICT_RESOLUTIONS
+        for line in _iter_raw_trace_lines(path)
+    )
+
+
+def _find_consuming_attempt(debug_dir: Path, workflow_path: str, execution_id: str) -> str | None:
+    """The execution id of a newer attempt that CONSUMED this run's chain, or ``None``.
+
+    THE one consumption policy, two callers — ``load_resume_source`` (raises
+    ``ResumeSupersededError``) and ``list_paused_runs`` (filters consumed tokens)
+    — so the loader and ``resume list`` can never disagree on whether a token is
+    still answerable. An attempt supersedes its source only when it consumed the
+    chain (``_attempt_consumed_work``) or is live right now (mid-first-step there
+    is no terminal event yet, but its writer lock is held). A DEAD zero-work
+    attempt — a refused ``--force`` resume, a crash before the entry — consumed
+    nothing; counting it would wedge the chain (the source reads superseded while
+    the empty attempt itself refuses with "no resumable failed step").
+    """
+    for candidate_path, candidate in _iter_workflow_traces(debug_dir, workflow_path):
+        if candidate.get("resumed_from") != execution_id:
+            continue
+        if _attempt_consumed_work(candidate_path, candidate) or _is_trace_locked(candidate_path) is True:
+            return str(candidate.get("execution_id") or "")
+    return None
 
 
 def _raise_resume_source_missing(debug_dir: Path, workflow_path: str | None, execution_id: str | None) -> NoReturn:
@@ -715,22 +764,13 @@ def load_resume_source(
         )
 
     if source_execution_id and isinstance(source_workflow_path, str):
-        for candidate_path, candidate in _iter_workflow_traces(debug_dir, source_workflow_path):
-            if candidate.get("resumed_from") != source_execution_id:
-                continue
-            # A newer attempt supersedes its source only when it CONSUMED the chain:
-            # it executed at least one real step, or it is live right now (mid-first-
-            # step there is no terminal event yet, but its writer lock is held). A
-            # DEAD zero-work attempt — a refused --force resume, a crash before K —
-            # consumed nothing; counting it would wedge the chain (the source reads
-            # superseded while the empty attempt itself refuses with "no resumable
-            # failed step").
-            if _attempt_consumed_work(candidate_path, candidate) or _is_trace_locked(candidate_path) is True:
-                raise ResumeSupersededError(
-                    str(candidate.get("execution_id") or ""),
-                    execution_id=source_execution_id,
-                    trace_path=str(path),
-                )
+        consuming = _find_consuming_attempt(debug_dir, source_workflow_path, source_execution_id)
+        if consuming is not None:
+            raise ResumeSupersededError(
+                consuming,
+                execution_id=source_execution_id,
+                trace_path=str(path),
+            )
 
     entry_node_id, last_completed_node_id = _resolve_resume_entry(path, data, source_execution_id)
 
@@ -807,3 +847,134 @@ def seed_snapshot_into_shared(
             continue
         shared[nid] = {k: v for k, v in output.items() if k not in _SNAPSHOT_RESERVED}
     return final
+
+
+# ── Resume list (Task 171) ──────────────────────────────────────────────────
+# `pflow resume list` is a STATUS QUERY over the debug dir, not a separate
+# registry: a paused trace IS the pending obligation. Cheap by construction —
+# a head read (meta line) + a tail read (trailer) per file; the only full
+# parses are `_find_consuming_attempt`'s over each candidate's chain (accepted
+# v1 inefficiency — "a status query", per spec).
+
+
+@dataclass(frozen=True)
+class PausedRun:
+    """One pending paused run — a ``resume list`` row (Task 171).
+
+    ``gate_kind`` is ``gate_request["kind"]`` (the payload stays the one source
+    of truth — the row carries only what the list renders); ``paused_at`` is the
+    trailer's ``end_time`` ISO string (the moment the run finalized paused).
+    """
+
+    execution_id: str
+    workflow_name: str | None
+    workflow_path: str | None
+    paused_node_id: str
+    gate_kind: str | None
+    paused_at: str | None
+    path: Path
+
+
+def _scan_tail_for_trailer(tail: bytes) -> tuple[dict[str, Any] | None, bool]:
+    """Inspect the LAST non-empty line of a byte tail: ``(trailer_dict, parse_ok)``.
+
+    ``(dict, True)`` when it is the ``run.complete`` trailer; ``(None, True)``
+    when it parsed but is NOT the trailer (run not finished) or the tail is
+    empty; ``(None, False)`` when it FAILED to parse — the caller disambiguates
+    a genuine mid-flush from a window that cut a fully-flushed oversized trailer.
+    """
+    for raw in reversed(tail.split(b"\n")):
+        if not raw.strip():
+            continue
+        try:
+            line = json.loads(raw)
+        except ValueError:
+            return None, False
+        if isinstance(line, dict) and line.get("kind") == "run.complete":
+            return line, True
+        return None, True  # a complete-but-non-trailer last line → not finished
+    return None, True  # empty tail
+
+
+def _read_trailer_line(path: Path) -> dict[str, Any] | None:
+    """The parsed ``run.complete`` trailer dict of a finalized trace, or ``None`` — a cheap tail read.
+
+    ``resume list`` scans every trace in the debug dir; a full ``load_trace_file``
+    per file would make a status query O(total trace bytes). Mirrors
+    ``ui.run_tailer.read_run_status``'s mechanics — the SAME accepted
+    ``runtime/ ↛ ui/`` duplication as ``_is_trace_locked`` above (importing
+    ``ui`` here fails ``test_import_hygiene.py::test_runtime_does_not_import_ui``):
+    read a bounded 64 KB tail and inspect the LAST non-empty line. A trailer
+    LARGER than the window — a paused trailer carries the full ``gate_request``,
+    so many-small-fields previews can exceed it — gets cut mid-line and would
+    misread as missing, silently hiding a legitimate paused run from the list.
+    So when the last line fails to parse BUT the file exceeds the window AND
+    ends with a newline (its last line IS fully flushed), re-read the whole file
+    ONCE. A genuine mid-flush has no trailing newline and stays ``None``.
+    """
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(max(0, size - 65536))
+            tail = handle.read()
+            trailer, parse_ok = _scan_tail_for_trailer(tail)
+            if not parse_ok and size > 65536 and tail.endswith(b"\n"):
+                handle.seek(0)
+                trailer, _ = _scan_tail_for_trailer(handle.read())
+    except OSError:
+        return None
+    return trailer
+
+
+def list_paused_runs(debug_dir: Path | None = None) -> list[PausedRun]:
+    """Pending paused runs (paused ∧ not consumed), newest first — ``pflow resume list`` (Task 171).
+
+    Skips, in scan order: unreadable/meta-less files; ``--only`` runs (never
+    resume sources); INLINE runs (``ir-hash:`` — the loader's inline refusal
+    precedes the paused arm, so their token is unanswerable; listing a row whose
+    command always refuses would be a lie. The producer-side pause-promise gap
+    for inline gated runs awaits an owner decision — see the Task 171 progress
+    log); non-paused trailers; corrupt pause records (no ``paused_node_id`` /
+    ``gate_request`` — the loader refuses those too); and CONSUMED tokens via
+    ``_find_consuming_attempt`` — the ONE consumption policy shared with the
+    loader, so the list and a resume verdict can never disagree on whether a
+    token is still answerable. No live-lock probe: a paused trace is finalized,
+    so its writer lock is never held.
+    """
+    debug_dir = debug_dir if debug_dir is not None else (Path.home() / ".pflow" / "debug")
+    if not debug_dir.exists():
+        return []
+    pending: list[PausedRun] = []
+    for trace_file in sorted(debug_dir.glob("workflow-trace-*.json"), key=_trace_recency_key, reverse=True):
+        meta = _read_trace_meta_line(trace_file)
+        if meta is None or meta.get("only_node") is not None:
+            continue
+        workflow_path = meta.get("workflow_path")
+        if not isinstance(workflow_path, str) or workflow_path.startswith("ir-hash:"):
+            continue
+        trailer = _read_trailer_line(trace_file)
+        if trailer is None or trailer.get("final_status") != "paused":
+            continue
+        paused_node_id = trailer.get("paused_node_id")
+        gate_request = trailer.get("gate_request")
+        if not isinstance(paused_node_id, str) or not isinstance(gate_request, dict):
+            continue
+        execution_id = str(meta.get("execution_id") or "")
+        if execution_id and _find_consuming_attempt(debug_dir, workflow_path, execution_id) is not None:
+            continue
+        gate_kind = gate_request.get("kind")
+        paused_at = trailer.get("end_time")
+        workflow_name = meta.get("workflow_name")
+        pending.append(
+            PausedRun(
+                execution_id=execution_id,
+                workflow_name=workflow_name if isinstance(workflow_name, str) else None,
+                workflow_path=workflow_path,
+                paused_node_id=paused_node_id,
+                gate_kind=gate_kind if isinstance(gate_kind, str) else None,
+                paused_at=paused_at if isinstance(paused_at, str) else None,
+                path=trace_file,
+            )
+        )
+    return pending

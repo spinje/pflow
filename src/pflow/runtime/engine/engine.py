@@ -1512,6 +1512,15 @@ class WorkflowEngine:
                     and not gate_exc.parallel_batch
                     and originating
                     and not self.nested
+                    # Pause = promise: an INLINE run (dict IR / piped content —
+                    # workflow_path is the synthesized "ir-hash:<md5>", never a
+                    # file; None = no identity at all) has no source to
+                    # re-resolve, so resume ALWAYS refuses its token. Don't
+                    # issue one — same principle as the loop/code/terminal
+                    # refusals in _gate_pausable. Making inline runs resumable
+                    # (workflow content in the trace) is a tracked follow-up.
+                    and self.workflow_path is not None
+                    and not self.workflow_path.startswith("ir-hash:")
                     and _gate_pausable(gate_exc.request, config, node, action)
                 ):
                     self.trace.gate_outcome = "paused"

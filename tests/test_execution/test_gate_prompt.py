@@ -113,6 +113,32 @@ class TestAutoApprove:
         assert "pre-approved via --auto-approve=notify" in capsys.readouterr().err
 
 
+class TestDeny:
+    """Task 171: the `deny` set — `pflow resume <id> --approve no`'s delivery channel."""
+
+    def test_deny_resolves_denied_via_flag_without_prompting(self):
+        resolver = build_gate_resolver(frozenset(), None, deny=frozenset({"notify"}))
+        resolution = resolver(_approval("notify"), allow_prompt=False)
+        assert resolution == GateResolution(approved=False, resolved_via="flag")
+
+    def test_deny_checked_before_auto_approve(self):
+        # Backstop only — the CLI rejects the contradictory flags up front. A
+        # silent approve here would run a step the human explicitly denied.
+        resolver = build_gate_resolver(frozenset({"notify"}), _FakeOC(), deny=frozenset({"notify"}))
+        assert resolver(_approval("notify")).approved is False
+
+    def test_deny_never_touches_escalations(self):
+        # You cannot pre-deny a question; a denied-set id on an escalation still
+        # raises the non-interactive error (no controller to prompt through).
+        resolver = build_gate_resolver(frozenset(), None, deny=frozenset({"agent-step"}))
+        with pytest.raises(GateNotInteractiveError):
+            resolver(_escalation(question="a or b?"))
+
+    def test_deny_ignores_other_gates(self):
+        resolver = build_gate_resolver(frozenset({"other"}), None, deny=frozenset({"notify"}))
+        assert resolver(_approval("other"), allow_prompt=False).approved is True
+
+
 class TestPromptFlows:
     def test_approval_yes_and_no(self, monkeypatch):
         oc = _FakeOC()

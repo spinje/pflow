@@ -53,7 +53,7 @@ def _run_streamed(ir: dict[str, Any], resolver, tmp_path: Path) -> tuple[Workflo
     )
     compiled = compile_workflow(ir, Registry())
     shared: dict[str, Any] = {"__gate_resolver__": resolver}
-    engine = WorkflowEngine(trace_collector=collector)
+    engine = WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md")
     try:
         engine.run(compiled, shared)
     finally:
@@ -107,7 +107,7 @@ class TestGateTraceEvents:
         compiled = compile_workflow(_gated_ir(), Registry())
         shared: dict[str, Any] = {"__gate_resolver__": _denier}
         with pytest.raises(GateDenied):
-            WorkflowEngine(trace_collector=collector).run(compiled, shared)
+            WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(compiled, shared)
         collector.finalize()
 
         lines = _read_lines(collector._stream_path)
@@ -136,7 +136,7 @@ class TestGateTraceEvents:
         )
         compiled = compile_workflow(_gated_ir(), Registry())
         with pytest.raises(GateNotInteractiveError):
-            WorkflowEngine(trace_collector=collector).run(compiled, {})
+            WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(compiled, {})
         collector.finalize()
         trace = load_trace_file(collector._stream_path)
         assert trace["final_status"] == "paused"
@@ -169,7 +169,9 @@ class TestGateTraceEvents:
         )
         compiled = compile_workflow(_gated_ir(), Registry())
         with pytest.raises(GateResolverError):
-            WorkflowEngine(trace_collector=collector).run(compiled, {"__gate_resolver__": crasher})
+            WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(
+                compiled, {"__gate_resolver__": crasher}
+            )
         collector.finalize()
         trace = load_trace_file(collector._stream_path)
         assert trace["final_status"] == "failed"
@@ -214,7 +216,9 @@ class TestGateTraceEvents:
         )
         compiled = compile_workflow(self._nested_gate_after_sibling_ir(tmp_path, "child-denied"), Registry())
         with pytest.raises(GateDenied):
-            WorkflowEngine(trace_collector=collector).run(compiled, {"__gate_resolver__": _denier})
+            WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(
+                compiled, {"__gate_resolver__": _denier}
+            )
         collector.finalize()  # must not raise
 
         lines = _read_lines(collector._stream_path)
@@ -239,7 +243,7 @@ class TestGateTraceEvents:
         )
         compiled = compile_workflow(self._nested_gate_after_sibling_ir(tmp_path, "child-noninteractive"), Registry())
         with pytest.raises(GateNotInteractiveError):
-            WorkflowEngine(trace_collector=collector).run(compiled, {})
+            WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(compiled, {})
         collector.finalize()  # must not raise
 
         lines = _read_lines(collector._stream_path)
@@ -308,7 +312,7 @@ class TestGateTraceEvents:
         )
         compiled = compile_workflow(ir, Registry())
         shared: dict[str, Any] = {"items": [1, 2, 3], "__gate_resolver__": flag_approver}
-        WorkflowEngine(trace_collector=collector).run(compiled, shared)
+        WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(compiled, shared)
         collector.finalize()
         assert shared["fan"]["success_count"] == 3
         trace = load_trace_file(collector._stream_path)

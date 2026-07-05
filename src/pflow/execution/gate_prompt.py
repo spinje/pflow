@@ -55,15 +55,27 @@ def can_prompt(output_controller: OutputController | None) -> bool:
 def build_gate_resolver(
     auto_approve: frozenset[str],
     output_controller: OutputController | None,
+    *,
+    deny: frozenset[str] = frozenset(),
 ) -> GateResolver:
     """Build the ``__gate_resolver__`` callable for this run.
 
     ``auto_approve`` pre-approves APPROVAL gates by node id (flat namespace
     across the workflow tree — a child gate with a flagged id is approved).
     Escalations never auto-resolve: you cannot pre-answer an unknown question.
+
+    ``deny`` (Task 171) pre-DENIES approval gates by node id — the delivery
+    channel for ``pflow resume <id> --approve no``: the paused gate re-fires in
+    the resume run and resolves denied, producing an honest denied resolution
+    line in the attempt trace (→ trace status ``denied``, exit 3). Checked
+    BEFORE ``auto_approve``; the CLI rejects the contradictory
+    ``--approve no`` + ``--auto-approve <same id>`` combination up front, so
+    the precedence here is a backstop, never a silent tiebreak.
     """
 
     def resolver(request: GateRequest, *, allow_prompt: bool = True) -> GateResolution:
+        if request.kind == GATE_KIND_APPROVAL and request.node_id in deny:
+            return GateResolution(approved=False, resolved_via="flag")
         if request.kind == GATE_KIND_APPROVAL and request.node_id in auto_approve:
             if allow_prompt:
                 _echo_auto_approved(request, output_controller)

@@ -371,10 +371,22 @@ def test_json_refusal_shape(home, shell_wf):
     assert doc["errors"][0]["context"]["execution_id"] == exec_id
 
 
-def test_bare_resume_is_usage_error(home):
+def test_bare_resume_shows_group_help_with_answer_flags(home):
+    """Post-171 `resume` is a GROUP: bare `pflow resume` renders the group help —
+    the discoverability surface for the flags the hidden default subcommand would
+    otherwise bury (a hidden subcommand contributes nothing to --help). Replaces
+    the flat command's "Missing TARGET" usage error; a flag-without-target form
+    (`resume --force`) still routes to the default subcommand and errors there."""
     result = _runner().invoke(cli, ["resume"])
-    assert result.exit_code == 2
-    assert "Missing TARGET" in (result.stdout + result.stderr)
+    assert result.exit_code == 0
+    assert "--approve yes|no" in result.stdout
+    assert "--choose" in result.stdout
+    assert "pflow resume list" in result.stdout
+    assert "Resume token" in result.stdout  # the worked paused-gate example
+    # And the flag-only form still gets the hard usage error (routed to `run`).
+    flag_only = _runner().invoke(cli, ["resume", "--force"])
+    assert flag_only.exit_code == 2
+    assert "Missing TARGET" in (flag_only.stdout + flag_only.stderr)
 
 
 def test_failed_run_with_no_trace_is_a_clear_missing_error(home, shell_wf):

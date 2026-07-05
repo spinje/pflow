@@ -531,6 +531,12 @@ re-record) + the real-collector keystone (below).
 
 ## Phase 3 — CLI: group restructure, `--approve`, `--choose`, `resume list`
 
+> **IMPLEMENTED 2026-07-05** — see the progress log's Phase-3 entry for the spike-verified
+> group config (`ignore_unknown_options` class attr; `allow_interspersed_args` on the
+> subcommand), the bare-`resume` group-help behavior change, and the delegation record
+> (3e built by a full-context fork). The batch-HOST test note in the producer battery below
+> was already dropped in Phase 1 (unproducible — validation rejects `approval:` on batch).
+
 ### 3a. Group restructure (precedent: `PflowCLI`, `cli/main.py:18-96`)
 
 `resume_cmd` is a flat `@click.command` whose `nargs=-1 UNPROCESSED args` rejects stray flags
