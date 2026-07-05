@@ -877,15 +877,19 @@ def test_both_primary_and_fallback_fail_resumes_at_the_primary_e2e(tmp_path) -> 
     assert "fallback" not in completed
 
 
-def test_non_interactive_gate_stop_pauses_and_loader_refuses_pending_answer_e2e(tmp_path) -> None:
-    """REAL non-interactive approval-gate stop: post-Task-171 the run trails PAUSED with
-    EMPTY failed_node_ids (the gated node never ran) and the pause record on the trailer.
-    The loader must never treat it as a resumable FAILURE. Interim (Phase 1): the paused
-    status refuses via the generic not-resumable arm — Phase 2 replaces that with the
-    ``--approve``/``--choose`` answer flow (ResumeAnswerRequiredError); update this test
-    then. Validates the whole chain against production, not a spliced synthetic trace."""
-    from pflow.core.exceptions import ResumeNotResumableError
+def test_non_interactive_gate_pause_loads_with_answer_and_resumes_e2e(tmp_path) -> None:
+    """The approval-side pause-promise keystone (Task 171 Phase 2), REAL end-to-end:
+    a non-interactive approval-gate stop trails PAUSED with EMPTY failed_node_ids (the
+    gated node never ran) and the pause record on the trailer. The loader (a) refuses a
+    no-answer resume with ``ResumeAnswerRequiredError`` carrying the gate content + the
+    exact answer command — never the seed guard's misleading "re-run" refusal — and
+    (b) with ``{"approve": True}`` returns entry = the gated node itself; the resumed run
+    (resolver primed by node id, exactly how Phase 3's ``--approve yes`` delivers it)
+    restores upstream without re-executing and runs the gated node once. Validates the
+    whole chain against production, not a spliced synthetic trace."""
+    from pflow.core.exceptions import ResumeAnswerRequiredError
     from pflow.core.workflow.status import WorkflowStatus
+    from pflow.execution.gate_prompt import build_gate_resolver
 
     wf = tmp_path / "wf.pflow.md"
     wf.write_text(
@@ -932,9 +936,37 @@ def test_non_interactive_gate_stop_pauses_and_loader_refuses_pending_answer_e2e(
     assert trace.get("failed_node_ids") == []  # the gated node produced zero events
     assert trace.get("paused_node_id") == "guarded"
 
-    with pytest.raises(ResumeNotResumableError) as exc:
+    # (a) No answer → the typed refusal, rendered self-contained: the pending
+    # gate content (the approval preview) + the exact kind-correct command.
+    with pytest.raises(ResumeAnswerRequiredError) as exc:
         load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
-    assert "paused" in str(exc.value)
+    assert exc.value.mode == "missing_answer"
+    assert "echo do-it" in str(exc.value)
+    assert any("--approve yes|no" in s for s in exc.value.suggestions)
+
+    # (b) With the approval answer → entry is the gated node itself (it never
+    # ran, so it has no event and the seed scope excludes it by construction).
+    source = load_resume_source(
+        execution_id=run1.trace.execution_id, debug_dir=p1.parent, gate_answer={"approve": True}
+    )
+    assert source.entry_node_id == "guarded"
+    assert source.last_completed_node_id is None
+    assert source.paused_node_id == "guarded"
+    assert source.gate_request is not None
+    assert source.gate_request["kind"] == "action_approval"
+    assert all(event["node_id"] != "guarded" for event in source.events)
+
+    # Resume: resolver primed with the gated node id — the exact delivery
+    # mechanism Phase 3's `--approve yes` uses (auto_approve set).
+    resolver = build_gate_resolver(frozenset({"guarded"}), None)
+    resumed = WorkflowRunner().run(str(wf), {}, RunnerConfig(), resume_source=source, gate_resolver=resolver)
+    assert resumed.success, [str(d) for d in resumed.diagnostics]
+    execution = resumed.shared_after["__execution__"]
+    # Upstream restored (not re-executed); the gated node ran exactly once.
+    assert execution["restored_nodes"] == ["prep"]
+    assert execution["completed_nodes"] == ["guarded"]
+    assert execution["resumed_from"] == run1.trace.execution_id
+    assert resumed.shared_after["guarded"]["stdout"].strip() == "do-it"
 
 
 # ── Review fixes (2026-07-04): seed fidelity + incomplete tails ending in a failure ──

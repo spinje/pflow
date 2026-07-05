@@ -30,7 +30,7 @@ from typing import Any
 import click
 
 from pflow.core.exceptions import GateNotInteractiveError
-from pflow.core.gate import GATE_KIND_APPROVAL, GateRequest, GateResolution, masked_preview
+from pflow.core.gate import GATE_KIND_APPROVAL, GateRequest, GateResolution, masked_preview, option_labels
 from pflow.core.output_controller import OutputController
 
 GateResolver = Callable[..., GateResolution]
@@ -149,15 +149,14 @@ def _echo_options(request: GateRequest) -> list[str]:
 def _format_option_lines(options: Any, recommendation: str | None) -> tuple[list[str], list[str]]:
     """Numbered escalation options as plain lines, plus the labels in display order.
 
-    The single label-extraction rule (``option.get("label") or f"option {i}"``):
-    the blocking prompt's digit answer AND resume's ``--choose N`` (Task 171)
-    both map numbers to THESE labels, so the render and the mapping can't drift.
+    Labels come from the shared ``option_labels`` rule (``core/gate.py``): the
+    blocking prompt's digit answer AND resume's ``--choose N`` (Task 171) both
+    map numbers to THESE labels, so the render and the mapping can't drift.
     """
+    options = list(options)
+    labels = option_labels(options)
     lines: list[str] = []
-    labels: list[str] = []
-    for i, option in enumerate(options, start=1):
-        label = str(option.get("label") or f"option {i}")
-        labels.append(label)
+    for i, (option, label) in enumerate(zip(options, labels, strict=True), start=1):
         rec = " (rec)" if recommendation and recommendation == label else ""
         detail = " — ".join(str(option[key]) for key in ("description", "tradeoffs") if option.get(key))
         suffix = f" — {detail}" if detail else ""

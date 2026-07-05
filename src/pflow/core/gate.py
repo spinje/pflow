@@ -101,6 +101,19 @@ def build_escalation_request(node_id: str, node_type: str, marker: Any) -> GateR
     )
 
 
+def option_labels(options: list[dict[str, Any]]) -> list[str]:
+    """Escalation option labels in display order — THE numbering rule.
+
+    The blocking prompt's digit answer, the pause output's numbered list, and
+    resume's numeric ``--choose`` (Task 171) all map numbers through this one
+    extraction (``label`` or ``option N``), so the render and the mapping can
+    never drift. Callers pre-filter to dict options (``GateRequest`` guarantees
+    dicts; trailer consumers filter hand-edited garbage) so numbering is
+    identical across surfaces.
+    """
+    return [str(option.get("label") or f"option {i}") for i, option in enumerate(options, start=1)]
+
+
 def masked_preview(preview: dict[str, Any]) -> dict[str, Any]:
     """Preview with secret-NAMED values redacted (recursively) — never truncated.
 

@@ -438,3 +438,152 @@ still wins; only the disclosure wording).
 **Gates re-run:** `make check` green; full `make test` **8610 passed, 0 failed** (+2 from the
 previous 8608: the paused-autoload disclosure test and the first-node ordering pin; the other
 additions folded into existing tests).
+
+## 2026-07-05 — Phase 2 session start (scope clarified by owner)
+
+Owner initially wrote "continue with phase 3 only"; since Phase 2 was not implemented and
+Phase 3's CLI is built on Phase 2's loader contract, I flagged the contradiction — owner
+corrected mid-session: **Phase 2 ONLY, then stop for human review.** The plan's
+"do-not-split 2+3" rule targets contract drift between DIFFERENT agents; mitigation for the
+split: this entry freezes the exact Phase-2 contract Phase 3 must consume (see the
+"Phase-2 → Phase-3 contract" section at the end of this session's entry).
+
+- Phases 0+1 committed by owner (`a8066f15`, `cf60b197`). Clean tree confirmed.
+- **Baseline captured**: 4 resume suites + `test_gate_pause.py` + `test_paused_cli.py` =
+  **181 passed** (the four alone were 165 at Phase-1 close; full suite 8610).
+- Plan re-verification (code is truth): all Phase-2 symbols re-grepped in
+  `runtime/resume_source.py` post-extraction — `_resolve_resume_entry`'s `!= "failed"`
+  catch-all at resume_source.py:391, `_apply_gate_resolutions` at :266, superseded scan at
+  :546-562, `_guard_seed_scope` at :458. Trailer keys confirmed to land FLAT on the loaded
+  `data` dict (`reconstruct_trace_from_lines` copies non-`kind` trailer keys verbatim,
+  trace_io.py:243). `core → execution` lazy-import precedent for
+  `ResumeAnswerRequiredError.to_diagnostics()` confirmed: `core/trace_report.py:1126`
+  already lazily imports `pflow.execution.formatters`.
+
+## 2026-07-05 — Phase 2 implemented (loader: paused arm + answer fold) — DONE, awaiting review
+
+**What was built** (per plan 2a–2f):
+- **2f — `ResumeAnswerRequiredError`** (`core/exceptions.py`, after `ResumeStaleWorkflowError`):
+  three modes (`missing_answer` / `wrong_flag` / `not_paused`), messages BUILT IN THE CLASS
+  keyed on mode (callers stay one-line). The paused modes render the gate content INTO the
+  multi-line message (question + numbered options with `(rec)`, or the secret-masked approval
+  preview) via `format_gate_lines`, and the suggestion carries the exact kind-correct command
+  via `format_resume_answer_command` (both lazy-imported from `execution/gate_prompt` at raise
+  time — the Phase-1 render seam, reused as planned). `to_diagnostics()` adds the masked
+  `context["gate"]` payload (same policy as `GateNotInteractiveError`). Instance-level `_TITLE`
+  override for `not_paused` ("No paused gate to answer").
+- **2a — `ResumeSource` fields**: `paused_node_id` + `gate_request` (default `None`); no
+  separate kind field (read `gate_request["kind"]` — one source of truth, per plan).
+- **2c — `_resolve_resume_entry` paused arm** (before the `!= "failed"` catch-all):
+  corrupt/missing pause record → `ResumeNotResumableError("…no pause record")`; escalation →
+  `(None, paused_node_id)` (between-nodes, CLI resolves successor); approval →
+  `(paused_node_id, None)` (the gated node never ran — no event, seed scope excludes it by
+  construction).
+- **2d — answer validation + fold**: `_fold_decision_into_event` EXTRACTED from
+  `_apply_gate_resolutions`' loop body (refactor-in-place, one fold shape, two callers);
+  `_map_choose_answer` mirrors `_prompt_escalation`'s strip + digit→label rule;
+  `_validate_gate_answer` (missing answer / wrong flag) runs BEFORE the seed guards.
+- **2b + 2e** — `load_resume_source(..., gate_answer=None)`; the whole answer policy lives in
+  ONE new seam `_apply_paused_answer(path, data, events, gate_answer, execution_id)` called
+  between `_apply_gate_resolutions` and `_guard_seed_scope` (extraction forced by ruff C901,
+  and better anyway: one function owns validate + not_paused + map + fold).
+- **Shared label rule**: `option_labels()` added to `core/gate.py`;
+  `gate_prompt._format_option_lines` refactored onto it — the prompt's digit answer, the pause
+  output's numbering, and the loader's `--choose N` mapping now literally share one function.
+
+**Deviations from the plan (with rationale — none are shortcuts):**
+1. **`not_paused` check ordering**: plan 2e didn't pin where the check fires. Placed AFTER
+   `_resolve_resume_entry`, so status refusals win: `resume <succeeded-id> --approve yes` says
+   "nothing to resume" (the more fundamental fact), and the `not_paused` answer error fires
+   only for sources that are otherwise RESUMABLE (failed/incomplete). Both orderings satisfy
+   the plan text; this one never buries a status refusal under a flag-usage complaint.
+2. **Numeric `--choose`→label mapping lives LOADER-side**, not in the CLI (plan 3b's text put
+   it there): the mapping needs `gate_request["options"]`, which only the loader has at answer
+   time — and the plan's own Phase-2 test list includes the mapping, confirming the placement.
+   Phase 3 passes `{"chosen": <raw flag value>}` and the loader maps.
+3. **`option_labels` in `core/gate.py`** (small touch on Phase-1's `gate_prompt.py`): the plan
+   said "mirror `_echo_options`' label extraction"; mirroring by copy would be a second home
+   for the ONE rule. `core/` is importable by both `execution/` and `runtime/` — single home,
+   no layering violation.
+4. **Parity pins added in Phase 2** (plan's test list put them under Phase 3, but the Phase-2
+   header says parity "holds by construction — but pin it"): approval variant drives the REAL
+   `WorkflowRunner` resume + planner; escalation variant drives the engine directly (the
+   custom `EscalatingNode` isn't in the runner's registry) + planner with the same compiled
+   workflow. The escalation pin asserts the FOLDED decision seeds identically on both sides.
+
+**Phase-2 → Phase-3 contract (FROZEN — Phase 3 must consume exactly this):**
+- `load_resume_source(..., gate_answer=...)` shapes: `{"approve": True|False}` from
+  `--approve yes|no`; `{"chosen": "<raw --choose value>", "notes": None}` from `--choose`
+  (loader strips/maps numerics; CLI passes the raw string). Both flags given → CLI-side
+  `click.UsageError` (never reaches the loader).
+- `ResumeSource.paused_node_id is not None` ⟺ paused source (the CLI's skip-side-effect-confirm
+  discriminator, plan 3c); approval entry == `paused_node_id`; escalation entry `None` +
+  `last_completed_node_id == paused_node_id` → route through `_resolve_between_nodes_entry`.
+- `--approve yes` delivery = prime the resolver's `auto_approve` with `source.paused_node_id`
+  (verified end-to-end in the updated e2e keystone, which does exactly that);
+  `--approve no` delivery = the new `deny` resolver param (plan 3c, NOT built yet).
+- `ResumeAnswerRequiredError.mode` values: `missing_answer` / `wrong_flag` / `not_paused`
+  (CLI needs no mode-specific handling — the messages are self-contained).
+
+**INTERIM STATE (dangling affordance until Phase 3 lands — deliberate, owner-scoped):**
+a paused `pflow resume <token>` now refuses with the correct pending-gate rendering and the
+exact command `pflow resume <id> --approve yes|no` / `--choose "…"` — but those flags DON'T
+EXIST on the CLI yet (click rejects them with "no such option"). Same for `pflow resume list`
+mentioned nowhere yet. Unreleased branch, review gap only; Phase 3 closes it.
+
+**DISCOVERED ISSUE (not Phase-2 scope — for owner/Phase-3 attention):** an INLINE gated run
+can now emit an unhonorable token — MCP `execute_workflow` accepts an IR dict (and CLI accepts
+content-string workflows), whose `workflow_path` is `ir-hash:<md5>`; post-Phase-1 those runs
+stream traces, so a gate pauses them and prints a token — but `load_resume_source` refuses
+inline sources BEFORE the paused arm ("Inline or piped workflows cannot be resumed… no source
+file to re-resolve"). A pause-promise gap at the producer for inline sources. Options when it's
+addressed: (a) producer keeps inline gated runs `failed` (mirroring `--no-trace`), or (b) a
+paused-specific inline refusal message ("re-run with --auto-approve"). Phase 3's `resume list`
+must also decide whether to show inline paused runs (recommendation: exclude `ir-hash:` +
+record why). NOT fixed here — producer territory, needs an owner call.
+
+**Behavior-change test updates** (1 test encoded the interim Phase-1 contract, its docstring
+said to update it here): `test_resume_engine.py::test_non_interactive_gate_stop_pauses_and_
+loader_refuses_pending_answer_e2e` → renamed `test_non_interactive_gate_pause_loads_with_
+answer_and_resumes_e2e` and EXTENDED into the approval keystone: no-answer →
+`ResumeAnswerRequiredError` with gate content + exact command; `{"approve": True}` → entry =
+the gated node; real resume with a primed resolver → upstream restored, gated node runs once.
+
+**New tests** (+18 net; full suite 8610 → 8628):
+- `test_resume_source.py` (+13): paused-approval/escalation entries, deny-shaped answer loads
+  identically (loader is verdict-agnostic), corrupt pause record, ★missing-answer renders gate
+  content and NOT the guard's message (fold-order pin, real-id in the suggestion),
+  wrong-flag both directions, not_paused on a failed source, ★`--choose` mapping matrix
+  (digit / strip / label-less "option 3" / out-of-range / free text), fold-decides-marker,
+  superseded-paused-token-with-answer.
+- `test_gate_pause.py` (+1): ★escalation keystone on a REAL producer trace — numeric answer
+  maps through producer-written options, fold + between-nodes entry, engine resume at the
+  successor: escalating node restored NOT re-executed, decided marker re-recorded into the
+  attempt trace (self-containment), successor runs, attempt trails success.
+- `test_plan_drift.py` (+2): ★paused-approval parity (the distinct seed-boundary case — entry
+  has NO event, scope = ALL events) and ★paused-escalation parity (folded decision seeds
+  identically on both sides).
+
+**Mutation verification (Edit + revert, never stash)** — each bites:
+1. `_apply_paused_answer` moved AFTER `_guard_seed_scope` → 11 tests fail (fold-order pin,
+   mapping matrix, both keystones, escalation parity).
+2. Escalation entry flipped to the approval shape `(K, None)` → 3 fail (entry pin, keystone,
+   parity).
+3. Numeric→label mapping dropped (return raw) → 4 fail (matrix digits + keystone).
+4. Wrong-flag kind check disabled → both wrong-flag pins fail.
+
+**Gates (all green):** `make check` fully green (ruff, format, mypy, deptry); resume-adjacent
+suites 254 passed; full `make test` **8628 passed, 0 failed**; `make test-e2e` 44 passed.
+Nothing committed (repo rule).
+
+**Not done (scope):** Phases 3–5 untouched. Phase 4's RunProgress green-✓ regression still
+EXISTS IN TREE (since Phase 1 — see that phase's banner). Next action = plan Phase 3 (CLI),
+consuming the frozen contract above; re-grep nothing — Phase 2 touched only
+`resume_source.py`, `exceptions.py`, `gate.py`, `gate_prompt.py`.
+
+**Post-review addition (same session, pre-commit):** owner review surfaced one tightening —
+an empty/whitespace `--choose` would have "decided" the escalation with an empty ``chosen``,
+a shape the blocking prompt cannot produce (click re-prompts on empty input).
+`_validate_gate_answer` now treats it as ``missing_answer``; pinned by
+`test_empty_choose_answer_is_treated_as_missing` (both `""` and `"   "`). Suites re-run green;
+Phase 2 committed by owner instruction ("commit phase 2").

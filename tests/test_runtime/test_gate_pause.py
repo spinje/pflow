@@ -105,8 +105,9 @@ def _escalation_ir(*, successor: bool, loop: dict[str, Any] | None = None) -> di
 class TestEscalationPausePromise:
     """Producer-side halves of the pause-promise parity pin (producer-pauses ⟹ resume-accepts).
 
-    The resume-accepts half (``--choose`` on an unchanged workflow succeeds) is
-    Phase 2/3 territory — add it to the CLI e2e battery there.
+    The resume-accepts loader/engine half now lives in
+    ``test_paused_escalation_real_trace_choose_answer_roundtrip`` (Phase 2, below);
+    the ``--choose`` CLI-flag half lands with the Phase-3 e2e battery.
     """
 
     def test_mid_graph_escalation_pauses_with_full_gate_request(self):
@@ -334,3 +335,61 @@ def test_torn_paused_trailer_degrades_to_incomplete_and_resumes(tmp_path, monkey
     # 164's incomplete arm: killed between nodes after 'prep' — the CLI resolves
     # the successor from there. The pause degraded gracefully to a plain resume.
     assert source.last_completed_node_id == "prep"
+
+
+@pytest.mark.trace_files
+def test_paused_escalation_real_trace_choose_answer_roundtrip(tmp_path, monkeypatch):
+    """The escalation-side pause-promise keystone (Task 171 Phase 2), on a REAL producer
+    trace: a mid-graph escalation pauses; the loader with a numeric ``--choose``-shaped
+    answer maps it through the option labels the producer actually wrote, folds the
+    DECIDED marker into the events, and returns the between-nodes entry; the resumed
+    engine run (entry = the successor, exactly what the CLI resolves post-compile)
+    restores the escalating step WITHOUT re-executing it, re-records the decided marker
+    into the attempt trace (self-containment for resume-of-a-resume), and runs the
+    successor. Producer-pauses ⟹ resume-accepts on an unchanged workflow — the
+    loader/engine half; the ``--choose`` FLAG itself lands with the Phase-3 CLI."""
+    from pflow.runtime.resume_source import load_resume_source
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    (tmp_path / ".pflow" / "debug").mkdir(parents=True)
+
+    ir = _escalation_ir(successor=True)
+    registry = _registry_with_escalating_node()
+    collector = WorkflowTraceCollector("gated", workflow_path="gated.pflow.md", is_run_scoped=True, stream_to_disk=True)
+    with pytest.raises(GateNotInteractiveError):
+        WorkflowEngine(trace_collector=collector).run(compile_workflow(ir, registry), {})
+    path = collector.finalize()
+    assert path is not None
+
+    source = load_resume_source(
+        execution_id=collector.execution_id, debug_dir=path.parent, gate_answer={"chosen": "2", "notes": None}
+    )
+    assert (source.entry_node_id, source.last_completed_node_id) == (None, "esc")
+    # The numeric answer mapped through the REAL producer-written options ("a", "b").
+    folded = next(e for e in source.events if e["node_id"] == "esc")
+    assert folded["node_output"]["result"]["escalation"]["decision"] == {"chosen": "b", "notes": None}
+
+    # Resume at the successor — the entry the CLI's between-nodes resolution pins.
+    attempt = WorkflowTraceCollector("gated", workflow_path="gated.pflow.md", is_run_scoped=True, stream_to_disk=True)
+    shared: dict = {}
+    engine = WorkflowEngine(
+        trace_collector=attempt,
+        resume_from="after",
+        resume_events=source.events,
+        resume_source_id=source.execution_id,
+    )
+    engine.run(compile_workflow(ir, registry), shared)
+    attempt.finalize()
+
+    execution = shared["__execution__"]
+    assert execution["restored_nodes"] == ["esc"]  # restored, never re-executed (never re-paid)
+    assert execution["completed_nodes"] == ["after"]
+    # The seeded store carries the human's decision where downstream templates read it.
+    assert shared["esc"]["result"]["escalation"]["decision"] == {"chosen": "b", "notes": None}
+    assert shared["after"]["stdout"].strip() == "after"
+    # Self-containment: the attempt trace re-recorded the DECIDED marker, so a
+    # resume-of-a-resume (or a later --only) seeds from this attempt alone.
+    re_recorded = next(e for e in attempt.events if e["node_id"] == "esc")
+    assert re_recorded["restored"] is True
+    assert re_recorded["node_output"]["result"]["escalation"]["decision"] == {"chosen": "b", "notes": None}
+    assert attempt._determine_trace_status() == "success"

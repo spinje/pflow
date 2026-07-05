@@ -405,6 +405,11 @@ degradation test.
 
 ## Phase 2 — Loader: the `paused` arm + answer fold
 
+> **IMPLEMENTED 2026-07-05** — see the progress log's Phase-2 entry for deviations (not_paused
+> ordering, loader-side `--choose` mapping, `option_labels` in core/gate.py, parity pins pulled
+> forward) and the FROZEN Phase-2→3 contract Phase 3 must consume. The interim banner below is
+> now historical.
+
 All in `runtime/resume_source.py`. The planner consumes the same `ResumeSource`
 (`execution/plan.py::_resolve_walk_start`), so engine↔planner parity holds by construction — but
 pin it (tests below).

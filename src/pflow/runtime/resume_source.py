@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from pflow.core.exceptions import (
+    ResumeAnswerRequiredError,
     ResumeFidelityError,
     ResumeGateStoppedError,
     ResumeNothingToResumeError,
@@ -32,6 +33,7 @@ from pflow.core.exceptions import (
     ResumeStillRunningError,
     ResumeSupersededError,
 )
+from pflow.core.gate import GATE_KIND_APPROVAL, GATE_KIND_ESCALATION, option_labels
 from pflow.core.trace_io import load_trace_file
 from pflow.runtime.workflow_trace import (
     _iter_workflow_traces,
@@ -67,6 +69,15 @@ class ResumeSource:
     resolves post-compile), the full blob-resolved top-level `events` to seed
     upstream from, the original `inputs` (`None` on pre-175 traces), and the
     `content_hash` the CLI compares against the current resolved IR.
+
+    Task 171: a PAUSED source additionally carries `paused_node_id` (the gated
+    step) and the `gate_request` payload from the trailer (both `None` for
+    failed/incomplete sources). Gate kind is read as `gate_request["kind"]` —
+    deliberately no separate kind field (one source of truth; the payload is
+    the seam, ADR-0009). A paused approval's entry is the gated node itself
+    (`entry_node_id == paused_node_id`); a paused escalation is between-nodes
+    (`entry_node_id=None`, `last_completed_node_id == paused_node_id`) so the
+    CLI resolves the successor exactly like the incomplete arm.
     """
 
     path: Path
@@ -77,6 +88,8 @@ class ResumeSource:
     events: list[dict[str, Any]]
     inputs: dict[str, Any] | None
     content_hash: str | None
+    paused_node_id: str | None = None
+    gate_request: dict[str, Any] | None = None
 
 
 def _is_trace_locked(path: Path) -> bool | None:
@@ -287,16 +300,30 @@ def _apply_gate_resolutions(path: Path, events: list[dict[str, Any]]) -> None:
         decision = line.get("decision")
         if not isinstance(decision, dict):
             continue  # approval/denied/non-interactive resolutions carry no decision
-        event = final.get(line.get("node_id"))  # type: ignore[arg-type]
-        output = event.get("node_output") if isinstance(event, dict) else None
-        result = output.get("result") if isinstance(output, dict) else None
-        if not isinstance(result, dict):
-            continue
-        marker = result.get("escalation")
-        if isinstance(marker, dict) and marker:
-            marker["decision"] = decision
-        elif isinstance(marker, str) and marker != "":
-            result["escalation"] = {"question": marker, "decision": decision}
+        _fold_decision_into_event(final.get(line.get("node_id")), decision)  # type: ignore[arg-type]
+
+
+def _fold_decision_into_event(event: dict[str, Any] | None, decision: dict[str, Any]) -> None:
+    """Fold one escalation decision into a node's final event marker (in place).
+
+    Mirrors ``run_escalation_gate``'s live-store write shape exactly: a dict
+    marker gains ``["decision"]``; a non-empty string marker becomes
+    ``{"question": marker, "decision": decision}``. THE one fold shape, two
+    callers — ``_apply_gate_resolutions`` (decisions the source run recorded)
+    and the paused ``--choose`` answer (Task 171) — so the two can never drift.
+    Anything not marker-shaped is left untouched (lenient, like the recorded
+    fold: a hand-edited trace must not crash the loader here — the seed-scope
+    guard downstream still refuses an undecided marker loudly).
+    """
+    output = event.get("node_output") if isinstance(event, dict) else None
+    result = output.get("result") if isinstance(output, dict) else None
+    if not isinstance(result, dict):
+        return
+    marker = result.get("escalation")
+    if isinstance(marker, dict) and marker:
+        marker["decision"] = decision
+    elif isinstance(marker, str) and marker != "":
+        result["escalation"] = {"question": marker, "decision": decision}
 
 
 def _contains_binary_placeholder(value: Any) -> bool:
@@ -388,6 +415,29 @@ def _resolve_resume_entry(path: Path, data: dict[str, Any], execution_id: str) -
         )
     if final_status == "incomplete":
         return _resolve_incomplete_entry(path, events, execution_id)
+    if final_status == "paused":
+        # Task 171: a durable gate pause. The trailer's pause record arrives flat
+        # on `data` (the reader copies non-`kind` trailer keys verbatim).
+        paused_node_id = data.get("paused_node_id")
+        gate_request = data.get("gate_request")
+        if not isinstance(paused_node_id, str) or not isinstance(gate_request, dict):
+            # Corrupt / hand-edited pause: marked paused with no honorable record.
+            raise ResumeNotResumableError(
+                "This run is marked paused but carries no pause record.",
+                execution_id=execution_id,
+                trace_path=str(path),
+                suggestions=["Re-run the workflow from the start."],
+            )
+        if gate_request.get("kind") == GATE_KIND_ESCALATION:
+            # The escalating step COMPLETED (its success event was recorded at
+            # engine step 16, before the 17.7 raise) — resume enters at its
+            # successor. Same between-nodes shape as the incomplete arm; the
+            # CLI resolves the single default successor post-compile.
+            return None, paused_node_id
+        # Approval: the gate fires at engine step 7.5, BEFORE node.start — the
+        # gated node has NO event in the trace, so `_seedable_final_events`
+        # provably excludes it and the seed-scope guards compose unchanged.
+        return paused_node_id, None
     if final_status != "failed":
         raise ResumeNotResumableError(
             f"This run's status '{final_status or 'unknown'}' is not resumable.",
@@ -499,11 +549,118 @@ def _guard_seed_scope(scope: Iterable[dict[str, Any]], execution_id: str, path: 
                 )
 
 
+def _validate_gate_answer(
+    gate_answer: dict[str, Any] | None,
+    gate_request: dict[str, Any],
+    paused_node_id: str,
+    execution_id: str,
+    path: Path,
+) -> None:
+    """Refuse a paused resume whose answer is missing or names the wrong gate kind (Task 171).
+
+    Must run BEFORE ``_guard_seed_scope``: an unanswered paused escalation would
+    otherwise hit the guard's "unresolved escalation … re-run the workflow"
+    refusal — the WRONG message (the right move is to answer, not re-run). The
+    answer shapes are the CLI contract: ``{"approve": bool}`` from
+    ``--approve yes|no``, ``{"chosen": str, "notes": str | None}`` from
+    ``--choose`` — discriminated by key, one flag per gate kind.
+    """
+    if gate_answer is None:
+        raise ResumeAnswerRequiredError(
+            mode="missing_answer",
+            gate_request=gate_request,
+            execution_id=execution_id,
+            trace_path=str(path),
+            node_id=paused_node_id,
+        )
+    is_approval = gate_request.get("kind") == GATE_KIND_APPROVAL
+    if is_approval != ("approve" in gate_answer):
+        raise ResumeAnswerRequiredError(
+            mode="wrong_flag",
+            gate_request=gate_request,
+            execution_id=execution_id,
+            trace_path=str(path),
+            node_id=paused_node_id,
+        )
+    if not is_approval and not str(gate_answer.get("chosen") or "").strip():
+        # An empty/whitespace `--choose` would "decide" the escalation with
+        # nothing — a shape the blocking prompt cannot produce (click re-prompts
+        # on empty input). Treat it as no answer at all.
+        raise ResumeAnswerRequiredError(
+            mode="missing_answer",
+            gate_request=gate_request,
+            execution_id=execution_id,
+            trace_path=str(path),
+            node_id=paused_node_id,
+        )
+
+
+def _apply_paused_answer(
+    path: Path,
+    data: dict[str, Any],
+    events: list[dict[str, Any]],
+    gate_answer: dict[str, Any] | None,
+    execution_id: str,
+) -> tuple[str | None, dict[str, Any] | None]:
+    """The whole Task-171 answer policy in one seam: validate, then fold an escalation's answer.
+
+    Returns ``(paused_node_id, gate_request)`` — ``(None, None)`` for non-paused
+    sources. Non-paused + an answer flag → ``not_paused`` refusal (the flag
+    answers nothing; refuse rather than ignore it — loader-side so by-exec-id
+    and by-name behave identically). Paused → the answer must exist and match
+    the gate kind (``_validate_gate_answer``); an escalation's ``chosen`` is then
+    folded into the paused node's final event using the identical marker shape
+    the source run would have recorded — so ``_guard_seed_scope`` sees a DECIDED
+    marker, seeding restores it, and the engine's re-record loop writes it into
+    the attempt trace (self-containment for resume-of-a-resume with zero new
+    code). An approval's answer is NOT folded — the gated node never ran;
+    delivery is the resume run's resolver (the CLI primes it from this answer).
+    Must run AFTER ``_apply_gate_resolutions`` (prior recorded decisions fold
+    first) and BEFORE ``_guard_seed_scope`` (see ``_validate_gate_answer``).
+    """
+    if data.get("final_status") != "paused":
+        if gate_answer is not None:
+            raise ResumeAnswerRequiredError(mode="not_paused", execution_id=execution_id, trace_path=str(path))
+        return None, None
+    # `_resolve_resume_entry`'s paused arm already refused a malformed record,
+    # so this narrowing never drops a paused source's fields.
+    raw_node_id, raw_request = data.get("paused_node_id"), data.get("gate_request")
+    paused_node_id = raw_node_id if isinstance(raw_node_id, str) else None
+    gate_request = raw_request if isinstance(raw_request, dict) else None
+    if paused_node_id is None or gate_request is None:
+        return None, None
+    _validate_gate_answer(gate_answer, gate_request, paused_node_id, execution_id, path)
+    if gate_answer is not None and "chosen" in gate_answer:
+        decision = {
+            "chosen": _map_choose_answer(str(gate_answer["chosen"]), gate_request),
+            "notes": gate_answer.get("notes"),
+        }
+        _fold_decision_into_event(final_events_by_node(events).get(paused_node_id), decision)
+    return paused_node_id, gate_request
+
+
+def _map_choose_answer(chosen: str, gate_request: dict[str, Any]) -> str:
+    """Map a numeric ``--choose`` to its option label, mirroring the blocking prompt exactly.
+
+    Same rule as ``_prompt_escalation`` (gate_prompt.py): strip, then a digit in
+    1..len(options) selects that option's label via the shared ``option_labels``
+    extraction — never raw indexing into the option dicts. Anything else is the
+    free-text answer, stripped like the prompt's.
+    """
+    answer = chosen.strip()
+    options = [option for option in gate_request.get("options") or () if isinstance(option, dict)]
+    labels = option_labels(options)
+    if answer.isdigit() and 1 <= int(answer) <= len(labels):
+        return labels[int(answer) - 1]
+    return answer
+
+
 def load_resume_source(
     workflow_path: str | None = None,
     execution_id: str | None = None,
     *,
     debug_dir: Path | None = None,
+    gate_answer: dict[str, Any] | None = None,
 ) -> ResumeSource:
     """Load and vet a prior run's trace as a resume source, or raise a typed refusal (Task 164).
 
@@ -513,11 +670,25 @@ def load_resume_source(
     resumable; live writer → still running; a newer attempt exists → superseded;
     then the status arm (``success``/``degraded`` → nothing to resume; ``denied``
     → not resumable; ``failed`` → entry is the terminal-failure root, or
-    gate-stopped when none; ``incomplete`` → Decision 7 derivation); then
+    gate-stopped when none; ``incomplete`` → Decision 7 derivation; ``paused`` →
+    Task 171: approval enters at the gated node, escalation between-nodes); then
     recorded escalation decisions are folded into the frozen event markers
     (``_apply_gate_resolutions``); finally the seed-scope guards (undecided
     escalation, lossy binary) scan exactly the seedable set. ``content_hash`` is
     RETURNED for the CLI to compare — the loader has no workflow IR to check it.
+
+    ``gate_answer`` (Task 171) is the human's answer to a PAUSED source —
+    ``{"approve": bool}`` (from ``--approve yes|no``) or ``{"chosen": str,
+    "notes": str | None}`` (from ``--choose``). A paused source REQUIRES a
+    kind-matching answer (``ResumeAnswerRequiredError`` otherwise, rendered with
+    the pending gate content); a non-paused resumable source REJECTS one (same
+    error, ``not_paused`` mode — loader-side so by-exec-id and by-name behave
+    identically). An escalation's answer is folded into the paused node's final
+    event here (numeric answers map to option labels first), so seeding restores
+    the DECIDED marker and the engine's re-record loop makes the attempt trace
+    self-contained with zero new code. An approval's answer is NOT folded — the
+    gated node never ran; delivery is the resume run's resolver (the CLI primes
+    it from the same answer).
     """
     if (workflow_path is None) == (execution_id is None):
         raise ValueError("load_resume_source requires exactly one of workflow_path / execution_id")
@@ -565,6 +736,7 @@ def load_resume_source(
 
     events = list(data.get("nodes") or [])
     _apply_gate_resolutions(path, events)
+    paused_node_id, gate_request = _apply_paused_answer(path, data, events, gate_answer, source_execution_id)
     _guard_seed_scope(_seedable_final_events(events, entry_node_id).values(), source_execution_id, path)
 
     return ResumeSource(
@@ -576,6 +748,8 @@ def load_resume_source(
         events=events,
         inputs=data.get("inputs"),
         content_hash=data.get("content_hash"),
+        paused_node_id=paused_node_id,
+        gate_request=gate_request,
     )
 
 
