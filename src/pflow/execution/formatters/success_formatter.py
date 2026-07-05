@@ -417,8 +417,18 @@ def format_success_as_text(  # noqa: C901
         lines.append("")
         _append_outputs(lines, result)
 
-    # Note: Trace path not shown in CLI text mode, only in MCP for debugging
-    # Agents can use trace_path from the dict if needed
+    # Run identity + trace location (Task 171) — MCP-only text (the CLI has its
+    # own stderr trace line and never calls this renderer). Grep-parseable
+    # `key: value` lines so an agent can correlate the run with a later
+    # `pflow resume` chain or `pflow report` without a side channel.
+    execution_id = success_dict.get("execution_id")
+    trace_path = success_dict.get("trace_path")
+    if execution_id or trace_path:
+        lines.append("")
+        if execution_id:
+            lines.append(f"execution_id: {execution_id}")
+        if trace_path:
+            lines.append(f"trace_path: {trace_path}")
 
     return "\n".join(lines)
 

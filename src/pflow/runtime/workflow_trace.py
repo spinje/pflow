@@ -33,9 +33,10 @@ logger = logging.getLogger(__name__)
 # top-level ``blobs`` map) and canonicalized LLM prompt/system into ``llm_prompt``/``llm_system`` by
 # removing redundant LLM copies from node_output/template_resolutions/node_params. 2.6.0 (Task 164,
 # additive) adds ``resumed_from`` to the meta line (attempt-chain lineage) and ``restored: true`` on
-# cached-status events a resumed run re-recorded from its source trace. Consumers gate on
-# ``startswith("2.")``; old traces remain readable.
-TRACE_FORMAT_VERSION = "2.6.0"
+# cached-status events a resumed run re-recorded from its source trace. 2.7.0 (Task 171, additive)
+# adds the durable gate pause: ``final_status: "paused"`` plus ``paused_node_id`` and ``gate_request``
+# on the ``run.complete`` trailer. Consumers gate on ``startswith("2.")``; old traces remain readable.
+TRACE_FORMAT_VERSION = "2.7.0"
 
 
 def format_trace_filename(workflow_path: str | None, workflow_name: str, timestamp: str) -> str:
@@ -604,7 +605,15 @@ class WorkflowTraceCollector:
         # read "success". "denied" → trailer "denied"; "failed" → trailer
         # "failed". Set by record_gate AND by the engine's gate-exception
         # re-raise arm (which covers gates fired under buffered child collectors).
+        # Task 171 adds "paused" (durable gate pause) — stamped ONLY by the
+        # engine arm, for a top-level gate the resume path can honor.
         self.gate_outcome: str | None = None
+        # Task 171: the pause record for the run.complete trailer — set by the
+        # engine's gate arm together with gate_outcome="paused". Carries
+        # paused_node_id + the GateRequest.to_dict() payload so a resume/bridge
+        # consumer needs one tail-read, not a line scan (the same payload also
+        # exists on the disk-only gate pause line).
+        self.pause_request: dict[str, Any] | None = None
 
     def record_gate(
         self,
@@ -1028,6 +1037,17 @@ class WorkflowTraceCollector:
             agg["warnings"] = self.execution_warnings
         if self.json_output is not None:
             agg["json_output"] = self.json_output
+        # Task 171: the pause record rides the trailer (paused_node_id +
+        # gate_request). Both keys round-trip generically — the reader copies
+        # every non-`kind` trailer key verbatim — and are end-of-run data, so
+        # they do NOT belong in META_KEYS. Atomicity stance: the trailer is one
+        # appended+flushed JSONL line; a kill mid-write leaves a truncated final
+        # line, which load_trace_file tolerates as a missing trailer → status
+        # reads `incomplete` → Task 164's interrupted arm still resumes the run
+        # (the gate pause line is earlier in the file and survives). Graceful
+        # degradation IS the crash story — no fsync/rename machinery.
+        if final_status == "paused" and self.pause_request is not None:
+            agg.update(self.pause_request)
         return agg
 
     def _disable_streaming(self, exc: OSError) -> None:
@@ -1068,6 +1088,18 @@ class WorkflowTraceCollector:
             self._flush_line({**self._aggregates(), "kind": "run.complete"})
         finally:
             self._close_stream()
+        return self._stream_path
+
+    @property
+    def trace_path(self) -> Path | None:
+        """The streamed trace file's path — ``None`` when streaming is off/gated/disabled.
+
+        Task 171: fixes a latent always-False bug — MCP's
+        ``hasattr(result.trace, "trace_path")`` guards predated any such
+        attribute. Reads ``_stream_path`` directly (set at ``_open_stream``,
+        cleared by ``_disable_streaming``), so it is valid before AND after
+        ``finalize()``.
+        """
         return self._stream_path
 
     def __del__(self) -> None:
@@ -1361,12 +1393,17 @@ class WorkflowTraceCollector:
                 don't need the dict elsewhere can omit the argument.
 
         Returns:
-            Status string: "success", "degraded", or "failed"
+            Status string: "success", "degraded", "failed", "denied", or "paused"
         """
         # Task 125: a gate-stopped run leaves no failed node event — the gate
         # outcome channel is the only honest signal (see gate_outcome in __init__).
         if self.gate_outcome == "denied":
             return "denied"
+        # Task 171: paused stays ABOVE the zero-events "failed" arm below — a
+        # first-node pause has ZERO node events (the gate fired before anything
+        # ran) and must not read as a crash.
+        if self.gate_outcome == "paused":
+            return "paused"
         if self.gate_outcome == "failed":
             return "failed"
         if final_events is None:
@@ -1399,7 +1436,10 @@ class WorkflowTraceCollector:
         "failed"`` AND a non-empty unrecovered set — which catches every case the C2
         report named: a zero-step crash (nothing ran), an all-steps-succeed-but-
         declared-output-unbuildable failure (status is then ``success``/``degraded``),
-        and a gate-stopped run (``failed`` with no unrecovered step).
+        and a gate-stopped run (``failed`` with no unrecovered step). A durably
+        PAUSED run (Task 171, status ``paused``) is likewise False — it has its own
+        answer affordance (the resume token), and the failure resume-hint /
+        ``resume_command`` must stay silent for it.
 
         It DELIBERATELY does not replicate the loader's seed-scope guards (lossy-binary,
         undecided-escalation): those can only be evaluated against the disk-only

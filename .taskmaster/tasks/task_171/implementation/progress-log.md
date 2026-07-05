@@ -225,3 +225,216 @@ string-path `patch()`/`monkeypatch`/attribute access at the old location — non
    created_at tie, asserts the newer insert on BOTH the node-only and workflow-scoped arms);
    mutation-verified — stripping the tiebreak makes it fail returning the older row. Full
    `make test` = **8586 passed**.
+
+## 2026-07-05 — Phase 1 implemented (producer: paused trailer, PAUSED status, exit 4, MCP flip)
+
+Phase 0 was committed by the owner (`a8066f15`) before this session. Baseline re-confirmed:
+4 resume suites = 165 passed on a clean tree.
+
+**Plan re-verification deltas** (plans are point-in-time; code is truth):
+
+1. **REAL BUG in the plan's 1a snippet — `action` is unbound at the gate arm for approvals.**
+   The plan claims "_gate_pausable's approval early-return keeps the arm safe at step 7.5
+   where `action` is not yet assigned" — but Python evaluates call ARGUMENTS eagerly, so
+   `_gate_pausable(..., action)` raises `UnboundLocalError` inside the except arm for any
+   approval gate (raised at step 7.5; `action` is first assigned at step 9). Fix: bind
+   `action: Any = None` in `_execute_node`'s existing pre-try defaults block (engine.py,
+   beside `host_frame`/`start_frame` — same established pattern), with a comment explaining
+   why. Side effect: the explicit `Any` surfaced mypy's pre-existing looseness on the happy
+   `return action` — suppressed with `# type: ignore[no-any-return]` + comment.
+2. **Plan's "batch-HOST approval → pauses (fires at 7.5 in the root engine)" is UNPRODUCIBLE.**
+   `approval:` on a batch step is rejected at compile/validation by
+   `check_approval_allowed` (core/workflow/gate_validation.py, Task 125 — the preview would
+   show unresolved `${item}` templates). Dropped the planned test; the arm's
+   originating/nested logic is unaffected. The plan's reasoning bullet stands as dead
+   reassurance only.
+3. Everything else verified as written: exactly 2 `WorkflowEngine(` sites; `PythonCodeNode`
+   class name; `node.successors` is a plain dict; GATE_KIND constants; `parallel_batch` only
+   on GateNotInteractiveError; `record_gate`'s writes precede the arm; `_exception_to_result`
+   signature/call-site as the plan's W1 note says.
+
+**What was built** (per plan 1a–1f):
+- Engine (1a): `nested: bool = False` on `WorkflowEngine.__init__`; `nested=True` at the ONE
+  child site (`workflow_executor.py`); gate arm rewritten — first-seen `_pflow_gate_seen` tag,
+  `originating ∧ not nested ∧ not parallel_batch ∧ _gate_pausable(...)` → `gate_outcome=
+  "paused"` + `pause_request` stash; module helper `_gate_pausable` with per-clause comments
+  mirroring the CLI refusal arms.
+- Collector (1b): `pause_request` field; `paused` arm in `_determine_trace_status` (between
+  denied and failed); `_aggregates` emits `paused_node_id`+`gate_request` on the trailer (with
+  the atomicity-stance comment); `TRACE_FORMAT_VERSION` 2.6.0 → **2.7.0** (+history comment,
+  exact-match test updated); `trace_path` property (fixes the always-False MCP `hasattr`
+  latent bug).
+- Status/runner (1c): `WorkflowStatus.PAUSED` (+exit-4 docstring); `_exception_to_result`
+  gains keyword-only `trace_enabled` threaded from the sole call site; three-way status
+  mapping with the both-gates-required comment.
+- CLI (1d): PAUSED branch in `_display_execution_result` (exit 4); `_durable_pause` (reads
+  `_stream_failed`, cites the `_resumable_execution_id` precedent); `_display_paused_result`
+  (stdout token line with in-band `(exit 4)`; stderr gate content + exact answer command; JSON
+  doc with REQUIRED empty `errors`/`diagnostics`; preview masked with the denied-doc policy);
+  stream-fault fall-through normalizes status to FAILED via `dataclasses.replace`;
+  `_maybe_echo_resume_hint` paused early-return.
+- Gate rendering seam (1d prerequisite): `execution/gate_prompt.py` gains
+  `format_gate_lines(gate_request_dict)` (ONE render shape: approval = masked preview;
+  escalation = question + numbered options, labels via the same extraction the prompt's
+  digit-answer uses) and `format_resume_answer_command` (kind→verb pairing, single home) —
+  `_echo_options` refactored onto the shared `_format_option_lines`. Both are what Phase 2's
+  `ResumeAnswerRequiredError` should reuse.
+- MCP (1e): `RunnerConfig()` (streams; registry probe stays traceless); paused branch returns
+  `_format_paused_text` (grep-parseable `key: value` scalars + rendered gate + resume_command)
+  instead of raising; `_trace_path_str` helper folds the four always-False `hasattr` sites;
+  success dict + text gain `execution_id` (+ real `trace_path` line in
+  `format_success_as_text` — MCP-only renderer).
+- Stale messages (1f): `GateNotInteractiveError.to_diagnostics()` suggestion replaced (names
+  `--no-trace` as the removable blocker + the unsupported positions); gate_prompt module
+  docstring notes the durable-pause path.
+
+**Behavior-change test updates** (3 tests encoded the pre-171 contract):
+- `test_gate_trace.py::test_noninteractive_gate_trailer_says_failed_not_success` → renamed
+  `..._says_paused_not_success`, asserts the pause record round-trips the trailer.
+- `test_resume_engine.py::test_non_interactive_gate_stop_refuses_naming_the_gate_e2e` →
+  renamed `..._pauses_and_loader_refuses_pending_answer_e2e`; the top-level scenario now
+  trails `paused`; INTERIM (Phase 1) the loader refuses via the generic not-resumable arm —
+  the docstring marks it for a Phase-2 update to `ResumeAnswerRequiredError`. The original
+  `ResumeGateStoppedError` chain stays covered via a NEW child-gate test (below) — that path
+  is still real for gate stops that remain `failed`.
+- `test_resume_cli.py::test_gate_stopped_run_omits_resume_hint` → renamed
+  `test_gate_paused_run_omits_failure_resume_hint`; exit 4; asserts the failure-resume hint
+  is absent and the answer affordance replaces it.
+
+**New tests**: `tests/test_runtime/test_gate_pause.py` (producer battery: mid-graph escalation
+pauses with full payload; code/loop/terminal escalations stay failed; "end"-action clause
+unit-pinned — no non-code node can produce it in a real graph; ★id-collision child gate;
+parallel-batch child gate; has_resumable_step pin; child-gate ResumeGateStoppedError chain;
+torn-trailer degradation → incomplete → 164 resume). `tests/test_cli/test_paused_cli.py`
+(exit 4 + parseable token resolving to a real trace file; secret-masked gate content on
+stderr; `-p` keeps token; JSON doc shape incl. masked preview + empty errors/diagnostics;
+`--no-trace` → exit 1 + message naming the flag). `test_gate_prompt.py` gains
+`TestPausedGateRendering` (format_gate_lines parity with the prompt rendering; kind→verb
+command pairing). `test_execution_workflow.py` (MCP) gains `TestExecuteWorkflowPaused`
+(paused text carries token/resume_command/gate content; auto-approve still succeeds; success
+text carries execution_id; ★real streamed+finalized trace file under trace_files).
+
+**Escalation test-node note**: mid-graph non-code escalations need a node that writes
+`result.escalation` — no core non-code node does in tests (code nodes are refused by
+`_gate_pausable` by design), so `test_gate_pause.py` registers a local `EscalatingNode`
+(registry-injection pattern from `test_compiler_integration.py`). The plan's "escalation on a
+plain mid-graph node → `--choose` succeeds" parity pin is HALF-covered here (producer emits
+the token); the resume-accepts half needs Phase 3's `--choose` — flagged in the test class
+docstring.
+
+**Two more pre-existing tests updated to the new contract** (found by the full-suite gate):
+- `test_cli_mcp_parity.py::test_mcp_gated_workflow_fails_loudly_with_remediation_ladder` →
+  `test_mcp_gated_workflow_pauses_with_resume_token` (MCP gated run now returns paused text;
+  the remediation-ladder rendering stays pinned by the `--no-trace` CLI test + gate unit
+  tests). Section comment updated too.
+- Pre-flight warning wording (found during REAL e2e, not by any plan item): run.py's
+  `_prepare_gate_resolver` warned "will FAIL at approval gate(s)" — post-171 the run PAUSES
+  (fails only under `--no-trace`). Now says "pause at"/"fail at" keyed on `ctx.obj["trace"]`;
+  new-wording assert added to `test_paused_cli.py`; the `--no-trace` "fail" wording stays
+  pinned by `test_approval_gate_cli.py` (which runs `--no-trace` throughout).
+
+**Mutation verification (Edit + revert, never stash)** — each ★pin bites:
+1. Naive `request.node_id == config.node_id` heuristic in the gate arm →
+   `test_child_gate_with_id_colliding_parent_host_stays_failed` fails ALONE (19 others green)
+   — exactly the "passes every other test" trap the pin exists for.
+2. `_gate_pausable` escalation clauses → `True` → all four refusal pins fail
+   (terminal/loop/code/end-action).
+3. Runner `trace_enabled` conjunct dropped →
+   `test_no_trace_gate_keeps_hard_failure_with_updated_message` fails (bogus token would print).
+4. `_aggregates` pause-record emission dropped → trailer round-trip test + the runner e2e fail.
+5. `has_resumable_step` forced True on paused → its pin fails.
+
+**Real-surface e2e** (actual `uv run pflow` subprocess, non-TTY): exit 4; stdout exactly
+`Paused at 'guarded'. Resume token: <uuid> (exit 4)`; stderr carries the resolved masked
+preview + `To answer: pflow resume <uuid> --approve yes|no`; the on-disk trailer reads
+`final_status: "paused"` + `paused_node_id` + full `gate_request`; `pflow resume <token>`
+refuses with the interim "status 'paused' is not resumable" (Phase 2 replaces this).
+Temp trace in the real `~/.pflow/debug` deleted after inspection.
+
+**Phase-1 gates (all green)**:
+- `make check`: fully green (ruff, format, mypy 246 files, deptry).
+- Four resume suites: **165 passed** (baseline unchanged).
+- Full `make test`: **8608 passed, 0 failed** (Phase-0 baseline 8586; +22 net new tests).
+- `make test-e2e`: 44 passed.
+
+**Not done (deliberately, scope)**: Phases 2–5 untouched. Interim seam for Phase 2: paused
+traces refuse via the loader's generic `final_status != "failed"` arm; two tests carry
+explicit "update in Phase 2" notes (`test_resume_engine.py` e2e, and the pause-promise
+resume-accepts half). Phase 2 should reuse `format_gate_lines` +
+`format_resume_answer_command` from `execution/gate_prompt.py` for
+`ResumeAnswerRequiredError` rendering — built here as the shared render seam.
+
+## 2026-07-05 — Post-review hardening pass (owner-requested loose-end sweep)
+
+Owner directive: fix the identified niggles, record the interim states in the PLAN, skip the
+MCP-traces-as-snapshot-sources concern (item 9 — intended consequence of Decision 2), and add
+only tests that catch REAL bugs ("the bar isn't passing, it's passing the right thing").
+
+**Fixes applied:**
+1. **Gate arm tag made unconditional** (engine.py): `_pflow_gate_seen` is now applied OUTSIDE
+   the `if self.trace is not None` guard. Verified the old placement was safe today
+   (`_open_child_trace` returns a None child collector only when the parent had none, and
+   `engine.run` installs the collector into shared — presence is uniform down the tree), but
+   the pause decision must not depend on that NON-LOCAL invariant; the comment records both
+   facts. Also folded the stale batch-HOST sentence out of the arm comment (unproducible —
+   delta #2 above).
+2. **`runner.py` stream_to_disk comment corrected** ("MCP passes trace_enabled=False" was now
+   false). Pulled forward from Phase 5 because it sits on the exact line 1e changed; plan's
+   Phase 5 updated to "verify, don't redo".
+3. **`_display_paused_result` dropped its unused `ctx` param** (was kept for symmetry with
+   `_display_denied_result`, which actually uses it — dead symmetry loses to simplicity).
+4. **Skipped-test rationale recorded (was an unlogged skip):** the plan's "MCP concurrent
+   two-run filename uniqueness (smoke)" test was NOT written. Rationale: the microsecond
+   filename suffix predates 171 (issue #443, `format_trace_filename`) and is what the plan
+   itself calls "the existing mechanism"; a sequential two-run check is tautological (different
+   timestamps by construction) and a true concurrent race test is flaky-by-design. The
+   MCP-side change is covered by `test_mcp_run_streams_a_real_trace` (real finalized file +
+   identity cross-check). If real concurrent-MCP collisions ever surface, the fix lives in
+   `format_trace_filename`, not the MCP layer.
+5. **`has_resumable_step` docstring** now names the paused case.
+
+**Plan updated (items 6–8):** Phase 2 gained an "interim state inherited from Phase 1" banner
+(misleading generic refusal, the two flagged tests, the gate_prompt render seam to reuse);
+Phase 4 gained a banner that the RunProgress green-✓ regression EXISTS IN TREE since Phase 1
+(must merge together); Phase 5's CLAUDE.md list gained `runtime/engine/CLAUDE.md` (except-arm
+description still enumerates gate_outcome as denied/failed) and the runner.py:184-186 note.
+
+**Item 10 (analyze-cache × paused) — found a real, small bug:** `_collect_candidate_traces`
+correctly buckets paused as non-reusable, but `_non_reusable_outcome_label` disclosed a paused
+run as a **"failed run"** — the exact misattribution that function exists to prevent (its own
+docstring: "an interrupted run is not a failed run"; same argument, the agent's next step is
+ANSWER THE GATE). Fixed: `paused` → "paused run". Pinned by
+`test_autoload_skip_note_labels_paused_run_not_failed` (selection unchanged — older success
+still wins; only the disclosure wording).
+
+**High-value tests added (each closes a REAL unpinned bug class, both mutation-verified):**
+- ★ **Paused trace is not a `--only` snapshot source** (added to the gate-trace trailer test,
+  mirroring the denied pin): a paused run's upstream is PARTIAL. `load_full_run_events` is
+  allowlist-based today (verified), but NOTHING pinned that for paused — mutating the allowlist
+  to a "reject failed" denylist made this (and the denied pin) fail; no other test caught it.
+- ★ **First-node pause status-ladder ordering** (`test_first_node_pause_reads_paused_not_failed`):
+  a gate on the FIRST node pauses with ZERO events, and `_determine_trace_status` has a
+  zero-events → "failed" arm. Every other paused test had ≥1 event, so the paused-check-first
+  ordering was completely unpinned — moving the paused check below the empty-events arm failed
+  ONLY this test. Ordering now also documented in a comment at the ladder. (Load-bearing for
+  Phase 3's by-name selection of first-node pauses.)
+
+**Shallow-test strengthening (same sweep):**
+- `test_parallel_batch_child_gate_stays_failed`: broad `pytest.raises(Exception)` +
+  `gate_outcome != "paused"` tightened to `pytest.raises(GateNotInteractiveError)` +
+  `parallel_batch is True` + `gate_outcome == "failed"` — now also PROVES gate exceptions
+  propagate untouched through the parallel-batch machinery (previously assumed).
+- MCP `test_success_text_carries_execution_id`: presence-only assert → parses the value and
+  `uuid.UUID()`s it (guards a rendered "None"); `test_mcp_run_streams_a_real_trace` gained the
+  identity cross-check (text's execution_id == the trace meta line's) so the id an agent
+  captures provably resolves against that exact file.
+- Stream-fault CLI test: also asserts `resume_command` absent from the error document (no
+  dead-end affordance).
+- Reviewed and deliberately left as-is: `test_end_action_refused_by_gate_pausable` (fake-object
+  unit test — justified and documented: no non-code node can produce action "end" with an
+  escalation in a real graph); the interim loader-refusal e2e (asserts the CURRENT contract
+  with an explicit Phase-2 update note — right thing for now).
+
+**Gates re-run:** `make check` green; full `make test` **8610 passed, 0 failed** (+2 from the
+previous 8608: the paused-autoload disclosure test and the first-node ordering pin; the other
+additions folded into existing tests).

@@ -97,8 +97,8 @@ def shell_wf(tmp_path):
 
 
 # g1 (shell) -> gated (shell, approval: required). In a non-interactive run the
-# unapproved gate finalizes FAILED (not DENIED) — but resume refuses it as a gate
-# stop, so the failed-run output must NOT advertise a resume that can only refuse.
+# unapproved gate now finalizes PAUSED (Task 171: durable pause, exit 4, resume
+# token) — the failed-run resume hint must never appear for it.
 _GATE_WF = """# Resume Gate Demo
 
 A workflow with an unapproved approval gate — non-interactive runs stop at it.
@@ -417,17 +417,18 @@ def test_failed_run_omits_hint_under_no_trace(home, shell_wf):
     assert "pflow resume" not in result.stderr
 
 
-def test_gate_stopped_run_omits_resume_hint(home, gate_wf):
-    """A non-interactive gate stop finalizes FAILED but resume refuses it
-    (ResumeGateStoppedError). The failed-run output must NOT print the resume hint —
-    the gate error already carries the ``--auto-approve`` remedy. Regression pin for
-    the 2026-07-04 verification finding (parity with the DENIED skip)."""
+def test_gate_paused_run_omits_failure_resume_hint(home, gate_wf):
+    """Task 171: a non-interactive gate stop now pauses durably (exit 4). The
+    FAILURE resume hint ("To resume from the failed step: …") must not print —
+    the paused display carries the kind-correct ANSWER command instead.
+    Descends from the 2026-07-04 pin that a gate stop never advertises the
+    failure-resume affordance (parity with the DENIED skip)."""
     result = _runner().invoke(cli, [str(gate_wf)])
-    assert result.exit_code == 1, result.stderr
-    # It really is a gate stop (not some other failure) …
-    assert "auto-approve" in result.stderr
-    # … and no resume affordance is offered.
-    assert "pflow resume" not in result.stderr
+    assert result.exit_code == 4, result.stderr
+    assert "To resume from the failed step:" not in result.stderr
+    # The answer affordance replaces it — token on stdout, command on stderr.
+    assert "Resume token:" in result.stdout
+    assert "--approve yes|no" in result.stderr
 
 
 def test_failed_run_hint_survives_print_mode(home, shell_wf):

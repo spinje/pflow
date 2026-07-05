@@ -877,11 +877,15 @@ def test_both_primary_and_fallback_fail_resumes_at_the_primary_e2e(tmp_path) -> 
     assert "fallback" not in completed
 
 
-def test_non_interactive_gate_stop_refuses_naming_the_gate_e2e(tmp_path) -> None:
-    """REAL non-interactive approval-gate stop (Decision 8): the run fails with EMPTY failed_node_ids
-    (the gated node never ran), and resume refuses — naming the gate — rather than treating it as a
-    resumable failure. Validates the whole chain against production, not a spliced synthetic trace."""
-    from pflow.core.exceptions import ResumeGateStoppedError
+def test_non_interactive_gate_stop_pauses_and_loader_refuses_pending_answer_e2e(tmp_path) -> None:
+    """REAL non-interactive approval-gate stop: post-Task-171 the run trails PAUSED with
+    EMPTY failed_node_ids (the gated node never ran) and the pause record on the trailer.
+    The loader must never treat it as a resumable FAILURE. Interim (Phase 1): the paused
+    status refuses via the generic not-resumable arm — Phase 2 replaces that with the
+    ``--approve``/``--choose`` answer flow (ResumeAnswerRequiredError); update this test
+    then. Validates the whole chain against production, not a spliced synthetic trace."""
+    from pflow.core.exceptions import ResumeNotResumableError
+    from pflow.core.workflow.status import WorkflowStatus
 
     wf = tmp_path / "wf.pflow.md"
     wf.write_text(
@@ -921,14 +925,16 @@ def test_non_interactive_gate_stop_refuses_naming_the_gate_e2e(tmp_path) -> None
     # No gate_resolver installed → GateNotInteractiveError at the gate.
     run1 = WorkflowRunner().run(str(wf), {}, RunnerConfig())
     assert not run1.success
+    assert run1.status is WorkflowStatus.PAUSED
     p1 = run1.trace.save_to_file()
     trace = load_trace_file(p1)
-    assert trace.get("final_status") == "failed"
+    assert trace.get("final_status") == "paused"
     assert trace.get("failed_node_ids") == []  # the gated node produced zero events
+    assert trace.get("paused_node_id") == "guarded"
 
-    with pytest.raises(ResumeGateStoppedError) as exc:
+    with pytest.raises(ResumeNotResumableError) as exc:
         load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
-    assert exc.value.node_id == "guarded"
+    assert "paused" in str(exc.value)
 
 
 # ── Review fixes (2026-07-04): seed fidelity + incomplete tails ending in a failure ──

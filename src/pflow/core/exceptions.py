@@ -1030,7 +1030,16 @@ class GateNotInteractiveError(PflowError):
                 "Escalations cannot be pre-approved — run interactively, "
                 "or re-run with the answer supplied as a workflow input."
             )
-        suggestions.append("pflow cannot yet hold a gate open for a later answer.")
+        # Task 171: gates normally pause durably (trace = checkpoint, resume by
+        # token). Reaching THIS error post-171 means the durable path was
+        # unavailable — name --no-trace explicitly as the removable blocker so
+        # an agent reads "drop the flag", not "gates don't work here".
+        suggestions.append(
+            "Gates pause durably when tracing is on (the run exits with a resume token). "
+            "This error means tracing was explicitly disabled (--no-trace — drop the flag to pause instead) "
+            "or the gate is in an unsupported position (parallel batch item, sub-workflow child, "
+            "or a loop-/code-node/final-step escalation)."
+        )
         return [
             Diagnostic(
                 severity=Severity.ERROR,

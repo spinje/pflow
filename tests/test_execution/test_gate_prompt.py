@@ -234,3 +234,45 @@ class TestPreviewRendering:
         assert "merge configs?" in rendered
         assert "1. merge — simpler — breaks overrides" in rendered
         assert "2. split (rec)" in rendered
+
+
+class TestPausedGateRendering:
+    """Task 171 — format_gate_lines / format_resume_answer_command: the pause
+    surfaces render the SAME content shape as the blocking prompt, from the
+    GateRequest.to_dict() payload (what the trace trailer carries)."""
+
+    def test_approval_lines_mask_secrets(self):
+        from pflow.execution.gate_prompt import format_gate_lines
+
+        payload = _approval(command="deploy", api_key="sk-live-abc").to_dict()
+        lines = format_gate_lines(payload)
+        text = "\n".join(lines)
+        assert "deploy" in text
+        assert "<REDACTED>" in text
+        assert "sk-live-abc" not in text
+
+    def test_escalation_lines_match_prompt_option_rendering(self):
+        from pflow.execution.gate_prompt import format_gate_lines
+
+        payload = _escalation(
+            question="merge configs?",
+            options=(
+                {"label": "merge", "description": "simpler", "tradeoffs": "breaks overrides"},
+                {"label": "split"},
+            ),
+            recommendation="split",
+        ).to_dict()
+        lines = format_gate_lines(payload)
+        # The exact label extraction the blocking prompt uses — `--choose N`
+        # maps numbers to precisely what is shown here.
+        assert lines[0] == "merge configs?"
+        assert lines[1] == "1. merge — simpler — breaks overrides"
+        assert lines[2] == "2. split (rec)"
+
+    def test_resume_answer_command_pairs_verb_with_kind(self):
+        from pflow.execution.gate_prompt import format_resume_answer_command
+
+        approval = format_resume_answer_command("tok-1", _approval().to_dict())
+        assert approval == "pflow resume tok-1 --approve yes|no"
+        escalation = format_resume_answer_command("tok-2", _escalation(question="q?").to_dict())
+        assert escalation == 'pflow resume tok-2 --choose "<answer or option number>"'

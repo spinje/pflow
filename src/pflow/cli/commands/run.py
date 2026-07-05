@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -373,6 +374,11 @@ def _maybe_echo_resume_hint(ctx: click.Context, result: Any | None) -> None:
 
     if not result or result.success or result.status is WorkflowStatus.DENIED:
         return
+    # A durable pause has its own answer hint (Task 171: _display_paused_result
+    # names the exact --approve/--choose command) — belt and braces beside the
+    # has_resumable_step suppression below.
+    if result.status is WorkflowStatus.PAUSED:
+        return
     # A gate stop is a human checkpoint, not a resumable failure — resume refuses it.
     # Mirror _display_denied_result's gate detection so the two stay consistent.
     if any(d.context and d.context.get("category") == "gate" for d in (result.diagnostics or ())):
@@ -443,8 +449,11 @@ def _prepare_gate_resolver(
         unapproved = [gate_id for gate_id in gated if gate_id not in auto_approve]
         if unapproved and not can_prompt(output_controller):
             flags = " ".join(f"--auto-approve={gate_id}" for gate_id in unapproved)
+            # Task 171: a non-interactive gate now pauses durably (or hard-fails
+            # under --no-trace) — either way the run stops there unattended.
+            outcome = "fail at" if not ctx.obj.get("trace", True) else "pause at"
             click.echo(
-                f"Warning: this run is non-interactive and will fail at approval "
+                f"Warning: this run is non-interactive and will {outcome} approval "
                 f"gate(s) [{', '.join(unapproved)}] unless pre-approved ({flags}).",
                 err=True,
             )
@@ -524,6 +533,17 @@ def _display_execution_result(
         _display_denied_result(ctx, result, output_format)
         ctx.exit(3)
 
+    if result.status is WorkflowStatus.PAUSED:
+        if _durable_pause(result):
+            # A gate held open on disk (Task 171): the trace is the checkpoint,
+            # the execution_id is the resume token. Own rendering + exit code 4.
+            _display_paused_result(result, output_format)
+            ctx.exit(4)
+        # The stream died mid-run: no durable trailer exists, so no token would
+        # resolve. Fall through to the failure path with the status NORMALIZED —
+        # a success:false exit-1 error document must not claim "paused".
+        result = dataclasses.replace(result, status=WorkflowStatus.FAILED)
+
     if result.success:
         _handle_workflow_success(
             ctx=ctx,
@@ -576,6 +596,67 @@ def _resumable_execution_id(ctx: click.Context, result: Any) -> str | None:
         return None
     execution_id = getattr(trace, "execution_id", None)
     return execution_id if isinstance(execution_id, str) else None
+
+
+def _durable_pause(result: Any) -> bool:
+    """True when the paused run's trailer actually reached disk (Task 171).
+
+    Same accepted single-consumer private read as ``_resumable_execution_id``
+    above: if the stream died mid-run there is no durable trailer, so no token
+    may be printed — the caller falls through to the failure path. The runner's
+    ``trace_enabled`` gate already handled ``--no-trace`` (status is FAILED
+    there, this branch is never reached).
+    """
+    return result.trace is not None and not getattr(result.trace, "_stream_failed", False)
+
+
+def _display_paused_result(result: Any, output_format: str) -> None:
+    """Render a durably PAUSED run (Task 171): token on stdout, gate content on stderr.
+
+    The token line goes to stdout even under ``-p`` — it IS the paused run's
+    data (a calling process must be able to capture it). The gate CONTENT goes
+    to stderr (like ``_maybe_echo_resume_hint``, so it survives ``-p``): an
+    agent must be able to compose the answer from this output alone, without a
+    blind resume round-trip.
+    """
+    from pflow.execution.gate_prompt import format_gate_lines, format_resume_answer_command
+
+    pause = result.trace.pause_request or {}
+    node_id = pause.get("paused_node_id")
+    gate_request = pause.get("gate_request") or {}
+    execution_id = result.trace.execution_id
+    resume_command = format_resume_answer_command(execution_id, gate_request)
+
+    if output_format == "json":
+        # A strict superset of the unified `success: false` shape — the empty
+        # errors/diagnostics arrays are REQUIRED (agents that branch on
+        # success==false and iterate them must not crash on a pause; a pause
+        # carries no error). Preview masked with the same policy as the denied
+        # doc's gate payload (exceptions._masked_gate_payload): secrets don't
+        # inform a decision, everything else must survive in full.
+        from pflow.core.gate import masked_preview
+
+        masked_request = {**gate_request, "preview": masked_preview(gate_request.get("preview") or {})}
+        document = {
+            "success": False,
+            "status": "paused",
+            "execution_id": execution_id,
+            "paused_node_id": node_id,
+            "gate_request": masked_request,
+            "resume_command": resume_command,
+            "errors": [],
+            "diagnostics": [],
+        }
+        click.echo(json.dumps(document, indent=2, default=str))
+        return
+
+    # Text: ONE parseable stdout line; the in-band exit code mirrors denied's.
+    click.echo(f"Paused at '{node_id}'. Resume token: {execution_id} (exit 4)")
+    click.echo("", err=True)
+    for line in format_gate_lines(gate_request):
+        click.echo(f"   {line}", err=True)
+    click.echo("", err=True)
+    click.echo(f"To answer: {resume_command}", err=True)
 
 
 def _echo_diagnostic_group(diagnostics: list[Any], *, blank_line: bool) -> None:

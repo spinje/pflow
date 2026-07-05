@@ -409,6 +409,17 @@ All in `runtime/resume_source.py`. The planner consumes the same `ResumeSource`
 (`execution/plan.py::_resolve_walk_start`), so engine↔planner parity holds by construction — but
 pin it (tests below).
 
+> **Interim state Phase 2 inherits from Phase 1 (implemented 2026-07-05):** a paused trace
+> currently refuses via the loader's generic `final_status != "failed"` arm with the MISLEADING
+> suggestion "Re-run the workflow from the start" — this phase's `paused` arm replaces exactly
+> that. Two tests carry explicit update-in-Phase-2 notes:
+> `test_resume_engine.py::test_non_interactive_gate_stop_pauses_and_loader_refuses_pending_answer_e2e`
+> (switch to `ResumeAnswerRequiredError`) and the pause-promise parity pin's resume-accepts half
+> (`test_gate_pause.py::TestEscalationPausePromise` docstring — `--choose` on an unchanged
+> workflow succeeds). Reuse `format_gate_lines` + `format_resume_answer_command` from
+> `execution/gate_prompt.py` for `ResumeAnswerRequiredError` rendering — built in Phase 1 as the
+> ONE render shape across prompt / pause output / answer-required error.
+
 ### 2a. `ResumeSource` fields
 
 Add (default `None`, populated only by the paused arm):
@@ -655,6 +666,11 @@ list[PausedRun]` (a small frozen dataclass: `execution_id`, `workflow_name`, `pa
 
 ## Phase 4 — UI: `resumed_from` chain + paused status
 
+> **The RunProgress regression below EXISTS IN THE TREE as of Phase 1 (2026-07-05)** — a
+> UI-launched gated run already trails `paused` and the live-overlay badge renders it as the
+> green success ✓. Phase 1 must not merge without this phase's `runBadgeStatus` fix (or land
+> them in the same PR, as planned).
+
 - `ui/server.py::_run_entry` (1167-1184): add `"resumed_from": meta.get("resumed_from")`. The
   meta line already carries it (`META_KEYS`, trace_io.py:35-48); `run_tailer._read_meta` returns
   it (verified — only `inputs` is popped).
@@ -699,8 +715,11 @@ list[PausedRun]` (a small frozen dataclass: `execution_id`, `workflow_name`, `pa
   internal inconsistency — the tool line ~:60 already says "traces saved");
   `execution/CLAUDE.md` (RunnerConfig block "MCP never streams", integration note);
   `runtime/CLAUDE.md` (Task-172 bullet, new `resume_source.py` module section, paused status in
-  the trace-format notes); `cli/` CLAUDE.md exit-code table (add 4); source comments
-  `runner.py:184-186`. Status-vocabulary staleness (deep-review S): `ui/run_tailer.py:110`
+  the trace-format notes); `runtime/engine/CLAUDE.md` (the EXCEPT-arm description enumerates
+  `gate_outcome` as "denied"/"failed" — add "paused" + the nested/originating decision; added
+  post-Phase-1, 2026-07-05); `cli/` CLAUDE.md exit-code table (add 4). Source comment
+  `runner.py:184-186` was already fixed WITH Phase 1 (it sat on the exact line 1e changed) —
+  verify, don't redo. Status-vocabulary staleness (deep-review S): `ui/run_tailer.py:110`
   docstring and `src/pflow/ui/CLAUDE.md:105` enumerate `success/degraded/failed[/denied]` —
   add `paused`.
 - ADR-0008: verified it NEVER said "trace streaming is CLI-only" — that was a Task-172 scoping

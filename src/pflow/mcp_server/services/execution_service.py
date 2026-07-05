@@ -28,6 +28,17 @@ from .base_service import BaseService, ensure_stateless
 logger = logging.getLogger(__name__)
 
 
+def _trace_path_str(result: Any) -> str:
+    """The run's streamed trace path as a string — ``""`` when no file exists.
+
+    Task 171: ``WorkflowTraceCollector.trace_path`` is a real property now (the
+    old ``hasattr`` guards here were always-False), but it is ``None`` when
+    streaming was gated off or disabled by an I/O fault mid-run.
+    """
+    path = getattr(result.trace, "trace_path", None) if result.trace else None
+    return str(path) if path else ""
+
+
 def _format_success_result(
     result: Any,
     resolved: Any,
@@ -62,20 +73,19 @@ def _format_success_result(
     else:
         workflow_metadata = {"action": "unsaved"}
 
-    # Derive trace path from trace collector
-    trace_path = ""
-    if result.trace and hasattr(result.trace, "trace_path"):
-        trace_path = str(result.trace.trace_path)
-
     formatted = format_execution_success(
         shared_storage=result.shared_after,
         workflow_ir=resolved.ir,
         metrics_collector=result.metrics,
         workflow_metadata=workflow_metadata,
-        trace_path=trace_path,
+        trace_path=_trace_path_str(result),
         status=result.status,
         warnings=_mcp_surfaced_diagnostics(getattr(result, "diagnostics", [])),
     )
+    # Task 171: run identity on every success response — MCP callers have no
+    # other way to correlate a run with its trace / a later resume chain.
+    if result.trace is not None:
+        formatted["execution_id"] = result.trace.execution_id
 
     return formatted
 
@@ -147,18 +157,13 @@ def _format_error_result(
             if key not in ["message", "node_id", "category"]:
                 error_details[key] = value
 
-    # Derive trace path
-    trace_path = ""
-    if result.trace and hasattr(result.trace, "trace_path"):
-        trace_path = str(result.trace.trace_path)
-
     return {
         "success": False,
         "error": error_details,
         "errors": formatted["errors"],
         "execution": formatted.get("execution"),
         "metrics": formatted.get("metrics"),
-        "trace_path": trace_path,
+        "trace_path": _trace_path_str(result),
         "warnings": [
             diagnostic.to_display_dict()
             for diagnostic in getattr(result, "diagnostics", [])
@@ -220,6 +225,37 @@ def _build_error_text(
     return "\n".join(lines)
 
 
+def _format_paused_text(result: Any) -> str:
+    """Text response for a durably PAUSED run (Task 171).
+
+    This surface is text-by-design (LLMs parse text better than nested JSON);
+    the scalar fields stay grep-parseable as one ``key: value`` per line. The
+    gate content is rendered so the agent (or its human) can compose the answer
+    from this response alone; the resume command is the exact next step.
+    """
+    from pflow.execution.gate_prompt import format_gate_lines, format_resume_answer_command
+
+    pause = result.trace.pause_request or {}
+    node_id = pause.get("paused_node_id")
+    gate_request = pause.get("gate_request") or {}
+    execution_id = result.trace.execution_id
+    resume_command = format_resume_answer_command(execution_id, gate_request)
+
+    lines = [
+        f"⏸ Workflow paused at '{node_id}' — a human decision is required.",
+        "",
+        "status: paused",
+        f"execution_id: {execution_id}",
+        f"paused_node_id: {node_id}",
+        f"trace_path: {_trace_path_str(result)}",
+        f"resume_command: {resume_command}",
+        "",
+        "Gate:",
+    ]
+    lines.extend(f"  {line}" for line in format_gate_lines(gate_request))
+    return "\n".join(lines)
+
+
 class ExecutionService(BaseService):
     """Service for workflow execution and related operations.
 
@@ -251,6 +287,7 @@ class ExecutionService(BaseService):
             ValueError: If workflow not found (with suggestions) or parameters fail security validation
             RuntimeError: All other failures (validation, compilation, execution)
         """
+        from pflow.core.workflow.status import WorkflowStatus
         from pflow.execution.gate_prompt import build_gate_resolver
         from pflow.execution.result import RunnerConfig
         from pflow.execution.runner import WorkflowRunner
@@ -285,11 +322,14 @@ class ExecutionService(BaseService):
         result = runner.run(
             resolved,
             validated_params,
-            # Task 172: MCP reads cost/results from the in-memory collector and never persists a trace
-            # file today, so it opts OUT of the new per-event streaming (trace_enabled=False). Streaming
-            # is CLI-only in v1; otherwise MCP runs would write to ~/.pflow/debug and become unintended
-            # --only / analyze-cache snapshot sources.
-            RunnerConfig(trace_enabled=False),
+            # Task 171: MCP streams traces like the CLI — a durable gate pause
+            # needs the trace ON DISK (the trace IS the checkpoint; the token
+            # resolves against it). The runner opens the stream and finalizes it
+            # (finalize_trace=True default) — MCP does no post-run trace
+            # mutation, so each call gets a complete closed file. Concurrency is
+            # safe: per-call collector + microsecond filename. The registry
+            # single-node probe below stays traceless.
+            RunnerConfig(),
             # MCP is the production non-TTY surface: output_controller=None means the
             # resolver honors auto_approve pre-approvals and otherwise raises the
             # payload-carrying GateNotInteractiveError (never hangs, never silently
@@ -308,17 +348,18 @@ class ExecutionService(BaseService):
                     success_dict,
                     warning_diagnostics=_mcp_surfaced_diagnostics(result.diagnostics),
                 )
+            elif result.status is WorkflowStatus.PAUSED:
+                # Task 171: a durable gate pause is not an error — return the
+                # resume token + the gate content in the structured result.
+                return _format_paused_text(result)
             else:
                 error_diagnostics = [d for d in result.diagnostics if d.severity == Severity.ERROR]
                 warning_diagnostics = _mcp_surfaced_diagnostics(result.diagnostics)
-                trace_path = (
-                    str(result.trace.trace_path) if result.trace and hasattr(result.trace, "trace_path") else ""
-                )
                 raise RuntimeError(
                     _build_error_text(
                         error_diagnostics,
                         warning_diagnostics,
-                        trace_path,
+                        _trace_path_str(result),
                         result=result,
                         workflow_ir=resolved.ir,
                     )
@@ -752,10 +793,7 @@ class ExecutionService(BaseService):
 
                 error_diagnostics = result.errors
                 warning_diagnostics = _mcp_surfaced_diagnostics(result.diagnostics)
-                trace_path = (
-                    str(result.trace.trace_path) if result.trace and hasattr(result.trace, "trace_path") else ""
-                )
-                return _build_error_text(error_diagnostics, warning_diagnostics, trace_path)
+                return _build_error_text(error_diagnostics, warning_diagnostics, _trace_path_str(result))
 
         except Exception as e:
             logger.error(f"Failed to run node {node_type}: {e}", exc_info=True)

@@ -206,3 +206,90 @@ class TestExecuteWorkflowErrors:
         assert "batch_error_details" not in text
         assert "item_summary" not in text
         assert "__failures__" not in text
+
+
+GATED_IR = {
+    "nodes": [
+        {
+            "id": "prep",
+            "type": "shell",
+            "params": {"command": "echo ready"},
+            "purpose": "Plain upstream step before the gate",
+        },
+        {
+            "id": "guarded",
+            "type": "shell",
+            "params": {"command": "echo do-it"},
+            "purpose": "Gated step requiring human approval",
+            "approval": "required",
+        },
+    ],
+    "edges": [{"from": "prep", "to": "guarded"}],
+}
+
+
+class TestExecuteWorkflowPaused:
+    """Task 171 — MCP durable pause: paused is a RESULT (token + gate content),
+    never a raised error; success responses gain run identity."""
+
+    def test_paused_run_returns_token_and_gate_content(self, tmp_path):
+        workflow_path = tmp_path / "gated.pflow.md"
+        write_workflow_file(dict(GATED_IR), workflow_path)
+
+        text = ExecutionService.execute_workflow(str(workflow_path))
+
+        assert "status: paused" in text
+        assert "paused_node_id: guarded" in text
+        # The token is real and the resume command is kind-correct.
+        exec_id = next(line.split(": ", 1)[1] for line in text.splitlines() if line.startswith("execution_id: "))
+        assert f"resume_command: pflow resume {exec_id} --approve yes|no" in text
+        # Gate content is rendered — an agent can show its human WHAT is gated.
+        assert "do-it" in text
+
+    def test_auto_approved_gate_still_succeeds(self, tmp_path):
+        workflow_path = tmp_path / "gated-approved.pflow.md"
+        write_workflow_file(dict(GATED_IR), workflow_path)
+
+        text = ExecutionService.execute_workflow(str(workflow_path), auto_approve=["guarded"])
+
+        assert "✓ Workflow completed" in text
+        assert "status: paused" not in text
+
+    def test_success_text_carries_execution_id(self, tmp_path):
+        """Run identity renders even when no trace file exists (streaming is
+        suppressed here by the autouse no-op) — and it is a real id, never a
+        rendered "None". The identity↔trace-file cross-check lives in the
+        trace_files test below."""
+        import uuid
+
+        workflow_path = tmp_path / "simple.pflow.md"
+        write_workflow_file(dict(SIMPLE_ECHO_IR), workflow_path)
+
+        text = ExecutionService.execute_workflow(str(workflow_path))
+
+        exec_id = next(line.split(": ", 1)[1] for line in text.splitlines() if line.startswith("execution_id: "))
+        uuid.UUID(exec_id)  # raises if the line rendered a non-id (e.g. "None")
+
+    @pytest.mark.trace_files
+    def test_mcp_run_streams_a_real_trace(self, tmp_path, monkeypatch):
+        """Task 171 flips MCP to trace streaming: the response's trace_path is a
+        real, complete (finalized) file whose identity MATCHES the rendered
+        execution_id — no post-171 MCP run is invisible to resume/analyze-cache,
+        and the id an agent captures resolves against that exact trace."""
+        import json as _json
+        from pathlib import Path as _Path
+
+        monkeypatch.setattr(_Path, "home", lambda: tmp_path)
+        workflow_path = tmp_path / "simple.pflow.md"
+        write_workflow_file(dict(SIMPLE_ECHO_IR), workflow_path)
+
+        text = ExecutionService.execute_workflow(str(workflow_path))
+
+        trace_path = next(line.split(": ", 1)[1] for line in text.splitlines() if line.startswith("trace_path: "))
+        trace_file = _Path(trace_path)
+        assert trace_file.exists()
+        lines = trace_file.read_text(encoding="utf-8").splitlines()
+        assert _json.loads(lines[-1])["kind"] == "run.complete"
+        # Identity cross-check: the text's execution_id IS this trace's run id.
+        exec_id = next(line.split(": ", 1)[1] for line in text.splitlines() if line.startswith("execution_id: "))
+        assert _json.loads(lines[0])["execution_id"] == exec_id
