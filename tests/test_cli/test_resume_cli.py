@@ -279,11 +279,11 @@ def _run_to_failure_llm(wf: Path) -> str:
 
 def test_stale_hash_refusal_after_edit(home, shell_wf):
     exec_id = _run_to_failure(shell_wf)
-    shell_wf.write_text(shell_wf.read_text() + "\n<!-- edited since the failed run -->\n")
+    shell_wf.write_text(shell_wf.read_text() + "\n<!-- edited -->\n")
     result = _runner().invoke(cli, ["resume", exec_id, "mode=ok"])
     assert result.exit_code == 1
     combined = result.stdout + result.stderr
-    assert "edited since the failed run" in combined
+    assert "edited since the original run" in combined
     assert "--force" in combined
 
 
@@ -553,7 +553,7 @@ def test_dry_run_still_refuses_stale_workflow(home, shell_wf):
     shell_wf.write_text(shell_wf.read_text() + "\n<!-- edited -->\n")
     result = _runner().invoke(cli, ["resume", exec_id, "mode=ok", "--dry-run"])
     assert result.exit_code == 1
-    assert "edited since the failed run" in (result.stdout + result.stderr)
+    assert "edited since the original run" in (result.stdout + result.stderr)
 
 
 # --- Incomplete-run between-nodes resolution (Decision 7 / §E step 4) ---------

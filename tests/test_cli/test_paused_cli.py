@@ -232,8 +232,25 @@ def test_dry_run_with_answer_plans_the_gated_entry_without_executing(home, gate_
     out = result.stdout + result.stderr
     assert "Resuming from 'gated'" in out
     assert "▸ gated" in out
+    # Task 171 wording fix: the gate was just answered by --approve yes, so the
+    # dry-run footer must NOT tell the agent to pre-approve it.
+    assert "--auto-approve=gated" not in out
+    assert "pauses for approval at run time" not in out
     # Nothing executed: still exactly one trace on disk (the paused source).
     assert len(list((home / ".pflow" / "debug").glob("workflow-trace-*.json"))) == 1
+
+
+def test_only_gate_preflight_warns_fail_not_pause(home, gate_wf):
+    """Task 171 wording fix: a gate under --only HARD-FAILS (its snapshot trace is
+    not resumable), so the non-interactive pre-flight warning must say 'fail at',
+    never 'pause at' — the verb must match `_gate_pausable`'s real outcome."""
+    # A prior full run seeds the --only snapshot.
+    seed = _runner().invoke(cli, [str(gate_wf), "--auto-approve", "gated"])
+    assert seed.exit_code == 0, seed.stderr
+    result = _runner().invoke(cli, [str(gate_wf), "--only", "gated"])
+    assert result.exit_code == 1
+    assert "will fail at approval gate" in result.stderr
+    assert "will pause at approval gate" not in result.stderr
 
 
 def test_stale_hash_refuses_paused_resume_and_force_proceeds(home, gate_wf):
@@ -241,7 +258,8 @@ def test_stale_hash_refuses_paused_resume_and_force_proceeds(home, gate_wf):
     gate_wf.write_text(gate_wf.read_text() + "\n<!-- edited since the pause -->\n")
     refused = _runner().invoke(cli, ["resume", token, "--approve", "yes"])
     assert refused.exit_code == 1
-    assert "edited since the failed run" in refused.stdout + refused.stderr
+    # Task 171: neutral wording ("original run") — a paused run was not a failure.
+    assert "edited since the original run" in refused.stdout + refused.stderr
     forced = _runner().invoke(cli, ["resume", token, "--approve", "yes", "--force"])
     assert forced.exit_code == 0, forced.stderr
     assert "gated action" in forced.stdout

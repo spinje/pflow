@@ -449,9 +449,13 @@ def _prepare_gate_resolver(
         unapproved = [gate_id for gate_id in gated if gate_id not in auto_approve]
         if unapproved and not can_prompt(output_controller):
             flags = " ".join(f"--auto-approve={gate_id}" for gate_id in unapproved)
-            # Task 171: a non-interactive gate now pauses durably (or hard-fails
-            # under --no-trace) — either way the run stops there unattended.
-            outcome = "fail at" if not ctx.obj.get("trace", True) else "pause at"
+            # Task 171: a non-interactive gate now pauses durably — EXCEPT when the
+            # run cannot produce a resumable trace, where it hard-fails instead:
+            # --no-trace (no trace at all) and --only (its snapshot trace is not a
+            # resume source). Both mirror `_gate_pausable`'s producer refusals, so
+            # the pre-flight verb must match the real outcome.
+            can_pause = ctx.obj.get("trace", True) and only_node is None
+            outcome = "pause at" if can_pause else "fail at"
             click.echo(
                 f"Warning: this run is non-interactive and will {outcome} approval "
                 f"gate(s) [{', '.join(unapproved)}] unless pre-approved ({flags}).",
@@ -731,7 +735,12 @@ def _display_plan_result(
     if output_format == "json":
         click.echo(json.dumps(format_plan_json(plan), indent=2, default=str))
     else:
-        click.echo(format_plan_text(plan))
+        # Gates already resolved by a flag this invocation — `--auto-approve`, or a
+        # resume `--approve yes|no` (which primes auto_approve / gate_deny). Drop them
+        # from the footer so the preview doesn't tell the agent to pre-approve a gate
+        # it has already answered (Task 171).
+        answered_gate_ids = frozenset(ctx.obj.get("auto_approve") or ()) | frozenset(ctx.obj.get("gate_deny") or ())
+        click.echo(format_plan_text(plan, answered_gate_ids=answered_gate_ids))
 
     has_error = any(d.severity == Severity.ERROR for d in plan.diagnostics)
     ctx.exit(1 if has_error else 0)

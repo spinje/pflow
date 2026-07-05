@@ -1344,15 +1344,17 @@ class ResumeSideEffectConfirmationError(ResumeSourceError):
 
 
 class ResumeStaleWorkflowError(ResumeSourceError):
-    """The workflow changed (or can't be proven unchanged) since the failed run (Task 164).
+    """The workflow changed (or can't be proven unchanged) since the original run
+    (Task 164; also paused resumes, Task 171).
 
     Two messages: a KNOWN hash mismatch states the workflow was edited; a MISSING
     source hash (a run predating hash tracking) states only that the match cannot
     be verified — never claiming an edit that may not have happened. Both suggest
-    ``--force``.
+    ``--force``. Wording stays neutral ("original run") because this refusal serves
+    failed, interrupted, AND paused resumes — a paused run was not a failure.
     """
 
-    _TITLE = "Workflow changed since the failed run"
+    _TITLE = "Workflow changed since the original run"
 
     def __init__(
         self,
@@ -1363,7 +1365,7 @@ class ResumeStaleWorkflowError(ResumeSourceError):
     ):
         if hash_known:
             message = (
-                "The workflow was edited since the failed run, so the restored upstream outputs "
+                "The workflow was edited since the original run, so the restored upstream outputs "
                 "may not match the current steps."
             )
         else:

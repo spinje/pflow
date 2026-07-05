@@ -69,7 +69,7 @@ The failed step runs **again** from the start. If it already partly side-effecte
 
 ## Other behavior worth knowing
 
-- **Edited workflow → refusal.** If the workflow file changed since the failed run, resume refuses — the restored upstream outputs may no longer match the current steps. Re-run from the start, or `--force` to resume anyway.
+- **Edited workflow → refusal.** If the workflow file changed since the original run, resume refuses — the restored upstream outputs may no longer match the current steps. Re-run from the start, or `--force` to resume anyway.
 - **Loop steps restart at iteration 1.** Loop iteration position is not part of the saved run, so a resumed loop step begins its loop again.
 - **Downstream approval gates re-prompt.** Resume does not inherit prior approvals — each execution is a new action. `--auto-approve <step>` still works.
 - **Top-level granularity.** A failure *inside* a sub-workflow re-runs the **whole** sub-workflow step — restoration works only at the top level of the parent workflow. The cross-run cache softens the cost of re-running its inner steps.

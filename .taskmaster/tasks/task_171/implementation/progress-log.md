@@ -1030,3 +1030,56 @@ the cause (the exact agent-UX failure the plan fixed for `--no-trace`/inline). A
 comprehensive stale-status-vocab sweep beyond the agent's 3 named sites: the enum's own docstring,
 `ui/run_tailer.py`, and all other `DENIED` mentions already carry `PAUSED` or are legitimately
 denied-specific — no further stale enumerations. Full `make test` **8661 passed**.
+
+## 2026-07-05 — Manual E2E verification pass (adversarial) + 3 agent-UX wording fixes
+
+Verification specialist pass: drove the REAL `pflow` CLI and the REAL MCP `execute_workflow`
+service against ~10 hand-built `.pflow.md` workflows (isolated `HOME`, throwaway debug dir),
+trying to BREAK the feature rather than confirm it — test-suite green treated as context, not
+evidence. **Verdict: no correctness bugs.** Every last-20% failure mode held:
+
+- **Producer**: approval pause → exit 4, stdout token, stderr resolved preview, trailer
+  (`final_status`/`paused_node_id`/`gate_request`), JSON doc (`success:false` + empty
+  `errors`/`diagnostics`); side-effect marker never written before answer.
+- **Real `claude-code` escalation** (not the suite's injected node): non-TTY → exit 4 token;
+  `--choose 2` (numeric→label through producer-written options) → decision folded downstream,
+  agent step restored (0 re-executions, 0.03s), work never re-paid.
+- **Consumption**: re-answer → "newer attempt exists" naming the successor; **double-deny** (a
+  0-node denied attempt) still consumes via its verdict line; **multi-gate chain** — distinct
+  tokens, gate-a ran exactly once despite two restores (no double-exec).
+- **Stays-failed promises** all hard-fail with NO dead token: `--no-trace`, inline IR via MCP,
+  `--only`, sub-workflow child, batch (validation reject), code-node escalation. Loop+approval
+  pauses BEFORE each body → no double-exec on resume.
+- **`resume list`**: amid 24 mixed traces (9 paused / 5 failed / 9 success / 1 denied) showed
+  EXACTLY the 1 non-superseded pause — the one-consumption-policy filter at scale.
+- **Cross-surface**: pause via MCP → answer via CLI completes; MCP `auto_approve` → success.
+- **Regression**: Task-164 failed-resume intact (list excludes it, non-TTY refuses the
+  side-effecting step, `--force` restores + re-runs). Exit codes exact: 0/1/2/3/4.
+
+**Three agent-UX WORDING imprecisions found + fixed** (no correctness impact; pflow is
+agent-first, so the emitted strings must not misdirect an agent):
+
+1. **`--dry-run` + an answer flag still advertised the answered gate.** `pflow resume <tok>
+   --approve yes --dry-run` printed `⏸ … non-interactive runs need --auto-approve=<gate>` for the
+   very gate just answered. Fix: `format_plan_text(plan, answered_gate_ids=…)` +
+   `_append_gate_footer` drop gates already resolved by a flag this invocation; CLI passes
+   `auto_approve ∪ gate_deny` from `ctx.obj` (the `--approve yes` priming already lands the paused
+   node in `auto_approve`). General win: `--dry-run --auto-approve X` now also omits X. Text path
+   is CLI-only (MCP uses `format_plan_json`), so no parity change. Pinned in
+   `test_dry_run_with_answer_plans_the_gated_entry_without_executing` (no `--auto-approve=gated`
+   line); normal `--dry-run` footer + `--auto-approve` suppression both regression-checked live.
+2. **`--only <gated>` pre-flight said "will pause", but the run hard-FAILS.** `_prepare_gate_
+   resolver`'s verb keyed only on `trace`; `--only` has trace ON yet its snapshot isn't a resume
+   source, so it fails. Fix: `can_pause = trace and only_node is None` → "pause at"/"fail at"
+   matches `_gate_pausable`'s real outcome. New pin
+   `test_only_gate_preflight_warns_fail_not_pause`.
+3. **Edited-workflow refusal said "since the failed run" on a PAUSED resume.**
+   `ResumeStaleWorkflowError` (shared by failed/interrupted/paused) now reads "since the original
+   run" (title + both messages); guide `features/resume.md` bullet matched. Updated 3 existing
+   assertions (`test_paused_cli.py`, `test_resume_cli.py` ×2). Left the separate
+   node-removed "since the failed run" messages (`engine.py`/`plan.py`) — different error, only
+   reachable on `--force` past a removed restored node; not in this pass's scope.
+
+**Gates:** `make check` green (ruff/format/mypy 246 files/deptry); full `make test`
+**8662 passed, 0 failed** (8661 + 1 net new pin); all three fixes re-verified against the live
+CLI. Committed as `deep review fixes` follow-up.
