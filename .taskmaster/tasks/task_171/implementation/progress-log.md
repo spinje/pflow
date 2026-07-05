@@ -966,3 +966,67 @@ prose are accurate. Gotcha recorded for the next agent: `.pflow.md` shell nodes 
 command via a ```command fence (```bash → "Unknown parameter 'bash'"); nodes live under
 `## Steps` with `- type:`/`- approval: required` attributes. Throwaway `gated` demo traces
 (+ two stale `gated-demo` ones from prior sessions) cleaned from `~/.pflow/debug`.
+
+## 2026-07-05 — Post-merge deep-review (6 agents, full branch) + fixes
+
+Ran `/deep-review` in code mode over the whole feature (`main...HEAD`, 7 commits, 70 files,
++6498/−851 — Major tier) as the pre-merge gate. Six relevance-selected agents:
+review-silent-failures, review-impact-completeness, review-feature-interactions,
+review-validation-consistency, review-simplicity, review-agent-ux (concurrency-safety dropped —
+owner deprioritized MCP concurrency; its main hook was the MCP-streaming flip). Each was told the
+plan was already deep-reviewed + mutation-verified (hunt plan→code deviations + cross-phase
+emergence) and given the settled-scope list so it wouldn't re-litigate trust-fs / no-expiry /
+inline-`ir-hash` / double-resume. **Verdict: no Critical; 2 confirmed Warnings, both
+pause-promise holes on secondary surfaces; ship after fixes.** All confirmed against live code by
+me (+ a searcher) before accepting; the whole producer↔resume mirror, engine↔planner parity,
+consumption single-home, status-vocab coverage, secret masking, and trailer atomicity came back
+verified clean.
+
+**Fixes applied (all four, mutation-verified where a Warning):**
+1. **★ `--only` × gate emitted a dead token (Warning, feature-interactions).** The engine pause
+   conjuncts (`engine.py` gate arm) had no `only_node` term, but `_run_only_snapshot` shares
+   `_execute_node`, so a gate on the `--only` target stamped `paused` + printed a token — while
+   every resume consumer excludes `only_node` traces (`_iter_workflow_traces`,
+   `_select_resume_trace` by-exec-id), so the token never resolved. Searcher-confirmed both
+   halves. Fix: added `and self.only_node is None` conjunct (mirrors the inline/`ir-hash:`
+   refusal). New pin `test_gate_pause.py::TestOnlyPausePromise` (mutation-verified: dropping the
+   conjunct → `paused`).
+2. **★ MCP paused response handed out a dead token on a mid-run disk fault (Warning, agent-ux +
+   silent-failures, 2 agents).** `execution_service.py`'s paused branch gated on bare
+   `status is PAUSED`, not durability — the CLI wraps the identical branch in a `_stream_failed`
+   check and normalizes to FAILED. Fix: hoisted the durability check into a shared
+   `ExecutionResult.is_durable_pause` property (one rule, one home) now consumed by BOTH the CLI
+   (replaced the `_durable_pause` helper, deleted) and the MCP branch; a stream-faulted pause now
+   falls through to the error path (the gate's ask-your-human remediation, ERROR-severity
+   diagnostic already on the result — same as `--no-trace`). New pin
+   `test_execution_workflow.py::...test_stream_faulted_pause_raises_not_a_dead_token`
+   (mutation-verified: dropping the `_stream_failed` conjunct → returns a token).
+3. **Simplicity S1 (take): `masked_gate_dict` extracted to `core/gate.py`** — the mask-only gate
+   policy was mirrored 3 ways (`exceptions._masked_gate_payload`, `ResumeAnswerRequiredError.
+   to_diagnostics`, `run.py` paused-JSON) because the canonical helper took a `GateRequest` object
+   while two consumers held a dict. All three now delegate; `_masked_gate_payload` is the
+   object-form twin (`to_dict()` → `masked_gate_dict`).
+4. **Impact-completeness S3 (take): stale "Four states" docs** — `core/workflow/CLAUDE.md` (3
+   sites) + `core/CLAUDE.md` status.py line now enumerate `PAUSED` (the canonical status-vocab
+   home; a latent seed for the green-✓ regression class the task fought).
+
+**Disputed (verified, no action):** the escalation successor existence-vs-uniqueness mirror gap
+(silent-failures + feature-interactions) — searcher confirmed `markdown_parser._build_edges`
+emits at most ONE `default` edge per node, so two distinct default targets aren't authorable;
+unreachable on an unedited workflow. **Deferred:** simplicity S2 (CLI↔MCP pause-field unpack —
+partially subsumed by #2's shared property; revisit at Task 176) and the `GraphView.tsx:1068`
+stale comment (code correct).
+
+**Gates:** `make check` green; full `make test` **8660 passed, 0 failed** (+2 new pins);
+`make test-e2e` 44 passed. Nothing committed (repo rule).
+
+**Self-review loose-end (found + fixed after the four above):** fix #1 made `--only` gates fail
+with `GateNotInteractiveError`, but its remediation menu named `--no-trace`/inline/unsupported-
+position and NOT `--only` — so an agent hitting the new path would get a message misattributing
+the cause (the exact agent-UX failure the plan fixed for `--no-trace`/inline). Added `--only`
+("its snapshot trace isn't resumable — run the full workflow to pause") to
+`GateNotInteractiveError.to_diagnostics()`. Pinned by
+`TestOnlyPausePromise::test_only_gate_remediation_names_only_as_the_cause`. Also did a
+comprehensive stale-status-vocab sweep beyond the agent's 3 named sites: the enum's own docstring,
+`ui/run_tailer.py`, and all other `DENIED` mentions already carry `PAUSED` or are legitimately
+denied-specific — no further stale enumerations. Full `make test` **8661 passed**.

@@ -1512,6 +1512,14 @@ class WorkflowEngine:
                     and not gate_exc.parallel_batch
                     and originating
                     and not self.nested
+                    # Pause = promise: an --only run records ONLY its target
+                    # (only_node is stamped on the trace at run() start), and
+                    # every resume consumer EXCLUDES only_node traces from
+                    # selection (_iter_workflow_traces / _select_resume_trace's
+                    # by-exec-id arm), so a token issued here would never
+                    # resolve — same non-resumable-trace refusal as the inline
+                    # guard below. An --only gate stays `failed`.
+                    and self.only_node is None
                     # Pause = promise: an INLINE run (dict IR / piped content —
                     # workflow_path is the synthesized "ir-hash:<md5>", never a
                     # file; None = no identity at all) has no source to

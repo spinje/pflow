@@ -136,3 +136,17 @@ def masked_preview(preview: dict[str, Any]) -> dict[str, Any]:
         return value
 
     return {key: mask(key, value) for key, value in preview.items()}
+
+
+def masked_gate_dict(payload: dict[str, Any]) -> dict[str, Any]:
+    """A gate-payload DICT with its ``preview`` secret-masked — THE policy for
+    every surface that holds a plain ``GateRequest.to_dict()`` / trailer gate
+    dict rather than a live ``GateRequest``.
+
+    Mask-only (recursive, never truncated), delegating to ``masked_preview``;
+    the trace's gate event stays unmasked, consistent with
+    ``template_resolutions``. ``exceptions._masked_gate_payload`` is the
+    object-form twin (``request.to_dict()`` → this). One rule, one home, N
+    consumers (the denied/paused JSON docs, ``ResumeAnswerRequiredError``).
+    """
+    return {**payload, "preview": masked_preview(payload.get("preview") or {})}

@@ -433,3 +433,55 @@ class TestInlinePausePromise:
             WorkflowEngine(trace_collector=collector).run(compiled, {})
         assert collector.gate_outcome == "failed"
         assert collector.pause_request is None
+
+
+class TestOnlyPausePromise:
+    """A gate fired under ``--only`` stays ``failed`` — never pauses.
+
+    ``_run_only_snapshot`` shares ``_execute_node`` with the full walk, so a gate
+    on the ``--only`` target reaches the pause arm. But the trace stamps
+    ``only_node`` and every resume consumer EXCLUDES ``only_node`` traces from
+    selection (``_iter_workflow_traces`` / ``_select_resume_trace`` by-exec-id),
+    so a token issued here would never resolve — pause = promise, so the producer
+    must not issue one. Reachability: a prior answered full run leaves a snapshot;
+    a non-TTY ``--only`` re-run of the gate node fires the gate again.
+    """
+
+    def _run_only_gate(self):
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {"id": "upstream", "type": "shell", "params": {"command": "echo up"}},
+                {
+                    "id": "gated",
+                    "type": "shell",
+                    "params": {"command": "echo go"},
+                    "approval": "required",
+                },
+            ],
+            "edges": [{"from": "upstream", "to": "gated"}],
+        }
+        collector = WorkflowTraceCollector("gated", workflow_path="gated.pflow.md", is_run_scoped=True)
+        compiled = compile_workflow(ir, _registry_with_escalating_node())
+        with pytest.raises(GateNotInteractiveError) as exc_info:
+            WorkflowEngine(
+                trace_collector=collector,
+                workflow_path="gated.pflow.md",
+                only_node="gated",
+                snapshot_events=[{"node_id": "upstream", "node_output": {"stdout": "up"}}],
+            ).run(compiled, {})
+        return collector, exc_info.value
+
+    def test_only_gate_stays_failed_without_a_token(self):
+        collector, _ = self._run_only_gate()
+        assert collector.gate_outcome == "failed"  # never "paused"
+        assert collector.pause_request is None
+        # only_node is stamped, confirming the trace is a non-resumable --only run.
+        assert collector.only_node == "gated"
+
+    def test_only_gate_remediation_names_only_as_the_cause(self):
+        """Agent-UX: the failure message must NAME --only, not leave an agent
+        staring at the generic 'unsupported position' list that doesn't apply."""
+        _, exc = self._run_only_gate()
+        suggestions = " ".join(exc.to_diagnostics()[0].suggestions)
+        assert "--only" in suggestions

@@ -270,6 +270,38 @@ class TestExecuteWorkflowPaused:
         exec_id = next(line.split(": ", 1)[1] for line in text.splitlines() if line.startswith("execution_id: "))
         uuid.UUID(exec_id)  # raises if the line rendered a non-id (e.g. "None")
 
+    def test_stream_faulted_pause_raises_not_a_dead_token(self, tmp_path, monkeypatch):
+        """Pause = promise, on the MCP surface too. If the trace stream dies
+        mid-run there is no on-disk trailer, so the token would never resolve.
+        MCP gates on ``is_durable_pause`` (the same guard the CLI applies) and
+        falls through to the error path (the gate's ask-your-human remediation),
+        never advertising an unanswerable token. Simulate the disk fault by
+        flipping ``_stream_failed`` on the real paused run's collector."""
+        from pflow.execution.runner import WorkflowRunner
+
+        workflow_path = tmp_path / "gated-faulted.pflow.md"
+        write_workflow_file(dict(GATED_IR), workflow_path)
+
+        real_run = WorkflowRunner.run
+
+        def faulting_run(self, *args, **kwargs):
+            result = real_run(self, *args, **kwargs)
+            if result.trace is not None:
+                result.trace._stream_failed = True  # the stream died mid-run
+            return result
+
+        monkeypatch.setattr(WorkflowRunner, "run", faulting_run)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            ExecutionService.execute_workflow(str(workflow_path))
+
+        msg = str(exc_info.value)
+        # NOT the durable-pause response — no token, no resume command advertised.
+        assert "status: paused" not in msg
+        assert "resume_command:" not in msg
+        # IS the gate-needs-a-human remediation (parity with a --no-trace gate).
+        assert "human" in msg.lower()
+
     @pytest.mark.trace_files
     def test_mcp_run_streams_a_real_trace(self, tmp_path, monkeypatch):
         """Task 171 flips MCP to trace streaming: the response's trace_path is a

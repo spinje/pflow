@@ -287,7 +287,6 @@ class ExecutionService(BaseService):
             ValueError: If workflow not found (with suggestions) or parameters fail security validation
             RuntimeError: All other failures (validation, compilation, execution)
         """
-        from pflow.core.workflow.status import WorkflowStatus
         from pflow.execution.gate_prompt import build_gate_resolver
         from pflow.execution.result import RunnerConfig
         from pflow.execution.runner import WorkflowRunner
@@ -348,9 +347,14 @@ class ExecutionService(BaseService):
                     success_dict,
                     warning_diagnostics=_mcp_surfaced_diagnostics(result.diagnostics),
                 )
-            elif result.status is WorkflowStatus.PAUSED:
+            elif result.is_durable_pause:
                 # Task 171: a durable gate pause is not an error — return the
                 # resume token + the gate content in the structured result.
+                # `is_durable_pause` (not a bare `status is PAUSED`) is the SAME
+                # guard the CLI applies: if the trace stream died mid-run there
+                # is no on-disk trailer, so the token would never resolve — that
+                # case falls through to the error branch below (the gate's
+                # remediation ladder), never advertising a dead token.
                 return _format_paused_text(result)
             else:
                 error_diagnostics = [d for d in result.diagnostics if d.severity == Severity.ERROR]

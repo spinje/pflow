@@ -537,7 +537,7 @@ def _display_execution_result(
         ctx.exit(3)
 
     if result.status is WorkflowStatus.PAUSED:
-        if _durable_pause(result):
+        if result.is_durable_pause:
             # A gate held open on disk (Task 171): the trace is the checkpoint,
             # the execution_id is the resume token. Own rendering + exit code 4.
             _display_paused_result(result, output_format)
@@ -601,18 +601,6 @@ def _resumable_execution_id(ctx: click.Context, result: Any) -> str | None:
     return execution_id if isinstance(execution_id, str) else None
 
 
-def _durable_pause(result: Any) -> bool:
-    """True when the paused run's trailer actually reached disk (Task 171).
-
-    Same accepted single-consumer private read as ``_resumable_execution_id``
-    above: if the stream died mid-run there is no durable trailer, so no token
-    may be printed — the caller falls through to the failure path. The runner's
-    ``trace_enabled`` gate already handled ``--no-trace`` (status is FAILED
-    there, this branch is never reached).
-    """
-    return result.trace is not None and not getattr(result.trace, "_stream_failed", False)
-
-
 def _display_paused_result(result: Any, output_format: str) -> None:
     """Render a durably PAUSED run (Task 171): token on stdout, gate content on stderr.
 
@@ -634,12 +622,12 @@ def _display_paused_result(result: Any, output_format: str) -> None:
         # A strict superset of the unified `success: false` shape — the empty
         # errors/diagnostics arrays are REQUIRED (agents that branch on
         # success==false and iterate them must not crash on a pause; a pause
-        # carries no error). Preview masked with the same policy as the denied
-        # doc's gate payload (exceptions._masked_gate_payload): secrets don't
-        # inform a decision, everything else must survive in full.
-        from pflow.core.gate import masked_preview
+        # carries no error). Preview masked with the same shared dict-form policy
+        # as the denied doc's gate payload: secrets don't inform a decision,
+        # everything else must survive in full.
+        from pflow.core.gate import masked_gate_dict
 
-        masked_request = {**gate_request, "preview": masked_preview(gate_request.get("preview") or {})}
+        masked_request = masked_gate_dict(gate_request)
         document = {
             "success": False,
             "status": "paused",

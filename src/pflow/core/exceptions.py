@@ -1038,8 +1038,9 @@ class GateNotInteractiveError(PflowError):
             "Gates pause durably when tracing is on (the run exits with a resume token). "
             "This error means tracing was explicitly disabled (--no-trace — drop the flag to pause instead), "
             "the workflow was submitted inline (no source file to resume from — save it and run by name/path "
-            "to pause instead), or the gate is in an unsupported position (parallel batch item, "
-            "sub-workflow child, or a loop-/code-node/final-step escalation)."
+            "to pause instead), the run targeted a single node with --only (its snapshot trace isn't "
+            "resumable — run the full workflow to pause), or the gate is in an unsupported position "
+            "(parallel batch item, sub-workflow child, or a loop-/code-node/final-step escalation)."
         )
         return [
             Diagnostic(
@@ -1099,15 +1100,14 @@ def _masked_gate_payload(request: GateRequest) -> dict[str, Any]:
 
     The diagnostic reaches agents/humans through error text and MCP responses —
     secrets don't inform an approval decision, but everything ELSE must survive
-    in full (approving blind defeats the gate). Delegates to the shared
-    ``masked_preview`` (mask-only, recursive, no truncation); the trace's gate
-    event carries the unmasked payload, consistent with ``template_resolutions``.
+    in full (approving blind defeats the gate). The object-form twin of the
+    shared dict-form ``masked_gate_dict`` (mask-only, recursive, no truncation):
+    ``to_dict()`` then the one shared masking rule. The trace's gate event
+    carries the unmasked payload, consistent with ``template_resolutions``.
     """
-    from pflow.core.gate import masked_preview
+    from pflow.core.gate import masked_gate_dict
 
-    payload = request.to_dict()
-    payload["preview"] = masked_preview(payload.get("preview", {}))
-    return payload
+    return masked_gate_dict(request.to_dict())
 
 
 class MaxNodeVisitsError(RuntimeError):
@@ -1447,9 +1447,8 @@ class ResumeAnswerRequiredError(ResumeSourceError):
         if self.gate_request is not None and context is not None:
             # Same masked-payload policy as GateNotInteractiveError's context["gate"]:
             # secrets don't inform a decision; everything else survives in full.
-            from pflow.core.gate import masked_preview
+            # One shared dict-form masking rule (core/gate.masked_gate_dict).
+            from pflow.core.gate import masked_gate_dict
 
-            payload = dict(self.gate_request)
-            payload["preview"] = masked_preview(payload.get("preview") or {})
-            context["gate"] = payload
+            context["gate"] = masked_gate_dict(self.gate_request)
         return diagnostics
