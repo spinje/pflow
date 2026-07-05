@@ -23,8 +23,8 @@ pytestmark = pytest.mark.trace_files
 # --- Format version ---------------------------------------------------------
 
 
-def test_format_version_is_2_6_0() -> None:
-    assert TRACE_FORMAT_VERSION == "2.6.0"
+def test_format_version_is_2_7_0() -> None:
+    assert TRACE_FORMAT_VERSION == "2.7.0"
 
 
 def test_saved_trace_records_format_version(tmp_path, monkeypatch) -> None:

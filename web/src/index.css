@@ -737,6 +737,10 @@ button.active {
 .run-banner.run-denied {
   border-color: #d29922;
 }
+/* Paused at a durable gate (Task 171) — waiting on a human's answer: amber, never red/green. */
+.run-banner.run-paused {
+  border-color: #d29922;
+}
 
 /* Catalog "● running" badge (Task 173 D6) — a pulsing dot + label on a workflow with a live run. */
 .catalog-item-running {
@@ -833,6 +837,22 @@ button.active {
   color: var(--text-faint);
   font-size: 11px;
 }
+/* Attempt-chain marker (Task 171): "⤷ resumed from <id>" under a resumed attempt's label; the
+   -link variant (source run present in this list) is a click-to-jump, styled like a quiet link.
+   `align-self: flex-start` shrinks the span to its text — the label column stretches children, and a
+   full-width marker swallowed row clicks (jumping to the source instead of picking the row; user-caught). */
+.run-menu-resumed {
+  color: var(--text-faint);
+  font-size: 11px;
+  align-self: flex-start;
+}
+.run-menu-resumed-link {
+  cursor: pointer;
+}
+.run-menu-resumed-link:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
 .run-menu-check {
   color: var(--accent);
 }
@@ -869,6 +889,10 @@ button.active {
 }
 /* Denied at an approval gate (Task 125) — amber, matching the banner/outcome treatment. */
 .run-mark.run-denied {
+  color: #d29922;
+}
+/* Paused at a durable gate (Task 171) — amber, matching the banner/outcome treatment. */
+.run-mark.run-paused {
   color: #d29922;
 }
 
@@ -2551,6 +2575,10 @@ button.say-affordance {
 }
 /* Denied at an approval gate (Task 125) — amber, mirroring the canvas .run-banner.run-denied. */
 .run-progress-outcome.run-denied {
+  color: var(--status-stopped);
+}
+/* Paused at a durable gate (Task 171) — amber, mirroring the canvas .run-banner.run-paused. */
+.run-progress-outcome.run-paused {
   color: var(--status-stopped);
 }
 

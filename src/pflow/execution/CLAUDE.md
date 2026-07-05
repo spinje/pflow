@@ -21,6 +21,13 @@ src/pflow/execution/
 │                            #   Installed via runner.run(gate_resolver=...) → shared["__gate_resolver__"]
 │                            #   (mirrors progress_callback end-to-end). Denial surfaces as
 │                            #   WorkflowStatus.DENIED (derived in _exception_to_result from GateDenied).
+│                            #   A non-answerable gate with tracing ON surfaces as WorkflowStatus.PAUSED
+│                            #   (Task 171 — _exception_to_result reads the collector's gate_outcome AND
+│                            #   requires trace_enabled; exit 4, resume token = execution_id, answered
+│                            #   later via `pflow resume <id> --approve yes|no` / --choose). Also exports
+│                            #   format_gate_lines/format_resume_answer_command — the ONE render shape
+│                            #   across prompt, pause output, and ResumeAnswerRequiredError; deny=
+│                            #   on build_gate_resolver is `--approve no`'s delivery.
 ├── plan.py                  # Dry-run planner — graph walker with explicit `Transition` state machine
 └── formatters/              # Shared output formatters (return strings/dicts, NEVER print)
     ├── error_formatter.py
@@ -220,7 +227,8 @@ class RunnerConfig:
     only_node: Optional[str] = None
     finalize_trace: bool = True   # runner finalizes the streamed trace it opened (any caller gets a
                                   # complete, closed file). CLI sets False — it finalizes itself after
-                                  # mutating the trace post-run (set_json_output). MCP never streams.
+                                  # mutating the trace post-run (set_json_output). MCP keeps the default
+                                  # (it streams since Task 171 — each call gets a complete closed file).
 
 @dataclass(frozen=True)
 class ResolvedWorkflow:

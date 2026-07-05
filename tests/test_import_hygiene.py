@@ -20,6 +20,15 @@
    because ``llm_client`` lazy-imports litellm itself, so this rule would
    otherwise rot silently.
 
+3. ``runtime/`` never imports ``ui/`` (any scope). ``ui/`` depends ON
+   ``runtime`` and pulls Starlette + the web server, so a ``runtime → ui``
+   edge inverts the layering AND drags the web stack into every execution
+   path (MCP, CLI, headless). The rule is absolute — ``_is_trace_locked``
+   is DUPLICATED in ``runtime/resume_source.py`` rather than imported from
+   ``ui.run_tailer`` for exactly this reason (Task 164/171). Nothing else
+   catches a violation: it imports fine under the test env's full deps and
+   breaks only a minimal install, which no other test simulates.
+
 Same pattern as ``test_core/test_litellm_runtime.py::
 test_no_direct_litellm_imports_in_production_code``: text prefilter, then
 AST scan so comments/strings/docstrings (e.g. a path like ``src/pflow``)
@@ -87,6 +96,67 @@ def _scan_one_file(py_file: Path, rel_path: str) -> list[str]:
 
 def _is_src_module(name: str) -> bool:
     return name == "src" or name.startswith("src.")
+
+
+# ---------------------------------------------------------------------------
+# runtime/ must not import ui/ (layering)
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_does_not_import_ui() -> None:
+    """``src/pflow/runtime/`` must never import ``pflow.ui`` — at ANY scope.
+
+    Walks every ``.py`` under ``src/pflow/runtime/`` and fails on any
+    ``import pflow.ui[.…]`` / ``from pflow.ui[.…] import …`` — module-level,
+    lazy inside a function, or under ``TYPE_CHECKING``. ``ui/`` depends on
+    ``runtime`` and imports Starlette; the reverse edge inverts the layering
+    and drags the web stack into MCP/CLI/headless execution. When ``runtime``
+    needs a scrap of ``ui`` logic it is DUPLICATED (see
+    ``resume_source._is_trace_locked`` ← ``ui.run_tailer.is_trace_locked``),
+    never imported. Matches absolute ``pflow.ui`` imports — the repo's
+    enforced style (rule 1 bans ``src.``; nothing uses cross-package relative
+    imports).
+    """
+    repo_root = _find_repo_root()
+    runtime_root = repo_root / "src" / "pflow" / "runtime"
+    assert runtime_root.is_dir(), f"expected src/pflow/runtime/ at {runtime_root}"
+
+    violations: list[str] = []
+    for py_file in sorted(runtime_root.rglob("*.py")):
+        rel_path = py_file.relative_to(repo_root).as_posix()
+        source = py_file.read_text(encoding="utf-8")
+        if "pflow.ui" not in source:  # prefilter; AST below is the authority
+            continue
+        try:
+            tree = ast.parse(source, filename=str(py_file))
+        except SyntaxError as exc:
+            pytest.fail(f"{rel_path}: failed to parse — {exc}")
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                violations.extend(
+                    f"  {rel_path}:{node.lineno}: import {alias.name}"
+                    for alias in node.names
+                    if _is_ui_module(alias.name)
+                )
+            elif isinstance(node, ast.ImportFrom) and _is_ui_module(node.module or ""):
+                names = ", ".join(a.name for a in node.names)
+                violations.append(f"  {rel_path}:{node.lineno}: from {node.module} import {names}")
+
+    if violations:
+        violations_block = "\n".join(violations)
+        pytest.fail(
+            "runtime/ imports ui/ — a layering inversion. ui/ depends on "
+            "runtime and pulls Starlette + the web server, so the reverse "
+            "edge drags the web stack into MCP/CLI/headless execution — and "
+            "no other test catches it (ui deps are installed in the test "
+            "env). Duplicate the needed helper into runtime/ instead, as "
+            "resume_source._is_trace_locked duplicates ui.run_tailer.\n\n"
+            f"Offending sites:\n{violations_block}"
+        )
+
+
+def _is_ui_module(name: str) -> bool:
+    return name == "pflow.ui" or name.startswith("pflow.ui.")
 
 
 # ---------------------------------------------------------------------------

@@ -2560,7 +2560,7 @@ def test_engine_and_planner_resume_entry_state_match(tmp_path) -> None:
     the rest of the suite stays green.
     """
     from pflow.execution.plan import _build_plan_with_shared
-    from pflow.runtime.workflow_trace import load_resume_source
+    from pflow.runtime.resume_source import load_resume_source
 
     # `middle` fails unless mode=ok — a mode-gated failure gives a clean K=middle.
     ir = {
@@ -2618,6 +2618,140 @@ def test_engine_and_planner_resume_entry_state_match(tmp_path) -> None:
 
     # Seeded VALUES: full-dict equality of the upstream the helper seeded.
     assert planner_shared["first"] == engine_shared["first"]
+
+
+@pytest.mark.trace_files
+def test_engine_and_planner_paused_approval_entry_state_match(tmp_path) -> None:
+    """Engine↔planner parity on a PAUSED-approval source (Task 171 Phase 2).
+
+    The paused arm's distinct seed-boundary case: the entry (the gated node K)
+    has NO event in the source trace — the gate fired before ``node.start`` —
+    so ``_seedable_final_events(events, K)`` finds no slice point and scopes to
+    ALL events. Both sides must seed that identical scope and enter at K.
+    Same re-fork net as the failed-resume pin above.
+    """
+    from pflow.execution.gate_prompt import build_gate_resolver
+    from pflow.execution.plan import _build_plan_with_shared
+    from pflow.runtime.resume_source import load_resume_source
+
+    ir = {
+        "nodes": [
+            {"id": "prep", "type": "shell", "params": {"command": "printf prep-v1"}},
+            {
+                "id": "guarded",
+                "type": "shell",
+                "params": {"command": "printf 'act ${prep.stdout}'"},
+                "approval": "required",
+            },
+        ],
+        "edges": [{"from": "prep", "to": "guarded"}],
+    }
+    wf = tmp_path / "wf.pflow.md"
+    write_workflow_file(ir, wf)
+
+    # Non-interactive gated run → durable pause.
+    paused = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert not paused.success
+    trace_path = paused.trace.save_to_file()
+    source = load_resume_source(
+        execution_id=paused.trace.execution_id, debug_dir=trace_path.parent, gate_answer={"approve": True}
+    )
+    assert source.entry_node_id == "guarded"
+
+    # ENGINE side: real resume, resolver primed (Phase 3's --approve yes delivery).
+    engine_result = WorkflowRunner().run(
+        str(wf),
+        {},
+        RunnerConfig(),
+        resume_source=source,
+        gate_resolver=build_gate_resolver(frozenset({"guarded"}), None),
+    )
+    assert engine_result.success, [d.message for d in engine_result.diagnostics]
+    engine_shared = engine_result.shared_after
+
+    # PLANNER side: same source.
+    compiled, registry = _compile(ir)
+    plan, planner_shared = _build_plan_with_shared(
+        compiled,
+        {},
+        MemoizationCache(),
+        registry,
+        workflow_name="wf",
+        resume_from=source.entry_node_id,
+        resume_events=source.events,
+        resume_source_id=source.execution_id,
+        _parent_workflow_file=str(wf),
+    )
+
+    assert engine_shared["__execution__"]["resume_entry_node"] == "guarded"
+    assert [entry.node_id for entry in plan.entries] == ["guarded"]
+
+    planner_seeded = [nid for nid in ("prep", "guarded") if nid in planner_shared]
+    assert planner_seeded == engine_shared["__execution__"]["restored_nodes"] == ["prep"]
+    assert planner_shared["prep"] == engine_shared["prep"]
+
+
+@pytest.mark.trace_files
+def test_engine_and_planner_paused_escalation_entry_state_match(tmp_path, monkeypatch) -> None:
+    """Engine↔planner parity on a PAUSED-escalation source (Task 171 Phase 2).
+
+    The escalation-specific seed ingredient is the FOLDED decision riding the
+    source events — both sides must seed the DECIDED marker identically and
+    enter at the successor (the entry the CLI resolves post-compile, handed to
+    both sides the same way the failed between-nodes arm does).
+    """
+    import dataclasses
+
+    from pflow.core.exceptions import GateNotInteractiveError
+    from pflow.execution.plan import _build_plan_with_shared
+    from pflow.runtime.resume_source import load_resume_source
+    from pflow.runtime.workflow_trace import WorkflowTraceCollector
+    from tests.test_runtime.test_gate_pause import _escalation_ir, _registry_with_escalating_node
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    (tmp_path / ".pflow" / "debug").mkdir(parents=True)
+
+    ir = _escalation_ir(successor=True)
+    registry = _registry_with_escalating_node()
+    compiled = compile_workflow(ir, registry)
+
+    collector = WorkflowTraceCollector("gated", workflow_path="gated.pflow.md", is_run_scoped=True, stream_to_disk=True)
+    with pytest.raises(GateNotInteractiveError):
+        WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(compiled, {})
+    trace_path = collector.finalize()
+    assert trace_path is not None
+    source = load_resume_source(
+        execution_id=collector.execution_id, debug_dir=trace_path.parent, gate_answer={"chosen": "1", "notes": None}
+    )
+    assert (source.entry_node_id, source.last_completed_node_id) == (None, "esc")
+    source = dataclasses.replace(source, entry_node_id="after")
+
+    # ENGINE side (engine-level: the custom escalating node isn't in the runner's registry).
+    engine_shared: dict = {}
+    WorkflowEngine(resume_from="after", resume_events=source.events, resume_source_id=source.execution_id).run(
+        compile_workflow(ir, registry), engine_shared
+    )
+
+    # PLANNER side: same compiled workflow + source.
+    plan, planner_shared = _build_plan_with_shared(
+        compiled,
+        {},
+        MemoizationCache(),
+        registry,
+        workflow_name="gated",
+        resume_from="after",
+        resume_events=source.events,
+        resume_source_id=source.execution_id,
+    )
+
+    assert engine_shared["__execution__"]["resume_entry_node"] == "after"
+    assert [entry.node_id for entry in plan.entries] == ["after"]
+
+    planner_seeded = [nid for nid in ("esc", "after") if nid in planner_shared]
+    assert planner_seeded == engine_shared["__execution__"]["restored_nodes"] == ["esc"]
+    # The folded decision seeds identically on both sides — the paused-specific pin.
+    assert planner_shared["esc"] == engine_shared["esc"]
+    assert planner_shared["esc"]["result"]["escalation"]["decision"] == {"chosen": "a", "notes": None}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -29,6 +29,7 @@ from pflow.core.exceptions import (
     LoopConditionError,
     ResumeNotResumableError,
 )
+from pflow.core.gate import GATE_KIND_APPROVAL
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_cache import CacheRenderContext
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
@@ -91,6 +92,33 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
 # custom routing action together with detector-matchable output (HTTP/MCP/Slack/GraphQL
 # payloads only ever ride "default"/"error"); revisit this gate if a future node does.
 _CLEAN_SUCCESS_ACTIONS = frozenset({"", "default", "end"})
+
+
+def _gate_pausable(request: Any, config: NodeConfig, node: Any, action: Any) -> bool:
+    """Only stamp ``paused`` when the resume path can honor the token (Task 171: pause = promise).
+
+    Approvals always resume — the entry is the gated node itself, which never ran
+    (the gate fires at step 7.5, before ``node.start``). Escalations resume at the
+    node's SUCCESSOR, so they are pausable only when that successor is resolvable.
+    Each clause mirrors a refusal arm in the CLI's ``_resolve_between_nodes_entry``
+    (cli/commands/resume.py) KIND-for-kind, so the producer never emits a token the
+    resume path bounces. The CLI-side refusals stay as belt-and-braces — the
+    workflow can be edited between pause and resume (hash gate + ``--force``).
+    """
+    if request.kind == GATE_KIND_APPROVAL:
+        return True
+    return (
+        # Loop re-entry state is engine-ephemeral — a restored loop node can't resume mid-loop.
+        config.loop_config is None
+        # A code node is a dynamic router: its successor can't be known from the graph alone.
+        and config.node_type_name != "PythonCodeNode"
+        # Terminal action: the escalating step was the last one — nothing left to run.
+        and str(action or "") != "end"
+        # Escalations fire only on clean-success actions, so the successor (when
+        # it exists) is the single default one.
+        and node.successors.get("default") is not None
+    )
+
 
 # Read-only empty mapping used to restore ``__pflow_prompt_cache__`` after a
 # child engine.run completes when the parent had no value installed. Module
@@ -568,7 +596,7 @@ def seed_walk_entry(
     and degraded advisories all stay caller-side — they differ per surface by
     design.
     """
-    from pflow.runtime.workflow_trace import seed_snapshot_into_shared
+    from pflow.runtime.resume_source import seed_snapshot_into_shared
 
     final = seed_snapshot_into_shared(shared, events, exclude=entry)
     return find_node_by_id(start_node, entry), final
@@ -618,6 +646,7 @@ class WorkflowEngine:
         resume_from: str | None = None,
         resume_events: list[dict] | None = None,
         resume_source_id: str | None = None,
+        nested: bool = False,
     ):
         if resume_from is not None and only_node is not None:
             raise ValueError("resume_from and only_node are mutually exclusive")
@@ -641,6 +670,12 @@ class WorkflowEngine:
         self.resume_from = resume_from
         self.resume_events = resume_events
         self.resume_source_id = resume_source_id
+        # Task 171: True for CHILD engines (the one construction site:
+        # workflow_executor.py). Node ids are author-chosen and not unique across
+        # the parent/child boundary, so the durable-pause arm needs an explicit
+        # nesting signal — "the root engine caught the gate exception first-hand"
+        # (originating tag + not nested) is the only reliable top-level test.
+        self.nested = nested
 
     def _run_node_with_child_only(
         self, node: Any, config: NodeConfig, shared: dict[str, Any], child_only: str | None
@@ -1139,6 +1174,12 @@ class WorkflowEngine:
         child_trace_events: list | None = None
         host_frame: Any = None  # Task 172: a sub-workflow host's reserved correlation (run-scoped)
         start_frame: Any = None  # Task 173: a leaf's node.start correlation (reserved seq, reused at completion)
+        # Task 171: bound BEFORE the try so the gate except arm can pass it to
+        # _gate_pausable — an approval gate raises at step 7.5, before step 9
+        # assigns it (arguments are evaluated eagerly; an unbound local would
+        # raise UnboundLocalError inside the except arm). None = "no action yet",
+        # which only approvals can observe (escalations raise at 17.7, post-exec).
+        action: Any = None
 
         try:
             plan = plan_node(node, config, shared)
@@ -1425,7 +1466,9 @@ class WorkflowEngine:
             if escalation is not None:
                 run_escalation_gate(config, escalation, shared, self.trace)
 
-            return action
+            # The `Any` annotation on the pre-try binding (Task 171) surfaces the
+            # pre-existing looseness here: node._run's action is untyped.
+            return action  # type: ignore[no-any-return]
 
         except (GateDenied, GateNotInteractiveError, GateResolverError) as gate_exc:
             # Task 125: a gate verdict is control flow, NOT a node failure — no
@@ -1437,8 +1480,66 @@ class WorkflowEngine:
             # "success". Set here (every engine level passes through, root last)
             # so the flag lands on the run-scoped collector even when the gate
             # fired under a buffered child collector.
+            #
+            # Task 171: the first-seen tag is applied UNCONDITIONALLY — outside
+            # the trace check — so "originating = the engine level where the
+            # gate fired" holds even if an intermediate engine ran without a
+            # collector. (Today collector presence is uniform down the tree —
+            # engine.run installs it into shared and _open_child_trace derives
+            # the child's from it — but the pause decision must not depend on
+            # that non-local invariant.) The tag mirrors the established
+            # _pflow_node_id annotation pattern; retriable=False on all three
+            # gate exceptions means no retry loop re-enters this arm.
+            originating = not getattr(gate_exc, "_pflow_gate_seen", False)
+            gate_exc._pflow_gate_seen = True  # type: ignore[union-attr]
             if self.trace is not None:
-                self.trace.gate_outcome = "denied" if isinstance(gate_exc, GateDenied) else "failed"
+                # Task 171: the durable-pause producer decision — the ONLY place
+                # a run is stamped `paused`. `originating and not self.nested` =
+                # "the ROOT engine caught it first-hand" — a child gate
+                # (NEW-path or OLD-path/batch) originates in a nested=True
+                # engine and arrives here already tagged → `failed`.
+                # `parallel_batch` exists only on GateNotInteractiveError (True
+                # for parallel-batch-worker gates → v1 keeps those `failed`);
+                # the isinstance guard short-circuits before the attribute
+                # access for GateDenied/GateResolverError. GateResolverError (a
+                # resolver BUG) falls to the else — never paused. record_gate's
+                # own gate_outcome writes ran before this raise, so this stamp
+                # always wins.
+                if isinstance(gate_exc, GateDenied):
+                    self.trace.gate_outcome = "denied"
+                elif (
+                    isinstance(gate_exc, GateNotInteractiveError)
+                    and not gate_exc.parallel_batch
+                    and originating
+                    and not self.nested
+                    # Pause = promise: an --only run records ONLY its target
+                    # (only_node is stamped on the trace at run() start), and
+                    # every resume consumer EXCLUDES only_node traces from
+                    # selection (_iter_workflow_traces / _select_resume_trace's
+                    # by-exec-id arm), so a token issued here would never
+                    # resolve — same non-resumable-trace refusal as the inline
+                    # guard below. An --only gate stays `failed`.
+                    and self.only_node is None
+                    # Pause = promise: an INLINE run (dict IR / piped content —
+                    # workflow_path is the synthesized "ir-hash:<md5>", never a
+                    # file; None = no identity at all) has no source to
+                    # re-resolve, so resume ALWAYS refuses its token. Don't
+                    # issue one — same principle as the loop/code/terminal
+                    # refusals in _gate_pausable. Making inline runs resumable
+                    # (workflow content in the trace) is a tracked follow-up.
+                    and self.workflow_path is not None
+                    and not self.workflow_path.startswith("ir-hash:")
+                    and _gate_pausable(gate_exc.request, config, node, action)
+                ):
+                    self.trace.gate_outcome = "paused"
+                    # The trailer payload (Task 171 pause record): everything the
+                    # resume path needs beyond what the trace already carries.
+                    self.trace.pause_request = {
+                        "paused_node_id": gate_exc.request.node_id,
+                        "gate_request": gate_exc.request.to_dict(),
+                    }
+                else:
+                    self.trace.gate_outcome = "failed"
 
                 # Code-review fix: a sub-workflow HOST's own completion event is
                 # normally recorded at step 16 below, reusing the seq

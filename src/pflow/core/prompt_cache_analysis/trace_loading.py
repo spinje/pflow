@@ -238,11 +238,18 @@ def _non_reusable_outcome_label(data: dict[str, Any]) -> str:
     genuinely failed runs (``final_status == "failed"``) AND incomplete ones —
     a crash-tail / interrupted / still-in-flight trace with no ``run.complete``
     trailer (``final_status == "incomplete"``, common since eager-``meta``,
-    Task 133/173). Naming them apart keeps the disclosure note honest: an
-    interrupted run is not a failed run, and the agent's next step differs
-    (re-run vs. wait for the in-flight run / investigate the failure).
+    Task 133/173) AND durably paused ones (``final_status == "paused"``, a gate
+    holding for a human answer, Task 171). Naming them apart keeps the
+    disclosure note honest: an interrupted or paused run is not a failed run,
+    and the agent's next step differs (re-run vs. wait for the in-flight run vs.
+    answer the gate vs. investigate the failure).
     """
-    return "incomplete run" if str(data.get("final_status") or "") == "incomplete" else "failed run"
+    status = str(data.get("final_status") or "")
+    if status == "incomplete":
+        return "incomplete run"
+    if status == "paused":
+        return "paused run"
+    return "failed run"
 
 
 def _autoload_selection_with_disclosure(

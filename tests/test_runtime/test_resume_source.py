@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from pflow.core.exceptions import (
+    ResumeAnswerRequiredError,
     ResumeFidelityError,
     ResumeGateStoppedError,
     ResumeNothingToResumeError,
@@ -33,12 +34,12 @@ from pflow.core.exceptions import (
     ResumeStillRunningError,
     ResumeSupersededError,
 )
-from pflow.runtime.workflow_trace import (
+from pflow.runtime.resume_source import (
     ResumeSource,
     _iter_raw_trace_lines,
-    format_trace_filename,
     load_resume_source,
 )
+from pflow.runtime.workflow_trace import format_trace_filename
 from tests.shared.trace_jsonl import flatten_trace_to_lines, write_trace_jsonl
 
 WF = "/work/project/wf.pflow.md"
@@ -69,6 +70,8 @@ def _write_trace(
     resumed_from: str | None = None,
     name: str = "wf",
     gate_lines: list[dict[str, Any]] | None = None,
+    paused_node_id: str | None = None,
+    gate_request: dict[str, Any] | None = None,
 ) -> Path:
     """Write a synthetic resume-source trace the loader can discover, returning its path."""
     debug_dir.mkdir(parents=True, exist_ok=True)
@@ -89,6 +92,12 @@ def _write_trace(
         data["warnings"] = warnings
     if resumed_from is not None:
         data["resumed_from"] = resumed_from
+    # Task 171: the pause record rides the run.complete trailer; the fixture
+    # builder routes non-META keys there, matching the producer.
+    if paused_node_id is not None:
+        data["paused_node_id"] = paused_node_id
+    if gate_request is not None:
+        data["gate_request"] = gate_request
     path = debug_dir / format_trace_filename(workflow_path, name, timestamp)
     if gate_lines:
         lines = flatten_trace_to_lines(data)
@@ -738,6 +747,210 @@ def test_missing_content_hash_returned_as_none(tmp_path: Path) -> None:
     _write_trace(tmp_path, execution_id="nohash", timestamp="20260101-000000", content_hash=None)
     source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
     assert source.content_hash is None
+
+
+# ── Paused arm + answer fold (Task 171, Phase 2) ──────────────────────────────
+# Real-collector keystones live beside the producers: approval in
+# test_resume_engine.py (WorkflowRunner e2e), escalation in test_gate_pause.py
+# (engine-level round-trip). These synthetic fixtures pin the loader's arms.
+
+_APPROVAL_REQUEST: dict[str, Any] = {
+    "node_id": "gated",
+    "node_type": "ShellNode",
+    "kind": "action_approval",
+    "preview": {"command": "echo hi"},
+    "question": None,
+    "options": [],
+    "recommendation": None,
+}
+
+_ESCALATION_REQUEST: dict[str, Any] = {
+    "node_id": "esc",
+    "node_type": "EscalatingNode",
+    "kind": "decision_escalation",
+    "preview": {},
+    "question": "which db?",
+    # The third, label-less option pins the shared `option_labels` fallback
+    # ("option 3") — numbering must match what the pause output rendered.
+    "options": [{"label": "keep"}, {"label": "drop", "description": "destructive"}, {}],
+    "recommendation": "keep",
+}
+
+
+def _write_paused_approval(debug_dir: Path, *, execution_id: str = "paused-appr") -> Path:
+    # The gated node has NO event (the gate fires before node.start).
+    return _write_trace(
+        debug_dir,
+        execution_id=execution_id,
+        timestamp="20260101-000000",
+        final_status="paused",
+        nodes=[_node("prep")],
+        failed_node_ids=[],
+        paused_node_id="gated",
+        gate_request=_APPROVAL_REQUEST,
+    )
+
+
+def _write_paused_escalation(debug_dir: Path, *, execution_id: str = "paused-esc") -> Path:
+    # The escalating node COMPLETED — its final event carries the UNDECIDED marker.
+    marker = {"question": "which db?", "options": [{"label": "keep"}, {"label": "drop"}, {}]}
+    return _write_trace(
+        debug_dir,
+        execution_id=execution_id,
+        timestamp="20260101-000000",
+        final_status="paused",
+        nodes=[_node("prep"), _node("esc", output={"result": {"escalation": marker}})],
+        failed_node_ids=[],
+        paused_node_id="esc",
+        gate_request=_ESCALATION_REQUEST,
+    )
+
+
+def test_paused_approval_entry_is_the_gated_node(tmp_path: Path) -> None:
+    _write_paused_approval(tmp_path)
+    source = load_resume_source(execution_id="paused-appr", debug_dir=tmp_path, gate_answer={"approve": True})
+    assert source.entry_node_id == "gated"
+    assert source.last_completed_node_id is None
+    assert source.paused_node_id == "gated"
+    assert source.gate_request == _APPROVAL_REQUEST
+
+
+def test_paused_approval_deny_answer_loads_identically(tmp_path: Path) -> None:
+    """The loader validates the answer's SHAPE, not its verdict — deny delivery is the
+    resume run's resolver (Phase 3 primes it), so {"approve": False} loads the same."""
+    _write_paused_approval(tmp_path)
+    source = load_resume_source(execution_id="paused-appr", debug_dir=tmp_path, gate_answer={"approve": False})
+    assert source.entry_node_id == "gated"
+
+
+def test_paused_escalation_entry_is_between_nodes(tmp_path: Path) -> None:
+    _write_paused_escalation(tmp_path)
+    source = load_resume_source(
+        execution_id="paused-esc", debug_dir=tmp_path, gate_answer={"chosen": "keep", "notes": None}
+    )
+    # Between-nodes shape: the escalating step completed; the CLI resolves its
+    # single default successor post-compile, exactly like the incomplete arm.
+    assert source.entry_node_id is None
+    assert source.last_completed_node_id == "esc"
+    assert source.paused_node_id == "esc"
+    assert source.gate_request is not None
+    assert source.gate_request["kind"] == "decision_escalation"
+
+
+def test_paused_without_pause_record_refuses(tmp_path: Path) -> None:
+    """A hand-edited/corrupt trace marked paused with no pause record: typed refusal."""
+    _write_trace(
+        tmp_path,
+        execution_id="corrupt-pause",
+        timestamp="20260101-000000",
+        final_status="paused",
+        nodes=[_node("prep")],
+    )
+    with pytest.raises(ResumeNotResumableError, match="no pause record"):
+        load_resume_source(execution_id="corrupt-pause", debug_dir=tmp_path, gate_answer={"approve": True})
+
+
+def test_paused_without_answer_refuses_with_gate_content_not_the_guard(tmp_path: Path) -> None:
+    """Fold-order pin: an unanswered paused ESCALATION must raise ResumeAnswerRequiredError
+    — whose message renders the pending question + numbered options + exact command — and
+    NEVER fall through to `_guard_seed_scope`'s "unresolved escalation … Re-run" refusal
+    (the escalating node's undecided marker IS in the seed scope; answer validation runs
+    first by design)."""
+    _write_paused_escalation(tmp_path)
+    with pytest.raises(ResumeAnswerRequiredError) as exc:
+        load_resume_source(execution_id="paused-esc", debug_dir=tmp_path)
+    assert exc.value.mode == "missing_answer"
+    message = str(exc.value)
+    assert "which db?" in message
+    assert "1. keep (rec)" in message
+    assert "2. drop — destructive" in message
+    assert "unresolved escalation" not in message
+    assert any('--choose "<answer or option number>"' in s for s in exc.value.suggestions)
+    assert any("paused-esc" in s for s in exc.value.suggestions)  # the REAL id, not a placeholder
+
+
+def test_choose_on_approval_refuses_naming_the_right_flag(tmp_path: Path) -> None:
+    _write_paused_approval(tmp_path)
+    with pytest.raises(ResumeAnswerRequiredError) as exc:
+        load_resume_source(execution_id="paused-appr", debug_dir=tmp_path, gate_answer={"chosen": "yes", "notes": None})
+    assert exc.value.mode == "wrong_flag"
+    assert "--approve yes|no" in str(exc.value)
+
+
+def test_approve_on_escalation_refuses_naming_the_right_flag(tmp_path: Path) -> None:
+    _write_paused_escalation(tmp_path)
+    with pytest.raises(ResumeAnswerRequiredError) as exc:
+        load_resume_source(execution_id="paused-esc", debug_dir=tmp_path, gate_answer={"approve": True})
+    assert exc.value.mode == "wrong_flag"
+    assert "--choose" in str(exc.value)
+
+
+def test_answer_flag_on_non_paused_source_refuses(tmp_path: Path) -> None:
+    """A resumable FAILED source rejects an answer flag — it answers nothing there."""
+    _write_trace(tmp_path, execution_id="plain-fail", timestamp="20260101-000000")
+    with pytest.raises(ResumeAnswerRequiredError) as exc:
+        load_resume_source(execution_id="plain-fail", debug_dir=tmp_path, gate_answer={"approve": True})
+    assert exc.value.mode == "not_paused"
+
+
+@pytest.mark.parametrize(
+    ("chosen", "expected"),
+    [
+        ("2", "drop"),  # digit → that option's label
+        (" 1 ", "keep"),  # stripped first, like the blocking prompt
+        ("3", "option 3"),  # label-less option → the shared fallback label
+        ("4", "4"),  # out of range → free text
+        ("postgres", "postgres"),  # free text passes through
+        ("²", "²"),  # unicode-numeric: isdigit() True but int() rejects → free text, never a crash
+    ],
+)
+def test_choose_answer_maps_numbers_to_labels(tmp_path: Path, chosen: str, expected: str) -> None:
+    _write_paused_escalation(tmp_path)
+    source = load_resume_source(
+        execution_id="paused-esc", debug_dir=tmp_path, gate_answer={"chosen": chosen, "notes": None}
+    )
+    final = {e["node_id"]: e for e in source.events}
+    decision = final["esc"]["node_output"]["result"]["escalation"]["decision"]
+    assert decision == {"chosen": expected, "notes": None}
+
+
+@pytest.mark.parametrize("chosen", ["", "   "])
+def test_empty_choose_answer_is_treated_as_missing(tmp_path: Path, chosen: str) -> None:
+    """An empty/whitespace --choose must not "decide" the escalation with nothing —
+    the blocking prompt can't produce an empty answer (click re-prompts), so the
+    durable path must not accept a shape the interactive path forbids."""
+    _write_paused_escalation(tmp_path)
+    with pytest.raises(ResumeAnswerRequiredError) as exc:
+        load_resume_source(execution_id="paused-esc", debug_dir=tmp_path, gate_answer={"chosen": chosen, "notes": None})
+    assert exc.value.mode == "missing_answer"
+
+
+def test_choose_fold_decides_the_marker_and_passes_the_guard(tmp_path: Path) -> None:
+    """The answered marker rides `source.events` DECIDED — seeding restores it and the
+    engine's re-record loop writes it into the attempt trace (self-containment). The
+    guard passing at all proves the fold ran before it."""
+    _write_paused_escalation(tmp_path)
+    source = load_resume_source(
+        execution_id="paused-esc", debug_dir=tmp_path, gate_answer={"chosen": "drop", "notes": None}
+    )
+    marker = source.events[-1]["node_output"]["result"]["escalation"]
+    assert marker["decision"] == {"chosen": "drop", "notes": None}
+    assert marker["question"] == "which db?"  # the original marker survives around the fold
+
+
+def test_superseded_paused_token_refuses_even_with_an_answer(tmp_path: Path) -> None:
+    """Chain policy precedes answer validation: a consumed paused token refuses
+    SUPERSEDED (naming the newer attempt), never re-answers."""
+    _write_paused_escalation(tmp_path)
+    _write_trace(
+        tmp_path,
+        execution_id="attempt-2",
+        timestamp="20260102-000000",
+        resumed_from="paused-esc",
+        nodes=[_node("prep"), _node("after")],  # a non-restored event = the attempt consumed the chain
+    )
+    with pytest.raises(ResumeSupersededError):
+        load_resume_source(execution_id="paused-esc", debug_dir=tmp_path, gate_answer={"chosen": "keep", "notes": None})
 
 
 # ── Corruption tolerance ──────────────────────────────────────────────────────

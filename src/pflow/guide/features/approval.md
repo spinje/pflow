@@ -39,11 +39,17 @@ Rules:
 
 You cannot answer an interactive prompt (your runs have no terminal). The playbook:
 
-1. **Discover gates before running**: `pflow <workflow> --dry-run` marks gated steps `[<type>, approval]` and lists them in a `⏸` footer (JSON: `"approval": true` per entry). This is also how you avoid the wasteful path — a run that fails at a gate re-executes everything upstream on retry, and side-effecting steps do not cache.
+1. **Discover gates before running**: `pflow <workflow> --dry-run` marks gated steps `[<type>, approval]` and lists them in a `⏸` footer (JSON: `"approval": true` per entry). A pause is cheap to answer later (resume restores the upstream work — nothing re-runs), but discovering gates up front lets you collect your human's approvals in one conversation instead of one pause at a time.
 2. **Show your human the action** — the resolved preview, not just the step name. Approving blind defeats the gate.
 3. **With their OK**, pre-approve exactly the gates they approved: `--auto-approve=<step-name>` (repeatable, one per gate — there is deliberately no approve-all flag), or `auto_approve=["<step-name>"]` on the MCP `workflow_execute` tool. **Never pass these without asking your human first.**
 
-If a gate is reached without pre-approval in a non-interactive run, the run fails loudly at the gate (exit 1) with these same instructions; a warning also fires at run start when top-level gates are unapproved. Two limits to know: the run-start warning sees **top-level steps only** (a gate inside a sub-workflow still fails at the gate, just without the early warning), and `--auto-approve` names are **flat across the workflow tree** (a child step with the same name as a flagged one is also approved). pflow cannot yet hold a gate open for a later answer.
+If a gate is reached without pre-approval in a non-interactive run, the run **pauses durably** instead of failing: the trace is finalized `paused`, stdout prints a resume token, and the run exits **4**:
+
+```
+Paused at 'notify-slack'. Resume token: 7a9e4afb-2095-447e-8043-0660438104f9 (exit 4)
+```
+
+The gate content follows on stderr (the resolved preview — enough to decide from the output alone). Show it to your human; they answer hours or days later with `pflow resume <token> --approve yes|no` — see the `resume` topic for the full flow (`pflow resume list`, escalation answers, token consumption). A warning still fires at run start when top-level gates are unapproved. Limits to know: the run-start warning sees **top-level steps only**, `--auto-approve` names are **flat across the workflow tree** (a child step with the same name as a flagged one is also approved), and gates that cannot pause keep the old hard error (exit 1): `--no-trace` runs, gates inside a parallel `batch:` item or a sub-workflow child, and inline/piped workflows (no file to resume — save the workflow first).
 
 A prompt needs stdin AND stderr at a terminal — stdout piping (`pflow wf | jq`) does not disable gates.
 
@@ -67,7 +73,7 @@ The contract — `result.escalation`, with this shape:
 - **On a `claude-code` step, declare `output_schema` and put `escalation` in it** (nullable). Without a schema, an agentic session that ends on prose loses the marker — pflow then emits a degrading warning ("an escalation attempt may have been swallowed") instead of pausing. A plain string `escalation` value also works (it becomes the question).
 - After the human answers, the marker gains `decision`: `result.escalation.decision = {"chosen": ..., "notes": ...}`. A marker that already carries `decision` never re-prompts.
 - The escalating step must end on a **clean success** (`default` action). A `code` step that routes via `next:` cannot escalate from the same execution — escalate from the agent step, route on the decision downstream.
-- Escalations **cannot be pre-approved** (`--auto-approve` does not apply — the question is unknown in advance). Non-interactive runs fail loudly at the escalation — **after the step has already run**, and the escalating result is deliberately never cached (a cached escalation would replay on a later run as resolved-without-a-decision). A re-run re-executes the escalating step from scratch, so an expensive agent step's work is discarded. If a workflow may escalate, run it interactively.
+- Escalations **cannot be pre-approved** (`--auto-approve` does not apply — the question is unknown in advance). A non-interactive run **pauses durably at the escalation** — after the step has already run — and prints a resume token; answer with `pflow resume <token> --choose "<answer or option number>"`. The answer is folded into the completed step's result and the run continues at the next step: **the agent step's work is never re-paid**. (The escalating result is deliberately never cached — a cached escalation would replay on a later run as resolved-without-a-decision.) Escalations on a loop step, a `code` router, or a workflow's **final** step cannot pause and stay hard errors — put escalating agent steps mid-graph with a single next step.
 - Not supported from inside a `batch:` step — the run fails with a clear error; restructure so the escalating step runs outside the batch.
 
 ### Continuing from the decision — the re-fork recipe
@@ -100,4 +106,5 @@ Round 1 escalates → the human answers → round 2 re-runs the same step with `
 
 - Every gate emits `gate` trace events (pause with the full payload; resolution with `approved`/`denied`/`auto`/`choice` and `resolved_via: prompt|flag` — the audit trail for which gates a human answered vs. a flag). One exception: a gate answered inside a `batch:` item's sub-workflow is honored but its gate events do not reach the trace (batch-item events are rollup-only today) — if you need the audit record, gate outside the batch.
 - Denied runs: exit 3, `final_status: "denied"`, amber in `pflow ui`. A denied trace is not used as an `--only` snapshot source.
+- Paused runs: exit 4, `final_status: "paused"` (the trailer also carries `paused_node_id` + the full gate payload), amber ⏸ in `pflow ui`; `pflow resume list` shows pending unanswered pauses. Answering consumes the token — the resumed attempt is a new run linked by `resumed_from`, and a second answer refuses with the newer attempt's id.
 - Ctrl-C at a prompt aborts the run like any interrupt (exit 130).

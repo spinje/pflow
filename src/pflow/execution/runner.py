@@ -20,6 +20,7 @@ from pflow.core.diagnostic import (
 from pflow.core.exceptions import (
     CompilationError,
     GateDenied,
+    GateNotInteractiveError,
     MarkdownParseError,
     SchemaValidationError,
     WorkflowNotFoundError,
@@ -33,7 +34,7 @@ from .result import ExecutionResult, Plan, ResolvedWorkflow, RunnerConfig, Valid
 from .workflow_resolver import resolve_workflow
 
 if TYPE_CHECKING:
-    from pflow.runtime.workflow_trace import ResumeSource
+    from pflow.runtime.resume_source import ResumeSource
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ class WorkflowRunner:
             workflow_manager: For metadata update on saved workflows. None = skip.
             workflow_name: Saved workflow name for metadata. None = skip.
             resume_source: Optional Task 164 resume source (built by
-                ``runtime.workflow_trace.load_resume_source``). Rides as a kwarg —
+                ``runtime.resume_source.load_resume_source``). Rides as a kwarg —
                 the Task 125 ``gate_resolver`` precedent; ``RunnerConfig`` stays
                 execution-config-only. The caller merges ``resume_source.inputs``
                 into ``params`` BEFORE calling; the runner threads the entry node,
@@ -181,8 +182,8 @@ class WorkflowRunner:
                 # emit-time correlation; the per-sub-workflow buffer collectors stay is_run_scoped=False.
                 is_run_scoped=True,
                 # Stream one JSONL line per node to disk as the run executes (so a live overlay can tail
-                # it) — gated by trace_enabled: the CLI persists (True); MCP reads cost from the in-memory
-                # collector and passes trace_enabled=False; --no-trace is False.
+                # it) — gated by trace_enabled: CLI and MCP both persist (True — Task 171: a durable gate
+                # pause needs the trace on disk); --no-trace and the registry probe pass False.
                 stream_to_disk=config.trace_enabled,
                 # Stamped into the trace `meta` line; the replay tailer compares it to the current file's
                 # digest to flag a stale (different-version) run (Task 173).
@@ -221,15 +222,17 @@ class WorkflowRunner:
             raise
 
         except Exception as e:
-            return self._exception_to_result(e, start_time, trace_collector, validation_warnings)
+            return self._exception_to_result(
+                e, start_time, trace_collector, validation_warnings, trace_enabled=config.trace_enabled
+            )
 
         finally:
             # The runner owns finalization of the streamed trace it opened: any caller — CLI, MCP, or a
             # library caller that just inspects the result — ends with a COMPLETE, closed trace rather
             # than an open handle + a trailer-less "incomplete" file. Idempotent + suppressed so it can
             # never mask the run result. The CLI opts out (finalize_trace=False) because it finalizes
-            # itself AFTER mutating the trace post-run (set_json_output); MCP's trace never streams, so
-            # finalize is a harmless no-op there.
+            # itself AFTER mutating the trace post-run (set_json_output); MCP relies on this default
+            # (it streams since Task 171) so each tool call ends with a complete, closed trace file.
             if config.finalize_trace and trace_collector is not None:
                 with contextlib.suppress(Exception):
                     trace_collector.finalize()
@@ -811,6 +814,8 @@ class WorkflowRunner:
         start_time: float,
         trace_collector: Any,
         validation_warnings: list[Diagnostic] | None = None,
+        *,
+        trace_enabled: bool = True,
     ) -> ExecutionResult:
         """Convert any exception to ExecutionResult.
 
@@ -860,7 +865,27 @@ class WorkflowRunner:
         # the gated node never ran, nothing broke. Payload diagnostics arrive
         # intact via exception_to_diagnostics → GateDenied.to_diagnostics above;
         # the CLI maps DENIED to its own display + exit code 3.
-        status = WorkflowStatus.DENIED if isinstance(exception, GateDenied) else WorkflowStatus.FAILED
+        # Task 171: a durably-paused gate maps to PAUSED (CLI exit 4, token on
+        # stdout). `gate_outcome == "paused"` already encodes top-level +
+        # non-batch + pausable (the engine's gate arm decided). The
+        # `trace_enabled` conjunct is REQUIRED and non-redundant with the CLI
+        # display's `_stream_failed` check: with --no-trace the stream is never
+        # opened, so no I/O fault ever sets `_stream_failed` — without this
+        # gate a bogus token would print for a trace that does not exist. The
+        # display check is in turn the only defense for a mid-run disk fault.
+        # `--no-trace` + gate therefore stays FAILED end-to-end (the in-memory
+        # `gate_outcome="paused"` is then unread — harmless).
+        if isinstance(exception, GateDenied):
+            status = WorkflowStatus.DENIED
+        elif (
+            isinstance(exception, GateNotInteractiveError)
+            and trace_enabled
+            and trace_collector is not None
+            and trace_collector.gate_outcome == "paused"
+        ):
+            status = WorkflowStatus.PAUSED
+        else:
+            status = WorkflowStatus.FAILED
         return ExecutionResult(
             success=False,
             status=status,

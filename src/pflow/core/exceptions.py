@@ -1030,7 +1030,18 @@ class GateNotInteractiveError(PflowError):
                 "Escalations cannot be pre-approved — run interactively, "
                 "or re-run with the answer supplied as a workflow input."
             )
-        suggestions.append("pflow cannot yet hold a gate open for a later answer.")
+        # Task 171: gates normally pause durably (trace = checkpoint, resume by
+        # token). Reaching THIS error post-171 means the durable path was
+        # unavailable — name --no-trace explicitly as the removable blocker so
+        # an agent reads "drop the flag", not "gates don't work here".
+        suggestions.append(
+            "Gates pause durably when tracing is on (the run exits with a resume token). "
+            "This error means tracing was explicitly disabled (--no-trace — drop the flag to pause instead), "
+            "the workflow was submitted inline (no source file to resume from — save it and run by name/path "
+            "to pause instead), the run targeted a single node with --only (its snapshot trace isn't "
+            "resumable — run the full workflow to pause), or the gate is in an unsupported position "
+            "(parallel batch item, sub-workflow child, or a loop-/code-node/final-step escalation)."
+        )
         return [
             Diagnostic(
                 severity=Severity.ERROR,
@@ -1089,15 +1100,14 @@ def _masked_gate_payload(request: GateRequest) -> dict[str, Any]:
 
     The diagnostic reaches agents/humans through error text and MCP responses —
     secrets don't inform an approval decision, but everything ELSE must survive
-    in full (approving blind defeats the gate). Delegates to the shared
-    ``masked_preview`` (mask-only, recursive, no truncation); the trace's gate
-    event carries the unmasked payload, consistent with ``template_resolutions``.
+    in full (approving blind defeats the gate). The object-form twin of the
+    shared dict-form ``masked_gate_dict`` (mask-only, recursive, no truncation):
+    ``to_dict()`` then the one shared masking rule. The trace's gate event
+    carries the unmasked payload, consistent with ``template_resolutions``.
     """
-    from pflow.core.gate import masked_preview
+    from pflow.core.gate import masked_gate_dict
 
-    payload = request.to_dict()
-    payload["preview"] = masked_preview(payload.get("preview", {}))
-    return payload
+    return masked_gate_dict(request.to_dict())
 
 
 class MaxNodeVisitsError(RuntimeError):
@@ -1334,15 +1344,17 @@ class ResumeSideEffectConfirmationError(ResumeSourceError):
 
 
 class ResumeStaleWorkflowError(ResumeSourceError):
-    """The workflow changed (or can't be proven unchanged) since the failed run (Task 164).
+    """The workflow changed (or can't be proven unchanged) since the original run
+    (Task 164; also paused resumes, Task 171).
 
     Two messages: a KNOWN hash mismatch states the workflow was edited; a MISSING
     source hash (a run predating hash tracking) states only that the match cannot
     be verified — never claiming an edit that may not have happened. Both suggest
-    ``--force``.
+    ``--force``. Wording stays neutral ("original run") because this refusal serves
+    failed, interrupted, AND paused resumes — a paused run was not a failure.
     """
 
-    _TITLE = "Workflow changed since the failed run"
+    _TITLE = "Workflow changed since the original run"
 
     def __init__(
         self,
@@ -1353,7 +1365,7 @@ class ResumeStaleWorkflowError(ResumeSourceError):
     ):
         if hash_known:
             message = (
-                "The workflow was edited since the failed run, so the restored upstream outputs "
+                "The workflow was edited since the original run, so the restored upstream outputs "
                 "may not match the current steps."
             )
         else:
@@ -1367,3 +1379,78 @@ class ResumeStaleWorkflowError(ResumeSourceError):
             trace_path=trace_path,
             suggestions=["Re-run the workflow from the start, or pass --force to resume anyway."],
         )
+
+
+class ResumeAnswerRequiredError(ResumeSourceError):
+    """A paused gate needs its answer — or an answer flag was given where none applies (Task 171).
+
+    Three modes, one refusal family (the shared remediation is "pass the right
+    answer flag"): ``missing_answer`` (a paused source resumed without
+    ``--approve``/``--choose``), ``wrong_flag`` (the flag doesn't match the gate
+    kind), ``not_paused`` (an answer flag on a source that isn't paused at a
+    gate). For the paused modes the MESSAGE carries the rendered gate content
+    (question + numbered options, or the secret-masked approval preview) — an
+    agent must be able to compose the answer from this error alone, without
+    re-reading the pause output — and the suggestion carries the exact,
+    kind-correct resume command. Rendering reuses ``format_gate_lines`` /
+    ``format_resume_answer_command`` (``execution/gate_prompt.py``, the ONE
+    render shape across prompt, pause output, and this error); the import is
+    lazy at raise time (core → execution precedent: ``core/trace_report.py``).
+    """
+
+    _TITLE = "Paused gate needs an answer"
+
+    def __init__(
+        self,
+        *,
+        mode: Literal["missing_answer", "wrong_flag", "not_paused"],
+        gate_request: dict[str, Any] | None = None,
+        execution_id: str | None = None,
+        trace_path: str | None = None,
+        node_id: str | None = None,
+    ):
+        self.mode = mode
+        self.gate_request = gate_request
+        if mode == "not_paused":
+            self._TITLE = "No paused gate to answer"
+            super().__init__(
+                "This run is not paused at a gate — resume it without --approve/--choose.",
+                execution_id=execution_id,
+                trace_path=trace_path,
+                suggestions=["Retry the same resume command without the answer flag."],
+            )
+            return
+        from pflow.execution.gate_prompt import format_gate_lines, format_resume_answer_command
+
+        request = gate_request or {}
+        is_approval = request.get("kind") == GATE_KIND_APPROVAL
+        kind_label = "an approval gate" if is_approval else "a decision escalation"
+        if mode == "wrong_flag":
+            right_flag = "--approve yes|no" if is_approval else "--choose"
+            head = (
+                f"This run is paused at {kind_label} on step '{node_id}', "
+                f"but that flag does not answer it — use {right_flag}."
+            )
+        else:
+            head = f"This run is paused at {kind_label} on step '{node_id}' and needs an answer."
+        content = "\n".join(f"  {line}" for line in format_gate_lines(request))
+        command = format_resume_answer_command(execution_id or "<execution-id>", request)
+        super().__init__(
+            f"{head}\n\n{content}" if content else head,
+            execution_id=execution_id,
+            trace_path=trace_path,
+            node_id=node_id,
+            suggestions=[f"Answer with: {command}"],
+        )
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        diagnostics = super().to_diagnostics()
+        context = diagnostics[0].context
+        if self.gate_request is not None and context is not None:
+            # Same masked-payload policy as GateNotInteractiveError's context["gate"]:
+            # secrets don't inform a decision; everything else survives in full.
+            # One shared dict-form masking rule (core/gate.masked_gate_dict).
+            from pflow.core.gate import masked_gate_dict
+
+            context["gate"] = masked_gate_dict(self.gate_request)
+        return diagnostics

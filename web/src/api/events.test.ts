@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { reportInteraction, reportNarration, subscribe } from "./events";
+import { _resetEpochBaselines, reportInteraction, reportNarration, subscribe } from "./events";
 import type { RFRef } from "../types";
 
 class FakeEventSource {
@@ -40,6 +40,7 @@ const ref: RFRef = { node_id: "greet", ancestor_path: [], port: null };
 
 beforeEach(() => {
   FakeEventSource.instances = [];
+  _resetEpochBaselines(); // module-scoped by design (survive re-subscribes) — tests need a clean slate
   vi.stubGlobal("EventSource", FakeEventSource);
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
   // Reset visibility every test: a later test flips it to "hidden" and does not
@@ -330,6 +331,58 @@ describe("subscribe point epoch dedup (#539)", () => {
 
     expect(h.selectRun.mock.calls.map((c) => c[0])).toEqual(["r1", "r2"]);
     unsubscribe();
+  });
+
+  it("keeps the baseline across a FRESH re-subscribe, so a replayed latched steer cannot revert a manual run switch", () => {
+    // User-caught (Task 171 testing): GraphView re-subscribes on every run switch. With per-subscription
+    // baselines, the server's latched select-run replayed as "new" on each re-subscribe — a steered tab
+    // could never manually switch runs (every pick was instantly reverted until a server restart).
+    const h = handlers();
+    const first = subscribe("wf", h);
+    const source = FakeEventSource.instances[0]!;
+    source.emit({ type: "connected", conn_id: "v1", boot_id: "boot-A" });
+    source.emit({ type: "select-run", run: "r-steer", epoch: 2 }); // the agent's steer → applied
+    expect(h.selectRun).toHaveBeenCalledTimes(1);
+    first(); // the run switch tears down the subscription…
+
+    const second = subscribe("wf", h); // …and opens a fresh one (same page, same server)
+    const reopened = FakeEventSource.instances[1]!;
+    reopened.emit({ type: "connected", conn_id: "v2", boot_id: "boot-A" });
+    reopened.emit({ type: "select-run", run: "r-steer", epoch: 2 }); // the server replays the latch → skipped
+    expect(h.selectRun).toHaveBeenCalledTimes(1);
+    reopened.emit({ type: "select-run", run: "r-new", epoch: 3 }); // a genuinely newer steer still lands
+    expect(h.selectRun).toHaveBeenCalledTimes(2);
+    second();
+  });
+
+  it("keys baselines per workflow — one workflow's high epoch never rejects another's older latch", () => {
+    // The server stamps every workflow's latches from ONE process-wide counter, so workflow B's latched
+    // command can legitimately carry a lower epoch than what this tab saw on workflow A.
+    const h = handlers();
+    const onA = subscribe("wf-a", h);
+    FakeEventSource.instances[0]!.emit(focus(9)); // wf-a baseline → 9
+    expect(h.focus).toHaveBeenCalledTimes(1);
+    onA();
+
+    const onB = subscribe("wf-b", h); // SPA navigation to another workflow
+    FakeEventSource.instances[1]!.emit(focus(4)); // lower than wf-a's 9, but unseen for wf-b → applied
+    expect(h.focus).toHaveBeenCalledTimes(2);
+    onB();
+  });
+
+  it("re-bases every workflow's baseline on a boot_id change across a re-subscribe (restart-fence)", () => {
+    const h = handlers();
+    const first = subscribe("wf", h);
+    FakeEventSource.instances[0]!.emit({ type: "connected", conn_id: "v1", boot_id: "boot-A" });
+    FakeEventSource.instances[0]!.emit({ type: "select-run", run: "r1", epoch: 5 });
+    expect(h.selectRun).toHaveBeenCalledTimes(1);
+    first();
+
+    const second = subscribe("wf", h); // reconnect lands on a RESTARTED server (fresh low counter)
+    FakeEventSource.instances[1]!.emit({ type: "connected", conn_id: "v2", boot_id: "boot-B" });
+    FakeEventSource.instances[1]!.emit({ type: "select-run", run: "r1", epoch: 1 }); // stale vs 5, but re-based → applied
+    expect(h.selectRun).toHaveBeenCalledTimes(2);
+    second();
   });
 
   it("keeps the point and run dedup baselines independent", () => {

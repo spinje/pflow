@@ -53,8 +53,14 @@ def _resume_header_line(plan: Plan) -> str | None:
     )
 
 
-def format_plan_text(plan: Plan) -> str:
-    """Render a plan as human-readable text."""
+def format_plan_text(plan: Plan, answered_gate_ids: frozenset[str] = frozenset()) -> str:
+    """Render a plan as human-readable text.
+
+    ``answered_gate_ids`` (CLI-only; text path has no MCP caller) are gates already
+    resolved by a flag for this invocation — ``--auto-approve`` on a normal run, or
+    a resume ``--approve``/``--choose`` answer. They are dropped from the gate footer
+    so the preview never tells an agent to pre-approve a gate it has already answered.
+    """
     lines: list[str] = []
     header_bits = [f"{plan.summary.total} nodes"]
     sub_count = sum(1 for entry in plan.entries if entry.status == "sub_workflow")
@@ -146,7 +152,7 @@ def format_plan_text(plan: Plan) -> str:
             "totals above exclude their cost/duration"
         )
 
-    _append_gate_footer(lines, plan.entries)
+    _append_gate_footer(lines, plan.entries, answered_gate_ids)
 
     if plan.diagnostics:
         lines.append("")
@@ -324,14 +330,18 @@ def _format_stats_annotation(entry: PlanEntry) -> str | None:
     return body
 
 
-def _append_gate_footer(lines: list[str], entries: list[PlanEntry]) -> None:
-    """Task 125: one footer line naming every gated step + its pre-approve flag.
+def _append_gate_footer(
+    lines: list[str], entries: list[PlanEntry], answered_gate_ids: frozenset[str] = frozenset()
+) -> None:
+    """Task 125: one footer line naming every UNANSWERED gated step + its pre-approve flag.
 
     Makes the agent-operator playbook self-discoverable — the plan is where an
     agent learns a run will pause, BEFORE side effects fire. No-op when nothing
-    is gated.
+    is gated, or when every gate is already answered by a flag this invocation
+    (Task 171: a resume ``--approve yes --dry-run`` must not tell the agent to
+    pre-approve the very gate it just answered).
     """
-    gated = _collect_gated_node_ids(entries)
+    gated = [node_id for node_id in _collect_gated_node_ids(entries) if node_id not in answered_gate_ids]
     if not gated:
         return
     flags = " ".join(f"--auto-approve={node_id}" for node_id in gated)

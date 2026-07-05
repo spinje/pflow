@@ -232,12 +232,13 @@ def test_empty_input_batch_emits_non_degrading_info_advisory():
 
 
 # ---------------------------------------------------------------------------
-# Task 125: MCP is the production non-TTY gate surface (split-session braindump).
-# Parity contract: a gated workflow through ExecutionService fails loudly with the
-# SAME payload-carrying, ask-your-human text the CLI shows, and `auto_approve`
-# pre-approves per-node exactly like `--auto-approve` — including when the engine
-# runs off the main thread (asyncio.to_thread, the real MCP tool bridge), which
-# pins the no-thread-guard design (a main-thread check would break MCP here).
+# Task 125/171: MCP is the production non-TTY gate surface (split-session braindump).
+# Parity contract: a gated workflow through ExecutionService now pauses DURABLY
+# (Task 171) — the response carries the resume token + gate content instead of a
+# raised error — and `auto_approve` pre-approves per-node exactly like
+# `--auto-approve`, including when the engine runs off the main thread
+# (asyncio.to_thread, the real MCP tool bridge), which pins the no-thread-guard
+# design (a main-thread check would break MCP here).
 # ---------------------------------------------------------------------------
 
 
@@ -264,15 +265,29 @@ def _gated_ir() -> dict[str, Any]:
     }
 
 
-def test_mcp_gated_workflow_fails_loudly_with_remediation_ladder():
+def test_mcp_gated_workflow_pauses_by_path_but_fails_inline(tmp_path):
+    """Task 171 (+ owner decision 2026-07-05, option a): a FILE-based MCP gated
+    run pauses durably with a token; the SAME workflow submitted INLINE (dict IR
+    — workflow_path is the synthesized ir-hash, no source file to re-resolve)
+    keeps the remediation-ladder hard error, whose text names the inline cause.
+    Pause is a promise: resume would ALWAYS refuse an inline token, so none is
+    issued (the follow-up — workflow content in the trace — flips this pin)."""
     from pflow.mcp_server.services.execution_service import ExecutionService
+    from tests.shared.markdown_utils import write_workflow_file
 
-    with pytest.raises(RuntimeError) as exc_info:
+    wf = tmp_path / "gated_parity.pflow.md"
+    write_workflow_file(_gated_ir(), wf)
+    text = ExecutionService.execute_workflow(str(wf), {})
+    assert "status: paused" in text
+    assert "paused_node_id: guarded-step" in text
+    assert "resume_command: pflow resume" in text
+    # The gate content is self-contained (resolved preview, not the template).
+    assert "posting-hello" in text
+
+    with pytest.raises(RuntimeError) as exc:
         ExecutionService.execute_workflow(_gated_ir(), {})
-    text = str(exc_info.value)
-    assert "requires a human approval decision" in text
-    assert "ask your human" in text
-    assert 'auto_approve=["guarded-step"]' in text
+    assert "submitted inline" in str(exc.value)
+    assert "status: paused" not in str(exc.value)
 
 
 def test_mcp_auto_approve_pre_approves_off_main_thread():

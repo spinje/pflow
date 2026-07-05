@@ -30,6 +30,9 @@ export function runMark(run: RunInfo): { glyph: string; cls: string; label: stri
   // Task 125: a human denied an approval gate — clean stop, amber like degraded (never the
   // grey stale fallthrough, which reads as "interrupted/unknown").
   if (run.final_status === "denied") return { glyph: "⊘", cls: "run-denied", label: "denied" };
+  // Task 171: durably paused at a gate — waiting on a human's answer, amber like denied
+  // (never the grey stale fallthrough: a pending question is a live obligation, not "done").
+  if (run.final_status === "paused") return { glyph: "⏸", cls: "run-paused", label: "paused" };
   return { glyph: "·", cls: "run-stale", label: run.final_status ?? "done" };
 }
 
@@ -127,6 +130,11 @@ export function RunSelector({ workflow, runId, onSelect }: RunSelectorProps): JS
           {runs.length === 0 && <div className="run-menu-empty">No runs yet for this workflow.</div>}
           {runs.map((run) => {
             const mark = runMark(run);
+            // Task 171: a resumed attempt carries its source run's id — render the chain marker; when
+            // the source is in THIS list, the marker jumps to it (stopPropagation keeps the row's own
+            // pick from firing). No grouping/collapsing — marker + jump is the v1 chain UI.
+            const resumedFrom = run.resumed_from;
+            const sourceInList = resumedFrom !== null && runs.some((r) => r.run_id === resumedFrom);
             return (
               <button
                 key={run.run_id}
@@ -139,6 +147,22 @@ export function RunSelector({ workflow, runId, onSelect }: RunSelectorProps): JS
                 <span className="run-menu-label">
                   {mark.label}
                   <span className="run-menu-time">{shortTime(run.start_time)}</span>
+                  {resumedFrom !== null && (
+                    <span
+                      className={"run-menu-resumed" + (sourceInList ? " run-menu-resumed-link" : "")}
+                      title={sourceInList ? `Go to source run ${resumedFrom}` : resumedFrom}
+                      onClick={
+                        sourceInList
+                          ? (e) => {
+                              e.stopPropagation();
+                              pick(resumedFrom);
+                            }
+                          : undefined
+                      }
+                    >
+                      ⤷ resumed from {resumedFrom.slice(0, 8)}
+                    </span>
+                  )}
                 </span>
                 {runId === run.run_id && <span className="run-menu-check">✓</span>}
               </button>

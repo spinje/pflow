@@ -139,6 +139,20 @@ describe("RunProgress", () => {
     expect(outcome?.className).toContain("run-denied");
   });
 
+  it("renders a PAUSED run amber — never the green success fallthrough (Task 171)", () => {
+    // A durable gate pause: the run trails final_status "paused" (waiting on a human's answer).
+    // Without the explicit arm, runBadgeStatus falls through to the green success ✓ — the exact
+    // regression a UI-launched gated run (stdin=DEVNULL → non-TTY → pause) would hit.
+    render(
+      <RunProgress steps={[step("a", { status: "success" })]} banner={{ final_status: "paused", nodes_executed: 1 }} />,
+    );
+    const badge = document.querySelector(".run-progress-outcome .status-badge");
+    expect(badge?.className).toContain("status-stopped");
+    expect(badge?.className).not.toContain("status-success");
+    const outcome = screen.getByText(/Run paused · 1 nodes/).closest(".run-progress-outcome");
+    expect(outcome?.className).toContain("run-paused");
+  });
+
   it("resolves a no-banner terminal run via `outcome` instead of spinning a fake 'Running…'", () => {
     // The callout is a second consumer of run-lifecycle state. stopped (process killed) and not-found
     // (stale ?run=) never set a banner, so without `outcome` the outcome line spun "Running…" forever

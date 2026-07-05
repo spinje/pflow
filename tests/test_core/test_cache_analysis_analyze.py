@@ -7721,3 +7721,39 @@ def test_configured_prewarm_projection_uses_cumulative_declared_tokens() -> None
     assert with_cumulative.meets_provider_min is True
     assert with_cumulative.affects_cost_projection is True
     assert with_cumulative.tokens_estimated == 10
+
+
+def test_autoload_skip_note_labels_paused_run_not_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Task 171: a durably PAUSED trace (a gate holding for a human answer) is
+    non-reusable evidence — it must never be autoloaded over a success — and the
+    disclosure must not misattribute it as a "failed run": the agent's next step
+    is answering the gate, not investigating a failure.
+    """
+    fake_home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+    debug_dir = fake_home / ".pflow" / "debug"
+    builder = TraceFixtureBuilder()
+    success_path = _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.7.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
+        timestamp="20260511-153228",
+        final_status="success",
+    )
+    paused_path = _write_trace(
+        debug_dir,
+        workflow_path="/abs/x.pflow.md",
+        format_version="2.7.0",
+        nodes=[builder.llm_event("ask", model="anthropic/claude-haiku-4-5")],
+        timestamp="20260511-163027",
+        final_status="paused",
+    )
+    result = analyze({"nodes": [_llm_ir_node()]}, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
+    # Selection: the older success wins over the newer paused run.
+    assert result.trace_path == str(success_path)
+    skip_notes = [n for n in result.notes if "Skipped newer trace" in n]
+    assert len(skip_notes) == 1, f"expected one skip note, got: {result.notes}"
+    assert paused_path.name in skip_notes[0]
+    assert "paused run" in skip_notes[0]
+    assert "failed run" not in skip_notes[0]

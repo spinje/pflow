@@ -29,6 +29,10 @@ function runBadgeStatus(banner: RunComplete | null, outcome: RunOutcome): NodeSt
     // degraded/stopped (the outcome text carries the word "denied"); the success ✓
     // fallthrough below must never render a human's "no" as green.
     if (banner.final_status === "denied") return "stopped";
+    // Task 171: a durable gate pause — the run is waiting on a human's answer, not done.
+    // Same amber treatment (the outcome text says "paused"); the success ✓ fallthrough
+    // must never render a pending question as green.
+    if (banner.final_status === "paused") return "stopped";
     return "success";
   }
   if (outcome === "stopped") return "stopped";

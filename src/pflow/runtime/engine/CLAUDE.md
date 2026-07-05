@@ -69,10 +69,20 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
         │
         └─ EXCEPT:
            (GateDenied, GateNotInteractiveError, GateResolverError) → stamp trace.gate_outcome
-           ("denied"/"failed" — the trailer channel; _determine_trace_status has no
+           ("denied"/"paused"/"failed" — the trailer channel; _determine_trace_status has no
            other signal for a gate stop) and re-raise UNTOUCHED: no record_trace(error),
            no error callback, no mark_node_failed — a gate verdict is control flow,
-           not a node failure. ONE deliberate trace write in this arm: when the node is
+           not a node failure. "paused" (Task 171) is the ONLY producer decision point
+           for durable pause, stamped iff ALL of: GateNotInteractiveError ∧ not
+           parallel_batch ∧ originating (first arm to see the exception — a first-seen
+           tag, mirroring _pflow_node_id) ∧ not self.nested (root engine; the flag comes
+           from the ONE child instantiation site in workflow_executor.py — node-id
+           comparison is NOT safe across the parent/child boundary) ∧ real workflow_path
+           (inline ir-hash:/None runs can't be resumed — #562) ∧ _gate_pausable
+           (approvals always; escalations only with a resolvable successor — mirrors the
+           CLI refusals KIND-for-kind: pause = promise, never emit a token resume
+           bounces). The stash trace.pause_request carries paused_node_id + the
+           GateRequest payload to the run.complete trailer. ONE deliberate trace write in this arm: when the node is
            a sub-workflow HOST (getattr(node, "_host_frame")), record_trace(success=True,
            frame=host_frame) closes the seq reserved by WorkflowExecutor's descend() —
            without it an earlier sibling child event orphans and finalize()/tree() raise,

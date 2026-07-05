@@ -91,6 +91,23 @@ const RETRY_MS = 1000; // localhost single-user: a fixed beat beats exponential 
  * the latched run selection (`select-run`) — each epoch-deduped on its own baseline (re-based when the
  * server's `boot_id` changes on restart) so it adopts newer agent state without clobbering the user's own.
  */
+// Issue #539 latch dedup: the highest epoch this browser session has applied per workflow and channel
+// (`point` = focus/frame/clear; `run` = select-run — orthogonal state, so separate baselines), plus the
+// server identity they count against. MODULE scope, not per-subscription (user-caught, Task 171 testing):
+// GraphView re-subscribes on every run switch, and a per-subscription baseline made the server's latched
+// select-run replay look new on each of those — a steered tab could then never manually switch runs (the
+// replay re-applied the steer, reverting every pick, until a server restart). Keyed by workflow because
+// ONE process-wide counter stamps every workflow's latches: a flat baseline would let workflow A's high
+// epoch wrongly reject workflow B's older-but-unseen latched command after an SPA navigation.
+const appliedByWorkflow = new Map<string, { point: number; run: number }>();
+let serverBootId: string | null = null;
+
+/** Test-only: clear the module-level epoch baselines (they deliberately survive re-subscribes). */
+export function _resetEpochBaselines(): void {
+  appliedByWorkflow.clear();
+  serverBootId = null;
+}
+
 export function subscribe(
   workflow: string,
   handlers: PointHandlers & Partial<RunHandlers>,
@@ -100,12 +117,11 @@ export function subscribe(
   let connId: string | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
   let stopped = false;
-  // Issue #539 latch dedup: the highest epoch this Viewer has applied on each channel (`point` = focus/
-  // frame/clear; `run` = select-run — orthogonal state, so separate baselines), and the server identity they
-  // count against. All survive the internal close/reopen (same closure); a fresh subscribe() resets them.
-  // A replayed latch with epoch <= its channel's baseline is skipped — idempotent catch-up, no clobber.
-  const applied = { point: 0, run: 0 };
-  let serverBootId: string | null = null;
+  // This workflow's shared baseline object (created on first subscribe, then mutated in place so every
+  // past and future subscription for the workflow reads/bumps the same state). A replayed latch with
+  // epoch <= its channel's baseline is skipped — idempotent catch-up, no clobber.
+  const applied = appliedByWorkflow.get(workflow) ?? { point: 0, run: 0 };
+  appliedByWorkflow.set(workflow, applied);
 
   const reportVisibility = (): void => {
     if (connId === null) return;
@@ -162,12 +178,16 @@ export function subscribe(
       }
       if (!isRecord(message) || typeof message.type !== "string") return;
       if (message.type === "connected" && typeof message.conn_id === "string") {
-        // A restarted server restarts its epoch counter at 1; reset BOTH channel baselines when its
-        // `boot_id` changes so a reconnecting tab doesn't skip the new process's lower-numbered commands.
+        // A restarted server restarts its (process-wide) epoch counter at 1; reset EVERY workflow's
+        // channel baselines when its `boot_id` changes so a reconnecting tab doesn't skip the new
+        // process's lower-numbered commands. In place, never `clear()` — live subscriptions hold
+        // references to their workflow's baseline object.
         if (typeof message.boot_id === "string" && message.boot_id !== serverBootId) {
           serverBootId = message.boot_id;
-          applied.point = 0;
-          applied.run = 0;
+          for (const baseline of appliedByWorkflow.values()) {
+            baseline.point = 0;
+            baseline.run = 0;
+          }
         }
         connId = message.conn_id;
         // A reconnect reopens with the original URL, whose visibility value may

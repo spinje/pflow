@@ -57,7 +57,7 @@ src/pflow/core/
 │   ├── save_service.py      # Shared save operations (CLI + MCP)
 │   ├── validator.py         # Unified validation orchestrator
 │   ├── data_flow.py         # Execution order and dependency validation
-│   ├── status.py            # SUCCESS/DEGRADED/FAILED/DENIED status enum
+│   ├── status.py            # SUCCESS/DEGRADED/FAILED/DENIED/PAUSED status enum
 │   ├── skill_service.py     # Publish workflows as AI agent skills (symlinks)
 │   ├── context.py           # Workflow context for discovery (build_workflows_context)
 │   ├── discovery.py         # LLM-powered workflow discovery (find_workflow)

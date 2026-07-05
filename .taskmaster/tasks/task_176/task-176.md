@@ -99,6 +99,34 @@ task start, per this draft's standing caveat):
 - Whether the button also serves `paused` runs (171's arm) with approve/deny folded into one
   control is a task-start design call — the plumbing is shared either way.
 
+## Canvas truth for paused runs: ⏸ frontier badge + un-run greying (owner idea, folded in 2026-07-05)
+
+Proposed by the owner while driving 171's shipped UI: a paused run's canvas is nearly mute about
+the pause — completed nodes wear their badges, but the gated node looks identical to any node
+that never ran; the pause position lives only in the callout text and banner. Two additions,
+scoped here because the ⏸ badge is the natural ANCHOR the approval controls (this task's core)
+attach to:
+
+1. **⏸ badge on the frontier node** — the paused-at node gets an amber pause badge on the same
+   corner `StatusBadge` surface (mirroring ✓/!/spinner). Data already exists: the paused trailer
+   carries `paused_node_id` (+ the full `gate_request`), and the tailer forwards trailer keys
+   generically — verify the join at task start, but no producer change is expected. This is a
+   CLIENT-synthesized per-node status derived from the banner, NOT a new trace event status —
+   `events.ts` `RUN_STATUSES` (the per-node EVENT allowlist) stays untouched (the 171-plan rule).
+   Clicking the ⏸ node is then the natural entry to the gate panel → Approve/Deny.
+2. **Grey out the not-yet-run region** — dim nodes and edges the pinned run never executed, so
+   the canvas reads: bright = ran, ⏸/! = frontier, grey = still owed. Design this as generic
+   "run-replay truth", not a paused-only feature: failed runs have the same shape, and on a
+   success replay the not-taken branches greying is genuinely informative. Owner-aligned scoping
+   call (2026-07-05 discussion): pinned terminal replays ONLY, never live runs (a live shrinking
+   grey region duplicates what the badges animate and would flicker). Reuse the existing cheap
+   restyle machinery (the focus-dim pass — no re-layout); the care point is composition with
+   focus-dimming, hover marks, and both densities.
+
+Sizing: the badge is small (a day-ish with tests + real-browser check); the greying is the larger
+half (composition testing). Both are presentation-only — zero engine/trace changes, consistent
+with this task's "if the bridge needs engine changes, escalate" rule.
+
 ## Explicitly out of scope
 
 - **Slack / email / webhook / any external surface.** Deliberately NOT tasked (Core Directive:

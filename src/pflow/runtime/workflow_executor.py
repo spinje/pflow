@@ -430,7 +430,11 @@ class WorkflowExecutor(BaseNode):
         child_storage.update(child_params)
 
         child_only = parent_shared.get("_pflow_child_only_node")
-        engine = WorkflowEngine(trace_collector=trace_for_child, only_node=child_only)
+        # nested=True (Task 171): a gate firing in this child engine must never
+        # durably pause the run — resume-into-a-child is out of scope, so the
+        # root engine's gate arm stamps `failed` for anything not originating
+        # at the top level. This is the ONE child-engine construction site.
+        engine = WorkflowEngine(trace_collector=trace_for_child, only_node=child_only, nested=True)
 
         # Descend immediately before the try whose finally ascends, so the push/pop balance holds even
         # if engine.run raises. A CompilationError from _compile_sub_workflow above (which must PROPAGATE

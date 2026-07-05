@@ -7,7 +7,7 @@ One file per top-level command, registered in `main.py` via `cli.add_command()`.
 | File | Command | External deps |
 |------|---------|---------------|
 | `run.py` | (hidden default — workflow execution) | All CLI modules, `pflow.execution.*` |
-| `resume.py` | `pflow resume [TARGET] [KEY=VALUE]...` — resume a failed/interrupted run from the failed step (Task 164) | `run.py` (`execute_json_workflow`), `pflow.runtime.workflow_trace.load_resume_source`, `pflow.runtime.compilation.is_side_effecting` |
+| `resume.py` | `pflow resume [TARGET] [KEY=VALUE]...` — a `click.Group` (`ResumeGroup`: unknown first arg routes to the hidden `run` subcommand): resume a failed/interrupted run from the failed step (Task 164), or answer a paused gate with `--approve yes\|no` / `--choose "<answer or option number>"` (Task 171); `pflow resume list` shows pending unanswered pauses. Bare `pflow resume` shows the group help (the `--approve`/`--choose` discoverability surface). | `run.py` (`execute_json_workflow`), `pflow.runtime.resume_source.load_resume_source`/`list_paused_runs`, `pflow.runtime.compilation.is_side_effecting` |
 | `list.py` | `pflow list [keyword...]` | `pflow.core.workflow.manager` |
 | `find.py` | `pflow find "description"` | `pflow.core.workflow.discovery` |
 | `describe.py` | `pflow describe <workflow>` | `pflow.core.workflow.manager` |

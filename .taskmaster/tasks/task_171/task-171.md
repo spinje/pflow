@@ -25,7 +25,15 @@ checkpoint→restore→continue substrate Task 164 builds.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-07-05 (branch `feat/durable-resume-tokens`, commits `a8066f15`→`fde74150`). All five
+phases shipped: loader extraction, paused producer (exit 4 + token), loader answer arm,
+`pflow resume --approve/--choose` + `resume list`, UI chain/paused rendering, and docs.
+See `task-review.md` for the shipped surface and `implementation/progress-log.md` for the
+chronology. Follow-on: #562 (resumable inline workflows), Task 176 (web-UI approval bridge).
 
 ## Priority
 
@@ -61,6 +69,20 @@ the pause-time trailer write, the token surface, paused-run lifecycle, and the `
 CLI verb.
 
 ## Design Decisions
+
+> **SETTLED AT PLAN TIME (2026-07-04, owner session — supersedes the open markers below):**
+> (1) **Paused encoding**: `final_status: "paused"` on the `run.complete` trailer +
+> `paused_node_id` + `gate_request` payload; no new line kind. (2) **Gated-runs-require-trace**:
+> resolved by DELETING the MCP special case — `execute_workflow` streams traces like the CLI
+> (registry probe stays traceless); `--no-trace` remains an explicit opt-out whose gates keep the
+> hard error (message updated). Neither spec option (a)/(b) — simpler final code than both; amend
+> ADR-0008's "CLI-only" sentence at ship. (3) **Escalation resume**: restore the completed
+> escalating step, fold the `--choose` answer into its event (`_apply_gate_resolutions` shape),
+> enter at its successor — the agent step is never re-paid. (4) **Pause exit code: 4**
+> (0/1/2/3/130 taken). (5) **Token security**: explicit v1 trust-the-local-filesystem; no
+> signing. Also confirmed: trace-as-checkpoint (the importance-4 confirm below); MCP token
+> surface = paused status + `execution_id` + `gate_request` + `resume_command` in the structured
+> result. Full rationale + plan: `implementation/implementation-plan.md`.
 
 - **Why this is its own task (2026-06-12):** the original build order was a sandwich
   (125-blocking → 164 → 125-durable), which contradicts the one-PR-per-task convention —

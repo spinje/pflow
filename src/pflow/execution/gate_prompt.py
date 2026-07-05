@@ -9,9 +9,15 @@ One builder, every configuration:
 - CLI interactive:    ``build_gate_resolver(flags, output_controller)`` — prompts on
   stderr, reads stdin (design anchor: ``terraform apply``).
 - MCP / non-TTY:      ``build_gate_resolver(flags, None)`` — honors ``--auto-approve``
-  pre-approvals, otherwise raises the payload-carrying ``GateNotInteractiveError``.
+  pre-approvals, otherwise raises the payload-carrying ``GateNotInteractiveError``
+  (the raise still happens; since Task 171 the TRACE records the gate as a durable
+  ``paused`` pause when tracing is on, and the run exits with a resume token).
 - Parallel-batch worker: the SAME resolver called with ``allow_prompt=False``
   (via ``__gate_prompt_allowed__``) — auto-approve still works, prompting never does.
+
+``format_gate_lines`` renders a gate's CONTENT as plain lines from the
+``GateRequest.to_dict()`` payload — the one render shape shared by the blocking
+prompt, the durable-pause output, and resume's answer-required error (Task 171).
 
 Ctrl-C at a prompt: click raises ``Abort`` (an ``Exception`` subclass the engine
 would archive as a node failure) — converted to ``KeyboardInterrupt`` so it rides
@@ -24,7 +30,7 @@ from typing import Any
 import click
 
 from pflow.core.exceptions import GateNotInteractiveError
-from pflow.core.gate import GATE_KIND_APPROVAL, GateRequest, GateResolution, masked_preview
+from pflow.core.gate import GATE_KIND_APPROVAL, GateRequest, GateResolution, masked_preview, option_labels
 from pflow.core.output_controller import OutputController
 
 GateResolver = Callable[..., GateResolution]
@@ -49,15 +55,27 @@ def can_prompt(output_controller: OutputController | None) -> bool:
 def build_gate_resolver(
     auto_approve: frozenset[str],
     output_controller: OutputController | None,
+    *,
+    deny: frozenset[str] = frozenset(),
 ) -> GateResolver:
     """Build the ``__gate_resolver__`` callable for this run.
 
     ``auto_approve`` pre-approves APPROVAL gates by node id (flat namespace
     across the workflow tree — a child gate with a flagged id is approved).
     Escalations never auto-resolve: you cannot pre-answer an unknown question.
+
+    ``deny`` (Task 171) pre-DENIES approval gates by node id — the delivery
+    channel for ``pflow resume <id> --approve no``: the paused gate re-fires in
+    the resume run and resolves denied, producing an honest denied resolution
+    line in the attempt trace (→ trace status ``denied``, exit 3). Checked
+    BEFORE ``auto_approve``; the CLI rejects the contradictory
+    ``--approve no`` + ``--auto-approve <same id>`` combination up front, so
+    the precedence here is a backstop, never a silent tiebreak.
     """
 
     def resolver(request: GateRequest, *, allow_prompt: bool = True) -> GateResolution:
+        if request.kind == GATE_KIND_APPROVAL and request.node_id in deny:
+            return GateResolution(approved=False, resolved_via="flag")
         if request.kind == GATE_KIND_APPROVAL and request.node_id in auto_approve:
             if allow_prompt:
                 _echo_auto_approved(request, output_controller)
@@ -125,26 +143,77 @@ def _prompt_escalation(request: GateRequest) -> GateResolution:
     else:
         answer = click.prompt("   Type an answer", err=True)
     answer = str(answer).strip()
-    if answer.isdigit() and 1 <= int(answer) <= len(labels):
+    # isdecimal(), NOT isdigit(): isdigit() accepts numeric-but-non-decimal chars
+    # (e.g. superscript "²") that int() then rejects with ValueError — mirrors the
+    # durable --choose rule in resume_source._map_choose_answer (one numbering rule).
+    if answer.isdecimal() and 1 <= int(answer) <= len(labels):
         return GateResolution(approved=True, resolved_via="prompt", chosen=labels[int(answer) - 1])
     return GateResolution(approved=True, resolved_via="prompt", chosen=answer)
 
 
 def _echo_options(request: GateRequest) -> list[str]:
     """Render numbered options; returns the option labels in display order."""
-    labels: list[str] = []
-    for i, option in enumerate(request.options, start=1):
-        label = str(option.get("label") or f"option {i}")
-        labels.append(label)
-        rec = " (rec)" if request.recommendation and request.recommendation == label else ""
-        detail = " — ".join(str(option[key]) for key in ("description", "tradeoffs") if option.get(key))
-        suffix = f" — {detail}" if detail else ""
-        click.echo(f"   {i}. {label}{rec}{suffix}", err=True)
-    if request.recommendation and request.recommendation not in labels:
-        click.echo(f"   Recommendation: {request.recommendation}", err=True)
+    lines, labels = _format_option_lines(request.options, request.recommendation)
+    for line in lines:
+        click.echo(f"   {line}", err=True)
     if labels:
         click.echo("", err=True)
     return labels
+
+
+def _format_option_lines(options: Any, recommendation: str | None) -> tuple[list[str], list[str]]:
+    """Numbered escalation options as plain lines, plus the labels in display order.
+
+    Labels come from the shared ``option_labels`` rule (``core/gate.py``): the
+    blocking prompt's digit answer AND resume's ``--choose N`` (Task 171) both
+    map numbers to THESE labels, so the render and the mapping can't drift.
+    """
+    options = list(options)
+    labels = option_labels(options)
+    lines: list[str] = []
+    for i, (option, label) in enumerate(zip(options, labels, strict=True), start=1):
+        rec = " (rec)" if recommendation and recommendation == label else ""
+        detail = " — ".join(str(option[key]) for key in ("description", "tradeoffs") if option.get(key))
+        suffix = f" — {detail}" if detail else ""
+        lines.append(f"{i}. {label}{rec}{suffix}")
+    if recommendation and recommendation not in labels:
+        lines.append(f"Recommendation: {recommendation}")
+    return lines, labels
+
+
+def format_resume_answer_command(execution_id: str, gate_request: dict[str, Any]) -> str:
+    """The kind-correct ``pflow resume`` answer command for a paused gate (Task 171).
+
+    One home for the verb pairing (approval → ``--approve``, escalation →
+    ``--choose``) so the CLI pause output, the MCP paused response, and resume's
+    answer-required error can never drift on which flag they advertise.
+    """
+    if gate_request.get("kind") == GATE_KIND_APPROVAL:
+        return f"pflow resume {execution_id} --approve yes|no"
+    return f'pflow resume {execution_id} --choose "<answer or option number>"'
+
+
+def format_gate_lines(gate_request: dict[str, Any]) -> list[str]:
+    """A gate's content as plain display lines, from the ``GateRequest.to_dict()`` payload.
+
+    Task 171: ONE render shape across the blocking prompt, the durable-pause
+    output, and resume's answer-required error — an agent must be able to
+    compose the answer from these lines alone (no blind round-trip). Approval:
+    the secret-masked param preview. Escalation: the question + numbered
+    options with the recommendation marked (``--choose N`` maps to exactly the
+    labels shown). Operates on the dict payload because pause consumers read it
+    from the trace trailer, not a live ``GateRequest``.
+    """
+    if gate_request.get("kind") == GATE_KIND_APPROVAL:
+        return _format_preview(gate_request.get("preview") or {})
+    lines: list[str] = []
+    question = gate_request.get("question")
+    if question:
+        lines.append(str(question))
+    options = [option for option in gate_request.get("options") or () if isinstance(option, dict)]
+    option_lines, _ = _format_option_lines(options, gate_request.get("recommendation"))
+    lines.extend(option_lines)
+    return lines
 
 
 def _format_preview(preview: dict[str, Any]) -> list[str]:
@@ -178,4 +247,10 @@ def _compact_json(value: Any) -> str:
         return str(value)
 
 
-__all__ = ["GateResolver", "build_gate_resolver", "can_prompt"]
+__all__ = [
+    "GateResolver",
+    "build_gate_resolver",
+    "can_prompt",
+    "format_gate_lines",
+    "format_resume_answer_command",
+]

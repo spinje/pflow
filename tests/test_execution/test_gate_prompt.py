@@ -113,6 +113,32 @@ class TestAutoApprove:
         assert "pre-approved via --auto-approve=notify" in capsys.readouterr().err
 
 
+class TestDeny:
+    """Task 171: the `deny` set — `pflow resume <id> --approve no`'s delivery channel."""
+
+    def test_deny_resolves_denied_via_flag_without_prompting(self):
+        resolver = build_gate_resolver(frozenset(), None, deny=frozenset({"notify"}))
+        resolution = resolver(_approval("notify"), allow_prompt=False)
+        assert resolution == GateResolution(approved=False, resolved_via="flag")
+
+    def test_deny_checked_before_auto_approve(self):
+        # Backstop only — the CLI rejects the contradictory flags up front. A
+        # silent approve here would run a step the human explicitly denied.
+        resolver = build_gate_resolver(frozenset({"notify"}), _FakeOC(), deny=frozenset({"notify"}))
+        assert resolver(_approval("notify")).approved is False
+
+    def test_deny_never_touches_escalations(self):
+        # You cannot pre-deny a question; a denied-set id on an escalation still
+        # raises the non-interactive error (no controller to prompt through).
+        resolver = build_gate_resolver(frozenset(), None, deny=frozenset({"agent-step"}))
+        with pytest.raises(GateNotInteractiveError):
+            resolver(_escalation(question="a or b?"))
+
+    def test_deny_ignores_other_gates(self):
+        resolver = build_gate_resolver(frozenset({"other"}), None, deny=frozenset({"notify"}))
+        assert resolver(_approval("other"), allow_prompt=False).approved is True
+
+
 class TestPromptFlows:
     def test_approval_yes_and_no(self, monkeypatch):
         oc = _FakeOC()
@@ -140,6 +166,15 @@ class TestPromptFlows:
         resolver = build_gate_resolver(frozenset(), _FakeOC())
         resolution = resolver(_escalation(question="?", options=({"label": "a"},)))
         assert resolution.chosen == "keep both, gate on env var"
+
+    def test_escalation_unicode_numeric_answer_is_free_text_not_a_crash(self, monkeypatch):
+        # "²".isdigit() is True but int("²") raises ValueError — the guard uses
+        # isdecimal() so a stray unicode-numeric answer folds as free text (mirrors
+        # resume_source._map_choose_answer's durable --choose rule).
+        monkeypatch.setattr(click, "prompt", lambda *a, **k: "²")
+        resolver = build_gate_resolver(frozenset(), _FakeOC())
+        resolution = resolver(_escalation(question="?", options=({"label": "a"},)))
+        assert resolution.chosen == "²"
 
     def test_out_of_range_number_is_free_text_not_crash(self, monkeypatch):
         monkeypatch.setattr(click, "prompt", lambda *a, **k: "9")
@@ -234,3 +269,45 @@ class TestPreviewRendering:
         assert "merge configs?" in rendered
         assert "1. merge — simpler — breaks overrides" in rendered
         assert "2. split (rec)" in rendered
+
+
+class TestPausedGateRendering:
+    """Task 171 — format_gate_lines / format_resume_answer_command: the pause
+    surfaces render the SAME content shape as the blocking prompt, from the
+    GateRequest.to_dict() payload (what the trace trailer carries)."""
+
+    def test_approval_lines_mask_secrets(self):
+        from pflow.execution.gate_prompt import format_gate_lines
+
+        payload = _approval(command="deploy", api_key="sk-live-abc").to_dict()
+        lines = format_gate_lines(payload)
+        text = "\n".join(lines)
+        assert "deploy" in text
+        assert "<REDACTED>" in text
+        assert "sk-live-abc" not in text
+
+    def test_escalation_lines_match_prompt_option_rendering(self):
+        from pflow.execution.gate_prompt import format_gate_lines
+
+        payload = _escalation(
+            question="merge configs?",
+            options=(
+                {"label": "merge", "description": "simpler", "tradeoffs": "breaks overrides"},
+                {"label": "split"},
+            ),
+            recommendation="split",
+        ).to_dict()
+        lines = format_gate_lines(payload)
+        # The exact label extraction the blocking prompt uses — `--choose N`
+        # maps numbers to precisely what is shown here.
+        assert lines[0] == "merge configs?"
+        assert lines[1] == "1. merge — simpler — breaks overrides"
+        assert lines[2] == "2. split (rec)"
+
+    def test_resume_answer_command_pairs_verb_with_kind(self):
+        from pflow.execution.gate_prompt import format_resume_answer_command
+
+        approval = format_resume_answer_command("tok-1", _approval().to_dict())
+        assert approval == "pflow resume tok-1 --approve yes|no"
+        escalation = format_resume_answer_command("tok-2", _escalation(question="q?").to_dict())
+        assert escalation == 'pflow resume tok-2 --choose "<answer or option number>"'

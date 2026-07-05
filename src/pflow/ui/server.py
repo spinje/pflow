@@ -1181,6 +1181,9 @@ def _run_entry(candidate: TraceCandidate) -> dict[str, Any]:
         "only_node": meta.get("only_node"),
         "trace_file": candidate["path"].name,
         "git_root": _git_root(meta.get("workflow_path")),
+        # Task 171: attempt-chain lineage — the source run's execution_id when this run resumed a prior
+        # attempt (meta line, 2.6.0+), else None. The selector renders the chain marker from it.
+        "resumed_from": meta.get("resumed_from"),
     }
 
 

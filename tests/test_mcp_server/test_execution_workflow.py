@@ -206,3 +206,122 @@ class TestExecuteWorkflowErrors:
         assert "batch_error_details" not in text
         assert "item_summary" not in text
         assert "__failures__" not in text
+
+
+GATED_IR = {
+    "nodes": [
+        {
+            "id": "prep",
+            "type": "shell",
+            "params": {"command": "echo ready"},
+            "purpose": "Plain upstream step before the gate",
+        },
+        {
+            "id": "guarded",
+            "type": "shell",
+            "params": {"command": "echo do-it"},
+            "purpose": "Gated step requiring human approval",
+            "approval": "required",
+        },
+    ],
+    "edges": [{"from": "prep", "to": "guarded"}],
+}
+
+
+class TestExecuteWorkflowPaused:
+    """Task 171 — MCP durable pause: paused is a RESULT (token + gate content),
+    never a raised error; success responses gain run identity."""
+
+    def test_paused_run_returns_token_and_gate_content(self, tmp_path):
+        workflow_path = tmp_path / "gated.pflow.md"
+        write_workflow_file(dict(GATED_IR), workflow_path)
+
+        text = ExecutionService.execute_workflow(str(workflow_path))
+
+        assert "status: paused" in text
+        assert "paused_node_id: guarded" in text
+        # The token is real and the resume command is kind-correct.
+        exec_id = next(line.split(": ", 1)[1] for line in text.splitlines() if line.startswith("execution_id: "))
+        assert f"resume_command: pflow resume {exec_id} --approve yes|no" in text
+        # Gate content is rendered — an agent can show its human WHAT is gated.
+        assert "do-it" in text
+
+    def test_auto_approved_gate_still_succeeds(self, tmp_path):
+        workflow_path = tmp_path / "gated-approved.pflow.md"
+        write_workflow_file(dict(GATED_IR), workflow_path)
+
+        text = ExecutionService.execute_workflow(str(workflow_path), auto_approve=["guarded"])
+
+        assert "✓ Workflow completed" in text
+        assert "status: paused" not in text
+
+    def test_success_text_carries_execution_id(self, tmp_path):
+        """Run identity renders even when no trace file exists (streaming is
+        suppressed here by the autouse no-op) — and it is a real id, never a
+        rendered "None". The identity↔trace-file cross-check lives in the
+        trace_files test below."""
+        import uuid
+
+        workflow_path = tmp_path / "simple.pflow.md"
+        write_workflow_file(dict(SIMPLE_ECHO_IR), workflow_path)
+
+        text = ExecutionService.execute_workflow(str(workflow_path))
+
+        exec_id = next(line.split(": ", 1)[1] for line in text.splitlines() if line.startswith("execution_id: "))
+        uuid.UUID(exec_id)  # raises if the line rendered a non-id (e.g. "None")
+
+    def test_stream_faulted_pause_raises_not_a_dead_token(self, tmp_path, monkeypatch):
+        """Pause = promise, on the MCP surface too. If the trace stream dies
+        mid-run there is no on-disk trailer, so the token would never resolve.
+        MCP gates on ``is_durable_pause`` (the same guard the CLI applies) and
+        falls through to the error path (the gate's ask-your-human remediation),
+        never advertising an unanswerable token. Simulate the disk fault by
+        flipping ``_stream_failed`` on the real paused run's collector."""
+        from pflow.execution.runner import WorkflowRunner
+
+        workflow_path = tmp_path / "gated-faulted.pflow.md"
+        write_workflow_file(dict(GATED_IR), workflow_path)
+
+        real_run = WorkflowRunner.run
+
+        def faulting_run(self, *args, **kwargs):
+            result = real_run(self, *args, **kwargs)
+            if result.trace is not None:
+                result.trace._stream_failed = True  # the stream died mid-run
+            return result
+
+        monkeypatch.setattr(WorkflowRunner, "run", faulting_run)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            ExecutionService.execute_workflow(str(workflow_path))
+
+        msg = str(exc_info.value)
+        # NOT the durable-pause response — no token, no resume command advertised.
+        assert "status: paused" not in msg
+        assert "resume_command:" not in msg
+        # IS the gate-needs-a-human remediation (parity with a --no-trace gate).
+        assert "human" in msg.lower()
+
+    @pytest.mark.trace_files
+    def test_mcp_run_streams_a_real_trace(self, tmp_path, monkeypatch):
+        """Task 171 flips MCP to trace streaming: the response's trace_path is a
+        real, complete (finalized) file whose identity MATCHES the rendered
+        execution_id — no post-171 MCP run is invisible to resume/analyze-cache,
+        and the id an agent captures resolves against that exact trace."""
+        import json as _json
+        from pathlib import Path as _Path
+
+        monkeypatch.setattr(_Path, "home", lambda: tmp_path)
+        workflow_path = tmp_path / "simple.pflow.md"
+        write_workflow_file(dict(SIMPLE_ECHO_IR), workflow_path)
+
+        text = ExecutionService.execute_workflow(str(workflow_path))
+
+        trace_path = next(line.split(": ", 1)[1] for line in text.splitlines() if line.startswith("trace_path: "))
+        trace_file = _Path(trace_path)
+        assert trace_file.exists()
+        lines = trace_file.read_text(encoding="utf-8").splitlines()
+        assert _json.loads(lines[-1])["kind"] == "run.complete"
+        # Identity cross-check: the text's execution_id IS this trace's run id.
+        exec_id = next(line.split(": ", 1)[1] for line in text.splitlines() if line.startswith("execution_id: "))
+        assert _json.loads(lines[0])["execution_id"] == exec_id

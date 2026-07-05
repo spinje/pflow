@@ -73,7 +73,7 @@ All tools use async/sync bridge: `await asyncio.to_thread(_sync_operation)` — 
 - `registry_discover(task)` — Find nodes via LLM selection. Pass full task description.
 
 **execution_tools.py** (7 tools):
-- `workflow_execute(workflow, parameters, auto_approve)` — Execute with agent defaults (no repair, silent, traces saved). MCP runs are non-interactive: a workflow with an `approval:` gate fails loudly with the gate payload unless that gate's step name is listed in `auto_approve` (ask your human first; escalations can never be pre-approved)
+- `workflow_execute(workflow, parameters, auto_approve)` — Execute with agent defaults (no repair, silent, traces streamed). MCP runs are non-interactive: an `approval:` gate NOT listed in `auto_approve` **pauses the run durably** (Task 171) — the response carries `status: paused`, the gate payload, and a resume token the human answers via `pflow resume <token> --approve yes|no` (ask your human before pre-approving; escalations can never be pre-approved — they pause too and are answered with `--choose`)
 - `workflow_validate(workflow)` — Static validation without execution (10 checks including sub-workflow validation)
 - `plan_workflow(workflow, parameters)` — Build execution plan JSON without side effects
 - `workflow_save(workflow, name, force)` — Save to library (accepts raw markdown or file path)
@@ -142,7 +142,7 @@ Shared formatters from `execution/formatters/` ensure identical output between C
 ## Agent-Optimized Defaults
 
 MCP execution differs from CLI:
-- **No trace file persisted.** Cost/tokens/results come from the in-memory collector and are returned in the response; trace streaming to `~/.pflow/debug/` is CLI-only (ADR-0008 — `ExecutionService` passes `RunnerConfig(trace_enabled=False)`). A CLI run is the way to get a saved trace for `pflow report` / `analyze-cache`.
+- **Traces stream like the CLI (Task 171).** Each `workflow_execute` run streams a JSONL trace to `~/.pflow/debug/` (`RunnerConfig()` default; the runner opens AND finalizes it, so every call ends with one complete closed file) — a durable gate pause needs the trace, and it serves `pflow report` / `analyze-cache` / `pflow resume`. The registry single-node probe stays traceless. (An earlier note here claimed streaming was CLI-only per ADR-0008 — a misattribution: ADR-0008 explicitly supports any-run streaming; CLI-only was a Task-172 code-comment scoping decision, deleted by Task 171.)
 - Text output format (LLMs parse text better than nested JSON)
 - Auto-normalization of workflow IR (`ir_version`, `edges`)
 - Services **raise exceptions** (ValueError, RuntimeError, FileExistsError, and pflow types like WorkflowValidationError / MarkdownParseError) with pre-rendered rich text. The `PflowMCP.call_tool` and `PflowMCP.read_resource` overrides (`server.py`) catch unhandled producer bugs and any self-describing exception (anything with `to_diagnostics()` — includes all `PflowError` subclasses plus `MaxNodeVisitsError`) and convert them to structured `CallToolResult(isError=True)` / rendered resource text via `exception_to_diagnostics()` + `format_diagnostic()`, matching the CLI's outer error boundary. Bare pre-formatted `ValueError` / `TypeError` / `RuntimeError` / `FileExistsError` pass through so their hand-rolled rich text survives unchanged.

@@ -103,6 +103,27 @@ class ExecutionResult:
         """Execution warnings as diagnostics."""
         return [d for d in self.diagnostics if d.severity == Severity.WARNING]
 
+    @property
+    def is_durable_pause(self) -> bool:
+        """True when a PAUSED run's trailer actually reached disk (Task 171).
+
+        A gate can stamp PAUSED in memory (``gate_outcome == "paused"``) while
+        the streamed trace dies mid-run — a full or read-only ``~/.pflow/debug``
+        sets ``_stream_failed`` and ``finalize()`` writes no ``run.complete``
+        trailer. The resume token would then never resolve. BOTH the CLI and MCP
+        paused branches gate on this so neither advertises an unanswerable token;
+        a non-durable pause falls through to the failure path (the gate's
+        remediation ladder). ``--no-trace`` never reaches here — the runner maps
+        it to FAILED (the stream is never opened, so ``_stream_failed`` stays
+        False; the ``trace_enabled`` conjunct in ``_exception_to_result`` is that
+        path's guard). One durability rule, one home, two surfaces.
+        """
+        return (
+            self.status is WorkflowStatus.PAUSED
+            and self.trace is not None
+            and not getattr(self.trace, "_stream_failed", False)
+        )
+
 
 @dataclass(frozen=True)
 class PlanEntry:

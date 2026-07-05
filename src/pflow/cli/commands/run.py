@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import os
@@ -373,6 +374,11 @@ def _maybe_echo_resume_hint(ctx: click.Context, result: Any | None) -> None:
 
     if not result or result.success or result.status is WorkflowStatus.DENIED:
         return
+    # A durable pause has its own answer hint (Task 171: _display_paused_result
+    # names the exact --approve/--choose command) — belt and braces beside the
+    # has_resumable_step suppression below.
+    if result.status is WorkflowStatus.PAUSED:
+        return
     # A gate stop is a human checkpoint, not a resumable failure — resume refuses it.
     # Mirror _display_denied_result's gate detection so the two stay consistent.
     if any(d.context and d.context.get("category") == "gate" for d in (result.diagnostics or ())):
@@ -443,13 +449,23 @@ def _prepare_gate_resolver(
         unapproved = [gate_id for gate_id in gated if gate_id not in auto_approve]
         if unapproved and not can_prompt(output_controller):
             flags = " ".join(f"--auto-approve={gate_id}" for gate_id in unapproved)
+            # Task 171: a non-interactive gate now pauses durably — EXCEPT when the
+            # run cannot produce a resumable trace, where it hard-fails instead:
+            # --no-trace (no trace at all) and --only (its snapshot trace is not a
+            # resume source). Both mirror `_gate_pausable`'s producer refusals, so
+            # the pre-flight verb must match the real outcome.
+            can_pause = ctx.obj.get("trace", True) and only_node is None
+            outcome = "pause at" if can_pause else "fail at"
             click.echo(
-                f"Warning: this run is non-interactive and will fail at approval "
+                f"Warning: this run is non-interactive and will {outcome} approval "
                 f"gate(s) [{', '.join(unapproved)}] unless pre-approved ({flags}).",
                 err=True,
             )
 
-    return build_gate_resolver(auto_approve, output_controller)
+    # Task 171: `gate_deny` is set only by resume's `--approve no` (_dispatch_resume);
+    # normal runs default it empty here via .get — there is no deny flag on `pflow run`.
+    deny = frozenset(ctx.obj.get("gate_deny") or ())
+    return build_gate_resolver(auto_approve, output_controller, deny=deny)
 
 
 def _display_denied_result(ctx: click.Context, result: Any, output_format: str) -> None:
@@ -524,6 +540,17 @@ def _display_execution_result(
         _display_denied_result(ctx, result, output_format)
         ctx.exit(3)
 
+    if result.status is WorkflowStatus.PAUSED:
+        if result.is_durable_pause:
+            # A gate held open on disk (Task 171): the trace is the checkpoint,
+            # the execution_id is the resume token. Own rendering + exit code 4.
+            _display_paused_result(result, output_format)
+            ctx.exit(4)
+        # The stream died mid-run: no durable trailer exists, so no token would
+        # resolve. Fall through to the failure path with the status NORMALIZED —
+        # a success:false exit-1 error document must not claim "paused".
+        result = dataclasses.replace(result, status=WorkflowStatus.FAILED)
+
     if result.success:
         _handle_workflow_success(
             ctx=ctx,
@@ -576,6 +603,55 @@ def _resumable_execution_id(ctx: click.Context, result: Any) -> str | None:
         return None
     execution_id = getattr(trace, "execution_id", None)
     return execution_id if isinstance(execution_id, str) else None
+
+
+def _display_paused_result(result: Any, output_format: str) -> None:
+    """Render a durably PAUSED run (Task 171): token on stdout, gate content on stderr.
+
+    The token line goes to stdout even under ``-p`` — it IS the paused run's
+    data (a calling process must be able to capture it). The gate CONTENT goes
+    to stderr (like ``_maybe_echo_resume_hint``, so it survives ``-p``): an
+    agent must be able to compose the answer from this output alone, without a
+    blind resume round-trip.
+    """
+    from pflow.execution.gate_prompt import format_gate_lines, format_resume_answer_command
+
+    pause = result.trace.pause_request or {}
+    node_id = pause.get("paused_node_id")
+    gate_request = pause.get("gate_request") or {}
+    execution_id = result.trace.execution_id
+    resume_command = format_resume_answer_command(execution_id, gate_request)
+
+    if output_format == "json":
+        # A strict superset of the unified `success: false` shape — the empty
+        # errors/diagnostics arrays are REQUIRED (agents that branch on
+        # success==false and iterate them must not crash on a pause; a pause
+        # carries no error). Preview masked with the same shared dict-form policy
+        # as the denied doc's gate payload: secrets don't inform a decision,
+        # everything else must survive in full.
+        from pflow.core.gate import masked_gate_dict
+
+        masked_request = masked_gate_dict(gate_request)
+        document = {
+            "success": False,
+            "status": "paused",
+            "execution_id": execution_id,
+            "paused_node_id": node_id,
+            "gate_request": masked_request,
+            "resume_command": resume_command,
+            "errors": [],
+            "diagnostics": [],
+        }
+        click.echo(json.dumps(document, indent=2, default=str))
+        return
+
+    # Text: ONE parseable stdout line; the in-band exit code mirrors denied's.
+    click.echo(f"Paused at '{node_id}'. Resume token: {execution_id} (exit 4)")
+    click.echo("", err=True)
+    for line in format_gate_lines(gate_request):
+        click.echo(f"   {line}", err=True)
+    click.echo("", err=True)
+    click.echo(f"To answer: {resume_command}", err=True)
 
 
 def _echo_diagnostic_group(diagnostics: list[Any], *, blank_line: bool) -> None:
@@ -659,7 +735,12 @@ def _display_plan_result(
     if output_format == "json":
         click.echo(json.dumps(format_plan_json(plan), indent=2, default=str))
     else:
-        click.echo(format_plan_text(plan))
+        # Gates already resolved by a flag this invocation — `--auto-approve`, or a
+        # resume `--approve yes|no` (which primes auto_approve / gate_deny). Drop them
+        # from the footer so the preview doesn't tell the agent to pre-approve a gate
+        # it has already answered (Task 171).
+        answered_gate_ids = frozenset(ctx.obj.get("auto_approve") or ()) | frozenset(ctx.obj.get("gate_deny") or ())
+        click.echo(format_plan_text(plan, answered_gate_ids=answered_gate_ids))
 
     has_error = any(d.severity == Severity.ERROR for d in plan.diagnostics)
     ctx.exit(1 if has_error else 0)
@@ -1247,6 +1328,8 @@ def run(
         ctx.obj["cache"] = cache
         ctx.obj["only_node"] = only_node
         ctx.obj["auto_approve"] = auto_approve
+        # Task 171: only resume's `--approve no` populates this (no deny flag on run).
+        ctx.obj["gate_deny"] = ()
 
         print_flag = ctx.obj.get("print_flag", False)
         output_format = ctx.obj.get("output_format", "text")

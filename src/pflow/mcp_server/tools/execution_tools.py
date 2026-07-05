@@ -32,8 +32,10 @@ async def workflow_execute(
             description=(
                 "Step names whose `approval: required` gates are pre-approved (one per gate; "
                 "no blanket form). MCP runs cannot prompt a human, so a gated step NOT listed "
-                "here fails with instructions. ASK YOUR HUMAN before passing this — the gate "
-                "exists so a person reviews the action first."
+                "here pauses the run durably — the response carries the gate content and a "
+                "resume token your human answers later (`pflow resume <token> --approve yes|no`). "
+                "ASK YOUR HUMAN before passing this — the gate exists so a person reviews "
+                "the action first."
             )
         ),
     ] = None,
@@ -47,14 +49,16 @@ async def workflow_execute(
     4. Inline IR: {...} (for sandboxed agents or programmatic building)
 
     Built-in behaviors:
-    - Cost, tokens, and per-node results are returned in the response. MCP runs do
-      NOT persist a trace file (trace streaming to ~/.pflow/debug is CLI-only — run
-      the workflow via the `pflow` CLI to get a saved trace for `pflow report` /
-      `analyze-cache`).
+    - Cost, tokens, and per-node results are returned in the response. Each run
+      also streams a trace file to ~/.pflow/debug (same as the CLI) — usable for
+      `pflow report`, `analyze-cache`, and `pflow resume`.
     - Returns explicit errors with suggestions for fixing
     - Steps declaring `approval: required` pause for a human. MCP runs cannot
-      prompt, so such a step fails with instructions unless its name is in
-      `auto_approve` — ask your human before pre-approving.
+      prompt, so an unapproved gate PAUSES THE RUN DURABLY: the response reports
+      `status: paused` with the paused step, the rendered gate content, and a
+      resume token. Relay the gate content to your human; they answer with
+      `pflow resume <token> --approve yes|no` (agent escalations: `--choose`).
+      Pre-approve via `auto_approve` only gates your human already approved.
 
     Before executing:
     1. Call workflow_describe to understand required parameters
@@ -89,6 +93,10 @@ async def workflow_execute(
             output value (JSON-encoded for structured types so agents can
             parse it directly).
             Example: "✓ Workflow completed in 0.5s\n\nWorkflow output:\n\n{\"key\": \"value\"}"
+        Paused: "⏸ Workflow paused at '<step>' — a human decision is required."
+            followed by grep-parseable ``key: value`` lines (``status: paused``,
+            ``execution_id`` — the resume token, ``paused_node_id``, ``trace_path``,
+            ``resume_command``) and the rendered gate content under ``Gate:``.
         Error: "❌ Workflow execution failed\n\nError details:\n  • node-id: error message..."
     """
     logger.debug(f"workflow_execute called: workflow type={type(workflow)}")

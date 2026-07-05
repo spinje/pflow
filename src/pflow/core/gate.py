@@ -101,6 +101,19 @@ def build_escalation_request(node_id: str, node_type: str, marker: Any) -> GateR
     )
 
 
+def option_labels(options: list[dict[str, Any]]) -> list[str]:
+    """Escalation option labels in display order — THE numbering rule.
+
+    The blocking prompt's digit answer, the pause output's numbered list, and
+    resume's numeric ``--choose`` (Task 171) all map numbers through this one
+    extraction (``label`` or ``option N``), so the render and the mapping can
+    never drift. Callers pre-filter to dict options (``GateRequest`` guarantees
+    dicts; trailer consumers filter hand-edited garbage) so numbering is
+    identical across surfaces.
+    """
+    return [str(option.get("label") or f"option {i}") for i, option in enumerate(options, start=1)]
+
+
 def masked_preview(preview: dict[str, Any]) -> dict[str, Any]:
     """Preview with secret-NAMED values redacted (recursively) — never truncated.
 
@@ -123,3 +136,17 @@ def masked_preview(preview: dict[str, Any]) -> dict[str, Any]:
         return value
 
     return {key: mask(key, value) for key, value in preview.items()}
+
+
+def masked_gate_dict(payload: dict[str, Any]) -> dict[str, Any]:
+    """A gate-payload DICT with its ``preview`` secret-masked — THE policy for
+    every surface that holds a plain ``GateRequest.to_dict()`` / trailer gate
+    dict rather than a live ``GateRequest``.
+
+    Mask-only (recursive, never truncated), delegating to ``masked_preview``;
+    the trace's gate event stays unmasked, consistent with
+    ``template_resolutions``. ``exceptions._masked_gate_payload`` is the
+    object-form twin (``request.to_dict()`` → this). One rule, one home, N
+    consumers (the denied/paused JSON docs, ``ResumeAnswerRequiredError``).
+    """
+    return {**payload, "preview": masked_preview(payload.get("preview") or {})}

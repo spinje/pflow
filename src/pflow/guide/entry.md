@@ -57,8 +57,8 @@ Features — when the user says X, load topic Y:
                    → "retry on failure", "fall back if X fails", "handle the error", "undo on failure"
   approval         Human-in-the-loop gates — pause for a yes/no or a decision
                    → "ask before sending", "confirm before deploying", "let me approve it", "escalate to me if unsure"
-  resume           Continue a failed/interrupted run from the step that failed (not from scratch)
-                   → "it failed halfway", "resume the run", "don't re-run the whole thing", "continue from where it broke"
+  resume           Continue a failed/interrupted run from the step that failed, or answer a paused approval gate by its token
+                   → "it failed halfway", "resume the run", "don't re-run the whole thing", "approve the paused run", "it exited 4 with a resume token"
   sub-workflows    Reusable composition, bounded iteration
                    → "reuse this", "same validation as X", "iterate over a fixed count"
   prompt-caching   Provider prompt caching, ## Cache, prompt_cache:

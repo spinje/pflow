@@ -53,7 +53,7 @@ def _run_streamed(ir: dict[str, Any], resolver, tmp_path: Path) -> tuple[Workflo
     )
     compiled = compile_workflow(ir, Registry())
     shared: dict[str, Any] = {"__gate_resolver__": resolver}
-    engine = WorkflowEngine(trace_collector=collector)
+    engine = WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md")
     try:
         engine.run(compiled, shared)
     finally:
@@ -107,7 +107,7 @@ class TestGateTraceEvents:
         compiled = compile_workflow(_gated_ir(), Registry())
         shared: dict[str, Any] = {"__gate_resolver__": _denier}
         with pytest.raises(GateDenied):
-            WorkflowEngine(trace_collector=collector).run(compiled, shared)
+            WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(compiled, shared)
         collector.finalize()
 
         lines = _read_lines(collector._stream_path)
@@ -122,7 +122,12 @@ class TestGateTraceEvents:
         collector.save_to_file()
         assert load_full_run_events(collector.workflow_path) is None
 
-    def test_noninteractive_gate_trailer_says_failed_not_success(self, tmp_path, monkeypatch):
+    def test_noninteractive_gate_trailer_says_paused_not_success(self, tmp_path, monkeypatch):
+        """Task 171: a top-level non-interactive gate pauses durably — the trailer
+        reads ``paused`` (pre-171: ``failed``) and carries the pause record
+        (``paused_node_id`` + the full ``gate_request``, round-tripped through
+        the trailer). Node "a" succeeded and no node failed — without the
+        gate_outcome channel this trailer would read "success"."""
         from pflow.core.exceptions import GateNotInteractiveError
 
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -131,16 +136,23 @@ class TestGateTraceEvents:
         )
         compiled = compile_workflow(_gated_ir(), Registry())
         with pytest.raises(GateNotInteractiveError):
-            WorkflowEngine(trace_collector=collector).run(compiled, {})
+            WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(compiled, {})
         collector.finalize()
         trace = load_trace_file(collector._stream_path)
-        # Node "a" succeeded and no node failed — without the gate_outcome channel
-        # this trailer would read "success" for a run that died at a gate.
-        assert trace["final_status"] == "failed"
+        assert trace["final_status"] == "paused"
+        assert trace["paused_node_id"] == "b"
+        assert trace["gate_request"]["kind"] == "action_approval"
+        assert trace["gate_request"]["preview"] == {"command": "echo from-hello"}
         resolution = next(
             ln for ln in _read_lines(collector._stream_path) if ln["kind"] == "gate" and ln["phase"] == "resolution"
         )
         assert resolution["resolution"] == "non_interactive"
+        # A paused run's upstream is PARTIAL (it stopped at the gate) — like a
+        # denied trace, it must never seed a --only snapshot. Pins the
+        # load_full_run_events ALLOWLIST (success/degraded): a "reject failed"
+        # denylist rewrite would silently accept paused partial upstream.
+        collector.save_to_file()
+        assert load_full_run_events(collector.workflow_path) is None
 
     def test_resolver_crash_emits_error_resolution_and_trailer_says_failed(self, tmp_path, monkeypatch):
         """A resolver bug still leaves an honest trace: a resolution line
@@ -157,7 +169,9 @@ class TestGateTraceEvents:
         )
         compiled = compile_workflow(_gated_ir(), Registry())
         with pytest.raises(GateResolverError):
-            WorkflowEngine(trace_collector=collector).run(compiled, {"__gate_resolver__": crasher})
+            WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(
+                compiled, {"__gate_resolver__": crasher}
+            )
         collector.finalize()
         trace = load_trace_file(collector._stream_path)
         assert trace["final_status"] == "failed"
@@ -202,7 +216,9 @@ class TestGateTraceEvents:
         )
         compiled = compile_workflow(self._nested_gate_after_sibling_ir(tmp_path, "child-denied"), Registry())
         with pytest.raises(GateDenied):
-            WorkflowEngine(trace_collector=collector).run(compiled, {"__gate_resolver__": _denier})
+            WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(
+                compiled, {"__gate_resolver__": _denier}
+            )
         collector.finalize()  # must not raise
 
         lines = _read_lines(collector._stream_path)
@@ -227,7 +243,7 @@ class TestGateTraceEvents:
         )
         compiled = compile_workflow(self._nested_gate_after_sibling_ir(tmp_path, "child-noninteractive"), Registry())
         with pytest.raises(GateNotInteractiveError):
-            WorkflowEngine(trace_collector=collector).run(compiled, {})
+            WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(compiled, {})
         collector.finalize()  # must not raise
 
         lines = _read_lines(collector._stream_path)
@@ -296,7 +312,7 @@ class TestGateTraceEvents:
         )
         compiled = compile_workflow(ir, Registry())
         shared: dict[str, Any] = {"items": [1, 2, 3], "__gate_resolver__": flag_approver}
-        WorkflowEngine(trace_collector=collector).run(compiled, shared)
+        WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(compiled, shared)
         collector.finalize()
         assert shared["fan"]["success_count"] == 3
         trace = load_trace_file(collector._stream_path)

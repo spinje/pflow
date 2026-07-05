@@ -330,6 +330,11 @@ def format_success_as_text(  # noqa: C901
         # intercepts DENIED before this formatter; MCP goes via success=False),
         # but a denied run must never render the success ✓ if that ever changes.
         lines.append(f"⊘ Workflow denied at an approval gate after {duration_sec:.3f}s{cache_suffix}")
+    elif status == "paused":
+        # Defensive (Task 171): paused results have their own surfaces (CLI
+        # _display_paused_result / MCP _format_paused_text), but a run waiting
+        # on a human's answer must never render the success ✓ if that changes.
+        lines.append(f"⏸ Workflow paused at a gate after {duration_sec:.3f}s{cache_suffix}")
     elif status == "failed":
         if warning_count:
             lines.append(f"❌ Workflow failed ({warning_count} warnings) after {duration_sec:.3f}s{cache_suffix}")
@@ -417,8 +422,18 @@ def format_success_as_text(  # noqa: C901
         lines.append("")
         _append_outputs(lines, result)
 
-    # Note: Trace path not shown in CLI text mode, only in MCP for debugging
-    # Agents can use trace_path from the dict if needed
+    # Run identity + trace location (Task 171) — MCP-only text (the CLI has its
+    # own stderr trace line and never calls this renderer). Grep-parseable
+    # `key: value` lines so an agent can correlate the run with a later
+    # `pflow resume` chain or `pflow report` without a side channel.
+    execution_id = success_dict.get("execution_id")
+    trace_path = success_dict.get("trace_path")
+    if execution_id or trace_path:
+        lines.append("")
+        if execution_id:
+            lines.append(f"execution_id: {execution_id}")
+        if trace_path:
+            lines.append(f"trace_path: {trace_path}")
 
     return "\n".join(lines)
 

@@ -97,8 +97,8 @@ def shell_wf(tmp_path):
 
 
 # g1 (shell) -> gated (shell, approval: required). In a non-interactive run the
-# unapproved gate finalizes FAILED (not DENIED) — but resume refuses it as a gate
-# stop, so the failed-run output must NOT advertise a resume that can only refuse.
+# unapproved gate now finalizes PAUSED (Task 171: durable pause, exit 4, resume
+# token) — the failed-run resume hint must never appear for it.
 _GATE_WF = """# Resume Gate Demo
 
 A workflow with an unapproved approval gate — non-interactive runs stop at it.
@@ -279,11 +279,11 @@ def _run_to_failure_llm(wf: Path) -> str:
 
 def test_stale_hash_refusal_after_edit(home, shell_wf):
     exec_id = _run_to_failure(shell_wf)
-    shell_wf.write_text(shell_wf.read_text() + "\n<!-- edited since the failed run -->\n")
+    shell_wf.write_text(shell_wf.read_text() + "\n<!-- edited -->\n")
     result = _runner().invoke(cli, ["resume", exec_id, "mode=ok"])
     assert result.exit_code == 1
     combined = result.stdout + result.stderr
-    assert "edited since the failed run" in combined
+    assert "edited since the original run" in combined
     assert "--force" in combined
 
 
@@ -299,7 +299,7 @@ def test_stale_unverifiable_message_when_hash_absent(tmp_path):
     from pflow.cli.commands.resume import _check_content_hash
     from pflow.core.exceptions import ResumeStaleWorkflowError
     from pflow.execution.result import ResolvedWorkflow
-    from pflow.runtime.workflow_trace import ResumeSource
+    from pflow.runtime.resume_source import ResumeSource
 
     resolved = ResolvedWorkflow(
         ir={"nodes": [{"id": "a", "type": "shell", "params": {"command": "true"}}]}, source="file"
@@ -371,10 +371,22 @@ def test_json_refusal_shape(home, shell_wf):
     assert doc["errors"][0]["context"]["execution_id"] == exec_id
 
 
-def test_bare_resume_is_usage_error(home):
+def test_bare_resume_shows_group_help_with_answer_flags(home):
+    """Post-171 `resume` is a GROUP: bare `pflow resume` renders the group help —
+    the discoverability surface for the flags the hidden default subcommand would
+    otherwise bury (a hidden subcommand contributes nothing to --help). Replaces
+    the flat command's "Missing TARGET" usage error; a flag-without-target form
+    (`resume --force`) still routes to the default subcommand and errors there."""
     result = _runner().invoke(cli, ["resume"])
-    assert result.exit_code == 2
-    assert "Missing TARGET" in (result.stdout + result.stderr)
+    assert result.exit_code == 0
+    assert "--approve yes|no" in result.stdout
+    assert "--choose" in result.stdout
+    assert "pflow resume list" in result.stdout
+    assert "Resume token" in result.stdout  # the worked paused-gate example
+    # And the flag-only form still gets the hard usage error (routed to `run`).
+    flag_only = _runner().invoke(cli, ["resume", "--force"])
+    assert flag_only.exit_code == 2
+    assert "Missing TARGET" in (flag_only.stdout + flag_only.stderr)
 
 
 def test_failed_run_with_no_trace_is_a_clear_missing_error(home, shell_wf):
@@ -417,17 +429,18 @@ def test_failed_run_omits_hint_under_no_trace(home, shell_wf):
     assert "pflow resume" not in result.stderr
 
 
-def test_gate_stopped_run_omits_resume_hint(home, gate_wf):
-    """A non-interactive gate stop finalizes FAILED but resume refuses it
-    (ResumeGateStoppedError). The failed-run output must NOT print the resume hint —
-    the gate error already carries the ``--auto-approve`` remedy. Regression pin for
-    the 2026-07-04 verification finding (parity with the DENIED skip)."""
+def test_gate_paused_run_omits_failure_resume_hint(home, gate_wf):
+    """Task 171: a non-interactive gate stop now pauses durably (exit 4). The
+    FAILURE resume hint ("To resume from the failed step: …") must not print —
+    the paused display carries the kind-correct ANSWER command instead.
+    Descends from the 2026-07-04 pin that a gate stop never advertises the
+    failure-resume affordance (parity with the DENIED skip)."""
     result = _runner().invoke(cli, [str(gate_wf)])
-    assert result.exit_code == 1, result.stderr
-    # It really is a gate stop (not some other failure) …
-    assert "auto-approve" in result.stderr
-    # … and no resume affordance is offered.
-    assert "pflow resume" not in result.stderr
+    assert result.exit_code == 4, result.stderr
+    assert "To resume from the failed step:" not in result.stderr
+    # The answer affordance replaces it — token on stdout, command on stderr.
+    assert "Resume token:" in result.stdout
+    assert "--approve yes|no" in result.stderr
 
 
 def test_failed_run_hint_survives_print_mode(home, shell_wf):
@@ -540,7 +553,7 @@ def test_dry_run_still_refuses_stale_workflow(home, shell_wf):
     shell_wf.write_text(shell_wf.read_text() + "\n<!-- edited -->\n")
     result = _runner().invoke(cli, ["resume", exec_id, "mode=ok", "--dry-run"])
     assert result.exit_code == 1
-    assert "edited since the failed run" in (result.stdout + result.stderr)
+    assert "edited since the original run" in (result.stdout + result.stderr)
 
 
 # --- Incomplete-run between-nodes resolution (Decision 7 / §E step 4) ---------
@@ -553,7 +566,7 @@ def _resolved(ir: dict) -> Any:
 
 
 def _between_source(last_completed: str) -> Any:
-    from pflow.runtime.workflow_trace import ResumeSource
+    from pflow.runtime.resume_source import ResumeSource
 
     return ResumeSource(
         path=Path("/x/t.json"),

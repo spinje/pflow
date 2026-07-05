@@ -93,6 +93,9 @@ export interface RunInfo {
   // The git-repo root this run's file lives under (server-side detection, cached) — the catalog buckets
   // ad-hoc runs by repo. `null` for an inline (`ir-hash:`) / pathless run or a file under no repo ("Other").
   git_root: string | null;
+  // Task 171: attempt-chain lineage — the source run's execution_id when this run resumed a prior
+  // attempt (trace meta, format 2.6.0+), else null. Drives the selector's "⤷ resumed from" marker.
+  resumed_from: string | null;
 }
 
 // The detail panel's "This run" section reads this from GET /api/run-node (Task 173 D6) — ONE node's
