@@ -175,6 +175,7 @@ scratchpads/
 
 # Claude data and logs
 .claude/data/
+CLAUDE.local.md
 
 # MCP servers
 .mcp-servers/
