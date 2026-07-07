@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pflow.core.trace_tree import normalize_workflow_path_key
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult, resolve_sub_workflow
 
 from .context import AnalysisContext, _normalize_empty
@@ -203,6 +204,7 @@ def walk_cross_workflow(
     """
     resolver = resolve_child or resolve_sub_workflow
     seen = set(seen_paths) if seen_paths else set()
+    root_workflow_path = normalize_workflow_path_key(root_workflow_path)
     if root_workflow_path:
         seen.add(root_workflow_path)
     edges: list[CrossWorkflowEdge] = []
@@ -345,7 +347,7 @@ def _process_one_call(
         return
 
     # Cycle detection — re-entry of a path already on the recursion stack.
-    child_path_str = result.path.as_posix() if result.path else None
+    child_path_str = normalize_workflow_path_key(result.path.as_posix()) if result.path else None
     child_label = child_path_str or "<inline>"
     cache_items_by_workflow[child_label] = _cache_items_as_tuple(result.ir)
     irs_by_workflow[child_label] = result.ir

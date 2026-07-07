@@ -4,9 +4,18 @@ Each test catches ONE specific real bug that would break binary workflows.
 """
 
 import base64
+import sys
 from unittest.mock import Mock, patch
 
+import pytest
+
 from pflow.nodes.shell.shell import ShellNode
+
+
+@pytest.fixture(autouse=True)
+def _use_subprocess_run_path(monkeypatch):
+    """These tests mock subprocess.run; Git Bash coverage lives in test_windows_bash."""
+    monkeypatch.setattr(sys, "platform", "linux")
 
 
 class TestBinaryStdoutDetection:

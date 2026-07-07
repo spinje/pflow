@@ -253,7 +253,7 @@ class TestRealWorldPatterns:
                     "type": "shell",
                     "params": {
                         # Outer JSON contains inner JSON as a string value
-                        "command": 'echo \'{"wrapper": "{\\\\"inner\\\\": \\\\"deep value\\\\"}"}\''
+                        "command": """printf '%s\n' '{"wrapper": "{\\"inner\\": \\"deep value\\"}"}'"""
                     },
                 },
                 {

@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import tempfile
 
 import pytest
@@ -11,8 +12,7 @@ from pflow.nodes.shell.shell import ShellNode
 
 def _shell_path(path: str) -> str:
     normalized = path.replace("\\", "/").rstrip("/")
-    if len(normalized) >= 2 and normalized[1] == ":":
-        normalized = f"/{normalized[0].lower()}{normalized[2:]}"
+    normalized = re.sub(r"(?<![A-Za-z0-9_/-])([A-Za-z]):/", lambda m: f"/{m.group(1).lower()}/", normalized)
     return normalized
 
 

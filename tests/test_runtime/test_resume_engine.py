@@ -736,7 +736,9 @@ def test_loop_k_restarts_at_iteration_one(tmp_path) -> None:
     (``loop_counts``/``__iteration__``) is engine-ephemeral, never traced or seeded."""
     iter_file = tmp_path / "iterations"
     fail_flag = tmp_path / "k-fail"
-    fail_flag.write_text("1")
+    fail_flag.write_text("1", encoding="utf-8")
+    iter_file_literal = iter_file.as_posix()
+    fail_flag_literal = fail_flag.as_posix()
     wf = tmp_path / "loop.pflow.md"
     wf.write_text(
         textwrap.dedent(
@@ -771,9 +773,9 @@ def test_loop_k_restarts_at_iteration_one(tmp_path) -> None:
             iteration: int
             from pathlib import Path
 
-            with Path("{iter_file}").open("a") as fh:
+            with Path("{iter_file_literal}").open("a") as fh:
                 fh.write(f"{{iteration}}\\n")
-            if Path("{fail_flag}").read_text().strip() == "1":
+            if Path("{fail_flag_literal}").read_text().strip() == "1":
                 raise RuntimeError("injected loop failure")
             result: bool = True
             ```
@@ -785,9 +787,9 @@ def test_loop_k_restarts_at_iteration_one(tmp_path) -> None:
     run1 = WorkflowRunner().run(str(wf), {}, RunnerConfig())
     assert not run1.success, [str(d) for d in run1.diagnostics]
     p1 = run1.trace.save_to_file()
-    assert iter_file.read_text().splitlines() == ["1"], "run 1 was supposed to fail on iteration 1"
+    assert iter_file.read_text(encoding="utf-8").splitlines() == ["1"], "run 1 was supposed to fail on iteration 1"
 
-    fail_flag.write_text("0")
+    fail_flag.write_text("0", encoding="utf-8")
     source = load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
     assert source.entry_node_id == "k"
     result = _resume(wf, source)
@@ -795,7 +797,7 @@ def test_loop_k_restarts_at_iteration_one(tmp_path) -> None:
     assert result.success, [str(d) for d in result.diagnostics]
     assert result.shared_after["__execution__"]["restored_nodes"] == ["prep"]
     # The resume's iterations are 1,2,3 (restart), never 2,3 (continuation).
-    assert iter_file.read_text().splitlines() == ["1", "1", "2", "3"]
+    assert iter_file.read_text(encoding="utf-8").splitlines() == ["1", "1", "2", "3"]
 
 
 def test_both_primary_and_fallback_fail_resumes_at_the_primary_e2e(tmp_path) -> None:

@@ -13,6 +13,7 @@ from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_config import get_default_workflow_model
 from pflow.core.llm_providers import normalize_model_name
 from pflow.core.trace_io import load_trace_file
+from pflow.core.trace_tree import normalize_workflow_path_key
 
 from .sub_workflow_walker import walk_cross_workflow
 from .types import PerCallRow, TraceExecutionIndex, TraceListEntry
@@ -416,7 +417,9 @@ def _resolve_trace_scope(
     generic scope disclosure — agents otherwise see "0 of N LLM nodes
     executed" without an obvious next step.
     """
-    raw_trace_root = (trace_data.get("workflow_path") if trace_data else None) or lookup_path
+    raw_trace_root = normalize_workflow_path_key(
+        (trace_data.get("workflow_path") if trace_data else None) or lookup_path
+    )
     if trace_data is None or _workflow_paths_refer_to_same(raw_trace_root, lookup_path):
         return lookup_path, False, False
     appears_as_child = _workflow_appears_as_child(trace_data, lookup_path, raw_trace_root)
@@ -498,7 +501,13 @@ def _scope_workflow_paths(
     """
     if not scope_mismatch:
         return None
-    return frozenset({lookup_path} | {r.workflow_path for r in per_call_rows if r.workflow_path is not None})
+    normalized_lookup = normalize_workflow_path_key(lookup_path) or lookup_path
+    normalized_rows = {
+        normalized
+        for row in per_call_rows
+        if (normalized := normalize_workflow_path_key(row.workflow_path)) is not None
+    }
+    return frozenset({normalized_lookup} | normalized_rows)
 
 
 def _workflow_paths_refer_to_same(a: str | None, b: str | None) -> bool:
@@ -518,11 +527,15 @@ def _workflow_paths_refer_to_same(a: str | None, b: str | None) -> bool:
     """
     if not a or not b:
         return a == b
+    a_key = normalize_workflow_path_key(a)
+    b_key = normalize_workflow_path_key(b)
+    if a_key == b_key:
+        return True
     if a == b:
         return True
     if a.startswith("ir-hash:") or b.startswith("ir-hash:"):
         return False
-    return os.path.realpath(a) == os.path.realpath(b)
+    return os.path.realpath(a_key or a) == os.path.realpath(b_key or b)
 
 
 def _resolve_ir_static_model_for_node(

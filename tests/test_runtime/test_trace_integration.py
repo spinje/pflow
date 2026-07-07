@@ -198,7 +198,7 @@ class TestTraceToReportFormatCompatibility:
         assert (batch_dir / "item-1-beta.md").exists()
 
         # Summary should reference the batch and explode items into per-item rows
-        summary_md = (report_dir / "summary.md").read_text()
+        summary_md = (report_dir / "summary.md").read_text(encoding="utf-8")
         assert "processor" in summary_md
         # New Tokens column header is always present, even when no LLM ran.
         assert "| # | Node | Type | Status | Time | Tokens | Cost |" in summary_md

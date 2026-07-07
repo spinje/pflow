@@ -252,20 +252,21 @@ The stdout.
 - source: ${boom.stdout}
 """
         workflow_file = tmp_path / "fail.pflow.md"
-        workflow_file.write_text(workflow_content)
+        workflow_file.write_text(workflow_content, encoding="utf-8")
 
         result = _run_pflow([str(workflow_file), "--no-trace"], prepared_subprocess_env)
         _skip_uv_sandbox_panic(result)
 
-        assert result.returncode != 0, f"workflow should fail:\nstdout: {result.stdout}\nstderr: {result.stderr}"
-        assert "Traceback" not in result.stderr, f"run should not traceback:\n{result.stderr}"
+        stderr = result.stderr or ""
+        assert result.returncode != 0, f"workflow should fail:\nstdout: {result.stdout}\nstderr: {stderr}"
+        assert "Traceback" not in stderr, f"run should not traceback:\n{stderr}"
         # Assertions below are run-pipeline-specific — the group boundary
         # (PflowCLI.invoke) would never emit these. They prove run's own
         # output_error() path fired, not a fallthrough to the boundary.
-        assert "Executing workflow" in result.stderr, (
-            f"run's execution-progress line missing — likely group boundary caught the error instead of run's pipeline:\n{result.stderr}"
+        assert "Executing workflow" in stderr, (
+            f"run's execution-progress line missing — likely group boundary caught the error instead of run's pipeline:\n{stderr}"
         )
-        assert "Shell details:" in result.stderr, (
-            f"category-aware shell rendering missing — failed-node diagnostic not routed through run's executor_service:\n{result.stderr}"
+        assert "Shell details:" in stderr, (
+            f"category-aware shell rendering missing — failed-node diagnostic not routed through run's executor_service:\n{stderr}"
         )
-        assert "At: node 'boom'" in result.stderr, f"node-specific attribution missing:\n{result.stderr}"
+        assert "At: node 'boom'" in stderr, f"node-specific attribution missing:\n{stderr}"

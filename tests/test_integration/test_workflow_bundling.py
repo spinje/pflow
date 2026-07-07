@@ -355,7 +355,7 @@ class TestSaveWorkflowWithOptionsBundles:
 
         # Assert: bundled_files list includes the discovered dependency
         assert len(bundled_files) >= 1
-        assert any("prompts/agent.md" in f for f in bundled_files)
+        assert any("prompts/agent.md" in f.replace("\\", "/") for f in bundled_files)
         assert validated_ir["nodes"][0]["id"] == "ask"
 
         # Assert: the actual bundled file exists on disk alongside the entry point

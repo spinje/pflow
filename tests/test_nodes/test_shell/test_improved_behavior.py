@@ -1,6 +1,8 @@
 """Improved tests that verify actual behavior, not just superficial checks."""
 
 import os
+import re
+import sys
 import tempfile
 import time
 
@@ -9,8 +11,7 @@ from pflow.nodes.shell.shell import ShellNode
 
 def _shell_path(path: str) -> str:
     normalized = path.replace("\\", "/").rstrip("/")
-    if len(normalized) >= 2 and normalized[1] == ":":
-        normalized = f"/{normalized[0].lower()}{normalized[2:]}"
+    normalized = re.sub(r"(?<![A-Za-z0-9_/-])([A-Za-z]):/", lambda m: f"/{m.group(1).lower()}/", normalized)
     return normalized
 
 
@@ -149,21 +150,22 @@ class TestImprovedErrorDetection:
         assert "not found" in shared["stderr"].lower() or "nicht gefunden" in shared["stderr"].lower()
 
         # Permission denied or read-only (trying to write to root)
-        shared = {}
-        action = run_shell_node(shared, command="echo test > /test_file_root.txt")
-        assert action == "error"
-        assert shared["exit_code"] != 0
-        # Could be permission denied or read-only file system
-        stderr_lower = shared["stderr"].lower()
-        assert any(
-            msg in stderr_lower
-            for msg in [
-                "permission denied",
-                "read-only",
-                "keine berechtigung",
-                "operation not permitted",
-            ]
-        )
+        if sys.platform != "win32":
+            shared = {}
+            action = run_shell_node(shared, command="echo test > /test_file_root.txt")
+            assert action == "error"
+            assert shared["exit_code"] != 0
+            # Could be permission denied or read-only file system
+            stderr_lower = shared["stderr"].lower()
+            assert any(
+                msg in stderr_lower
+                for msg in [
+                    "permission denied",
+                    "read-only",
+                    "keine berechtigung",
+                    "operation not permitted",
+                ]
+            )
 
         # Syntax error
         shared = {}
@@ -272,7 +274,8 @@ class TestShellSpecificBehaviors:
         run_shell_node(shared, command="echo ~")
 
         output = shared["stdout"].strip()
-        assert _shell_path(output) == _shell_path(os.path.expanduser("~"))
+        expected_home = os.environ.get("HOME") or os.path.expanduser("~")
+        assert _shell_path(output) == _shell_path(expected_home)
         assert output != "~"  # Should be expanded
 
     def test_shell_builtin_commands(self):

@@ -44,6 +44,8 @@ def test_stdin_has_data_returns_true_for_fifo(monkeypatch):
 
     from pflow.core.shell_integration import stdin_has_data
 
+    monkeypatch.setattr("sys.platform", "linux")
+
     class MockStdin:
         closed = False
 

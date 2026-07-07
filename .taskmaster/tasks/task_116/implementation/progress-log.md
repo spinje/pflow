@@ -997,3 +997,82 @@ Expected next step: commit/push with `[skip review]`, then inspect the new
 `tests-windows` run. Remaining Windows failures, if any, should be the next
 round's ground truth; do not flip `continue-on-error` or wire the Windows job
 into the gate until a full Windows run is green.
+
+## 2026-07-07 — CI round 2 observed (after `06001761`, next fix pass started)
+
+Pushed `06001761 Fix Windows CI round 1 failures [skip review]` plus the
+previous local progress-log commit. New Main run:
+https://github.com/spinje/pflow/actions/runs/28860487854
+
+Round 2 status:
+- All Linux/quality/web/docs-equivalent PR gates passed.
+- `tests-and-type-check-done` passed because `tests-windows` remains
+  continue-on-error.
+- `tests-windows` failed in 5m56s; MCP npx smoke passed again.
+- Pytest summary improved to **50 failed, 8634 passed, 75 skipped,
+  553 warnings**.
+- Windows mypy improved to **2 errors**, both in `shell.py` where Windows
+  mypy infers decoded `stdout`/`stderr` as `str` before the binary fallback
+  assigns `bytes`.
+
+Round 2 dominant remaining classes:
+- Cache-analysis trace joins still use mixed workflow-path keys
+  (`C:\...`, `C:/...`, `/abs/...`, `\abs\...`). This is product behavior, not
+  just assertions: rows miss trace costs/outputs when trace metadata and
+  analyzer-discovered child paths spell the same workflow differently. Next
+  fix should canonicalize workflow-path keys at the cache-analysis/trace
+  boundary.
+- Many shell-binary unit tests patch `subprocess.run`, but real win32 shell
+  execution now correctly goes through the new `Popen` helper. These tests are
+  about binary decoding/post-processing, not Git Bash itself; update them to
+  patch the shell runner seam or force the POSIX subprocess path intentionally.
+- A few real shell semantics assertions still assume native Windows spelling
+  after Git Bash returns `/c/...`/`D:/...`; normalize semantically.
+- Remaining singletons: CLI error-boundary `NoneType` assertion, FIFO stdin
+  behavior on Windows, trace report path text, JSON nested access, workflow
+  bundling path list, and one resume-engine null save.
+
+Next iteration starts from `/tmp/pflow-win-round2.log` and
+`/tmp/pflow-win-round2-failures.txt`.
+
+## 2026-07-07 — CI round 2 fix pass (local, ready for round 3)
+
+Fixed the deterministic Windows mypy regression:
+- `ShellNode` binary stdout/stderr fallback variables are explicitly typed as
+  `str | bytes`, matching the runtime branch where decode failures preserve
+  raw bytes.
+
+Fixed the remaining cache-analysis path-key class as product behavior:
+- Added `normalize_workflow_path_key()` and threaded it through trace-tree
+  walk events, explicit child-workflow edges, batch child workflow paths,
+  analyzer lookup paths, trace scope checks, and cross-workflow walker output.
+- Relative child workflow paths now resolve with slash-normalized logical keys
+  instead of host-platform `Path` spelling, so Windows trace metadata and
+  analyzer-discovered paths join on the same workflow key.
+
+Fixed shell/test portability issues from round 2:
+- Simple `which missing` is treated as a safe not-found command even when Git
+  Bash emits stderr, while pipeline forms still surface downstream failures.
+- Shell-binary unit tests intentionally force the POSIX `subprocess.run` path;
+  Git Bash/Popen coverage remains in `test_windows_bash`.
+- Remaining Git Bash path assertions normalize drive/path spelling
+  semantically instead of requiring native Windows text.
+
+Fixed the singletons called out by the round 2 log:
+- FIFO stdin mock test now exercises its intended POSIX branch.
+- CLI error-boundary assertions tolerate `stderr=None`.
+- Recursive JSON fixture no longer depends on fragile echo/backslash quoting.
+- Workflow bundling path assertions normalize separators.
+- Trace report and resume-engine fixtures use UTF-8/as-posix where Windows
+  shell/path parsing made the previous fixture ambiguous.
+- The root-permission shell failure subcase is skipped on Windows because Git
+  Bash `/` maps to a runner-owned install/root area rather than POSIX root
+  permissions.
+
+Local validation after this pass:
+- Targeted round-2 failure slice: **733 passed**.
+- `make check`: **green** (ruff, format, pre-commit hooks, mypy, deptry).
+- `make test`: **8714 passed, 532 warnings**.
+
+Expected next step: commit/push with `[skip review]`, then inspect the next
+`tests-windows` run and continue from the new CI ground truth.

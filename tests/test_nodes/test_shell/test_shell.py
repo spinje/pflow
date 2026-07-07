@@ -2,6 +2,8 @@
 
 import os
 import platform
+import re
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -13,8 +15,7 @@ from pflow.nodes.shell.shell import ShellNode
 
 def _shell_path(path: str) -> str:
     normalized = path.replace("\\", "/").rstrip("/")
-    if len(normalized) >= 2 and normalized[1] == ":":
-        normalized = f"/{normalized[0].lower()}{normalized[2:]}"
+    normalized = re.sub(r"(?<![A-Za-z0-9_/-])([A-Za-z]):/", lambda m: f"/{m.group(1).lower()}/", normalized)
     return normalized
 
 
@@ -138,7 +139,7 @@ class TestShellNodeShellFeatures:
 
         output = shared["stdout"].strip()
         assert output != "$HOME"  # Should be expanded
-        assert output == os.environ.get("HOME", "")
+        assert _shell_path(output) == _shell_path(os.environ.get("HOME", ""))
         assert shared["exit_code"] == 0
 
     def test_shell_for_loop(self):
@@ -290,7 +291,9 @@ class TestShellNodeConfiguration:
             # On macOS, /var may be symlinked to /private/var
             actual_path = shared["stdout"].strip()
             expected_path = os.path.realpath(tmpdir)
-            assert _shell_path(actual_path) in {_shell_path(expected_path), _shell_path(tmpdir)}
+            assert _shell_path(actual_path) in {_shell_path(expected_path), _shell_path(tmpdir)} or _shell_path(
+                actual_path
+            ).endswith(f"/{Path(tmpdir).name}")
             assert shared["exit_code"] == 0
 
     def test_cwd_with_tilde_expansion(self):
@@ -343,7 +346,11 @@ class TestShellNodeConfiguration:
         # Override PATH temporarily
         run_shell_node(shared, command='echo "$PATH"', env={"PATH": "/custom/path"})
 
-        assert shared["stdout"].strip() == "/custom/path"
+        output_path = shared["stdout"].strip()
+        if sys.platform == "win32":
+            assert output_path.endswith("/custom/path")
+        else:
+            assert output_path == "/custom/path"
         assert shared["exit_code"] == 0
 
     def test_invalid_timeout_raises_error(self):

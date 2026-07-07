@@ -476,10 +476,11 @@ class ShellNode(Node):
         ):
             return True, "ripgrep exit 1 with empty stderr - no matches"
 
-        # which returns 1 when command doesn't exist (that's its purpose)
-        # BUT only if stderr is empty - otherwise a downstream command likely failed
-        if exit_code != 0 and not has_stderr_content and command.strip().startswith("which "):
-            return True, "which exit 1 with empty stderr - command not found"
+        # which returns non-zero when command doesn't exist (that's its purpose).
+        # Keep this to a simple command so pipeline/downstream failures still surface.
+        stripped_command = command.strip()
+        if exit_code != 0 and stripped_command.startswith("which ") and "|" not in stripped_command:
+            return True, "which exit non-zero - command not found"
 
         # command -v returns 1 when command doesn't exist
         # BUT only if stderr is empty - otherwise a downstream command likely failed
@@ -526,8 +527,9 @@ class ShellNode(Node):
             and ("No such file or directory" in stderr or "cannot access" in stderr)
         ):
             return 1
-        # Normalize which not-found to 1 (only if no stderr content)
-        if exit_code != 0 and not has_stderr_content and command.strip().startswith("which "):
+        # Normalize simple which not-found to 1.
+        stripped_command = command.strip()
+        if exit_code != 0 and stripped_command.startswith("which ") and "|" not in stripped_command:
             return 1
         # Normalize command -v not-found to 1 (only if no stderr content)
         if exit_code != 0 and not has_stderr_content and "command -v" in command:
@@ -812,6 +814,7 @@ class ShellNode(Node):
             )
 
             # Handle stdout - try decode, fallback to binary
+            stdout: str | bytes
             try:
                 stdout = result.stdout.decode("utf-8")
                 stdout_is_binary = False
@@ -821,6 +824,7 @@ class ShellNode(Node):
                 stdout_is_binary = True
 
             # Handle stderr - try decode, fallback to binary
+            stderr: str | bytes
             try:
                 stderr = result.stderr.decode("utf-8")
                 stderr_is_binary = False

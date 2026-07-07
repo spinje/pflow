@@ -42,6 +42,7 @@ from pflow.core.prompt_cache import (  # noqa: F401 — see docstring.
     _resolve_static_prefix_for_cache,
     deterministic_serialize,
 )
+from pflow.core.trace_tree import normalize_workflow_path_key
 from pflow.core.validation_utils import generate_dummy_parameters
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.core.workflow_id import synthesize_inline_workflow_id
@@ -132,7 +133,11 @@ def analyze(
     # labeling) — every site that correlates analyzer-time and runtime state.
     # ``"<inline>"`` is reserved for the displayed identifier — a human-readable
     # label kept separate from the lookup key.
-    lookup_path = workflow_path if workflow_path is not None else synthesize_inline_workflow_id(workflow_ir)
+    lookup_path = (
+        normalize_workflow_path_key(workflow_path)
+        if workflow_path is not None
+        else synthesize_inline_workflow_id(workflow_ir)
+    )
 
     # CR-1305 W3: default-construct ``memo_cache`` from disk when the caller
     # didn't supply one. Production entry points (CLI / MCP / dry-run nudge)
