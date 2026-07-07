@@ -1173,3 +1173,29 @@ Local validation after this pass:
 Expected next step: commit/push with `[skip review]`, then inspect the next
 `tests-windows` run. At this point the expected outcome is either green Windows
 or a very small residual list.
+
+## 2026-07-07 — CI round 5 green, Windows gate enabled
+
+Pushed `1afdf52c Fix Windows CI round 4 failures [skip review]`. New Main run:
+https://github.com/spinje/pflow/actions/runs/28865406812
+
+Round 5 status:
+- Main concluded **success**.
+- `tests-windows` concluded **success**.
+- Windows pytest: **8682 passed, 77 skipped, 557 warnings**.
+- Windows mypy: **Success: no issues found in 246 source files**.
+- MCP npx smoke: **passed** (`pflow mcp add` + `pflow mcp sync everything`
+  discovered and registered tools).
+
+Follow-up completed after green Windows:
+- Removed `continue-on-error: true` from `tests-windows`.
+- Wired `tests-windows` into the `tests-and-type-check-done` summary gate via
+  `needs: [tests-and-type-check, tests-windows]`.
+- Updated the workflow comments from non-blocking instrumentation to active
+  Windows gate language.
+
+Local validation for the gate change:
+- `make check`: **green**.
+
+Expected next step: commit/push the gate flip, then confirm the next Main run
+stays green with Windows as a blocking job.

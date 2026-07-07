@@ -82,25 +82,26 @@ jobs:
 
   # Summary job for branch protection — matrix jobs report as
   # "tests-and-type-check (3.10)" etc., so the bare name never resolves.
-  # Point the required status check at this job instead.
+  # Point the required status check at this job; it also gates the single
+  # Windows job now that Task 116 is green.
   tests-and-type-check-done:
     if: always()
-    needs: tests-and-type-check
+    needs: [tests-and-type-check, tests-windows]
     runs-on: ubuntu-latest
     steps:
       - run: |
           if [[ "${{ needs.tests-and-type-check.result }}" != "success" ]]; then
             exit 1
           fi
+          if [[ "${{ needs.tests-windows.result }}" != "success" ]]; then
+            exit 1
+          fi
 
-  # Task 116: instrument-first. Non-blocking until Windows support is
-  # actually green (flipped on in Phase 6, which also wires this into the
-  # tests-and-type-check-done gate). Single Python version (not a matrix) —
+  # Task 116 Windows gate. Single Python version (not a matrix) —
   # version-specific bugs are rarely Windows-specific, and this job is
   # already the expensive one (Windows runners run ~2x slower).
   tests-windows:
     runs-on: windows-latest
-    continue-on-error: true
     # ~8k tests at ~2x runner slowness should land well under this; the cap
     # exists so a hung test/npx spawn can't burn a runner for the 6h default.
     timeout-minutes: 60
