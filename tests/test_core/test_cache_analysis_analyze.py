@@ -7579,7 +7579,7 @@ def test_workflow_appears_as_child_detects_sub_workflow_via_default_edges(
     # Bug A signal #2: text rendering carries the redirect note + suggested command.
     redirect_notes = [n for n in result.notes if "appears as a sub-workflow" in n]
     assert len(redirect_notes) == 1, f"expected redirect note, got: {result.notes}"
-    assert child_path in redirect_notes[0]
+    assert normalize_workflow_path_key(child_path) in redirect_notes[0]
     assert "pflow analyze-cache" in redirect_notes[0]
 
 

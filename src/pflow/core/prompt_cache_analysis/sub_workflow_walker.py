@@ -466,6 +466,7 @@ def _build_parameters_by_workflow(
     stale_memo_uncheckable: set[tuple[str | None, str]] | None = None,
 ) -> dict[str | None, dict[str, Any]]:
     """Build workflow-scoped parameter views from cross-workflow input edges."""
+    root_workflow_path = normalize_workflow_path_key(root_workflow_path)
     params_by_workflow: dict[str | None, dict[str, Any]] = {root_workflow_path: dict(root_parameters)}
     irs_by_workflow = getattr(cw_result, "irs_by_workflow", {}) or {}
     remaining = list(getattr(cw_result, "edges", ()) or ())
@@ -474,11 +475,11 @@ def _build_parameters_by_workflow(
         made_progress = False
         next_remaining = []
         for edge in remaining:
-            parent_workflow = str(getattr(edge, "parent_workflow", root_workflow_path))
+            parent_workflow = normalize_workflow_path_key(str(getattr(edge, "parent_workflow", root_workflow_path)))
             if parent_workflow not in params_by_workflow:
                 next_remaining.append(edge)
                 continue
-            child_workflow = getattr(edge, "child_workflow", None)
+            child_workflow = normalize_workflow_path_key(getattr(edge, "child_workflow", None))
             child_input_name = getattr(edge, "child_input_name", None)
             if child_workflow is None or child_input_name is None:
                 continue
@@ -497,7 +498,7 @@ def _build_parameters_by_workflow(
                 continue
             if stale_memo_uncheckable is not None:
                 stale_memo_uncheckable.update(_unchecked_parent_memo_roots(edge, parent_ctx))
-            child_params = params_by_workflow.setdefault(str(child_workflow), {})
+            child_params = params_by_workflow.setdefault(child_workflow, {})
             child_params[str(child_input_name)] = resolved
             made_progress = True
         remaining = next_remaining

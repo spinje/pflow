@@ -7189,7 +7189,7 @@ def test_partial_prompt_cache_emits_once_per_workflow_regardless_of_dynamic_batc
 def test_partial_prompt_cache_external_prompt_md_file_resolved_at_analyzer_time(tmp_path: Path) -> None:
     prompt_file = tmp_path / "prompt.md"
     prompt_file.write_text("Use ${a} and ${b}.", encoding="utf-8")
-    workflow_ir = _partial_prompt_cache_workflow(prompts=(str(prompt_file), "Reuse ${a} and ${b}."))
+    workflow_ir = _partial_prompt_cache_workflow(prompts=(prompt_file.as_posix(), "Reuse ${a} and ${b}."))
     resolve_file_references(workflow_ir, tmp_path)
 
     diag, _result = _partial_diag(workflow_ir)

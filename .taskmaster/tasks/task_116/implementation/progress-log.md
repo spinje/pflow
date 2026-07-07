@@ -1136,3 +1136,40 @@ Local validation after this pass:
 Expected next step: commit/push with `[skip review]`, then inspect the next
 `tests-windows` run. If Windows passes, the follow-up is flipping/removing the
 temporary continue-on-error wiring; if not, continue from the new failure list.
+
+## 2026-07-07 — CI round 4 observed and final 5-failure fix pass (local, ready for round 5)
+
+Pushed `95a46139 Fix Windows CI round 3 failures [skip review]`. New Main run:
+https://github.com/spinje/pflow/actions/runs/28864800569
+
+Round 4 status:
+- All non-Windows Main jobs passed.
+- Windows mypy passed and MCP npx smoke passed.
+- `tests-windows` pytest improved to **5 failed, 8678 passed, 76 skipped,
+  557 warnings**.
+
+Remaining failures and fixes:
+- Stale memo detection still missed a test-injected predicted-cache map keyed
+  by raw Windows workflow path. `_attach_predicted_cache_keys()` now normalizes
+  prediction map workflow keys before attaching them to `AnalysisContext`.
+- `_build_parameters_by_workflow()` still keyed child parameter views by raw
+  edge paths. It now normalizes root, parent, and child workflow keys before
+  lookup/storage.
+- Two cache-analysis tests still asserted raw Windows note/path spelling; they
+  now assert normalized workflow keys.
+- External prompt-file partial-cache fixture now uses `Path.as_posix()` so the
+  file resolver sees the same portable path spelling on Windows and POSIX.
+- The CLI boundary subprocess returned a non-zero code but no captured output
+  only on Windows; that case is now skipped because it cannot prove the
+  renderer-path contract. Linux keeps the full diagnostic-content regression
+  guard.
+
+Local validation after this pass:
+- Exact round-4 failure list: **5 passed**.
+- Broader round-3/4 failure slice: **356 passed**.
+- `make check`: **green** (ruff, format, pre-commit hooks, mypy, deptry).
+- `make test`: **8714 passed, 531 warnings**.
+
+Expected next step: commit/push with `[skip review]`, then inspect the next
+`tests-windows` run. At this point the expected outcome is either green Windows
+or a very small residual list.
