@@ -781,3 +781,143 @@ updates from round-0 work:
    `tests-and-type-check-done` (`needs` + result check), set task-116.md
    Status to done + decision-log row, move Task 116 to Recently Completed
    in CLAUDE.md.
+
+## 2026-07-07 — PR publication + durable review artifact
+
+Created feature branch `agent/windows-compatibility` from `main`, committed
+the implementation as `ef25113e Add Windows compatibility support`, pushed it,
+and opened draft PR #564:
+https://github.com/spinje/pflow/pull/564
+
+Local validation before the push:
+- `make check`: green.
+- `make test`: **8709 passed, 660 warnings**.
+- `make test-e2e`: **44 passed, 1 skipped, 118 warnings**.
+
+Auth note for future agents: the first push failed because the token lacked
+GitHub's `workflow` scope while the PR changes `.github/workflows/main.yml`.
+`gh auth refresh -h github.com -s workflow` fixed it via device auth, then
+the push succeeded.
+
+Added `.taskmaster/tasks/task_116/task-review.md` as the durable forward
+reference for future Windows work. Shape mirrors recent artifacts
+(`task_173`, `task_174`, `task_175`): metadata, load-bearing files,
+invariants, built/non-built decisions, patterns/anti-patterns, gotchas,
+integration points, tests that matter, and CI handoff protocol. Committed as
+`daf7991a Add Task 116 review artifact` and pushed to PR #564.
+
+Validation after adding the review artifact:
+- `make check`: green.
+
+## 2026-07-07 — CI round 1 observed (first real Windows signal, not fixed yet)
+
+PR #564 produced the first real `tests-windows` run:
+https://github.com/spinje/pflow/actions/runs/28858119971/job/85589625649
+
+Overall status:
+- Existing Linux/quality/web gates passed; `tests-and-type-check-done`
+  passed because `tests-windows` is still intentionally non-blocking.
+- `tests-windows` failed, as expected for round 1.
+- Pytest summary: **117 failed, 8560 passed, 73 skipped, 561 warnings,
+  4 errors** in 228.68s.
+- Windows mypy summary: **16 errors in 6 files**.
+- MCP npx smoke **passed**: `npx --version` was 10.9.8, `pflow mcp sync
+  everything` discovered and registered 13 tools. This closes the SDK
+  `.cmd` shim assumption positively.
+
+Premise checks:
+- GitHub ran the job under `C:\Program Files\Git\bin\bash.EXE`.
+- The shell-node premise is therefore not blocked by missing Git Bash on
+  the runner. Do not spend the next pass on resolver availability; focus on
+  product/test portability failures.
+
+Windows mypy classes:
+- `os.statvfs` is type-unavailable on Windows in
+  `nodes/file/write_file.py` and `nodes/file/copy_file.py`.
+- `fcntl.flock` / `LOCK_*` are type-unavailable on Windows in
+  `runtime/workflow_trace.py`, `runtime/resume_source.py`, and
+  `ui/run_tailer.py`.
+- `signal.SIGPIPE` is type-unavailable on Windows in `cli/main.py`.
+
+These were previously runtime-guarded/audited as safe but not Windows-mypy
+clean. Fix with real `if sys.platform != "win32"` statement branches or
+appropriately scoped ignores/import seams; do not remove the runtime
+degradation behavior.
+
+Dominant pytest failure classes from the log:
+
+1. **Path separator / path normalization assertions.**
+   Many expected POSIX strings (`/abs/...`, relative `sub/child.pflow.md`,
+   `/project/shell.py`, `%2F`) compare against Windows paths
+   (`\abs\...`, `sub\child.pflow.md`, `D:\...`, encoded drive paths).
+   Affected areas include cache analysis, workflow bundling, registry
+   metadata, UI path URLs, file/Claude node error messages, and trace report
+   formatting.
+
+2. **Git Bash path conversion / Windows path passed through POSIX commands.**
+   Several shell/resume/cache/only/iteration tests failed because commands
+   like `cat` saw paths such as `C:Usersrunneradmin...` after shell/path
+   mangling. This includes resume-engine tests, cache/memoization sentinel
+   tests, only-snapshot tests, iteration workflow tests, and shell file
+   manipulation tests. This is the predicted MSYS path-mangling class and
+   may be broad enough to justify discussing `MSYS_NO_PATHCONV`, but that is
+   a user-visible semantics decision.
+
+3. **Windows shell semantics vs test expectations.**
+   Shell tests failed around `pwd` formatting, tilde expansion, output
+   redirection to files, `rm`, timeout duration (`sleep 10` waited ~10s
+   rather than timing out at the asserted bound), grep/which smart handling,
+   cwd assertions, and a Windows-branch test that expected the POSIX
+   `shell=True` command string rather than the actual `[bash, "-c", cmd]`
+   argv on real win32. Classify each before fixing: some are test-only
+   expectations, some may reveal real Git Bash invocation/env issues.
+
+4. **Encoding gaps outside the already-fixed source sweep.**
+   Guide/example validation and IR example parsing hit `UnicodeDecodeError`
+   under Windows charmap decoding; several plan-to-code harness tests failed
+   with "File must be valid UTF-8 text." This is likely remaining test/helper
+   reads or generated skeleton files, not the pflow source sites already
+   covered by PLW1514. Treat as targeted `encoding="utf-8"` fixes after
+   locating the specific read/write sites.
+
+5. **Windows open-handle atomic-write failures.**
+   MCP config tests failed with `[WinError 32]` / `[WinError 5]` around temp
+   files and `mcp-servers.json` replacement. This is the predicted
+   open-handle class and likely needs production/test serialization or
+   Windows-aware expectations around concurrent writes.
+
+6. **StringIO stdin tests now execute the win32 read path in CI.**
+   Several existing `test_shell_integration.py` tests use `io.StringIO` and
+   failed because win32 `read_stdin()` expects `.buffer`. The new helper
+   tests deliberately covered StringIO for stdout/stderr but not stdin.
+   Decide whether `read_stdin()` should gracefully fall back when the stream
+   has no `.buffer`, or whether those tests should mock a realistic stdin
+   object on win32.
+
+7. **Environment variable semantics differ on Windows.**
+   `test_e2e_mixed_input_sources` observed env injection overriding the
+   expected value, and `test_shell_env_var_case_sensitive` saw uppercase win
+   over lowercase. Windows environment variables are case-insensitive, so
+   this needs a product/test contract decision rather than a string tweak.
+
+8. **Residual permission/handle behavior.**
+   `NamedTemporaryFile`-style workflow resolution tests failed with
+   `[WinError 32]` because Windows cannot open/delete a file still held by
+   another handle. This is test setup portability, not necessarily product
+   behavior.
+
+Known non-problems from round 1:
+- Console glyph/cp1252 stdout/stderr crash did not appear as the dominant
+  failure class after the `cli_main()` UTF-8 reconfigure.
+- MCP `.cmd`/npx spawning is confirmed working on `windows-latest`.
+- Git Bash is present and used by the runner.
+
+Recommended next pass:
+1. Fix Windows mypy first; it is small, deterministic, and load-bearing.
+2. Fix or classify the `StringIO` stdin failures because they are directly
+   in Task 116's touched surface.
+3. Group path-normalization assertion fixes by subsystem instead of chasing
+   one-off strings.
+4. Reproduce and decide the MSYS path conversion class before applying a
+   systemic env change such as `MSYS_NO_PATHCONV`.
+5. Keep `continue-on-error: true` until a full `tests-windows` run is green.
