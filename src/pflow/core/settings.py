@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import stat
+import sys
 import tempfile
 import threading
 from fnmatch import fnmatch
@@ -154,7 +155,7 @@ class SettingsManager:
         """Load settings from file or return defaults."""
         if self.settings_path.exists():
             try:
-                with open(self.settings_path) as f:
+                with open(self.settings_path, encoding="utf-8") as f:
                     data = json.load(f)
                 return PflowSettings(**data)
             except Exception as e:
@@ -395,6 +396,14 @@ class SettingsManager:
         Args:
             settings: Optional pre-loaded settings to avoid recursion during load()
         """
+        # POSIX permission bits are meaningless on Windows: st_mode always
+        # reports group/other read on regular files, so this check would
+        # warn every Windows user with secrets on every load — and the
+        # `chmod 600` advice it gives is a no-op there. Windows ACLs are a
+        # different mechanism entirely; skip the check.
+        if sys.platform == "win32":
+            return
+
         if not self.settings_path.exists():
             return
 

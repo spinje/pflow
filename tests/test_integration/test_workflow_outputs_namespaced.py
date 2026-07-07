@@ -48,7 +48,7 @@ class TestWorkflowOutputsNamespaced:
         }
 
         # Save workflow to temp file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             workflow_file = f.name
 
         try:
@@ -83,7 +83,7 @@ class TestWorkflowOutputsNamespaced:
         }
 
         # Save workflow to temp file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             workflow_file = f.name
 
         try:
@@ -132,7 +132,7 @@ class TestWorkflowOutputsNamespaced:
         }
 
         # Save workflow to temp file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             workflow_file = f.name
 
         try:

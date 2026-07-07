@@ -175,7 +175,7 @@ def validate_report_output_dir(report_dir: str | Path, *, allow_unmarked_existin
 
 def _is_valid_report_marker(marker_path: Path) -> bool:
     try:
-        data = json.loads(marker_path.read_text())
+        data = json.loads(marker_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return False
     if not isinstance(data, dict):
@@ -204,8 +204,8 @@ def _render_report_snapshot(
     total_nodes: int | None,
 ) -> None:
     summary = _build_summary(trace, source_path=str(trace_path), only_node=only_node, total_nodes=total_nodes)
-    (report_dir / "summary.md").write_text(summary)
-    (report_dir / _REPORT_MARKER).write_text(_build_report_marker(trace, trace_path))
+    (report_dir / "summary.md").write_text(summary, encoding="utf-8")
+    (report_dir / _REPORT_MARKER).write_text(_build_report_marker(trace, trace_path), encoding="utf-8")
     _write_node_files(trace.get("nodes", []), report_dir, node_index=1)
 
 
@@ -666,7 +666,7 @@ def _write_node_files(events: list[dict[str, Any]], parent_dir: Path, node_index
             node_dir.mkdir(exist_ok=True)
 
             # Write container summary
-            (node_dir / "summary.md").write_text(_build_node_summary(event))
+            (node_dir / "summary.md").write_text(_build_node_summary(event), encoding="utf-8")
 
             if batch_items:
                 for item in batch_items:
@@ -675,17 +675,19 @@ def _write_node_files(events: list[dict[str, Any]], parent_dir: Path, node_index
                         # Sub-workflow batch item — create item directory
                         item_dir = node_dir / _item_filename(item, suffix="")
                         item_dir.mkdir(exist_ok=True)
-                        (item_dir / "summary.md").write_text(_build_batch_item_summary(item))
+                        (item_dir / "summary.md").write_text(_build_batch_item_summary(item), encoding="utf-8")
                         _write_node_files(item_events, item_dir, node_index=1)
                     else:
                         # Simple batch item — single file
-                        (node_dir / _item_filename(item)).write_text(_build_batch_item_file(item, event))
+                        (node_dir / _item_filename(item)).write_text(
+                            _build_batch_item_file(item, event), encoding="utf-8"
+                        )
 
             if sub_events:
                 _write_node_files(sub_events, node_dir, node_index=1)
         else:
             # Leaf node — single file
-            (parent_dir / f"{prefix}-{safe_id}.md").write_text(_build_node_file(event))
+            (parent_dir / f"{prefix}-{safe_id}.md").write_text(_build_node_file(event), encoding="utf-8")
 
         idx += 1
     return idx

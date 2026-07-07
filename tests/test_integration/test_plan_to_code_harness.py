@@ -506,7 +506,7 @@ _HARNESS_DIR = Path(__file__).resolve().parents[2] / "examples/agent-orchestrati
 
 def _successors(pflow_path: Path) -> dict[str, set[str]]:
     """Map each node id to the set of its successor node ids in the real .pflow.md."""
-    ir = parse_markdown(pflow_path.read_text()).ir
+    ir = parse_markdown(pflow_path.read_text(encoding="utf-8")).ir
     succ: dict[str, set[str]] = {}
     for edge in ir["edges"]:
         succ.setdefault(edge["from"], set()).add(edge["to"])

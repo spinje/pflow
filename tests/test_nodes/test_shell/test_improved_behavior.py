@@ -189,7 +189,7 @@ class TestImprovedWorkingDirectory:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create a file in tmpdir
             test_file = os.path.join(tmpdir, "test.txt")
-            with open(test_file, "w") as f:
+            with open(test_file, "w", encoding="utf-8") as f:
                 f.write("content")
 
             # Try to read file with relative path from different directories
@@ -248,7 +248,7 @@ class TestShellSpecificBehaviors:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create some files
             for i in range(3):
-                open(os.path.join(tmpdir, f"file{i}.txt"), "w").close()
+                open(os.path.join(tmpdir, f"file{i}.txt"), "w", encoding="utf-8").close()
 
             shared = {}
             run_shell_node(shared, command="ls *.txt", cwd=tmpdir)
@@ -313,7 +313,7 @@ class TestRealWorldUseCases:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create original file
             original = os.path.join(tmpdir, "data.txt")
-            with open(original, "w") as f:
+            with open(original, "w", encoding="utf-8") as f:
                 f.write("important data")
 
             # Backup with timestamp

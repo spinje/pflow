@@ -34,7 +34,7 @@ class TestFileNodeRetryBehavior:
         Uses real file with simulated lock contention to test retry behavior.
         """
         # Create a real file for testing
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", delete=False) as f:
             f.write("test content\n")
             temp_path = f.name
 
@@ -120,7 +120,7 @@ class TestFileNodeRetryBehavior:
 
         BEHAVIOR: Node should handle realistic file contention gracefully.
         """
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", delete=False) as f:
             f.write("shared file content\n")
             temp_path = f.name
 
@@ -186,7 +186,7 @@ class TestFileNodeRetryBehavior:
             assert action == "default"
             assert os.path.exists(target_path)
 
-            with open(target_path) as f:
+            with open(target_path, encoding="utf-8") as f:
                 content = f.read()
                 assert content == "test content"
 
@@ -200,7 +200,7 @@ class TestFileNodeRetryBehavior:
             dest_path = os.path.join(tmpdir, "dest.txt")
 
             # Create source file
-            with open(source_path, "w") as f:
+            with open(source_path, "w", encoding="utf-8") as f:
                 f.write("source content to copy")
 
             node = CopyFileNode()
@@ -230,7 +230,7 @@ class TestFileNodeRetryBehavior:
             assert os.path.exists(source_path)  # Source should remain
 
             # Verify content was copied correctly
-            with open(dest_path) as f:
+            with open(dest_path, encoding="utf-8") as f:
                 assert f.read() == "source content to copy"
 
     def test_move_operations_complete_successfully_within_filesystem(self):
@@ -244,7 +244,7 @@ class TestFileNodeRetryBehavior:
 
             # Create source file with specific content
             original_content = "content to be moved"
-            with open(source_path, "w") as f:
+            with open(source_path, "w", encoding="utf-8") as f:
                 f.write(original_content)
 
             node = MoveFileNode()
@@ -260,7 +260,7 @@ class TestFileNodeRetryBehavior:
 
             # BEHAVIOR: File should be at destination with correct content
             assert os.path.exists(dest_path)
-            with open(dest_path) as f:
+            with open(dest_path, encoding="utf-8") as f:
                 assert f.read() == original_content
 
             # BEHAVIOR: Source should no longer exist (true move, not copy)
@@ -339,7 +339,7 @@ class TestFileNodeRetryBehavior:
             dest_path = os.path.join(tmpdir, "dest.txt")
 
             # Create valid file
-            with open(source_path, "w") as f:
+            with open(source_path, "w", encoding="utf-8") as f:
                 f.write("test content")
 
             attempt_count = 0
@@ -377,7 +377,7 @@ class TestFileNodeRetryBehavior:
             dest_path = os.path.join(tmpdir, "dest.txt")
 
             # Create valid file
-            with open(source_path, "w") as f:
+            with open(source_path, "w", encoding="utf-8") as f:
                 f.write("test success content")
 
             node3.set_params({"source_path": source_path, "dest_path": dest_path})

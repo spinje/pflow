@@ -1088,13 +1088,24 @@ async def run(request: Request) -> Response:
     # `-m pflow`): `pflow` is a package with no `__main__.py`, so `python -m pflow` errors; `pflow.cli` is
     # the package's documented module entry (`cli/__main__.py` → `cli_main`, same target as the `pflow`
     # console script) and runs against the server's own interpreter.
+    # Task 116: `start_new_session=True` (POSIX setsid) is silently ignored on win32, so the ADR-0008
+    # detachment requirement (run survives server exit) would otherwise not hold there — the win32
+    # equivalent is DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP. An `if`/`else` statement (not a ternary)
+    # is load-bearing for mypy: it treats `if sys.platform == "win32":` blocks as unreachable on a
+    # non-Windows run and skips type-checking the body — a ternary expression doesn't get that treatment,
+    # so `subprocess.DETACHED_PROCESS` (Windows-only in typeshed) would fail ubuntu CI's mypy step.
+    detach_kwargs: dict[str, Any]
+    if sys.platform == "win32":
+        detach_kwargs = {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
+    else:
+        detach_kwargs = {"start_new_session": True}
     subprocess.Popen(  # noqa: S603 — argv list, no shell; tokens are injection-safe (one element each)
         [sys.executable, "-m", "pflow.cli", "run", key, "--output-format", "json", *tokens],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        start_new_session=True,
         env={**os.environ, "PFLOW_EXECUTION_ID": run_id},
+        **detach_kwargs,
     )
     return _json({"status": "spawned", "run_id": run_id})
 

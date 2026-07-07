@@ -115,5 +115,7 @@ def write_trace_jsonl(path: Path, trace_data: dict[str, Any]) -> Path:
     the test suite (#531): ``load_trace_file`` reads only the Task-172 JSONL format, so fixtures must be
     written via the flatten serializer. ``default=str`` matches the streaming writer's ``json.dump`` so a
     non-JSON-native leaf (e.g. a ``datetime``) serializes the same way."""
-    path.write_text("\n".join(json.dumps(line, default=str) for line in flatten_trace_to_lines(trace_data)) + "\n")
+    path.write_text(
+        "\n".join(json.dumps(line, default=str) for line in flatten_trace_to_lines(trace_data)) + "\n", encoding="utf-8"
+    )
     return path

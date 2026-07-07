@@ -20,7 +20,7 @@ def test_hello_workflow_execution(tmp_path):
 
     with runner.isolated_filesystem():
         # Create input file
-        with open("input.txt", "w") as f:
+        with open("input.txt", "w", encoding="utf-8") as f:
             f.write("Hello\nWorld")
 
         # Create workflow with namespacing support
@@ -56,7 +56,7 @@ def test_hello_workflow_execution(tmp_path):
 
         # Verify output file
         assert Path("output.txt").exists()
-        content = Path("output.txt").read_text()
+        content = Path("output.txt").read_text(encoding="utf-8")
         assert "Hello" in content
         assert "World" in content
 
@@ -129,7 +129,7 @@ def test_invalid_workflow_markdown(tmp_path):
 
     with runner.isolated_filesystem():
         # Create invalid workflow (missing ## Steps section)
-        Path("workflow.pflow.md").write_text("# Bad Workflow\n\nNo steps at all.\n")
+        Path("workflow.pflow.md").write_text("# Bad Workflow\n\nNo steps at all.\n", encoding="utf-8")
 
         # Run CLI
         result = runner.invoke(main, ["./workflow.pflow.md"])
@@ -148,7 +148,9 @@ def test_invalid_workflow_validation(tmp_path):
 
     with runner.isolated_filesystem():
         # Create workflow with empty Steps section (no nodes)
-        Path("workflow.pflow.md").write_text("# Empty Workflow\n\nWorkflow with no nodes.\n\n## Steps\n")
+        Path("workflow.pflow.md").write_text(
+            "# Empty Workflow\n\nWorkflow with no nodes.\n\n## Steps\n", encoding="utf-8"
+        )
 
         # Run CLI
         result = runner.invoke(main, ["./workflow.pflow.md"])
@@ -170,7 +172,7 @@ def test_plain_text_file_handling(tmp_path):
 
     with runner.isolated_filesystem():
         # Create plain text file
-        with open("natural.txt", "w") as f:
+        with open("natural.txt", "w", encoding="utf-8") as f:
             f.write("read the file and summarize it")
 
         # Run CLI
@@ -223,7 +225,7 @@ def test_verbose_execution_output(tmp_path):
 
     with runner.isolated_filesystem():
         # Create input file
-        with open("input.txt", "w") as f:
+        with open("input.txt", "w", encoding="utf-8") as f:
             f.write("Test content")
 
         # Create simple workflow with explicit template variable connection
@@ -263,7 +265,7 @@ def test_data_flows_between_nodes(tmp_path):
 
     with runner.isolated_filesystem():
         # Create input file with test data
-        with open("input.txt", "w") as f:
+        with open("input.txt", "w", encoding="utf-8") as f:
             f.write("Test content\nSecond line")
 
         # Create workflow that passes data between nodes
@@ -293,7 +295,7 @@ def test_data_flows_between_nodes(tmp_path):
 
         # Verify the data was correctly passed and written
         assert Path("output.txt").exists()
-        content = Path("output.txt").read_text()
+        content = Path("output.txt").read_text(encoding="utf-8")
         assert "Test content" in content
         assert "Second line" in content
 
@@ -307,7 +309,7 @@ def test_permission_error_read(tmp_path):
 
     with runner.isolated_filesystem():
         # Create a file and make it unreadable
-        with open("protected.txt", "w") as f:
+        with open("protected.txt", "w", encoding="utf-8") as f:
             f.write("Secret content")
 
         # Make file unreadable (Unix-like systems only)

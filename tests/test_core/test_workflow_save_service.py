@@ -15,6 +15,7 @@ Updated for Task 107: Markdown workflow format (.pflow.md). File loading uses
 parse_markdown(), save uses markdown_content string instead of IR dict.
 """
 
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -640,6 +641,10 @@ class TestDeleteDraftSafely:
             assert result is False
             assert unsafe_file.exists(), "File outside safe dir should NOT be deleted"
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="creates a real symlink — needs elevated privileges on Windows (Task 116: don't certify symlinks on win32)",
+    )
     def test_refuse_delete_symlinks(self, tmp_path: Path) -> None:
         """SECURITY: Refuse to delete symlinks (defense in depth).
 

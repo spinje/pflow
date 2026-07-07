@@ -77,7 +77,7 @@ class Registry:
         if not self.registry_path.exists():
             return {}
         try:
-            content = self.registry_path.read_text()
+            content = self.registry_path.read_text(encoding="utf-8")
             if not content.strip():
                 return {}
             data = json.loads(content)
@@ -150,7 +150,7 @@ class Registry:
             return {}
 
         try:
-            content = self.registry_path.read_text()
+            content = self.registry_path.read_text(encoding="utf-8")
             if not content.strip():
                 logger.debug("Registry file is empty")
                 return {}
@@ -216,7 +216,7 @@ class Registry:
         # filesystem (cross-fs rename would raise).
         fd, tmp = tempfile.mkstemp(dir=self.registry_path.parent, prefix=".registry.", suffix=".tmp")
         try:
-            with os.fdopen(fd, "w") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, sort_keys=True)
             os.replace(tmp, self.registry_path)
         except BaseException:

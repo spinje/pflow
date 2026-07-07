@@ -23,7 +23,7 @@ class TestMarkdownParseErrorHandling:
 This workflow has no steps section.
 """
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(malformed_md)
             temp_path = f.name
 
@@ -53,7 +53,7 @@ A node without type.
 - command: echo test
 """
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(malformed_md)
             temp_path = f.name
 
@@ -84,7 +84,7 @@ A node.
 - invalid-yaml: {unclosed bracket
 """
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(malformed_md)
             temp_path = f.name
 
@@ -105,7 +105,7 @@ A node.
         """Test that .json files show clear migration message."""
         json_content = '{"ir_version": "0.1.0", "nodes": []}'
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".json", delete=False) as f:
             f.write(json_content)
             temp_path = f.name
 
@@ -139,7 +139,7 @@ A test node.
 - command: echo test
 """
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(valid_md)
             temp_path = f.name
 
@@ -200,7 +200,7 @@ Missing type.
 - command: echo test
 """
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(malformed_md)
             temp_path = f.name
 
@@ -234,7 +234,7 @@ echo test
 # Missing closing backticks
 """
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(malformed_md)
             temp_path = f.name
 

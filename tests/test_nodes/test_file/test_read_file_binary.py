@@ -150,7 +150,7 @@ class TestReadFileBinarySupport:
         BUG IT CATCHES: Text files incorrectly flagged as binary, write-file
         treats them as binary, corrupts text data.
         """
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", delete=False, suffix=".txt") as f:
             f.write("Text content")
             temp_path = f.name
 
@@ -206,7 +206,7 @@ class TestReadFileBinarySupport:
         incorrectly treated as binary.
         """
         text_content = "Line one\nLine two\nLine three"
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", delete=False, suffix=".txt") as f:
             f.write(text_content)
             temp_path = f.name
 

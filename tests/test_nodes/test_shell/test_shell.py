@@ -162,7 +162,7 @@ class TestShellNodeShellFeatures:
         # node = ShellNode()
         shared = {}
 
-        with tempfile.NamedTemporaryFile(mode="r", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="r", delete=False) as f:
             temp_file = f.name
 
         try:
@@ -171,7 +171,7 @@ class TestShellNodeShellFeatures:
             assert shared["exit_code"] == 0
 
             # Verify file was created with content
-            with open(temp_file) as f:
+            with open(temp_file, encoding="utf-8") as f:
                 assert f.read().strip() == "test content"
         finally:
             if os.path.exists(temp_file):
@@ -504,7 +504,7 @@ class TestShellNodePracticalScenarios:
             output_file = os.path.join(tmpdir, "output.txt")
 
             # Create input file
-            with open(input_file, "w") as f:
+            with open(input_file, "w", encoding="utf-8") as f:
                 f.write("hello world")
 
             # Use sed to replace 'world' with 'universe' and save to new file
@@ -512,7 +512,7 @@ class TestShellNodePracticalScenarios:
             assert shared["exit_code"] == 0
 
             # Verify output file content
-            with open(output_file) as f:
+            with open(output_file, encoding="utf-8") as f:
                 assert f.read() == "hello universe"
 
     def test_find_files_by_pattern(self):

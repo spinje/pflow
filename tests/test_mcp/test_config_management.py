@@ -153,7 +153,7 @@ class TestConcurrentAccess:
             assert len(errors) == 0, f"Unexpected errors: {errors}"
 
             # CRITICAL: File must be valid JSON
-            with open(config_path) as f:
+            with open(config_path, encoding="utf-8") as f:
                 final_config = json.load(f)  # Should not raise
 
             # Should have servers (last-write-wins means some may be overwritten)

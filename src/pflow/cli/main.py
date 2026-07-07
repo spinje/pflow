@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import signal
 import sys
 from contextlib import suppress
@@ -96,6 +97,32 @@ class PflowCLI(click.Group):
             formatter.write_dl(rows)
 
 
+def _reconfigure_windows_stdio() -> None:
+    """Force UTF-8 on stdout/stderr on Windows (Task 116, ADR-0013 territory).
+
+    Windows gives PIPED std streams the ANSI code page (cp1252, strict
+    errors), so the first non-ASCII glyph pflow writes (`✓ ✗ ⚠ ↻` in
+    core/output_controller.py) raises UnicodeEncodeError the moment output
+    is redirected — `pflow … | tee` crashes while the same command works in
+    a bare console. Pinning UTF-8 at process entry fixes every consumer at
+    once; on POSIX this is a no-op (streams are already UTF-8 in practice,
+    and the platform guard skips them anyway).
+
+    Lives in cli_main()/__main__ (real-process entry) rather than cli():
+    in-process CliRunner tests replace the streams with StringIO captures
+    that must not be touched — the isinstance guard below is the second
+    line of defense for any exotic stream replacement.
+    """
+    if sys.platform == "win32":
+        for stream in (sys.stdout, sys.stderr):
+            if isinstance(stream, io.TextIOWrapper):
+                with suppress(OSError, ValueError):
+                    # errors= must be passed explicitly: reconfigure() resets
+                    # it to "strict" when only encoding is given, which would
+                    # silently drop stderr's crash-proof "backslashreplace".
+                    stream.reconfigure(encoding="utf-8", errors=stream.errors)
+
+
 def _setup_signals() -> None:
     """Configure signal handlers for all commands."""
 
@@ -172,6 +199,7 @@ cli.add_command(ui_cmd)
 
 def cli_main() -> None:
     """Run the CLI in standalone mode."""
+    _reconfigure_windows_stdio()
     cli(standalone_mode=True)
 
 

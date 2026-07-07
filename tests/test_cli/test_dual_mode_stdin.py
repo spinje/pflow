@@ -24,6 +24,7 @@ import pytest
 from click.testing import CliRunner
 
 from pflow.cli.main import main
+from tests.conftest import set_isolated_home
 from tests.shared.markdown_utils import ir_to_markdown
 
 
@@ -40,7 +41,7 @@ def prepared_subprocess_env(tmp_path_factory, uv_exe):
     (home / ".pflow").mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
-    env["HOME"] = str(home)
+    set_isolated_home(env, home)
 
     subprocess.run(  # noqa: S603
         [uv_exe, "run", "pflow", "registry", "list", "--json"],
@@ -335,6 +336,50 @@ class TestRealShellIntegration:
 
         assert result.returncode == 0
         assert "Test data from pipe" in result.stdout or "Test data from pipe" in result.stderr
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows ground truth for win32 pipe detection (Task 116)")
+    def test_windows_pipe_utf8_round_trip(self, tmp_path, uv_exe, prepared_subprocess_env):
+        """Real-Windows pin for BOTH win32 stdin changes: pipe detection AND UTF-8 decode.
+
+        The Linux unit tests (test_core/test_stdin_windows.py) mock GetFileType,
+        so a wrong constant there would return False forever and stay green.
+        This test pipes real non-ASCII bytes through a real Windows pipe and
+        asserts they route to a `stdin: true` input byte-exact. The workflow
+        writes to a file (read back with explicit UTF-8) so the assertion
+        can't be blurred by console code-page re-encoding on the way out.
+        """
+        out_file = tmp_path / "roundtrip.txt"
+        workflow = {
+            "ir_version": "0.1.0",
+            "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
+            "nodes": [
+                {
+                    "id": "capture",
+                    "type": "write-file",
+                    "params": {"file_path": str(out_file), "content": "${data}"},
+                }
+            ],
+            "edges": [],
+            "start_node": "capture",
+        }
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
+
+        payload = "café ☕ naïve — ✓"
+        # input= gives the child a real anonymous pipe (FILE_TYPE_PIPE); bytes
+        # (no text=True) so the payload reaches stdin as exact UTF-8, not
+        # re-encoded through the console code page.
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "pflow.cli", str(workflow_file)],
+            input=(payload + "\n").encode("utf-8"),
+            capture_output=True,
+            shell=False,
+            env=prepared_subprocess_env,
+        )
+
+        assert result.returncode == 0, f"stderr: {result.stderr.decode('utf-8', errors='replace')}"
+        assert out_file.exists(), "stdin was not detected as a pipe — data never routed to the input"
+        assert out_file.read_text(encoding="utf-8") == payload
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
     def test_pipe_json_triggers_planner(self, tmp_path, uv_exe, prepared_subprocess_env):

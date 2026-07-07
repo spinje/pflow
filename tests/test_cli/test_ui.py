@@ -731,7 +731,7 @@ class TestUiCommand:
         runner = CliRunner()
         with runner.isolated_filesystem():
             Path("wf.pflow.md").write_text(
-                "# x\n\n## Steps\n\n### a\n\nDo a thing now.\n\n- type: shell\n- command: echo hi\n"
+                "# x\n\n## Steps\n\n### a\n\nDo a thing now.\n\n- type: shell\n- command: echo hi\n", encoding="utf-8"
             )
             with (
                 patch("pflow.cli.commands.ui._port_available", return_value=False),

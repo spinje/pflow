@@ -19,6 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
     "Topic :: Software Development :: Build Tools",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
@@ -143,6 +144,26 @@ markers = [
 ]
 # Note: We don't set addopts with -n here to allow flexibility
 # Use 'make test' for parallel or 'make test-debug' for sequential
+# Task 116 (Windows compat): ruff PLW1514 catches unspecified-encoding at
+# open()/read_text()/write_text() call sites when the receiver's Path type is
+# statically inferable, but it has two real blind spots this filter covers:
+# (1) os.fdopen, which PLW1514 never flags at all; (2) any call on a variable
+# derived from an untyped parameter (e.g. `tmp_path / "x"` inside a pytest
+# fixture with no `-> Path` annotation) — ruff can't prove the receiver is a
+# Path, so it silently skips hundreds of call sites of exactly this shape
+# across the test suite (verified: ruff flags `path: Path` but not a bare
+# `tmp_path` fixture param). Scoped to `pflow.*` — not a blanket
+# `error::EncodingWarning` — because Python's warning attribution follows the
+# DEFINING module of the frame that calls open()/write_text()/fdopen(), not
+# the caller: an unscoped filter promotes every third-party library's own
+# missing-encoding warnings (verified: litellm's own
+# containers/endpoint_factory.py) into hard test failures having nothing to
+# do with pflow, and would also swallow the tmp_path blind spot above across
+# the whole test suite rather than catching it where it matters — a
+# regression inside pflow's own source. Only fires when the interpreter runs
+# with PYTHONWARNDEFAULTENCODING=1 (set in Makefile test targets + CI job
+# envs) or -X warn_default_encoding — the filter alone is inert without it.
+filterwarnings = ["error::EncodingWarning:pflow.*"]
 
 [tool.ruff]
 # target-version is inferred from requires-python (>=3.10) — do not pin it separately.
@@ -158,6 +179,12 @@ exclude = [
 ]
 
 [tool.ruff.lint]
+# Task 116 (Windows compat): PLW1514 (unspecified-encoding) is a preview-only
+# rule in ruff 0.15.0 — `explicit-preview-rules` limits preview status to
+# rules named explicitly in `select` rather than enabling the entire preview
+# rule set (which would pull in unrelated, unreviewed lint findings).
+preview = true
+explicit-preview-rules = true
 select = [
     # flake8-2020
     "YTT",
@@ -195,6 +222,8 @@ select = [
     "RUF",
     # tryceratops
     "TRY",
+    # unspecified-encoding (Task 116, Windows compat: locale defaults to cp1252 there)
+    "PLW1514",
 ]
 ignore = [
     # Single-line implicit string concatenation — conflicts with ruff format
@@ -215,7 +244,7 @@ ignore = [
 # Tests are a different context: asserts are the point (S101) and print is fine (T20).
 "tests/*" = ["S101", "T20"]
 "tests/test_core/test_stdin_no_hang.py" = ["S603", "S607", "UP022"]  # Allow subprocess calls for testing stdin hang issue
-"src/pflow/nodes/shell/shell.py" = ["S602"]  # shell=True is intentional for shell node
+"src/pflow/nodes/shell/shell.py" = ["S602", "S603"]  # shell=True is intentional for shell node; S603 is the win32 list-form equivalent (["bash", "-c", cmd] via Git Bash, ADR-0013)
 "src/pflow/core/prompt_cache_analysis/*" = ["RUF001", "RUF002"]  # `×` (multiplication sign) is spec-mandated for agent-facing output: `(×N)` batch annotation, `0.1×`/`1.25×`/`2×` cost ratios.
 
 [tool.ruff.format]

@@ -473,6 +473,19 @@ def isolate_pflow_config(tmp_path, monkeypatch, precomputed_core_registry_nodes)
 # --- Subprocess test helpers (DRY for real shell tests) ---
 
 
+def set_isolated_home(env: dict[str, str], home: Path) -> None:
+    """Point a subprocess env's home directory at an isolated path on every platform.
+
+    Subprocess ``Path.home()`` reads ``USERPROFILE`` on Windows, not ``HOME``
+    (mirrors the ``Path.home``-vs-``$HOME`` distinction documented on
+    ``isolate_pflow_config`` above). Setting ``HOME`` alone leaves the child
+    resolving the real ``~/.pflow`` via the stale ``USERPROFILE`` on win32 —
+    a silent test-isolation leak, not a crash.
+    """
+    env["HOME"] = str(home)
+    env["USERPROFILE"] = str(home)
+
+
 @pytest.fixture(scope="session")
 def uv_exe():
     """Return path to uv executable or skip if not found."""
@@ -506,5 +519,5 @@ def prepared_subprocess_env(tmp_path_factory, precomputed_core_registry_nodes):
     registry_path.write_text(_json.dumps(registry_data, indent=2))
 
     env = os.environ.copy()
-    env["HOME"] = str(home)
+    set_isolated_home(env, home)
     return env

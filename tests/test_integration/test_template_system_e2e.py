@@ -29,7 +29,7 @@ def test_template_system_with_file_nodes():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Create source file
         source_file = os.path.join(tmpdir, "input.txt")
-        with open(source_file, "w") as f:
+        with open(source_file, "w", encoding="utf-8") as f:
             f.write("Hello from template test!")
 
         # Create workflow with templates
@@ -69,7 +69,7 @@ def test_template_system_with_file_nodes():
 
         # Verify output file was created with correct content
         assert os.path.exists(initial_params["output_file"])
-        with open(initial_params["output_file"]) as f:
+        with open(initial_params["output_file"], encoding="utf-8") as f:
             content = f.read()
         assert content == "Hello from template test!"
 
@@ -114,7 +114,7 @@ def test_template_with_path_traversal():
         # Verify
         output_file = initial_params["paths"]["output"]
         assert os.path.exists(output_file)
-        with open(output_file) as f:
+        with open(output_file, encoding="utf-8") as f:
             content = f.read()
         assert content == "Nested template test!"
 
@@ -151,7 +151,7 @@ def test_template_fallback_to_shared_store():
 
         # Verify
         assert os.path.exists(initial_params["output_path"])
-        with open(initial_params["output_path"]) as f:
+        with open(initial_params["output_path"], encoding="utf-8") as f:
             content = f.read()
         assert content == "Content from shared store!"
 
@@ -184,7 +184,7 @@ def test_template_priority_initial_params_over_shared():
         _compile_and_run(workflow_ir, registry, shared, initial_params=initial_params)
 
         # Verify initial_params value was used
-        with open(os.path.join(tmpdir, "priority.txt")) as f:
+        with open(os.path.join(tmpdir, "priority.txt"), encoding="utf-8") as f:
             content = f.read()
         assert content == "From initial params (should win)"
 
@@ -231,8 +231,8 @@ def test_workflow_reusability():
         _compile_and_run(workflow_ir, registry, shared2, initial_params=params2)
 
         # Verify both files
-        with open(os.path.join(tmpdir, "user1.txt")) as f:
+        with open(os.path.join(tmpdir, "user1.txt"), encoding="utf-8") as f:
             assert f.read() == "User: Alice, Task: TASK-001"
 
-        with open(os.path.join(tmpdir, "user2.txt")) as f:
+        with open(os.path.join(tmpdir, "user2.txt"), encoding="utf-8") as f:
             assert f.read() == "User: Bob, Task: TASK-002"

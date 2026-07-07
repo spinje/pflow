@@ -48,7 +48,7 @@ class MCPDiscovery:
             yield sys.stderr
         else:
             # Properly manage devnull file handle
-            with open(os.devnull, "w") as devnull:
+            with open(os.devnull, "w", encoding="utf-8") as devnull:
                 yield devnull
 
     def discover_tools(self, server_name: str, verbose: bool = False) -> list[dict[str, Any]]:

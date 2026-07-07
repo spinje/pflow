@@ -190,7 +190,7 @@ def _generate_and_echo_report(ctx: click.Context, trace_file: Any, report: Any, 
         _echo_trace(ctx, f"📋 Execution report: {report_dir}")
         summary_path = report_dir / "summary.md"
         try:
-            summary_text = summary_path.read_text()
+            summary_text = summary_path.read_text(encoding="utf-8")
         except OSError:
             pass
         else:

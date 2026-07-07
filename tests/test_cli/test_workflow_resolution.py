@@ -173,7 +173,7 @@ class TestWorkflowResolutionCLI:
             "ir_version": "1.0",
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             content = ir_to_markdown(workflow_data)
             f.write(content)
             f.flush()
@@ -343,7 +343,7 @@ class TestWorkflowResolutionCLI:
             "ir_version": "1.0",
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow_data))
             f.flush()
 
@@ -523,7 +523,7 @@ class TestEdgeCases:
         """Test error handling for invalid markdown in workflow file."""
         runner = click.testing.CliRunner()
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             # Write content that is not a valid workflow (no ## Steps section)
             f.write("# Not a Workflow\n\nJust some text.\n")
             f.flush()

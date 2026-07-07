@@ -1,9 +1,12 @@
 """Tests for pflow core CLI functionality."""
 
+import io
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import click.testing
+import pytest
 
 from pflow.cli.main import main
 
@@ -102,7 +105,7 @@ def test_from_markdown_file():
             "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
         }
-        with open("workflow.pflow.md", "w") as f:
+        with open("workflow.pflow.md", "w", encoding="utf-8") as f:
             f.write(ir_to_markdown(workflow))
 
         # .pflow.md file path is detected automatically without --file flag
@@ -118,7 +121,7 @@ def test_from_pflow_file_with_empty_steps():
     runner = click.testing.CliRunner()
     with runner.isolated_filesystem():
         # Create a workflow file with empty Steps section
-        with open("test.pflow.md", "w") as f:
+        with open("test.pflow.md", "w", encoding="utf-8") as f:
             f.write("# Test\n\nA test workflow.\n\n## Steps\n")
 
         # .pflow.md extension triggers file workflow detection
@@ -135,7 +138,7 @@ def test_from_pflow_file_with_whitespace():
     runner = click.testing.CliRunner()
     with runner.isolated_filesystem():
         # Create a .pflow.md file with leading/trailing whitespace
-        with open("workflow.pflow.md", "w") as f:
+        with open("workflow.pflow.md", "w", encoding="utf-8") as f:
             f.write("\n\n# Test\n\nDescription.\n\n## Steps\n\n")
 
         # File is detected and parsed — empty Steps section is an error
@@ -170,7 +173,7 @@ def test_markdown_workflow_with_parameters():
             "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo ${param1}"}}],
             "edges": [],
         }
-        with open("workflow.pflow.md", "w") as f:
+        with open("workflow.pflow.md", "w", encoding="utf-8") as f:
             f.write(ir_to_markdown(workflow))
 
         # .pflow.md files are detected automatically and execute directly with params
@@ -186,11 +189,11 @@ def test_file_with_parameters():
         from tests.shared.markdown_utils import ir_to_markdown
 
         # Create test input file
-        with open("input.txt", "w") as f:
+        with open("input.txt", "w", encoding="utf-8") as f:
             f.write("Test content")
 
         # Create output file path
-        with open("output.txt", "w") as f:
+        with open("output.txt", "w", encoding="utf-8") as f:
             f.write("")  # Empty file
 
         # Create a test workflow file with template variables using existing nodes
@@ -215,7 +218,7 @@ def test_file_with_parameters():
             "edges": [{"from": "reader", "to": "writer"}],
         }
 
-        with open("workflow.pflow.md", "w") as f:
+        with open("workflow.pflow.md", "w", encoding="utf-8") as f:
             f.write(ir_to_markdown(workflow))
 
         # Parameters should be allowed with workflow files (no --file flag needed)
@@ -224,7 +227,7 @@ def test_file_with_parameters():
         )
 
         assert result.exit_code == 0
-        with open("output.txt") as f:
+        with open("output.txt", encoding="utf-8") as f:
             assert f.read() == "Test content"
 
 
@@ -239,7 +242,7 @@ def test_pflow_file_with_no_parameters():
             "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo hello"}}],
             "edges": [],
         }
-        with open("workflow.pflow.md", "w") as f:
+        with open("workflow.pflow.md", "w", encoding="utf-8") as f:
             f.write(ir_to_markdown(workflow))
 
         # Should work without parameters
@@ -274,7 +277,7 @@ def test_file_with_parameters_template_resolution():
         from tests.shared.markdown_utils import ir_to_markdown
 
         # Create test files
-        with open("hello.txt", "w") as f:
+        with open("hello.txt", "w", encoding="utf-8") as f:
             f.write("Hello World")
 
         # Create workflow with template variables AND declared inputs
@@ -298,7 +301,7 @@ def test_file_with_parameters_template_resolution():
             "edges": [{"from": "reader", "to": "writer"}],
         }
 
-        with open("workflow.pflow.md", "w") as f:
+        with open("workflow.pflow.md", "w", encoding="utf-8") as f:
             f.write(ir_to_markdown(workflow))
 
         # Run with parameters to resolve templates (no --file flag needed)
@@ -307,7 +310,7 @@ def test_file_with_parameters_template_resolution():
         )
 
         assert result.exit_code == 0
-        with open("result.txt") as f:
+        with open("result.txt", encoding="utf-8") as f:
             assert f.read() == "Hello World"
 
 
@@ -335,7 +338,7 @@ def test_stdin_with_file_workflow(mock_stdin_has_data):
             "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo '${data}'"}}],
             "edges": [],
         }
-        with open("workflow.pflow.md", "w") as f:
+        with open("workflow.pflow.md", "w", encoding="utf-8") as f:
             f.write(ir_to_markdown(workflow))
 
         # File workflow with stdin data - should route to the stdin: true input
@@ -385,7 +388,7 @@ def test_error_empty_pflow_file():
     runner = click.testing.CliRunner()
     with runner.isolated_filesystem():
         # Create empty file
-        with open("empty.pflow.md", "w") as f:
+        with open("empty.pflow.md", "w", encoding="utf-8") as f:
             f.write("")
 
         result = runner.invoke(main, ["./empty.pflow.md"])
@@ -395,6 +398,9 @@ def test_error_empty_pflow_file():
         assert "steps" in result.output.lower() or "error" in result.output.lower()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="chmod-based access denial doesn't work on Windows (POSIX permission bits)"
+)
 def test_error_file_permission_denied():
     """Test error when file cannot be read due to permissions."""
     import os
@@ -402,7 +408,7 @@ def test_error_file_permission_denied():
     runner = click.testing.CliRunner()
     with runner.isolated_filesystem():
         # Create a .pflow.md file and remove read permissions
-        with open("no-read.pflow.md", "w") as f:
+        with open("no-read.pflow.md", "w", encoding="utf-8") as f:
             f.write("# Test\n\nDescription.\n\n## Steps\n\n### echo1\n\nA step.\n\n- type: echo\n")
         os.chmod("no-read.pflow.md", 0o000)
 
@@ -443,7 +449,7 @@ def test_pflow_file_automatic_detection():
             "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
         }
-        with open("my-workflow.pflow.md", "w") as f:
+        with open("my-workflow.pflow.md", "w", encoding="utf-8") as f:
             f.write(ir_to_markdown(workflow))
 
         # .pflow.md extension triggers file workflow detection
@@ -467,7 +473,7 @@ def test_path_with_slash_triggers_file_detection():
             "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo hello"}}],
             "edges": [],
         }
-        with open("workflows/test.pflow.md", "w") as f:
+        with open("workflows/test.pflow.md", "w", encoding="utf-8") as f:
             f.write(ir_to_markdown(workflow))
 
         # Path with / triggers file detection
@@ -490,7 +496,7 @@ def test_absolute_path_workflow():
             "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo 'absolute path test'"}}],
             "edges": [],
         }
-        with open("workflow.pflow.md", "w") as f:
+        with open("workflow.pflow.md", "w", encoding="utf-8") as f:
             f.write(ir_to_markdown(workflow))
 
         # Get absolute path
@@ -550,3 +556,110 @@ def test_workflow_name_with_params_detected():
     # Should attempt to find saved workflow and show not found error
     assert result.exit_code != 0
     assert "Workflow 'my-workflow' not found" in result.output or "not found" in result.output.lower()
+
+
+class TestWindowsStdioReconfigure:
+    """_reconfigure_windows_stdio pins UTF-8 on stdout/stderr at process entry (Task 116).
+
+    Windows gives piped std streams cp1252 with strict errors, so the first
+    `✓`/`✗` glyph pflow writes to a redirected stream raises
+    UnicodeEncodeError. The helper runs from cli_main() (real-process entry
+    only — CliRunner invokes `cli` directly and must never have its StringIO
+    captures touched).
+    """
+
+    @staticmethod
+    def _cp1252_wrapper(errors: str = "strict") -> io.TextIOWrapper:
+        return io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors=errors)
+
+    def test_win32_repins_piped_streams_to_utf8(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from pflow.cli.main import _reconfigure_windows_stdio
+
+        out, err = self._cp1252_wrapper(), self._cp1252_wrapper()
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(sys, "stdout", out)
+        monkeypatch.setattr(sys, "stderr", err)
+
+        _reconfigure_windows_stdio()
+
+        assert out.encoding == "utf-8"
+        assert err.encoding == "utf-8"
+        # The exact write that crashes under cp1252-strict (the glyph class
+        # from core/output_controller.py progress output)
+        out.write("✓ ✗ ⚠ ↻")
+        out.flush()
+
+    def test_win32_preserves_error_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """stderr ships with errors="backslashreplace" so error reporting can
+        never crash; reconfigure(encoding=...) alone would reset it to
+        "strict" (verified behavior), so the helper must carry it over."""
+        from pflow.cli.main import _reconfigure_windows_stdio
+
+        err = self._cp1252_wrapper(errors="backslashreplace")
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(sys, "stderr", err)
+
+        _reconfigure_windows_stdio()
+
+        assert err.encoding == "utf-8"
+        assert err.errors == "backslashreplace"
+        # A lone surrogate (os.fsdecode of an undecodable filename echoed
+        # into a diagnostic) must degrade, not raise, exactly as before
+        err.write("bad name: \udce9")
+        err.flush()
+
+    def test_posix_streams_untouched(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from pflow.cli.main import _reconfigure_windows_stdio
+
+        out = self._cp1252_wrapper()
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(sys, "stdout", out)
+
+        _reconfigure_windows_stdio()
+
+        assert out.encoding == "cp1252"
+
+    def test_non_textiowrapper_streams_left_alone(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """CliRunner-style StringIO replacements must survive untouched."""
+        from pflow.cli.main import _reconfigure_windows_stdio
+
+        out, err = io.StringIO(), io.StringIO()
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(sys, "stdout", out)
+        monkeypatch.setattr(sys, "stderr", err)
+
+        _reconfigure_windows_stdio()  # must not raise
+
+        out.write("still works")
+        assert out.getvalue() == "still works"
+
+    def test_cli_main_wires_the_reconfigure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Wiring pin: the real entry point must actually CALL the helper.
+
+        The direct-helper tests above stay green if a refactor drops the
+        _reconfigure_windows_stdio() call from cli_main() — this test runs
+        the genuine entry path (`cli_main()`, the target of both the console
+        script and `python -m pflow.cli`) and goes red instead. Uses
+        --version so click exits before any command machinery runs under the
+        faked platform.
+        """
+        from pflow.cli.main import cli_main
+
+        out_buf = io.BytesIO()
+        out = io.TextIOWrapper(out_buf, encoding="cp1252")
+        err = self._cp1252_wrapper(errors="backslashreplace")
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(sys, "stdout", out)
+        monkeypatch.setattr(sys, "stderr", err)
+        monkeypatch.setattr(sys, "argv", ["pflow", "--version"])
+
+        with pytest.raises(SystemExit) as excinfo:
+            cli_main()
+
+        assert excinfo.value.code == 0
+        assert out.encoding == "utf-8"
+        assert err.encoding == "utf-8"
+        assert err.errors == "backslashreplace"
+        # And the repinned stream is what click actually wrote through
+        out.flush()
+        assert b"pflow version" in out_buf.getvalue()

@@ -3,20 +3,137 @@
 import base64
 import logging
 import os
+import shutil
 import subprocess
+import sys
+from pathlib import Path
 from typing import Any, ClassVar
 
 from pflow.core.node import Node
+from pflow.core.user_errors import UserFriendlyError
 
 logger = logging.getLogger(__name__)
+
+# Default Git for Windows install locations, probed last by
+# _resolve_windows_bash(). Module-level so tests can point the probes at
+# temp paths without patching Path.is_file globally.
+_GIT_BASH_DEFAULT_PATHS: tuple[str, ...] = (
+    r"C:\Program Files\Git\bin\bash.exe",
+    r"C:\Program Files (x86)\Git\bin\bash.exe",
+)
+
+
+def _resolve_windows_bash() -> str | None:
+    """Resolve a Git Bash executable on Windows (ADR-0013).
+
+    Shell steps mean POSIX sh on every platform; on win32 that shell is
+    supplied by Git Bash, resolved deliberately — never a naive
+    ``which("bash")``, because on end-user machines that can be the WSL
+    launcher (``C:\\Windows\\System32\\bash.exe``), a separate Linux VM with
+    a different filesystem. CI can't catch that trap (runners put Git Bash
+    on PATH), so only the explicit rejection below protects real machines.
+
+    Resolution order:
+    1. ``PFLOW_BASH`` env var — trusted verbatim, not validated: the user set
+       it deliberately, and a wrong path produces a subprocess error naming
+       that path. Empty string counts as unset.
+    2. ``bash`` on PATH, rejected if it resolves under System32 (WSL trap).
+    3. Derived from the Git install: ``{bin,usr/bin}/bash.exe`` probed under
+       both the parent and grandparent of git.exe's directory — covers
+       git.exe resolving from ``Git\\cmd``, ``Git\\bin``, and
+       ``Git\\mingw64\\bin``.
+    4. Default Git for Windows install locations.
+
+    Deliberately uncached: a cached None would go stale in the long-lived MCP
+    server after the user installs Git, and a cache would cross-contaminate
+    tests that mock shutil.which. Resolution costs microseconds, once per
+    shell step.
+
+    Returns:
+        Absolute path to bash.exe, or None when no Git Bash could be found.
+    """
+    override = os.environ.get("PFLOW_BASH")
+    if override:
+        return override
+
+    on_path = shutil.which("bash")
+    if on_path and "system32" not in on_path.lower():
+        return on_path
+
+    git = shutil.which("git")
+    if git:
+        git_dir = Path(git).parent
+        for root in (git_dir.parent, git_dir.parent.parent):
+            for candidate in (root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"):
+                if candidate.is_file():
+                    return str(candidate)
+
+    for default in _GIT_BASH_DEFAULT_PATHS:
+        if Path(default).is_file():
+            return default
+
+    return None
+
+
+def _windows_bash_or_raise() -> str | None:
+    """Resolve the win32 POSIX shell for prep(), or raise install guidance.
+
+    Called from prep() and ONLY prep() — never exec(): exec_fallback()
+    converts every exec() raise into {exit_code: -2} without re-raising, and
+    post() then returns the SUCCESS action under ignore_errors: true — a
+    missing bash raised from exec() would become a silent green run with
+    empty stdout. prep() runs outside any try/except (core/node.py _run), so
+    a raise here reaches the diagnostic pipeline intact and is immune to
+    ignore_errors.
+
+    Returns:
+        Path to bash.exe on win32; None on every other platform.
+
+    Raises:
+        UserFriendlyError: On win32 when no Git Bash can be resolved.
+    """
+    if sys.platform != "win32":
+        return None
+
+    bash_path = _resolve_windows_bash()
+    if bash_path is None:
+        raise UserFriendlyError(
+            title="Shell steps need a POSIX shell, and none was found on this Windows system",
+            explanation=(
+                "pflow runs shell steps with POSIX shell semantics on every platform "
+                "so workflows behave identically everywhere. On Windows that shell is "
+                "provided by Git Bash, which could not be found (checked PATH, the Git "
+                "installation, and the default install locations)."
+            ),
+            suggestions=[
+                "Install Git for Windows from https://gitforwindows.org (includes Git Bash)",
+                "If bash is installed somewhere unusual, set the PFLOW_BASH environment "
+                'variable to its full path, e.g. PFLOW_BASH="C:\\Program Files\\Git\\bin\\bash.exe"',
+            ],
+            technical_details=(
+                "WSL bash (C:\\Windows\\System32\\bash.exe) is deliberately not used: it "
+                "executes inside a separate Linux VM with a different filesystem. See ADR-0013."
+            ),
+        )
+    return bash_path
 
 
 class ShellNode(Node):
     """
     Execute shell commands with full Unix power.
 
-    WARNING: This node executes commands with shell=True for maximum compatibility
-    with pipes, redirects, and shell constructs. Only run trusted commands.
+    Shell dialect contract (ADR-0013): a shell step means POSIX sh semantics
+    on EVERY platform. On Unix, commands run via shell=True (/bin/sh); on
+    Windows they run through Git Bash (["bash", "-c", command], resolved by
+    _resolve_windows_bash) — never cmd.exe or PowerShell, so one command
+    string means the same thing everywhere. Windows without Git for Windows
+    gets a structured install-guidance error, not a different dialect.
+    Native dialects, if ever wanted, must arrive as additive opt-in
+    per-step parameters — never by changing what an unadorned step means.
+
+    WARNING: This node executes commands through a full shell for maximum
+    compatibility with pipes, redirects, and shell constructs. Only run
+    trusted commands.
 
     Security features:
     - Blocks obviously dangerous patterns (rm -rf /, fork bombs, device writes)
@@ -434,6 +551,7 @@ class ShellNode(Node):
 
         Raises:
             ValueError: If command is missing or dangerous
+            UserFriendlyError: On Windows when no Git Bash can be resolved (ADR-0013)
         """
         # Get command from params (required)
         command = self.params.get("command")
@@ -485,6 +603,11 @@ class ShellNode(Node):
         if not isinstance(timeout, (int, float)) or timeout <= 0:
             raise ValueError(f"Invalid timeout value: {timeout}")
 
+        # Resolve the POSIX shell on Windows (ADR-0013). Must happen in prep,
+        # not exec — see _windows_bash_or_raise for why moving it breaks
+        # error reporting under ignore_errors.
+        bash_path = _windows_bash_or_raise()
+
         # Audit log all commands (useful for debugging and security reviews)
         logger.info(
             f"[AUDIT] Preparing command: {command[:100]}{'...' if len(command) > 100 else ''}",
@@ -505,6 +628,7 @@ class ShellNode(Node):
             "timeout": timeout,
             "ignore_errors": ignore_errors,
             "strip_newline": strip_newline,
+            "bash_path": bash_path,
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -534,18 +658,32 @@ class ShellNode(Node):
             # Encode stdin to bytes for text=False mode
             stdin_bytes = stdin.encode("utf-8") if stdin else None
 
-            # Execute the command with shell=True for full shell power
-            # Security: shell=True is intentional - this is a shell node that provides full shell access
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=False,
-                input=stdin_bytes,
-                cwd=cwd,
-                env=full_env,
-                timeout=timeout,
-            )
+            if sys.platform == "win32":
+                # ADR-0013: POSIX sh everywhere — on Windows the command runs
+                # through Git Bash (resolved in prep()), never cmd.exe, so one
+                # shell dialect works on every platform.
+                result = subprocess.run(
+                    [prep_res["bash_path"], "-c", command],
+                    capture_output=True,
+                    text=False,
+                    input=stdin_bytes,
+                    cwd=cwd,
+                    env=full_env,
+                    timeout=timeout,
+                )
+            else:
+                # Execute the command with shell=True for full shell power
+                # Security: shell=True is intentional - this is a shell node that provides full shell access
+                result = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=False,
+                    input=stdin_bytes,
+                    cwd=cwd,
+                    env=full_env,
+                    timeout=timeout,
+                )
 
             logger.info(
                 f"[AUDIT] Command completed with exit code {result.returncode}",

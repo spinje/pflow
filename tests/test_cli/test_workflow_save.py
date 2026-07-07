@@ -8,6 +8,7 @@ import click.testing
 import pytest
 
 from pflow.cli.main import main
+from tests.conftest import set_isolated_home
 from tests.shared.markdown_utils import write_workflow_file
 
 
@@ -18,7 +19,7 @@ def prepared_subprocess_env(tmp_path_factory, uv_exe):
     (home / ".pflow").mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
-    env["HOME"] = str(home)
+    set_isolated_home(env, home)
 
     subprocess.run(  # noqa: S603
         [uv_exe, "run", "pflow", "registry", "list", "--json"],

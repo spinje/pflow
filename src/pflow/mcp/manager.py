@@ -83,7 +83,7 @@ class MCPServerManager:
             return {"mcpServers": {}}
 
         try:
-            with open(self.config_path) as f:
+            with open(self.config_path, encoding="utf-8") as f:
                 config = json.load(f)
 
             # Ensure mcpServers exists
@@ -118,7 +118,7 @@ class MCPServerManager:
 
         try:
             # Write to temporary file
-            with os.fdopen(temp_fd, "w") as f:
+            with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
                 json.dump(config, f, indent=2, sort_keys=True)
                 f.write("\n")  # Add final newline
 

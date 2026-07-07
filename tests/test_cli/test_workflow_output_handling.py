@@ -195,7 +195,7 @@ class TestWorkflowOutputHandling:
         }
 
         # Save workflow to a temp file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -229,7 +229,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -268,7 +268,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -322,7 +322,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -368,7 +368,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -418,7 +418,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -458,7 +458,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -587,7 +587,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -621,7 +621,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -663,7 +663,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -703,7 +703,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -748,7 +748,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -786,7 +786,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -832,7 +832,7 @@ class TestWorkflowOutputHandling:
                 "nodes": [{"id": "test", "type": "test-node", "params": {"add_keys": keys_to_add}}],
             }
 
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
                 f.write(ir_to_markdown(workflow))
                 workflow_file = f.name
 
@@ -863,7 +863,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -896,7 +896,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -937,7 +937,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -961,7 +961,7 @@ class TestWorkflowOutputHandling:
             "nodes": [{"id": "test", "type": "test-node", "params": {"add_keys": {"response": "Fallback response"}}}],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -1007,7 +1007,7 @@ class TestWorkflowOutputHandling:
                 "nodes": [{"id": "test", "type": "test-node", "params": {"add_keys": output_data}}],
             }
 
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
                 f.write(ir_to_markdown(workflow))
                 workflow_file = f.name
 
@@ -1052,7 +1052,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -1094,7 +1094,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -1140,7 +1140,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -1177,7 +1177,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -1211,7 +1211,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -1259,7 +1259,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -1296,7 +1296,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -1325,7 +1325,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -1361,7 +1361,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -1402,7 +1402,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -1432,7 +1432,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
@@ -1476,7 +1476,7 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 

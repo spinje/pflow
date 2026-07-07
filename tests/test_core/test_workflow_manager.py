@@ -1,5 +1,6 @@
 """Tests for WorkflowManager."""
 
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -82,7 +83,7 @@ class TestWorkflowManager:
         assert path == str(workflow_manager.workflows_dir / name / f"{name}.pflow.md")
 
         # Read and parse frontmatter
-        content = Path(path).read_text()
+        content = Path(path).read_text(encoding="utf-8")
         lines = content.split("---\n")
         assert len(lines) >= 3  # Should have opening ---, frontmatter, closing ---, body
         frontmatter = yaml.safe_load(lines[1])
@@ -114,7 +115,7 @@ class TestWorkflowManager:
         path = workflow_manager.save(name, markdown_content)
 
         # Read and parse frontmatter
-        content = Path(path).read_text()
+        content = Path(path).read_text(encoding="utf-8")
         lines = content.split("---\n")
         frontmatter = yaml.safe_load(lines[1])
 
@@ -321,7 +322,7 @@ class TestWorkflowManager:
         invalid_dir = workflow_manager.workflows_dir / "invalid"
         invalid_dir.mkdir()
         invalid_path = invalid_dir / "invalid.pflow.md"
-        with open(invalid_path, "w") as f:
+        with open(invalid_path, "w", encoding="utf-8") as f:
             f.write("not valid markdown workflow")
 
         # List should skip invalid and return only valid
@@ -379,28 +380,32 @@ class TestWorkflowManager:
         workflow_manager.delete(name)
         assert not workflow_manager.exists(name)
 
-        # Test atomicity by trying to save to a read-only directory
-        import stat
+        # Test atomicity by trying to save to a read-only directory.
+        # chmod-based access denial doesn't work on Windows (POSIX permission
+        # bits are advisory no-ops there), so this half is Unix-only; the
+        # normal-save half above still runs everywhere.
+        if sys.platform != "win32":
+            import stat
 
-        readonly_subdir = workflow_manager.workflows_dir / "readonly"
-        readonly_subdir.mkdir()
-        readonly_subdir.chmod(stat.S_IRUSR | stat.S_IXUSR)  # Read + execute only
+            readonly_subdir = workflow_manager.workflows_dir / "readonly"
+            readonly_subdir.mkdir()
+            readonly_subdir.chmod(stat.S_IRUSR | stat.S_IXUSR)  # Read + execute only
 
-        readonly_manager = WorkflowManager(readonly_subdir)
+            readonly_manager = WorkflowManager(readonly_subdir)
 
-        # Save should fail cleanly with permission error
-        with pytest.raises(PermissionError):
-            readonly_manager.save(name, markdown_content)
+            # Save should fail cleanly with permission error
+            with pytest.raises(PermissionError):
+                readonly_manager.save(name, markdown_content)
 
-        # No file should exist after failure
-        assert not readonly_manager.exists(name)
+            # No file should exist after failure
+            assert not readonly_manager.exists(name)
 
-        # No temp directories should remain after failure
-        temp_dirs = list(readonly_subdir.glob(f".{name}.*.tmp"))
-        assert len(temp_dirs) == 0
+            # No temp directories should remain after failure
+            temp_dirs = list(readonly_subdir.glob(f".{name}.*.tmp"))
+            assert len(temp_dirs) == 0
 
-        # Restore permissions for cleanup
-        readonly_subdir.chmod(stat.S_IRWXU)
+            # Restore permissions for cleanup
+            readonly_subdir.chmod(stat.S_IRWXU)
 
     def test_concurrent_saves_to_same_workflow(self, workflow_manager):
         """Test that concurrent saves to the same workflow are properly handled.
@@ -445,6 +450,9 @@ class TestWorkflowManager:
         # Clean up for other tests
         workflow_manager.delete("concurrent-test")
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="chmod-based access denial doesn't work on Windows (POSIX permission bits)"
+    )
     def test_file_permission_error(self, tmp_path):
         """Test handling of file permission errors."""
         import stat

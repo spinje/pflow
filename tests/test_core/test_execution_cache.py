@@ -212,12 +212,12 @@ class TestListCachedExecutions:
 
         # Create malformed cache file
         malformed_file = temp_cache_dir / "exec-9999999999-badfile.json"
-        with open(malformed_file, "w") as f:
+        with open(malformed_file, "w", encoding="utf-8") as f:
             f.write("{invalid json")
 
         # Create file with missing keys
         incomplete_file = temp_cache_dir / "exec-8888888888-incomplete.json"
-        with open(incomplete_file, "w") as f:
+        with open(incomplete_file, "w", encoding="utf-8") as f:
             json.dump({"execution_id": "exec-8888888888-incomplete"}, f)  # Missing node_type
 
         result = cache.list_cached_executions()
@@ -343,7 +343,7 @@ class TestSensitiveParameterMasking:
 
         # Read cache file directly
         cache_file = tmp_path / f"{execution_id}.json"
-        with open(cache_file) as f:
+        with open(cache_file, encoding="utf-8") as f:
             cache_data = json.load(f)
 
         # Verify sensitive values are masked
@@ -374,7 +374,7 @@ class TestSensitiveParameterMasking:
 
         # Verify cache file exists and has empty params
         cache_file = tmp_path / f"{execution_id}.json"
-        with open(cache_file) as f:
+        with open(cache_file, encoding="utf-8") as f:
             cache_data = json.load(f)
 
         assert cache_data["params"] == {}
@@ -396,7 +396,7 @@ class TestSensitiveParameterMasking:
 
         # Verify cache file exists and has empty params
         cache_file = tmp_path / f"{execution_id}.json"
-        with open(cache_file) as f:
+        with open(cache_file, encoding="utf-8") as f:
             cache_data = json.load(f)
 
         assert cache_data["params"] == {}
@@ -446,7 +446,7 @@ class TestSensitiveParameterMasking:
 
         # Read cache file directly
         cache_file = tmp_path / f"{execution_id}.json"
-        with open(cache_file) as f:
+        with open(cache_file, encoding="utf-8") as f:
             cache_data = json.load(f)
 
         # All variations should be masked

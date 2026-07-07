@@ -25,7 +25,7 @@ def load_prompt(prompt_path: Path) -> str:
         raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
 
     # Read the entire file
-    content = prompt_path.read_text()
+    content = prompt_path.read_text(encoding="utf-8")
 
     # Skip YAML frontmatter if present
     if content.startswith("---\n"):

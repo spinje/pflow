@@ -5612,7 +5612,7 @@ def test_analyze_end_to_end_current_cost_honors_recorded_trace_cost() -> None:
     # the trace JSON to tmp.
     import tempfile
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+    with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".json", delete=False) as f:
         trace_file = f.name
     write_trace_jsonl(Path(trace_file), trace)
 

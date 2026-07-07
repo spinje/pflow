@@ -3,6 +3,7 @@
 import json
 import os
 import stat
+import sys
 import threading
 import time
 from pathlib import Path
@@ -10,6 +11,16 @@ from pathlib import Path
 import pytest
 
 from pflow.core.settings import PflowSettings, RegistrySettings, SettingsManager
+
+# POSIX permission bits are advisory-only on Windows (chmod is a near-no-op
+# and st_mode always reports group/other read), so tests asserting exact
+# mode bits or chmod-induced behavior are skipped there. The production
+# counterpart: SettingsManager._validate_permissions early-returns on win32
+# (pinned by test_validate_permissions_noop_on_windows below).
+skip_win32_posix_perms = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX permission bits are advisory no-ops on Windows",
+)
 
 
 @pytest.fixture
@@ -381,6 +392,7 @@ class TestAtomicOperations:
         assert nested_path.parent.exists()
 
 
+@skip_win32_posix_perms
 class TestFilePermissions:
     """Test file permission handling."""
 
@@ -429,6 +441,7 @@ class TestFilePermissions:
 class TestPermissionValidation:
     """Test permission validation (defense-in-depth)."""
 
+    @skip_win32_posix_perms
     def test_validate_permissions_warns_on_insecure(
         self, settings_manager: SettingsManager, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -465,6 +478,7 @@ class TestPermissionValidation:
         # Should have no warnings
         assert not any("insecure permissions" in record.message.lower() for record in caplog.records)
 
+    @skip_win32_posix_perms
     def test_validate_permissions_skips_if_no_env(
         self, settings_manager: SettingsManager, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -492,6 +506,28 @@ class TestPermissionValidation:
 
         # Should not raise exception
         settings_manager._validate_permissions()
+
+    def test_validate_permissions_noop_on_windows(
+        self, settings_manager: SettingsManager, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """On win32 the check must not warn at all (Task 116 product fix).
+
+        Windows st_mode always reports group/other read on regular files, so
+        without the early return every Windows user with secrets would get a
+        spurious "insecure permissions ... run chmod 600" warning on every
+        load — and chmod 600 does nothing there.
+        """
+        import logging
+
+        settings_manager.set_env("api_key", "secret")
+        # World-readable + secrets: the exact condition that warns on POSIX
+        os.chmod(settings_manager.settings_path, 0o644)
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        with caplog.at_level(logging.WARNING):
+            settings_manager._validate_permissions()
+
+        assert not any("insecure permissions" in record.message.lower() for record in caplog.records)
 
 
 class TestConcurrentAccess:

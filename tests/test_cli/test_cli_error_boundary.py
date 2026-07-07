@@ -16,6 +16,8 @@ import click
 import pytest
 from click.testing import CliRunner
 
+from tests.conftest import set_isolated_home
+
 # Invalid workflow: output "out" has no description paragraph between the
 # heading and the `- source:` param. parse_markdown raises MarkdownParseError
 # at line 23 ("Entity 'out' (line 23) is missing a description.").
@@ -82,7 +84,7 @@ class TestDescribeParseError:
     def test_describe_parse_error_renders_via_diagnostic_pipeline(self, tmp_path, prepared_subprocess_env):
         """pflow describe <workflow-with-parse-error> renders a structured diagnostic, not a traceback."""
         env = dict(prepared_subprocess_env)
-        env["HOME"] = str(tmp_path)
+        set_isolated_home(env, tmp_path)
         (tmp_path / ".pflow").mkdir(exist_ok=True)
         _save_broken_workflow(tmp_path, "__boundary_parse_err")
 
@@ -107,7 +109,7 @@ class TestDescribeParseError:
         later wiring per-command handlers and silently regressing the boundary.
         """
         env = dict(prepared_subprocess_env)
-        env["HOME"] = str(tmp_path)
+        set_isolated_home(env, tmp_path)
         (tmp_path / ".pflow").mkdir(exist_ok=True)
         _save_broken_workflow(tmp_path, "__boundary_history_err")
 
@@ -135,7 +137,7 @@ class TestDescribeParseError:
         identically.
         """
         env = dict(prepared_subprocess_env)
-        env["HOME"] = str(tmp_path)
+        set_isolated_home(env, tmp_path)
         (tmp_path / ".pflow").mkdir(exist_ok=True)
         _save_broken_workflow(tmp_path, "__boundary_symmetry")
 

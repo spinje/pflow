@@ -138,12 +138,12 @@ def _validate(path: Path, registry: Registry) -> list:
     dotted node refs are left alone so typos/phantom children still fail.
     Returns ERROR-severity diagnostics.
     """
-    ir = parse_markdown(path.read_text()).ir
+    ir = parse_markdown(path.read_text(encoding="utf-8")).ir
     normalize_ir(ir)
 
     node_ids = {n.get("id") for n in ir.get("nodes", [])}
     inputs = ir.setdefault("inputs", {})
-    for var in set(_BARE_VAR_RE.findall(path.read_text())):
+    for var in set(_BARE_VAR_RE.findall(path.read_text(encoding="utf-8"))):
         if var in node_ids or var in inputs:
             continue
         inputs[var] = {"type": "string", "required": False, "default": "dummy"}
@@ -162,7 +162,7 @@ def _validate(path: Path, registry: Registry) -> list:
 
 
 def _unregistered_types(path: Path, registered: set[str]) -> set[str]:
-    ir = parse_markdown(path.read_text()).ir
+    ir = parse_markdown(path.read_text(encoding="utf-8")).ir
     normalize_ir(ir)
     used = {n.get("type") for n in ir.get("nodes", []) if n.get("type")}
     return used - registered
@@ -179,7 +179,7 @@ def _is_self_contained_runnable(path: Path) -> bool:
     no caller-supplied required inputs. Keeps the execution tier hermetic: no
     network, no LLM cost, no missing-input failures.
     """
-    ir = parse_markdown(path.read_text()).ir
+    ir = parse_markdown(path.read_text(encoding="utf-8")).ir
     normalize_ir(ir)
     types = {n.get("type") for n in ir.get("nodes", []) if n.get("type")}
     if not types or not types <= _RUNNABLE_NODE_TYPES:

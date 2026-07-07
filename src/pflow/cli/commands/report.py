@@ -88,7 +88,7 @@ def report_cmd(ctx: click.Context, trace_path: str | None, output_path: str | No
         click.echo(f"Report generated: {report_dir}", err=True)
         summary_path = report_dir / "summary.md"
         try:
-            summary_text = summary_path.read_text()
+            summary_text = summary_path.read_text(encoding="utf-8")
         except OSError:
             pass
         else:

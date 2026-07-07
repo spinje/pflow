@@ -155,7 +155,7 @@ pflow is for workflows where you know the steps — tasks your agent figured out
 
 ## Getting started
 
-Requires Python 3.10+, macOS or Linux (Windows is untested). See the [quickstart](https://docs.pflow.run/quickstart) for API key setup and detailed configuration.
+Requires Python 3.10+ on macOS, Linux, or Windows. On Windows, shell steps run through Git Bash — install [Git for Windows](https://gitforwindows.org) (workflows use one POSIX shell dialect on every platform, so they stay portable). See the [quickstart](https://docs.pflow.run/quickstart) for API key setup and detailed configuration.
 
 ```bash
 # Recommended

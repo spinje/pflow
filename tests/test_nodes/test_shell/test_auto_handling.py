@@ -1,8 +1,11 @@
 """Test auto-handling of safe non-error patterns in shell node."""
 
 import os
+import sys
 import tempfile
 from unittest.mock import patch
+
+import pytest
 
 from pflow.nodes.shell.shell import ShellNode
 
@@ -35,7 +38,7 @@ class TestAutoHandlingLsGlob:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create test files
             for i in range(3):
-                open(os.path.join(tmpdir, f"file{i}.txt"), "w").close()
+                open(os.path.join(tmpdir, f"file{i}.txt"), "w", encoding="utf-8").close()
 
             shared = {}
             action = run_shell_node(shared, command="ls *.txt", cwd=tmpdir)
@@ -82,7 +85,7 @@ class TestAutoHandlingGrep:
 
     def test_grep_no_match_returns_success(self):
         """Test that grep returns default when pattern not found."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", delete=False) as f:
             f.write("some content\nother content\n")
             temp_file = f.name
 
@@ -100,7 +103,7 @@ class TestAutoHandlingGrep:
 
     def test_grep_with_match_works_normally(self):
         """Test that grep works normally when pattern matches."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", delete=False) as f:
             f.write("test line\nother line\n")
             temp_file = f.name
 
@@ -133,7 +136,7 @@ class TestAutoHandlingRipgrep:
         """Test that rg returns default when pattern not found."""
         with tempfile.TemporaryDirectory() as tmpdir:
             test_file = os.path.join(tmpdir, "test.txt")
-            with open(test_file, "w") as f:
+            with open(test_file, "w", encoding="utf-8") as f:
                 f.write("some content")
 
             shared = {}
@@ -263,6 +266,9 @@ class TestAutoHandlingRealErrors:
         if shared["exit_code"] != 0:
             assert action == "error"
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="chmod-based access denial doesn't work on Windows (POSIX permission bits)"
+    )
     def test_ls_permission_denied_not_auto_handled(self):
         """Test that ls with permission denied is not auto-handled."""
         # Create a directory with no read permissions

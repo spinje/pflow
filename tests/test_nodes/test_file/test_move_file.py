@@ -14,7 +14,7 @@ class TestMoveFileNode:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create source file
             source_path = os.path.join(tmpdir, "source.txt")
-            with open(source_path, "w") as f:
+            with open(source_path, "w", encoding="utf-8") as f:
                 f.write("Test content")
 
             dest_path = os.path.join(tmpdir, "dest.txt")
@@ -37,14 +37,14 @@ class TestMoveFileNode:
             assert os.path.exists(dest_path)
 
             # Verify content
-            with open(dest_path) as f:
+            with open(dest_path, encoding="utf-8") as f:
                 assert f.read() == "Test content"
 
     def test_move_with_directory_creation(self):
         """Test move creates parent directories."""
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = os.path.join(tmpdir, "source.txt")
-            with open(source_path, "w") as f:
+            with open(source_path, "w", encoding="utf-8") as f:
                 f.write("Test content")
 
             # Destination in non-existent subdirectory
@@ -74,9 +74,9 @@ class TestMoveFileNode:
             dest_path = os.path.join(tmpdir, "dest.txt")
 
             # Create both files
-            with open(source_path, "w") as f:
+            with open(source_path, "w", encoding="utf-8") as f:
                 f.write("Source content")
-            with open(dest_path, "w") as f:
+            with open(dest_path, "w", encoding="utf-8") as f:
                 f.write("Existing content")
 
             node = MoveFileNode()
@@ -91,11 +91,11 @@ class TestMoveFileNode:
 
             # BEHAVIOR: Source should remain untouched
             assert os.path.exists(source_path)
-            with open(source_path) as f:
+            with open(source_path, encoding="utf-8") as f:
                 assert f.read() == "Source content"
 
             # BEHAVIOR: Destination should not be overwritten
-            with open(dest_path) as f:
+            with open(dest_path, encoding="utf-8") as f:
                 assert f.read() == "Existing content"
 
     def test_move_source_not_found(self):

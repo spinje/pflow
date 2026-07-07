@@ -251,7 +251,7 @@ class TestMCPRealIntegration:
             )
 
             # Verify it's stored as template
-            with open(config_path) as f:
+            with open(config_path, encoding="utf-8") as f:
                 config_content = f.read()
                 assert "${TEST_API_KEY}" in config_content
                 assert "secret123" not in config_content  # Not expanded yet

@@ -9,6 +9,7 @@ REFACTOR HISTORY:
 """
 
 import json
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -148,6 +149,9 @@ class TestRegistryDataPersistence:
             assert "old" not in loaded_data
             assert "new" in loaded_data
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="chmod-based access denial doesn't work on Windows (POSIX permission bits)"
+    )
     def test_handles_permission_errors_on_save(self):
         """Test that permission errors on save are properly raised."""
         with tempfile.TemporaryDirectory() as tmpdir:
