@@ -229,6 +229,8 @@ class TestAutoHandlingRealErrors:
 
     def test_permission_denied_still_errors(self):
         """Test that permission denied is not auto-handled."""
+        if sys.platform == "win32":
+            pytest.skip("Git Bash / maps to a runner-owned location on Windows")
         shared = {}
 
         # Try to write to root directory (will fail with permission denied)

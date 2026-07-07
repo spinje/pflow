@@ -25,6 +25,7 @@ from pflow.core.trace_io import (
     intern_event_leaves,
     load_trace_file,
 )
+from pflow.core.trace_tree import normalize_workflow_path_key
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 
 logger = logging.getLogger(__name__)
@@ -136,9 +137,18 @@ def _iter_workflow_traces(debug_dir: Path, workflow_path: str) -> Iterator[tuple
     on a ``failed``-bucket fallback that silently breaks if status filtering
     moves in here. Keep status decisions in the callers.
     """
-    wf_hash = hashlib.md5(workflow_path.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
-    pattern = f"workflow-trace-{wf_hash}-*.json"
-    for trace_file in sorted(debug_dir.glob(pattern), key=_trace_recency_key, reverse=True):
+    normalized_workflow_path = normalize_workflow_path_key(workflow_path)
+    workflow_path_variants = dict.fromkeys((
+        workflow_path,
+        normalized_workflow_path,
+        normalized_workflow_path.replace("/", "\\"),
+    ))
+    patterns = [
+        f"workflow-trace-{hashlib.md5(path.encode('utf-8'), usedforsecurity=False).hexdigest()[:8]}-*.json"
+        for path in workflow_path_variants
+    ]
+    trace_files = {trace_file for pattern in patterns for trace_file in debug_dir.glob(pattern)}
+    for trace_file in sorted(trace_files, key=_trace_recency_key, reverse=True):
         try:
             data = load_trace_file(trace_file)
         except (json.JSONDecodeError, OSError):
@@ -146,7 +156,10 @@ def _iter_workflow_traces(debug_dir: Path, workflow_path: str) -> Iterator[tuple
             continue
         if not isinstance(data, dict):
             continue
-        if data.get("workflow_path") != workflow_path:
+        data_workflow_path = data.get("workflow_path")
+        if not isinstance(data_workflow_path, str):
+            continue
+        if normalize_workflow_path_key(data_workflow_path) != normalized_workflow_path:
             continue
         if not str(data.get("format_version", "")).startswith("2."):
             continue

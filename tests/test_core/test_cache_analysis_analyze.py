@@ -32,6 +32,7 @@ from pflow.core.prompt_cache_analysis.types import (
     invocation_count_for,
 )
 from pflow.core.trace_io import load_trace_file
+from pflow.core.trace_tree import normalize_workflow_path_key
 from pflow.core.validation_utils import generate_dummy_parameters
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.workflow_resolver import resolve_workflow
@@ -617,7 +618,7 @@ def test_analyze_cache_validation_replaces_unknown_scope() -> None:
 
     duplicate = next(d for d in result.warnings if d.id == "cache.prompt-body-duplicates-cache")
     assert duplicate.context is not None
-    assert duplicate.context["affected_workflow"] == workflow_path
+    assert duplicate.context["affected_workflow"] == normalize_workflow_path_key(workflow_path)
 
 
 def test_confidence_NOT_high_when_one_row_is_memo() -> None:
@@ -738,7 +739,7 @@ def test_summary_current_cost_includes_sub_workflow_costs_via_trace(
     assert result.summary.actually_paid_usd == pytest.approx(0.15)
     assert {(row.workflow_path, row.node_path) for row in result.per_call} == {
         ("parent.pflow.md", "parent-llm"),
-        (str(child_path), "child-llm"),
+        (normalize_workflow_path_key(str(child_path)), "child-llm"),
     }
 
 
@@ -771,7 +772,7 @@ def test_erroring_child_trace_marks_unexecuted_rows_and_suppresses_projection(tm
         memo_cache=cache,
     )
 
-    child_path = str((fixture_dir / "child.pflow.md").resolve())
+    child_path = normalize_workflow_path_key(str((fixture_dir / "child.pflow.md").resolve()))
     by_key = {(row.workflow_path, row.node_path): row for row in result.per_call}
     assert result.summary.actually_paid_usd == pytest.approx(0.12)
     assert by_key[(child_path, "review")].did_not_execute_in_trace is True
@@ -2112,7 +2113,7 @@ def test_child_workflow_input_from_root_parameters_drives_cacheable_source(
         memo_cache=None,
     )
 
-    row = next(row for row in result.per_call if row.workflow_path == str(child_path))
+    row = next(row for row in result.per_call if row.workflow_path == normalize_workflow_path_key(str(child_path)))
     assert row.cacheable_data_source == "parameters"
     assert row.cacheable_tokens_estimated is not None
 
@@ -2180,7 +2181,7 @@ def test_child_workflow_input_from_parent_memo_drives_prompt_tokenization_but_is
         memo_cache=cache,
     )
 
-    row = next(row for row in result.per_call if row.workflow_path == str(child_path))
+    row = next(row for row in result.per_call if row.workflow_path == normalize_workflow_path_key(str(child_path)))
     assert row.data_source == "estimator"
     assert row.input_tokens_estimated > 100
     assert result.summary.stale_memo_uncheckable_count == 1
@@ -2228,7 +2229,7 @@ def test_child_workflow_unresolved_input_remains_unavailable(
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", auto_load_trace=False, memo_cache=None)
 
-    row = next(row for row in result.per_call if row.workflow_path == str(child_path))
+    row = next(row for row in result.per_call if row.workflow_path == normalize_workflow_path_key(str(child_path)))
     assert row.cacheable_data_source == "unavailable"
     assert row.data_source == "estimator-partial"
 
@@ -2936,7 +2937,7 @@ def test_analyze_child_validator_error_carries_child_affected_workflow(tmp_path:
     diag = child_errors[0]
     assert diag.node_id == "child-thinker"
     assert diag.context is not None
-    assert diag.context["affected_workflow"] == str(child_path)
+    assert diag.context["affected_workflow"] == normalize_workflow_path_key(str(child_path))
     assert diag.context["sub_workflow_step"] == "call-child"
     assert diag.message.startswith("In step 'call-child' sub-workflow:")
 
@@ -5959,7 +5960,7 @@ def test_build_parameters_by_workflow_propagates_batch_alias_child_input() -> No
         base_path=fixtures_dir,
     )
 
-    assert params_by_workflow[str(child_path)]["brief"] == "current first"
+    assert params_by_workflow[normalize_workflow_path_key(str(child_path))]["brief"] == "current first"
 
 
 def test_build_parameters_by_workflow_uses_trace_batch_item_when_items_expr_unresolvable() -> None:
@@ -6905,7 +6906,7 @@ def test_dynamic_workflow_batch_old_relative_trace_attributed_to_child(
         memo_cache=None,
     )
 
-    child_workflow_path = str(child_path.resolve())
+    child_workflow_path = normalize_workflow_path_key(str(child_path.resolve()))
     child_row = next(row for row in result.per_call if row.workflow_path == child_workflow_path)
     assert child_row.node_path == "c-llm"
     assert child_row.observed_call_count == 2
@@ -7461,8 +7462,11 @@ def test_actually_paid_scopes_to_analyzed_workflow_when_trace_is_parent(
     # agent at the trace root so they can get full attribution.
     redirect_notes = [n for n in result.notes if "appears as a sub-workflow" in n]
     assert len(redirect_notes) == 1, f"expected one redirect note, got: {result.notes}"
-    assert str(child_path) in redirect_notes[0]
-    assert parent_path in redirect_notes[0] or os.path.realpath(parent_path) in redirect_notes[0]
+    assert normalize_workflow_path_key(str(child_path)) in redirect_notes[0]
+    assert (
+        normalize_workflow_path_key(parent_path) in redirect_notes[0]
+        or normalize_workflow_path_key(os.path.realpath(parent_path)) in redirect_notes[0]
+    )
     assert "pflow analyze-cache" in redirect_notes[0]
 
 

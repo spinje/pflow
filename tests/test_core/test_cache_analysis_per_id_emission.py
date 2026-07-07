@@ -23,6 +23,7 @@ from pflow.core.prompt_cache_analysis.cost_estimation import ModelPricing
 from pflow.core.prompt_cache_analysis.rendering.json import render_json
 from pflow.core.prompt_cache_analysis.rendering.text import render_text
 from pflow.core.prompt_cache_analysis.types import CrossWorkflowInputContribution
+from pflow.core.trace_tree import normalize_workflow_path_key
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
 from pflow.core.workflow.validator import WorkflowValidator
 from tests.shared.trace_jsonl import write_trace_jsonl
@@ -2571,9 +2572,8 @@ def test_cross_workflow_projection_populates_row_and_recommendation_for_single_c
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
 
-    row = next(
-        row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "use-concept"
-    )
+    child_key = normalize_workflow_path_key(str(child_path))
+    row = next(row for row in result.per_call if row.workflow_path == child_key and row.node_path == "use-concept")
     assert row.cacheable_data_source == "cross_workflow_projection"
     assert row.cacheable_tokens_estimated is None
     assert row.cache_opportunity.data_source == "cross_workflow_projection"
@@ -2666,7 +2666,8 @@ def test_cross_workflow_projection_sums_multiple_inputs_on_one_row(
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
 
-    row = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "review")
+    child_key = normalize_workflow_path_key(str(child_path))
+    row = next(row for row in result.per_call if row.workflow_path == child_key and row.node_path == "review")
     assert row.cacheable_data_source == "cross_workflow_projection"
     assert row.cacheable_tokens_estimated is None
     assert row.cache_opportunity.data_source == "cross_workflow_projection"
@@ -2766,8 +2767,9 @@ def test_cross_workflow_projection_skips_unreached_conditional_consumer_rows(
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
 
-    draft = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "draft")
-    review = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "review")
+    child_key = normalize_workflow_path_key(str(child_path))
+    draft = next(row for row in result.per_call if row.workflow_path == child_key and row.node_path == "draft")
+    review = next(row for row in result.per_call if row.workflow_path == child_key and row.node_path == "review")
     assert draft.cacheable_data_source == "cross_workflow_projection"
     assert draft.cacheable_tokens_estimated is None
     assert draft.cache_opportunity.data_source == "cross_workflow_projection"
@@ -2847,7 +2849,8 @@ def test_cross_workflow_projection_uses_strictest_child_model_threshold(
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
 
-    child_rows = [row for row in result.per_call if row.workflow_path == str(child_path)]
+    child_key = normalize_workflow_path_key(str(child_path))
+    child_rows = [row for row in result.per_call if row.workflow_path == child_key]
     assert {row.node_path for row in child_rows} == {"draft", "review"}
     assert all(row.cacheable_tokens_estimated is None for row in child_rows)
     assert all(row.cache_opportunity.data_source == "cross_workflow_projection" for row in child_rows)
@@ -3842,7 +3845,8 @@ def test_cross_workflow_projection_uses_child_subpath_contribution(
 
     result = analyze(parent_ir, workflow_path="parent.pflow.md", trace_path=trace_path, memo_cache=None)
 
-    row = next(row for row in result.per_call if row.workflow_path == str(child_path) and row.node_path == "draft")
+    child_key = normalize_workflow_path_key(str(child_path))
+    row = next(row for row in result.per_call if row.workflow_path == child_key and row.node_path == "draft")
     assert row.cacheable_data_source == "cross_workflow_projection"
     assert row.cacheable_tokens_estimated is None
     assert row.cache_opportunity.data_source == "cross_workflow_projection"
@@ -3860,7 +3864,7 @@ def test_cross_workflow_projection_uses_child_subpath_contribution(
         ),
     )
     payload = render_json(result)
-    child_row = next(item for item in payload["per_call"] if item["workflow_path"] == str(child_path))
+    child_row = next(item for item in payload["per_call"] if item["workflow_path"] == child_key)
     assert child_row["cross_workflow_inputs"] == [
         {
             "child_input_name": "concept",
@@ -4480,7 +4484,8 @@ def test_discrepancy_for_sub_workflow_node_carries_child_workflow_path_in_affect
     diag = next(d for d in result.warnings if d.id == "cache.discrepancy")
     assert diag.node_id == "review"
     assert diag.context is not None
-    assert diag.context["affected_workflow"] == str(child_path), (
+    child_key = normalize_workflow_path_key(str(child_path))
+    assert diag.context["affected_workflow"] == child_key, (
         f"Bug 6: expected affected_workflow == child path {str(child_path)!r}, "
         f"got {diag.context['affected_workflow']!r} (would be the analyzed root pre-fix)"
     )
@@ -5485,7 +5490,7 @@ def test_predict_cache_keys_includes_sub_workflow_nodes(
     memo_cache = MemoizationCache(db_path=cache_db, read_enabled=True)
 
     parent_ir = parse_markdown(parent_path.read_text(encoding="utf-8")).ir
-    parent_label = str(parent_path.resolve())
+    parent_label = normalize_workflow_path_key(str(parent_path.resolve()))
     cw_result = walk_cross_workflow(
         parent_ir,
         base_path=tmp_path,
@@ -5495,7 +5500,7 @@ def test_predict_cache_keys_includes_sub_workflow_nodes(
     # final assertions could pass for the wrong reason (keys against the
     # wrong workflow_path).
     assert parent_label in cw_result.irs_by_workflow
-    child_label = str(child_path.resolve())
+    child_label = normalize_workflow_path_key(str(child_path.resolve()))
     assert child_label in cw_result.irs_by_workflow, f"Expected {child_label!r} in {sorted(cw_result.irs_by_workflow)}"
 
     parameters_by_workflow = _build_parameters_by_workflow(
@@ -5629,18 +5634,18 @@ def test_predict_cache_keys_byte_identical_to_runtime(
     cw_result = walk_cross_workflow(
         parsed.ir,
         base_path=tmp_path,
-        root_workflow_path=str(workflow_path.resolve()),
+        root_workflow_path=normalize_workflow_path_key(str(workflow_path.resolve())),
     )
     memo_cache = MemoizationCache(db_path=cache_db, read_enabled=True)
     ctx = AnalysisContext.build(
         workflow_ir=parsed.ir,
         parameters={"topic": "alpha"},
         memo_cache=memo_cache,
-        workflow_path=str(workflow_path.resolve()),
+        workflow_path=normalize_workflow_path_key(str(workflow_path.resolve())),
         base_path=tmp_path,
     )
     keys, _notes = _predict_cache_keys(cw_result, ctx)
-    predicted_key = keys.get((str(workflow_path.resolve()), "gen"))
+    predicted_key = keys.get((normalize_workflow_path_key(str(workflow_path.resolve())), "gen"))
     assert predicted_key == runtime_key, (
         f"Byte-identity violated: predicted {predicted_key!r} vs runtime {runtime_key!r}"
     )

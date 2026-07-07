@@ -3430,7 +3430,7 @@ def _make_sub_workflow_cache_diag(
     """Build the child-scoped sub-workflow cache diagnostic."""
     from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 
-    child_basename = child_workflow.rsplit("/", 1)[-1] if "/" in child_workflow else child_workflow
+    child_basename = child_workflow.replace("\\", "/").rsplit("/", 1)[-1]
     return make_diagnostic(
         "cache.sub-workflow-cache-undeclared",
         affected_workflow=child_workflow,
@@ -6348,7 +6348,7 @@ def test_renderer_never_emits_cd_commands() -> None:
     forbidden = re.compile(r'["\']\s{0,8}cd\s+[^"\']*["\']')
     offenders: list[str] = []
     for source_file in sorted(cache_analysis_dir.rglob("*.py")):
-        text = source_file.read_text()
+        text = source_file.read_text(encoding="utf-8")
         # Strip triple-quoted docstrings/comments so historical references
         # explaining WHY we don't emit cd don't trip the check.
         stripped = re.sub(r'""".*?"""', "", text, flags=re.DOTALL)

@@ -349,10 +349,10 @@ class TestWindowsExecRealBash:
     def test_full_lifecycle_stdin_and_pipes(self):
         """stdin reaches the command, POSIX pipe syntax works inside -c."""
         node = ShellNode()
-        node.set_params({"command": "tr a-z A-Z | rev", "stdin": "hello"})
+        node.set_params({"command": "cat | tr a-z A-Z", "stdin": "hello"})
         shared: dict = {}
         assert node.run(shared) == "default"
-        assert shared["stdout"] == "OLLEH"
+        assert shared["stdout"] == "HELLO"
         assert shared["exit_code"] == 0
 
     def test_nonzero_exit_and_stderr_propagate(self):

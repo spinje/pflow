@@ -258,15 +258,16 @@ The stdout.
         _skip_uv_sandbox_panic(result)
 
         stderr = result.stderr or ""
+        combined_output = f"{result.stdout or ''}\n{stderr}"
         assert result.returncode != 0, f"workflow should fail:\nstdout: {result.stdout}\nstderr: {stderr}"
-        assert "Traceback" not in stderr, f"run should not traceback:\n{stderr}"
+        assert "Traceback" not in combined_output, f"run should not traceback:\n{combined_output}"
         # Assertions below are run-pipeline-specific — the group boundary
         # (PflowCLI.invoke) would never emit these. They prove run's own
         # output_error() path fired, not a fallthrough to the boundary.
-        assert "Executing workflow" in stderr, (
-            f"run's execution-progress line missing — likely group boundary caught the error instead of run's pipeline:\n{stderr}"
+        assert "Executing workflow" in combined_output, (
+            f"run's execution-progress line missing — likely group boundary caught the error instead of run's pipeline:\n{combined_output}"
         )
-        assert "Shell details:" in stderr, (
-            f"category-aware shell rendering missing — failed-node diagnostic not routed through run's executor_service:\n{stderr}"
+        assert "Shell details:" in combined_output, (
+            f"category-aware shell rendering missing — failed-node diagnostic not routed through run's executor_service:\n{combined_output}"
         )
-        assert "At: node 'boom'" in stderr, f"node-specific attribution missing:\n{stderr}"
+        assert "At: node 'boom'" in combined_output, f"node-specific attribution missing:\n{combined_output}"

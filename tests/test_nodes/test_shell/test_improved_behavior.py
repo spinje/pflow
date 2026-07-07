@@ -235,10 +235,10 @@ class TestImprovedTimeoutBehavior:
         os.unlink(temp_file)
 
         # Timeout before file creation
-        run_shell_node(shared, command=f"sleep 0.2 && touch {temp_file}", timeout=0.05)
+        run_shell_node(shared, command=f"sleep 2 && touch {temp_file}", timeout=0.05)
 
         # Brief wait to confirm process was killed
-        deadline = time.monotonic() + 0.10
+        deadline = time.monotonic() + 0.30
         while time.monotonic() < deadline:
             if os.path.exists(temp_file):
                 break

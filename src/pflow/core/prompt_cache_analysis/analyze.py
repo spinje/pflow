@@ -536,6 +536,8 @@ def _run_full_validation(
         current = context.get("affected_workflow")
         if (not current or current == "<unknown>") and workflow_path:
             context["affected_workflow"] = workflow_path
+        elif isinstance(current, str):
+            context["affected_workflow"] = normalize_workflow_path_key(current)
         enriched.append(replace(diag, context=context))
     return enriched
 

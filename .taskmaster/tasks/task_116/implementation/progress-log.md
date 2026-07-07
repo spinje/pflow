@@ -1076,3 +1076,63 @@ Local validation after this pass:
 
 Expected next step: commit/push with `[skip review]`, then inspect the next
 `tests-windows` run and continue from the new CI ground truth.
+
+## 2026-07-07 — CI round 3 observed and fix pass (local, ready for round 4)
+
+Pushed `65bc829a Fix Windows CI round 2 failures [skip review]`. New Main run:
+https://github.com/spinje/pflow/actions/runs/28863944517
+
+Round 3 status:
+- All non-Windows Main jobs passed.
+- `tests-windows` still failed, but mypy and the MCP npx smoke both passed.
+- Pytest improved to **30 failed, 8654 passed, 75 skipped, 558 warnings**.
+
+Round 3 dominant remaining classes:
+- Cache-analysis path normalization was correct for trace joins, but memo-cache
+  rows and debug trace filenames still used raw Windows workflow paths. That
+  caused stale-memo detection, predicted-cache-key checks, streamed-trace
+  autoload, and several child-workflow projections to miss real data.
+- Many cache-analysis tests asserted native path spelling even though the
+  product contract is now slash-normalized workflow keys for analyzer joins and
+  user-facing cache-analysis metadata.
+- Three shell tests were test-shape portability problems: Git Bash `/` can be
+  writable on Windows, the delayed-touch timeout assertion was too tight, and
+  `rev` is not guaranteed to exist in Git for Windows.
+- One CLI boundary test assumed diagnostics always land on stderr, but the
+  contract is that run's own diagnostic renderer fires; Windows can surface the
+  captured text differently.
+
+Fixed product/runtime boundaries:
+- `MemoizationCache` now writes canonical workflow-path keys and reads/clears
+  using canonical plus legacy raw/backslash variants, preserving scoped lookup
+  while allowing existing Windows rows to be found.
+- `_iter_workflow_traces()` now searches debug trace filename hashes for both
+  canonical and legacy workflow-path spellings, then compares trace contents by
+  normalized workflow key.
+- Analyzer validation diagnostics normalize any returned
+  `affected_workflow`, so validator-originated findings do not reintroduce
+  host-specific separator spelling.
+
+Fixed focused test contracts:
+- Cache-analysis tests now compare/index by `normalize_workflow_path_key()`
+  where the behavior under test is attribution, projection, memo freshness, or
+  rendered workflow scope rather than native separator spelling.
+- Renderer helper basename derivation handles both `/` and `\`; renderer source
+  scan reads UTF-8.
+- Root permission probe skips only on win32; POSIX still verifies permission
+  errors are not auto-handled.
+- Timeout side-effect delay is long enough to distinguish process-tree kill
+  behavior on Windows.
+- Windows real-bash pipe test uses `cat | tr`, avoiding the optional `rev`
+  utility.
+- CLI run-boundary test checks combined captured output while still verifying
+  the run pipeline's diagnostic content and no traceback.
+
+Local validation after this pass:
+- Targeted round-3 failure slice: **356 passed**.
+- `make check`: **green** (ruff, format, pre-commit hooks, mypy, deptry).
+- `make test`: **8714 passed, 531 warnings**.
+
+Expected next step: commit/push with `[skip review]`, then inspect the next
+`tests-windows` run. If Windows passes, the follow-up is flipping/removing the
+temporary continue-on-error wiring; if not, continue from the new failure list.
