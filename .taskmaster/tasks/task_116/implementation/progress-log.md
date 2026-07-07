@@ -1237,3 +1237,22 @@ Local validation after this pass:
 Expected next step: commit/push with `[skip review]`, then inspect the next
 blocking `tests-windows` run. Expected result is green unless the prior
 concurrent config failure exposes another intermittent Windows-only race.
+
+## 2026-07-07 — CI round 7 green with blocking Windows gate
+
+Pushed `c57f1a1d Fix Windows MCP config read race [skip review]`. New Main run:
+https://github.com/spinje/pflow/actions/runs/28866419558
+
+Round 7 status:
+- Main concluded **success**.
+- `tests-windows` concluded **success** with Windows as a blocking job.
+- Windows `Run tests`, `Check typing`, and MCP npx smoke all passed.
+- `tests-and-type-check-done` concluded **success**, confirming the summary
+  gate accepts both Linux matrix and Windows results.
+- All non-Windows jobs also passed.
+
+Current expected state:
+- Task 116's Windows CI is now blocking and green on the latest code-bearing
+  commit.
+- The only remaining branch change after this entry is the progress-log update
+  documenting that result.
