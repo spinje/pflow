@@ -68,7 +68,7 @@ class TestExampleValidation:
                 continue
 
             try:
-                content = pflow_file.read_text()
+                content = pflow_file.read_text(encoding="utf-8")
                 result = parse_markdown(content)
                 ir = result.ir
                 normalize_ir(ir)
@@ -163,7 +163,7 @@ class TestExampleValidation:
         unexpected_passes = []
         for pflow_file in invalid_workflow_files:
             try:
-                content = pflow_file.read_text()
+                content = pflow_file.read_text(encoding="utf-8")
                 result = parse_markdown(content)
                 ir_data = result.ir
                 normalize_ir(ir_data)

@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -21,6 +22,126 @@ _GIT_BASH_DEFAULT_PATHS: tuple[str, ...] = (
     r"C:\Program Files\Git\bin\bash.exe",
     r"C:\Program Files (x86)\Git\bin\bash.exe",
 )
+
+
+def _git_bash_support_paths(bash_path: str) -> list[str]:
+    """Return Git-for-Windows directories that make non-login bash useful.
+
+    A clean end-user install often has ``Git\\cmd`` on PATH but not
+    ``Git\\usr\\bin``. ``bash -c`` is non-login/non-interactive, so seed PATH
+    from the resolved bash location instead of relying on profile startup.
+    """
+    path = Path(bash_path)
+    candidates: list[Path] = []
+    parent = path.parent
+
+    if parent.name.lower() == "bin" and parent.parent.name.lower() == "usr":
+        # C:\Program Files\Git\usr\bin\bash.exe
+        candidates.append(parent.parent.parent)
+    elif parent.name.lower() == "bin":
+        # C:\Program Files\Git\bin\bash.exe
+        candidates.append(parent.parent)
+
+    roots: list[Path] = []
+    for candidate in candidates:
+        if candidate not in roots:
+            roots.append(candidate)
+
+    support_paths: list[str] = []
+    for root in roots:
+        for subdir in (root / "usr" / "bin", root / "bin"):
+            if subdir.is_dir():
+                support_paths.append(str(subdir))
+    return support_paths
+
+
+def _prepare_windows_shell_env(base_env: dict[str, str] | None, bash_path: str) -> dict[str, str]:
+    """Prepare environment for Git Bash shell steps on Windows."""
+    full_env = dict(os.environ if base_env is None else base_env)
+    full_env.setdefault("MSYS_NO_PATHCONV", "1")
+
+    support_paths = _git_bash_support_paths(bash_path)
+    if support_paths:
+        current_path = full_env.get("PATH", "")
+        full_env["PATH"] = os.pathsep.join([*support_paths, current_path] if current_path else support_paths)
+    return full_env
+
+
+def _windows_path_to_bash(path_text: str) -> str:
+    drive = path_text[0].lower()
+    tail = path_text[2:].replace("\\", "/")
+    return f"/{drive}{tail}"
+
+
+def _translate_windows_paths_for_bash(command: str) -> str:
+    """Translate native absolute Windows paths embedded in POSIX shell commands.
+
+    The shell dialect is POSIX sh, but pflow's Python-side path values are
+    native Windows strings. Without this bridge, command templates like
+    ``cat C:\\Users\\...\\flag.txt`` are parsed by bash as ``C:Users...`` because
+    backslashes are escape characters. The translation is intentionally narrow:
+    drive-letter absolute paths without shell metacharacters.
+    """
+    import re
+
+    pattern = re.compile(r"(?<![A-Za-z0-9_/-])([A-Za-z]:[\\/][^\s'\"|;&<>()`$]+)")
+    return pattern.sub(lambda match: _windows_path_to_bash(match.group(1)), command)
+
+
+def _terminate_windows_process_tree(pid: int) -> None:
+    """Best-effort termination for Git Bash and any child process it spawned."""
+    taskkill_path = shutil.which("taskkill") or r"C:\Windows\System32\taskkill.exe"
+    try:
+        result = subprocess.run(
+            [taskkill_path, "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return
+    if result.returncode != 0:
+        logger.debug("taskkill failed while terminating shell process tree", extra={"pid": pid})
+
+
+def _run_windows_bash_command(
+    bash_path: str,
+    command: str,
+    *,
+    stdin_bytes: bytes | None,
+    cwd: str | None,
+    env: dict[str, str],
+    timeout: int | float,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run a Git Bash command with timeout semantics that kill child processes.
+
+    On Windows, ``subprocess.run(timeout=...)`` kills only the bash process.
+    Children such as ``sleep`` can keep inherited pipe handles open, causing
+    communicate() to wait until the child exits. Killing the process tree keeps
+    shell-node timeout behavior consistent with POSIX.
+    """
+    argv = [bash_path, "-c", _translate_windows_paths_for_bash(command)]
+    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    proc = subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE if stdin_bytes is not None else None,
+        cwd=cwd,
+        env=env,
+        creationflags=creationflags,
+    )
+    try:
+        stdout, stderr = proc.communicate(input=stdin_bytes, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        _terminate_windows_process_tree(proc.pid)
+        with suppress(OSError):
+            proc.kill()
+        stdout, stderr = proc.communicate()
+        raise subprocess.TimeoutExpired(
+            argv, timeout, output=stdout or exc.output, stderr=stderr or exc.stderr
+        ) from exc
+    return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
 
 
 def _resolve_windows_bash() -> str | None:
@@ -662,13 +783,13 @@ class ShellNode(Node):
                 # ADR-0013: POSIX sh everywhere — on Windows the command runs
                 # through Git Bash (resolved in prep()), never cmd.exe, so one
                 # shell dialect works on every platform.
-                result = subprocess.run(
-                    [prep_res["bash_path"], "-c", command],
-                    capture_output=True,
-                    text=False,
-                    input=stdin_bytes,
+                bash_path = prep_res["bash_path"]
+                result = _run_windows_bash_command(
+                    bash_path,
+                    command,
+                    stdin_bytes=stdin_bytes,
                     cwd=cwd,
-                    env=full_env,
+                    env=_prepare_windows_shell_env(full_env, bash_path),
                     timeout=timeout,
                 )
             else:

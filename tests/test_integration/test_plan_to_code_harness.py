@@ -378,7 +378,7 @@ Why the run ended.
 def _run(tmp_path: Path, scenario: str, max_review_rounds: int = 3) -> list[str]:
     """Run the skeleton and return the ground-truth control-flow log as a list of lines."""
     wf = tmp_path / "harness_skeleton.pflow.md"
-    wf.write_text(HARNESS_SKELETON)
+    wf.write_text(HARNESS_SKELETON, encoding="utf-8")
     log = tmp_path / "flow.log"
     result = WorkflowRunner().run(
         str(wf),
@@ -390,7 +390,7 @@ def _run(tmp_path: Path, scenario: str, max_review_rounds: int = 3) -> list[str]
     # routing regression that raises after writing the early log lines would still satisfy the
     # negative assertions (e.g. "ship" not in flow) simply because execution crashed early.
     assert result.success, f"skeleton run failed ({scenario}): {[d.message for d in result.errors]}"
-    return log.read_text().splitlines() if log.exists() else []
+    return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
 
 
 def test_happy_path_runs_full_pipeline(tmp_path: Path) -> None:
@@ -519,7 +519,7 @@ def test_real_execute_plan_routing_matches_skeleton() -> None:
     The ``end`` abort sentinel is not a node, so it is never a declared edge target — assert the
     concrete successors only (aborts route via the check-* code bodies' ``next = "end"``).
     """
-    ir = parse_markdown((_HARNESS_DIR / "execute-plan/execute-plan.pflow.md").read_text()).ir
+    ir = parse_markdown((_HARNESS_DIR / "execute-plan/execute-plan.pflow.md").read_text(encoding="utf-8")).ir
     succ: dict[str, set[str]] = {}
     for edge in ir["edges"]:
         succ.setdefault(edge["from"], set()).add(edge["to"])
@@ -550,11 +550,15 @@ def test_real_validate_fix_is_a_ground_truth_loop() -> None:
     assert succ["run-validate"] == {"check-validate"}
     assert succ["check-validate"] == {"fix-tests"}  # red → fix; green/cap route via `next = "end"`
     assert succ["fix-tests"] == {"run-validate"}  # backward edge: re-check after every fix
-    ir = parse_markdown((_HARNESS_DIR / "execute-plan/validate-fix/validate-fix.pflow.md").read_text()).ir
+    ir = parse_markdown(
+        (_HARNESS_DIR / "execute-plan/validate-fix/validate-fix.pflow.md").read_text(encoding="utf-8")
+    ).ir
     assert "ok" in ir["outputs"], list(ir["outputs"])  # callers branch on the gate's verdict
 
 
 def test_real_implement_chunk_exposes_commits_made() -> None:
     """The parent loop's hard-failure early-exit depends on implement-chunk's commits_made output."""
-    ir = parse_markdown((_HARNESS_DIR / "execute-plan/implement-chunk/implement-chunk.pflow.md").read_text()).ir
+    ir = parse_markdown(
+        (_HARNESS_DIR / "execute-plan/implement-chunk/implement-chunk.pflow.md").read_text(encoding="utf-8")
+    ).ir
     assert "commits_made" in ir["outputs"], list(ir["outputs"])

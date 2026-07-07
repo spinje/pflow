@@ -131,7 +131,7 @@ def _setup_signals() -> None:
         sys.exit(130)
 
     signal.signal(signal.SIGINT, _handle_sigint)
-    with suppress(AttributeError):
+    if sys.platform != "win32":
         signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
 

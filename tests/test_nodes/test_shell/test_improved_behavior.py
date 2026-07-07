@@ -7,6 +7,13 @@ import time
 from pflow.nodes.shell.shell import ShellNode
 
 
+def _shell_path(path: str) -> str:
+    normalized = path.replace("\\", "/").rstrip("/")
+    if len(normalized) >= 2 and normalized[1] == ":":
+        normalized = f"/{normalized[0].lower()}{normalized[2:]}"
+    return normalized
+
+
 def run_shell_node(shared, **params):
     """Helper to run shell node with parameters."""
     node = ShellNode()
@@ -265,7 +272,7 @@ class TestShellSpecificBehaviors:
         run_shell_node(shared, command="echo ~")
 
         output = shared["stdout"].strip()
-        assert output == os.path.expanduser("~")
+        assert _shell_path(output) == _shell_path(os.path.expanduser("~"))
         assert output != "~"  # Should be expanded
 
     def test_shell_builtin_commands(self):

@@ -230,11 +230,19 @@ def read_stdin() -> str | None:
             # (a bare full read would consume the whole stream before failing
             # on binary input, starving the read_stdin_enhanced fallback).
             # detach() afterwards so closing the wrapper can't close stdin.
-            wrapper = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", newline=None)
-            try:
-                content = wrapper.read()
-            finally:
-                wrapper.detach()
+            buffer = getattr(sys.stdin, "buffer", None)
+            if buffer is None:
+                # In-process test harnesses and embedded callers can replace
+                # stdin with StringIO. Real win32 pipes have .buffer; this
+                # fallback keeps the function defensive once stdin_has_data()
+                # has already been mocked or prevalidated by the caller.
+                content = sys.stdin.read()
+            else:
+                wrapper = io.TextIOWrapper(buffer, encoding="utf-8", newline=None)
+                try:
+                    content = wrapper.read()
+                finally:
+                    wrapper.detach()
         else:
             content = sys.stdin.read()
 

@@ -1236,8 +1236,9 @@ def _short_workflow_label(path: str) -> str:
     Filesystem paths get their basename; non-path identifiers (e.g.
     ``"<inline>"``, ``"ir-hash:<md5>"``) pass through as-is.
     """
-    if "/" in path:
-        return path.rsplit("/", 1)[-1] or path
+    normalized = path.replace("\\", "/")
+    if "/" in normalized:
+        return normalized.rsplit("/", 1)[-1] or normalized
     return path
 
 
@@ -1249,17 +1250,17 @@ def _display_path_from_cwd(path: str) -> str:
     machine paths. If the path is outside the current working directory, keep it
     unchanged to avoid misleading ``../../../`` paths.
     """
-    if not path or path.startswith("ir-hash:") or "/" not in path:
+    if not path or path.startswith("ir-hash:") or ("/" not in path and "\\" not in path):
         return path
     if not os.path.isabs(path):
-        return path
+        return path.replace("\\", "/")
     try:
         rel = os.path.relpath(path, os.getcwd())
     except ValueError:
-        return path
+        return path.replace("\\", "/")
     if rel == "." or rel.startswith(".."):
-        return path
-    return rel
+        return path.replace("\\", "/")
+    return rel.replace("\\", "/")
 
 
 def _display_edit_target(path: str, *, root_workflow_path: str) -> str:
@@ -1273,7 +1274,7 @@ def _display_edit_target(path: str, *, root_workflow_path: str) -> str:
     for self-references — ``Edit chorus-chooser.pflow.md`` reads cleaner
     than the full path when prose context already established the workflow.
     """
-    if not path or path.startswith("ir-hash:") or "/" not in path:
+    if not path or path.startswith("ir-hash:") or ("/" not in path and "\\" not in path):
         return path
     if path == root_workflow_path:
         return _workflow_filename(path)
@@ -1295,7 +1296,9 @@ def _display_run_command(command: str, workflow_path: str) -> str:
 
 def _shorten_paths_in_prose(text: str, paths: Iterable[str | None]) -> str:
     replacements = {
-        path: _workflow_filename(path) for path in paths if path and "/" in path and not path.startswith("ir-hash:")
+        path: _workflow_filename(path)
+        for path in paths
+        if path and ("/" in path or "\\" in path) and not path.startswith("ir-hash:")
     }
     for path in sorted(replacements, key=len, reverse=True):
         text = text.replace(path, replacements[path])
@@ -1541,8 +1544,9 @@ def _workflow_short_name(path: str) -> str:
     ``/abs/path/song-creator.pflow.md`` → ``song-creator``
     ``<inline>`` / ``ir-hash:abc`` → unchanged
     """
-    if "/" in path:
-        path = path.rsplit("/", 1)[-1]
+    normalized = path.replace("\\", "/")
+    if "/" in normalized:
+        path = normalized.rsplit("/", 1)[-1]
     if path.endswith(".pflow.md"):
         return path[: -len(".pflow.md")]
     return path
@@ -1550,9 +1554,10 @@ def _workflow_short_name(path: str) -> str:
 
 def _workflow_filename(path: str) -> str:
     """Return the filename-like workflow label, preserving .pflow.md suffix."""
-    if "/" in path:
-        return path.rsplit("/", 1)[-1]
-    return path
+    normalized = path.replace("\\", "/")
+    if "/" in normalized:
+        return normalized.rsplit("/", 1)[-1]
+    return normalized
 
 
 def _render_per_call(analysis: CacheAnalysis, *, all_rows: bool) -> str:

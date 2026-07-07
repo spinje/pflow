@@ -63,7 +63,7 @@ def home(tmp_path, monkeypatch):
 @pytest.fixture
 def gate_wf(tmp_path):
     path = tmp_path / "paused_demo.pflow.md"
-    path.write_text(_GATE_WF)
+    path.write_text(_GATE_WF, encoding="utf-8")
     return path
 
 
@@ -255,7 +255,7 @@ def test_only_gate_preflight_warns_fail_not_pause(home, gate_wf):
 
 def test_stale_hash_refuses_paused_resume_and_force_proceeds(home, gate_wf):
     token = _pause(gate_wf)
-    gate_wf.write_text(gate_wf.read_text() + "\n<!-- edited since the pause -->\n")
+    gate_wf.write_text(gate_wf.read_text(encoding="utf-8") + "\n<!-- edited since the pause -->\n", encoding="utf-8")
     refused = _runner().invoke(cli, ["resume", token, "--approve", "yes"])
     assert refused.exit_code == 1
     # Task 171: neutral wording ("original run") — a paused run was not a failure.
@@ -290,7 +290,7 @@ def test_first_node_pause_resumes_by_workflow_path(home, tmp_path):
     rule: without `paused ⇒ consumed`, `_select_resume_trace` calls the trace a
     dead zero-work attempt and `pflow resume <workflow>` misses the pause."""
     wf = tmp_path / "first_gate.pflow.md"
-    wf.write_text(_FIRST_NODE_GATE_WF)
+    wf.write_text(_FIRST_NODE_GATE_WF, encoding="utf-8")
     _pause(wf)
     result = _runner().invoke(cli, ["resume", str(wf), "--approve", "yes"])
     assert result.exit_code == 0, result.stderr
@@ -333,7 +333,7 @@ def test_multiple_gates_chain_pauses_again_and_supersedes(home, tmp_path):
     trace + token); the old token is consumed (answering it → superseded);
     answering the new token completes the run. Three traces in the chain."""
     wf = tmp_path / "two_gates.pflow.md"
-    wf.write_text(_TWO_GATE_WF)
+    wf.write_text(_TWO_GATE_WF, encoding="utf-8")
     token_a = _pause(wf)
 
     paused_again = _runner().invoke(cli, ["resume", token_a, "--approve", "yes"])
@@ -424,7 +424,7 @@ def escalating_registry():
 @pytest.fixture
 def esc_wf(tmp_path, escalating_registry):
     path = tmp_path / "esc_demo.pflow.md"
-    path.write_text(_ESC_WF)
+    path.write_text(_ESC_WF, encoding="utf-8")
     return path
 
 
@@ -498,7 +498,7 @@ def test_restored_only_paused_attempt_supersedes_its_source(home, tmp_path, esca
     a pause, ZERO fresh executed events. B must still supersede A — without
     clause (b) both A and B would stay answerable and the chain could fork."""
     wf = tmp_path / "esc_gate.pflow.md"
-    wf.write_text(_ESC_THEN_GATE_WF)
+    wf.write_text(_ESC_THEN_GATE_WF, encoding="utf-8")
     token_a = _pause(wf)
 
     paused_b = _runner().invoke(cli, ["resume", token_a, "--choose", "1"])
@@ -521,13 +521,14 @@ def test_escalation_on_edited_final_step_gets_paused_specific_refusal(home, tmp_
     between pause and resume — and its message must speak the pause, not claim an
     interruption."""
     wf = tmp_path / "esc_edit.pflow.md"
-    wf.write_text(_ESC_WF)
+    wf.write_text(_ESC_WF, encoding="utf-8")
     token = _pause(wf)
     # Edit away the successor: the escalating step becomes the final step.
     wf.write_text(
         "# Escalation Demo\n\nAn escalating step with nothing after it.\n\n"
         "## Steps\n\n### esc\n\nRaises a decision escalation.\n\n"
-        "- type: escalating-node\n- question: pick a or b\n"
+        "- type: escalating-node\n- question: pick a or b\n",
+        encoding="utf-8",
     )
     result = _runner().invoke(cli, ["resume", token, "--choose", "1", "--force"])
     assert result.exit_code == 1

@@ -111,6 +111,9 @@ class WriteFileNode(Node):
 
     def _check_disk_space(self, content: str, encoding: str, file_path: str) -> None:
         """Check if there's enough disk space for writing."""
+        if sys.platform == "win32":
+            return
+
         parent_dir = os.path.dirname(file_path)
         try:
             stat = os.statvfs(parent_dir or ".")

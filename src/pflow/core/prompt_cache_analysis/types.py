@@ -645,7 +645,8 @@ class _SubWorkflowCacheGroup:
 
 
 def _workflow_basename(workflow_path: str) -> str:
-    return workflow_path.rsplit("/", 1)[-1] if "/" in workflow_path else workflow_path
+    normalized = workflow_path.replace("\\", "/")
+    return normalized.rsplit("/", 1)[-1] if "/" in normalized else normalized
 
 
 @dataclass(frozen=True)

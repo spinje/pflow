@@ -65,6 +65,7 @@ class TestWriteFileNode:
         with tempfile.TemporaryDirectory() as fake_home:
             # Set up a fake home directory
             monkeypatch.setenv("HOME", fake_home)
+            monkeypatch.setenv("USERPROFILE", fake_home)
 
             # Use ~/ path with non-existent subdirectory
             tilde_path = "~/stories/cat_story.md"

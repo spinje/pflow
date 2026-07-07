@@ -18,6 +18,7 @@ is duplicated from ``ui.run_tailer`` rather than imported.
 import json
 import logging
 import re
+import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -101,6 +102,8 @@ def _is_trace_locked(path: Path) -> bool | None:
     live writer holds the producer's EXCLUSIVE lock, ``False`` when free, ``None``
     when liveness can't be determined (no ``fcntl`` / unopenable).
     """
+    if sys.platform == "win32":
+        return None
     try:
         import fcntl
     except ImportError:

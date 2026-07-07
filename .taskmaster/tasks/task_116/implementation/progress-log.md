@@ -921,3 +921,79 @@ Recommended next pass:
 4. Reproduce and decide the MSYS path conversion class before applying a
    systemic env change such as `MSYS_NO_PATHCONV`.
 5. Keep `continue-on-error: true` until a full `tests-windows` run is green.
+
+## 2026-07-07 — CI round 1 fix pass (local, ready for round 2)
+
+Started from the first real Windows log (run `28858119971`, job
+`85589625649`) and the two PR comments. The review comments were consistent
+with the fixes below: seed Git Bash's support directories for clean installs,
+keep stdin reconfiguration scoped, and treat binary stdin fallback as out of
+scope for this Windows pass unless it appears as a regression.
+
+Fixed the deterministic Windows mypy failures:
+- `os.statvfs` now returns early on win32 in write/copy file disk-space
+  checks.
+- `fcntl` trace-lock checks now return "unknown/unlocked" on win32 without
+  importing `fcntl`.
+- `signal.SIGPIPE` setup is skipped on win32.
+
+Fixed the dominant shell-node product failures instead of papering over
+tests:
+- Git Bash execution now seeds `Git/usr/bin` and `Git/bin` from the resolved
+  `bash.exe`, so clean Git for Windows installs have `cat`, `rm`, `sleep`,
+  `grep`, etc. in non-login `bash -c` runs.
+- Git Bash env defaults `MSYS_NO_PATHCONV=1`, preserving explicit user env
+  overrides.
+- Native absolute Windows paths embedded in POSIX shell commands are
+  narrowly translated from `C:\...` / `C:/...` to `/c/...` before bash sees
+  them; this targets the observed `C:Usersrunneradmin...` failures without
+  changing POSIX behavior.
+- Windows shell execution uses a small `Popen` wrapper so timeout handling
+  kills the Git Bash process tree with `taskkill /T /F`; this fixes the real
+  `sleep 10` timeout failure where `subprocess.run(timeout=...)` waited for
+  the child process to exit.
+
+Fixed other product/runtime Windows surfaces:
+- `read_stdin()` now falls back when an in-process caller replaces
+  `sys.stdin` with `StringIO`, while real win32 pipe reads still use the
+  UTF-8 byte wrapper.
+- MCP config saves are serialized in-process around load/mutate/atomic
+  replace, and the partial-write test no longer leaves the temp fd open on
+  Windows.
+- Cache-analysis path rendering and warning metadata now consistently use
+  forward-slash workflow labels for agent/user-facing output on Windows.
+
+Classified and fixed high-signal test portability issues:
+- Remaining UTF-8 fixture reads/writes in guide validation, IR examples,
+  pause/resume, workflow-save, branch convergence, plan-to-code, and selected
+  bundling/scanner paths now pass `encoding="utf-8"`.
+- `NamedTemporaryFile` CLI workflow tests now close the file before invoking
+  pflow, matching Windows file-sharing rules.
+- UI spawn tests now assert Windows detached flags vs POSIX
+  `start_new_session`.
+- Path assertions now compare normalized/semantic paths where the product
+  contract is "same path", not "same separator spelling".
+- Windows case-insensitive environment semantics are reflected in the
+  settings/env tests; the mixed-input test no longer collides with ambient
+  `OPENAI_API_KEY`.
+- Tilde-expansion tests set both `HOME` and `USERPROFILE`.
+
+High-leverage tests added/updated:
+- Windows shell env/path translation tests for Git Bash support-path seeding,
+  `MSYS_NO_PATHCONV`, native path translation, and process-tree timeout
+  termination.
+- Existing touched test slices now exercise the new Windows stdin fallback,
+  MCP config serialization path, UI spawn flags, and shell path normalization.
+
+Local validation after this pass:
+- Targeted Windows-failure slice:
+  **786 passed** (`tests/test_nodes/test_shell`, stdin, MCP config,
+  workflow resolution, pause/resume, UI spawn/reuse, settings env, cache
+  analysis, selected file/Claude/registry/bundling assertions).
+- `make check`: **green** (ruff, format, pre-commit hooks, mypy, deptry).
+- `make test`: **8714 passed, 537 warnings**.
+
+Expected next step: commit/push with `[skip review]`, then inspect the new
+`tests-windows` run. Remaining Windows failures, if any, should be the next
+round's ground truth; do not flip `continue-on-error` or wire the Windows job
+into the gate until a full Windows run is green.

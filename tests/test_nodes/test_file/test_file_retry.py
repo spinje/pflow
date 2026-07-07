@@ -113,7 +113,7 @@ class TestFileNodeRetryBehavior:
         assert action == "error"
         error_msg = shared["error"]
         assert "does not exist" in error_msg.lower()
-        assert "/nonexistent/path/file.txt" in error_msg  # Shows actual path
+        assert "nonexistent/path/file.txt" in error_msg.replace("\\", "/")  # Shows actual path
 
     def test_concurrent_file_access_eventually_succeeds(self):
         """Test that retry mechanism handles real concurrent access scenarios.

@@ -345,7 +345,7 @@ def _process_one_call(
         return
 
     # Cycle detection — re-entry of a path already on the recursion stack.
-    child_path_str = str(result.path) if result.path else None
+    child_path_str = result.path.as_posix() if result.path else None
     child_label = child_path_str or "<inline>"
     cache_items_by_workflow[child_label] = _cache_items_as_tuple(result.ir)
     irs_by_workflow[child_label] = result.ir

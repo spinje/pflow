@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import re
+import sys
 import threading
 import uuid
 from collections import Counter
@@ -83,6 +84,8 @@ def _lock_trace_handle(handle: TextIO) -> None:
     closes in ``_close_stream`` or the process dies). Unix-only (``fcntl``); a no-op on Windows or any
     failure (e.g. a filesystem without ``flock``) — liveness then degrades to the consumer's fallback, and
     the run is NEVER affected (trace persistence is a side-channel)."""
+    if sys.platform == "win32":
+        return  # no fcntl (Windows) — degrade to the consumer's heuristic
     try:
         import fcntl
     except ImportError:

@@ -6,8 +6,6 @@ trace reports, runtime summaries, and analyze-cache rollups.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from pflow.core.trace_tree import TraceTree, WalkEvent, batch_item_cost, event_cost
@@ -993,7 +991,7 @@ def test_walk_normalizes_old_relative_template_resolved_workflow_path() -> None:
 
     builder = TraceFixtureBuilder()
     parent_path = "/repo/song-creator/song-creator.pflow.md"
-    child_path = str(Path("/repo/song-creator/reviews/review-rhyme.pflow.md"))
+    child_path = "/repo/song-creator/reviews/review-rhyme.pflow.md"
     parent = builder.heterogeneous_workflow_batch_event(
         "fan-out",
         items=[

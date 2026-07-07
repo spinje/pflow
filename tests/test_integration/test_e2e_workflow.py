@@ -405,6 +405,7 @@ def test_tilde_path_with_directory_creation(tmp_path, monkeypatch):
         fake_home = tmp_path / "fake_home"
         fake_home.mkdir()
         monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.setenv("USERPROFILE", str(fake_home))
 
         # Create workflow with ~/ path and non-existent subdirectory
         workflow = {

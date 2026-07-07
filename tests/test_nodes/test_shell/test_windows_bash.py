@@ -25,7 +25,14 @@ from pflow.core.user_errors import UserFriendlyError
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
 from pflow.nodes.shell import shell as shell_module
-from pflow.nodes.shell.shell import ShellNode, _resolve_windows_bash
+from pflow.nodes.shell.shell import (
+    ShellNode,
+    _git_bash_support_paths,
+    _prepare_windows_shell_env,
+    _resolve_windows_bash,
+    _run_windows_bash_command,
+    _translate_windows_paths_for_bash,
+)
 
 
 class TestResolveWindowsBash:
@@ -134,23 +141,125 @@ class TestWindowsExecArgv:
         monkeypatch.setattr(shell_module, "_resolve_windows_bash", lambda: r"C:\Git\bin\bash.exe")
         completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"hello\n", stderr=b"")
 
-        with patch.object(shell_module.subprocess, "run", return_value=completed) as mock_run:
+        with patch.object(shell_module, "_run_windows_bash_command", return_value=completed) as mock_run:
             shared: dict = {}
             action = _make_node().run(shared)
 
         assert action == "default"
         assert shared["stdout"] == "hello"
-        argv = mock_run.call_args.args[0]
-        assert argv == [r"C:\Git\bin\bash.exe", "-c", "echo hello"]
-        assert mock_run.call_args.kwargs.get("shell") is not True
+        assert mock_run.call_args.args == (r"C:\Git\bin\bash.exe", "echo hello")
+        assert mock_run.call_args.kwargs["env"]["MSYS_NO_PATHCONV"] == "1"
 
-    def test_posix_path_unchanged(self):
+    def test_native_windows_paths_are_translated_before_bash(self, monkeypatch):
+        """pflow templates produce native Windows paths; POSIX bash needs /c/...
+        form or backslashes become escape characters (``C:\\Users`` -> ``C:Users``)."""
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(shell_module, "_resolve_windows_bash", lambda: r"C:\Git\bin\bash.exe")
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"", stderr=b"")
+
+        node = ShellNode()
+        node.set_params({"command": r"cat C:\Users\runneradmin\AppData\Local\Temp\flag.txt"})
+        with patch.object(shell_module, "_run_windows_bash_command", return_value=completed) as mock_run:
+            node.run({})
+
+        assert mock_run.call_args.args == (
+            r"C:\Git\bin\bash.exe",
+            r"cat C:\Users\runneradmin\AppData\Local\Temp\flag.txt",
+        )
+
+    def test_posix_path_unchanged(self, monkeypatch):
         """On non-win32 the command still goes through shell=True as a string."""
+        monkeypatch.setattr(sys, "platform", "linux")
         completed = subprocess.CompletedProcess(args="", returncode=0, stdout=b"hello\n", stderr=b"")
         with patch.object(shell_module.subprocess, "run", return_value=completed) as mock_run:
             _make_node().run({})
         assert mock_run.call_args.args[0] == "echo hello"
         assert mock_run.call_args.kwargs.get("shell") is True
+
+
+class TestWindowsBashEnvironment:
+    def test_support_paths_derived_from_git_bash_install(self, tmp_path):
+        git_root = tmp_path / "Git"
+        bash = git_root / "bin" / "bash.exe"
+        usr_bin = git_root / "usr" / "bin"
+        for path in (bash.parent, usr_bin):
+            path.mkdir(parents=True, exist_ok=True)
+        bash.touch()
+
+        assert _git_bash_support_paths(str(bash)) == [str(usr_bin), str(bash.parent)]
+
+    def test_env_seeds_git_coreutils_and_disables_msys_path_conversion(self, tmp_path):
+        git_root = tmp_path / "Git"
+        bash = git_root / "bin" / "bash.exe"
+        usr_bin = git_root / "usr" / "bin"
+        for path in (bash.parent, usr_bin):
+            path.mkdir(parents=True, exist_ok=True)
+        bash.touch()
+
+        env = _prepare_windows_shell_env({"PATH": "existing", "MSYS_NO_PATHCONV": "custom"}, str(bash))
+
+        assert env["MSYS_NO_PATHCONV"] == "custom"
+        assert env["PATH"].split(shell_module.os.pathsep)[:2] == [str(usr_bin), str(bash.parent)]
+        assert env["PATH"].endswith("existing")
+
+    def test_translate_windows_paths_is_narrow(self):
+        command = r"cat C:\Temp\a.txt && printf '%s' D:\Logs\out.txt"
+        assert _translate_windows_paths_for_bash(command) == "cat /c/Temp/a.txt && printf '%s' /d/Logs/out.txt"
+
+    def test_windows_runner_kills_process_tree_on_timeout(self, monkeypatch):
+        monkeypatch.setattr(shell_module.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, raising=False)
+
+        class FakeProc:
+            pid = 1234
+            returncode = None
+
+            def __init__(self):
+                self.communicate_calls = 0
+                self.killed = False
+
+            def communicate(self, data=None, timeout=None, **kwargs):
+                self.communicate_calls += 1
+                if self.communicate_calls == 1:
+                    raise subprocess.TimeoutExpired(["bash", "-c", "sleep 10"], timeout or 0)
+                self.returncode = -9
+                return b"partial", b""
+
+            def kill(self):
+                self.killed = True
+
+        fake_proc = FakeProc()
+        popen_calls = []
+
+        def fake_popen(*args, **kwargs):
+            popen_calls.append((args, kwargs))
+            return fake_proc
+
+        monkeypatch.setattr(shell_module.subprocess, "Popen", fake_popen)
+        with patch.object(shell_module.subprocess, "run") as mock_taskkill:
+            mock_taskkill.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+            with pytest.raises(subprocess.TimeoutExpired) as exc_info:
+                _run_windows_bash_command(
+                    r"C:\Git\bin\bash.exe",
+                    "sleep 10",
+                    stdin_bytes=None,
+                    cwd=None,
+                    env={"PATH": "x"},
+                    timeout=0.1,
+                )
+
+        assert popen_calls[0][0][0] == [r"C:\Git\bin\bash.exe", "-c", "sleep 10"]
+        assert popen_calls[0][1]["creationflags"] == 512
+        mock_taskkill.assert_called_once()
+        taskkill_argv = mock_taskkill.call_args.args[0]
+        assert taskkill_argv[0].lower().endswith("taskkill.exe")
+        assert taskkill_argv[1:] == ["/PID", "1234", "/T", "/F"]
+        assert mock_taskkill.call_args.kwargs == {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "check": False,
+        }
+        assert fake_proc.killed is True
+        assert exc_info.value.output == b"partial"
 
 
 class TestMissingBashRaisesFromPrep:

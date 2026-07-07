@@ -82,7 +82,7 @@ class TestValidExamples:
     def test_valid_examples_pass_validation(self, examples_dir, example_file):
         """Test that valid examples parse and pass validation."""
         file_path = examples_dir / example_file
-        content = file_path.read_text()
+        content = file_path.read_text(encoding="utf-8")
         result = parse_markdown(content)
         ir_data = result.ir
         normalize_ir(ir_data)
@@ -97,7 +97,7 @@ class TestValidExamples:
             if not dir_path.exists():
                 continue
             for pflow_file in dir_path.glob("*.pflow.md"):
-                content = pflow_file.read_text()
+                content = pflow_file.read_text(encoding="utf-8")
                 result = parse_markdown(content)
                 # Every valid workflow should have a title
                 assert result.title is not None, f"Missing title in {pflow_file}"
@@ -113,56 +113,56 @@ class TestInvalidExamples:
 
     def test_missing_steps_error(self, examples_dir):
         """Test missing Steps section produces correct error."""
-        content = (examples_dir / "invalid/missing-steps.pflow.md").read_text()
+        content = (examples_dir / "invalid/missing-steps.pflow.md").read_text(encoding="utf-8")
 
         with pytest.raises(MarkdownParseError, match=r"Missing.*Steps.*section"):
             parse_markdown(content)
 
     def test_missing_type_error(self, examples_dir):
         """Test missing node type produces correct error."""
-        content = (examples_dir / "invalid/missing-type.pflow.md").read_text()
+        content = (examples_dir / "invalid/missing-type.pflow.md").read_text(encoding="utf-8")
 
         with pytest.raises(MarkdownParseError, match=r"missing.*type.*parameter"):
             parse_markdown(content)
 
     def test_missing_description_error(self, examples_dir):
         """Test missing description produces correct error."""
-        content = (examples_dir / "invalid/missing-description.pflow.md").read_text()
+        content = (examples_dir / "invalid/missing-description.pflow.md").read_text(encoding="utf-8")
 
         with pytest.raises(MarkdownParseError, match="missing a description"):
             parse_markdown(content)
 
     def test_unclosed_fence_error(self, examples_dir):
         """Test unclosed code fence produces correct error."""
-        content = (examples_dir / "invalid/unclosed-fence.pflow.md").read_text()
+        content = (examples_dir / "invalid/unclosed-fence.pflow.md").read_text(encoding="utf-8")
 
         with pytest.raises(MarkdownParseError, match="Unclosed code block"):
             parse_markdown(content)
 
     def test_bare_code_block_error(self, examples_dir):
         """Test code block without tag produces correct error."""
-        content = (examples_dir / "invalid/bare-code-block.pflow.md").read_text()
+        content = (examples_dir / "invalid/bare-code-block.pflow.md").read_text(encoding="utf-8")
 
         with pytest.raises(MarkdownParseError, match="no tag"):
             parse_markdown(content)
 
     def test_duplicate_param_error(self, examples_dir):
         """Test duplicate param (inline + code block) produces correct error."""
-        content = (examples_dir / "invalid/duplicate-param.pflow.md").read_text()
+        content = (examples_dir / "invalid/duplicate-param.pflow.md").read_text(encoding="utf-8")
 
         with pytest.raises(MarkdownParseError, match="defined both inline and as a code block"):
             parse_markdown(content)
 
     def test_duplicate_ids_error(self, examples_dir):
         """Test duplicate node IDs produce correct error."""
-        content = (examples_dir / "invalid/duplicate-ids.pflow.md").read_text()
+        content = (examples_dir / "invalid/duplicate-ids.pflow.md").read_text(encoding="utf-8")
 
         with pytest.raises(MarkdownParseError, match="Duplicate entity ID"):
             parse_markdown(content)
 
     def test_yaml_syntax_error(self, examples_dir):
         """Test YAML syntax error produces correct error."""
-        content = (examples_dir / "invalid/yaml-syntax-error.pflow.md").read_text()
+        content = (examples_dir / "invalid/yaml-syntax-error.pflow.md").read_text(encoding="utf-8")
 
         with pytest.raises(MarkdownParseError, match="YAML syntax error"):
             parse_markdown(content)
@@ -178,7 +178,7 @@ class TestExampleContent:
 
     def test_template_variables_contains_dollar_syntax(self, examples_dir):
         """Verify template variables example actually uses ${variable} syntax."""
-        content = (examples_dir / "core/template-variables.pflow.md").read_text()
+        content = (examples_dir / "core/template-variables.pflow.md").read_text(encoding="utf-8")
 
         # Check for multiple template variables
         assert "${api_endpoint}" in content
@@ -187,7 +187,7 @@ class TestExampleContent:
 
     def test_error_handling_has_multiple_nodes(self, examples_dir):
         """Verify error handling example has nodes for error/fallback pattern."""
-        content = (examples_dir / "core/error-handling.pflow.md").read_text()
+        content = (examples_dir / "core/error-handling.pflow.md").read_text(encoding="utf-8")
         result = parse_markdown(content)
         ir_data = result.ir
 
@@ -197,7 +197,7 @@ class TestExampleContent:
 
     def test_conditional_branching_has_routing(self, examples_dir):
         """Verify conditional branching example has error and dynamic routing."""
-        content = (examples_dir / "core/conditional-branching.pflow.md").read_text()
+        content = (examples_dir / "core/conditional-branching.pflow.md").read_text(encoding="utf-8")
         result = parse_markdown(content)
         ir_data = result.ir
 
@@ -225,7 +225,7 @@ class TestExampleContent:
         Note: mappings are an IR-level feature not represented in markdown
         syntax. The example tests that the basic workflow structure parses.
         """
-        content = (examples_dir / "core/proxy-mappings.pflow.md").read_text()
+        content = (examples_dir / "core/proxy-mappings.pflow.md").read_text(encoding="utf-8")
         result = parse_markdown(content)
         ir_data = result.ir
         normalize_ir(ir_data)
@@ -242,7 +242,7 @@ class TestExampleContent:
             # Skip invalid examples — they are expected to fail
             if "invalid" in pflow_file.parts:
                 continue
-            content = pflow_file.read_text()
+            content = pflow_file.read_text(encoding="utf-8")
             try:
                 result = parse_markdown(content)
                 ir_data = result.ir

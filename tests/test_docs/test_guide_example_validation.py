@@ -104,7 +104,7 @@ def _collect_guide_workflows(tmp_root: Path) -> list[tuple[str, Path]]:
     """
     collected: list[tuple[str, Path]] = []
     for md_file in sorted(GUIDE_DIR.rglob("*.md")):
-        text = md_file.read_text()
+        text = md_file.read_text(encoding="utf-8")
         blocks: list[tuple[str | None, str]] = []
         for match in _FENCE_RE.finditer(text):
             body = match.group(3)
@@ -125,7 +125,7 @@ def _collect_guide_workflows(tmp_root: Path) -> list[tuple[str, Path]]:
                 body if _TITLE_RE.search(body) else f"# Guide Example {idx}\n\nExtracted from {md_file.name}.\n\n{body}"
             )
             path = file_dir / name
-            path.write_text(content)
+            path.write_text(content, encoding="utf-8")
             collected.append((f"{md_file.name}:{name}", path))
     return collected
 
@@ -263,7 +263,7 @@ class TestGuideExampleValidation:
         }
         for label, content in cases.items():
             path = tmp_path / f"{label}.pflow.md"
-            path.write_text(content)
+            path.write_text(content, encoding="utf-8")
             try:
                 errors = _validate(path, registry)
             except (MarkdownParseError, SchemaValidationError, ValueError):
@@ -316,7 +316,7 @@ class TestGuideExampleValidation:
         for label, path in guide_workflows:
             if not _is_self_contained_runnable(path):
                 continue
-            ir = parse_markdown(path.read_text()).ir
+            ir = parse_markdown(path.read_text(encoding="utf-8")).ir
             normalize_ir(ir)
             loop_examples.extend(
                 (label, path, n["id"]) for n in ir.get("nodes", []) if n.get("loop") is not None and n.get("id")

@@ -11,6 +11,13 @@ import pytest
 from pflow.nodes.shell.shell import ShellNode
 
 
+def _shell_path(path: str) -> str:
+    normalized = path.replace("\\", "/").rstrip("/")
+    if len(normalized) >= 2 and normalized[1] == ":":
+        normalized = f"/{normalized[0].lower()}{normalized[2:]}"
+    return normalized
+
+
 def run_shell_node(shared, **params):
     """Helper function to run a shell node with parameters."""
     node = ShellNode()
@@ -47,7 +54,7 @@ class TestShellNodeBasicExecution:
         run_shell_node(shared, command="pwd")
 
         # The output should be the current working directory
-        assert shared["stdout"].strip() == os.getcwd()
+        assert _shell_path(shared["stdout"].strip()) == _shell_path(os.getcwd())
         assert shared["exit_code"] == 0
 
     def test_date_command_executes(self):
@@ -154,7 +161,7 @@ class TestShellNodeShellFeatures:
         run_shell_node(shared, command='echo "Current dir: $(pwd)"')
 
         assert "Current dir:" in shared["stdout"]
-        assert os.getcwd() in shared["stdout"]
+        assert _shell_path(os.getcwd()) in _shell_path(shared["stdout"])
         assert shared["exit_code"] == 0
 
     def test_output_redirection_to_file(self):
@@ -283,7 +290,7 @@ class TestShellNodeConfiguration:
             # On macOS, /var may be symlinked to /private/var
             actual_path = shared["stdout"].strip()
             expected_path = os.path.realpath(tmpdir)
-            assert actual_path in (expected_path, tmpdir)
+            assert _shell_path(actual_path) in {_shell_path(expected_path), _shell_path(tmpdir)}
             assert shared["exit_code"] == 0
 
     def test_cwd_with_tilde_expansion(self):
@@ -294,7 +301,7 @@ class TestShellNodeConfiguration:
         # Use ~ for home directory
         run_shell_node(shared, command="pwd", cwd="~")
 
-        assert shared["stdout"].strip() == os.path.expanduser("~")
+        assert _shell_path(shared["stdout"].strip()) == _shell_path(os.path.expanduser("~"))
         assert shared["exit_code"] == 0
 
     def test_cwd_nonexistent_directory_raises_error(self):

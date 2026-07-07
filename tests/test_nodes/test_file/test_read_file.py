@@ -53,7 +53,7 @@ class TestReadFileNode:
         assert "error" in shared
         error_msg = shared["error"]
         assert "exist" in error_msg.lower()  # More robust than exact string match
-        assert "/non/existent/file.txt" in error_msg  # Shows actual path
+        assert "non/existent/file.txt" in error_msg.replace("\\", "/")  # Shows actual path
         assert "content" not in shared
 
     def test_encoding_parameter(self):
