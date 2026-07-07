@@ -6,11 +6,17 @@ entry first). Every claim here is a pointer — verify against git/gh/`./scripts
 
 ## Now (last verified: 2026-07-04)
 
-**Current arc: resume/HITL — 125 ✅ → 164 ✅ → 174 ✅ → 171 (next) → 176.** 164 (PR #559, closes
+**Current arc: resume/HITL — 125 ✅ → 164 ✅ → 174 ✅ → 171 (in flight) → 176.** 164 (PR #559, closes
 #255) + 174 (PR #560) merged 2026-07-04; their worktrees pruned; roadmap + specs reconciled.
 
-**Next action: Task 171** (durable resume tokens / non-TTY gates) — unblocked by 164; the second
-consumer of its checkpoint→restore→continue substrate. Before launching:
+**IN FLIGHT: Task 171** in worktree `feat-durable-resume-tokens` (branch `feat/durable-resume-tokens`,
+launched on **fable** 2026-07-04, based on `2e2eb9e8`). Brief at
+`scratchpads/task-171-durable-resume/BRIEF.md`. **Launched WITHOUT a pre-decision session** (owner
+call) — the brief carries the 5 open decisions with recs as plan-time items; the builder must surface
+the two **format-shaping** ones (paused-status encoding · gated-runs-require-trace) to the owner
+before committing. **Sole engine/trace toucher — keep it that way** (#542 retention must wait for it).
+On merge: verify personally, reconcile roadmap (171 → ✅, unblocks 176), check the `resumed_from`
+run-list UI shipped. Reference (the 164/171 build context):
 - **Read `task_164/task-review.md` FIRST** — the shipped-substrate handoff (invariants that must not
   break, the `paused` insertion point, gotchas). The 171 spec already absorbed the handoff (banner +
   "UI attempt-chain rendering" section) — trust the review over any pre-impl phrasing.
