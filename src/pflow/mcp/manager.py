@@ -81,6 +81,10 @@ class MCPServerManager:
             Configuration dictionary in standard MCP format
 
         """
+        with _CONFIG_SAVE_LOCK:
+            return self._load_locked()
+
+    def _load_locked(self) -> dict[str, Any]:
         if not self.config_path.exists():
             logger.info(f"No MCP server configuration found at {self.config_path}, returning empty config")
             return {"mcpServers": {}}

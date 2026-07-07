@@ -1199,3 +1199,41 @@ Local validation for the gate change:
 
 Expected next step: commit/push the gate flip, then confirm the next Main run
 stays green with Windows as a blocking job.
+
+## 2026-07-07 — CI round 6 observed, blocking gate proved, MCP read race fixed
+
+Pushed `13299a5b Enable blocking Windows CI gate [skip review]`. New Main run:
+https://github.com/spinje/pflow/actions/runs/28865902091
+
+Round 6 status:
+- The Windows gate worked: `tests-and-type-check-done` failed because
+  `tests-windows` failed.
+- All Linux, quality, web, Windows mypy, and Windows MCP smoke jobs passed.
+- Windows pytest had one remaining failure: **1 failed, 8681 passed,
+  77 skipped, 557 warnings**.
+
+Remaining failure:
+- `tests/test_mcp/test_config_management.py::TestConcurrentAccess::test_read_during_write_doesnt_crash`
+  failed on Windows with `PermissionError: [Errno 13] Permission denied` while
+  a reader opened `mcp-servers.json` during a concurrent write.
+
+Fix:
+- `MCPServerManager.load()` now uses the same reentrant `_CONFIG_SAVE_LOCK` as
+  `save()` and the load/mutate/save path in `add_server()`. This prevents
+  in-process readers from opening the config file while Windows is inside the
+  replace/write lock window.
+- The linked PR review's Git Bash PATH/coreutils concern is already covered in
+  the branch: `_prepare_windows_shell_env()` seeds Git `usr/bin` and `bin`
+  ahead of the inherited PATH, with focused tests. The binary-stdin fallback
+  notes remain known limitations rather than high-leverage fixes for this CI
+  iteration.
+
+Local validation after this pass:
+- Exact round-6 failure: **1 passed**.
+- MCP config slice: **30 passed**.
+- Windows Git Bash shell slice: **28 passed**.
+- `make check`: **green** (ruff, format, pre-commit hooks, mypy, deptry).
+
+Expected next step: commit/push with `[skip review]`, then inspect the next
+blocking `tests-windows` run. Expected result is green unless the prior
+concurrent config failure exposes another intermittent Windows-only race.
