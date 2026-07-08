@@ -210,12 +210,13 @@ class Registry:
     def _write_atomic(self, data: dict[str, Any]) -> None:
         """Persist the registry wrapper to ``registry_path`` atomically.
 
-        A plain truncate-and-write lets a concurrent reader (e.g. parallel
-        ``pflow ui`` requests, or two CLI processes) observe a half-written file
-        → invalid JSON → an empty node set → spurious "unknown node type"
-        errors. ``os.replace`` is atomic on POSIX, so a reader always sees either
-        the complete old file or the complete new one. Mirrors the
-        tempfile+replace pattern ``WorkflowManager``/``SettingsManager`` use.
+        A plain truncate-and-write lets a concurrent reader observe a
+        half-written file → invalid JSON → an empty node set → spurious
+        "unknown node type" errors. ``os.replace`` gives readers the complete
+        old file or the complete new one. The module lock serializes
+        same-process registry I/O for Windows; it is not a cross-process lock.
+        Mirrors the tempfile+replace pattern ``WorkflowManager``/
+        ``SettingsManager`` use.
         """
         with _REGISTRY_IO_LOCK:
             self.registry_path.parent.mkdir(parents=True, exist_ok=True)
@@ -244,8 +245,9 @@ class Registry:
         Returns:
             The metadata value or default if not found
         """
-        wrapper = self._read_wrapper()
-        return wrapper.get("metadata", {}).get(key, default)
+        with _REGISTRY_IO_LOCK:
+            wrapper = self._read_wrapper()
+            return wrapper.get("metadata", {}).get(key, default)
 
     def set_metadata(self, key: str, value: Any) -> None:
         """Set metadata value in registry.

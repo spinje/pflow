@@ -1446,3 +1446,31 @@ Verification:
 Follow-up:
 - After installing `make` and `python3` on PATH, the literal `make check`
   command also passed on this Windows machine.
+
+## 2026-07-08 — Follow-up review evaluation for UI/registry commit
+
+Evaluated the two post-push review comments on the UI launch/race follow-up.
+
+Actioned:
+- `Registry.get_metadata()` was the only remaining public registry file reader
+  outside `_REGISTRY_IO_LOCK`. It is currently called from single-threaded MCP
+  sync startup, so it was not the observed UI first-render path, but the review
+  was right that it left a latent read-vs-replace window for future request
+  handlers. Wrapped it in the same module-level lock as the other registry
+  reads/writes.
+- Clarified `_write_atomic()`'s docstring: `os.replace()` supplies the
+  no-half-written-file guarantee, while `_REGISTRY_IO_LOCK` only serializes
+  same-process registry I/O. It is not a cross-process lock.
+- Added `test_get_metadata_serializes_with_atomic_replace`, which patches
+  `os.replace` to hold the replace window open and asserts `get_metadata()`
+  does not enter `_read_wrapper()` until the write completes.
+
+Accepted without code change:
+- `pflow ui serve` now resolves to the explicit `serve` subcommand, so a saved
+  workflow literally named `serve` cannot be opened through the ambiguous
+  shorthand `pflow ui serve`. This is the intended Click/subcommand precedence;
+  users can still open such a workflow by passing an explicit path or another
+  unambiguous spelling.
+- Holding the registry lock across first-use discovery is intentional. Cold UI
+  requests serialize once, which is the tradeoff that prevents concurrent
+  Windows replaces during startup.
