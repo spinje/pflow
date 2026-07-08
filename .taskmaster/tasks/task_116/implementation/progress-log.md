@@ -1503,7 +1503,10 @@ Accepted without code change:
   heuristic in Task 116.
 
 Verification:
-- Targeted regression tests:
+- Targeted regression tests, then strengthened in a test-fidelity pass so the
+  stdin cases use real in-memory byte streams through `_read_stdin_data()` and
+  the compound-`which` case asserts the `ShellNode.post()` action rather than
+  only the private classifier:
   `python -m pytest tests/test_nodes/test_shell/test_windows_bash.py::TestWindowsBashEnvironment::test_translate_quoted_windows_paths_with_spaces tests/test_nodes/test_shell/test_auto_handling.py::TestAutoHandlingWhich::test_compound_which_command_does_not_mask_downstream_failure tests/test_cli/test_run_stdin.py -q`:
   **5 passed**.
 - `ruff check` and `ruff format --check` on the touched source/test files:

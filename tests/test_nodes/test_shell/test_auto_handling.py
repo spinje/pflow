@@ -176,16 +176,19 @@ class TestAutoHandlingWhich:
     def test_compound_which_command_does_not_mask_downstream_failure(self):
         """Only a simple `which missing` probe is safe; compound commands must fail."""
         node = ShellNode()
+        command = "which definitely_not_a_real_command_xyz123; definitely_bad_command_xyz123"
 
-        is_safe, reason = node._is_safe_non_error(
-            command="which definitely_not_a_real_command_xyz123; definitely_bad_command_xyz123",
-            exit_code=127,
-            stdout="",
-            stderr="bash: definitely_bad_command_xyz123: command not found",
+        action = node.post(
+            {},
+            {"command": command, "ignore_errors": False, "strip_newline": True},
+            {
+                "exit_code": 127,
+                "stdout": "",
+                "stderr": "bash: definitely_bad_command_xyz123: command not found",
+            },
         )
 
-        assert is_safe is False
-        assert reason == ""
+        assert action == "error"
 
 
 class TestAutoHandlingCommandV:
