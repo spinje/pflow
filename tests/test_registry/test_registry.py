@@ -9,8 +9,12 @@ REFACTOR HISTORY:
 """
 
 import json
+import os
 import sys
 import tempfile
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -1075,3 +1079,45 @@ class TestRegistryAtomicWrite:
 
             assert json.loads(registry_path.read_text())["nodes"]["shell"]["module"] == "m"
             assert [p.name for p in Path(tmpdir).iterdir()] == ["registry.json"]
+
+    def test_concurrent_writes_serialize_replace_section(self):
+        """Windows can deny replacing a file while another thread is replacing it.
+
+        UI startup can issue concurrent graph/catalog requests, and each request
+        may construct its own Registry instance. The registry's module-level lock
+        must therefore serialize the actual tempfile -> registry.json replace
+        section across instances, not just within one object.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+            registries = [Registry(registry_path) for _ in range(4)]
+            active = 0
+            max_active = 0
+            guard = threading.Lock()
+            original_replace = os.replace
+
+            def slow_replace(src: str, dst: str) -> None:
+                nonlocal active, max_active
+                with guard:
+                    active += 1
+                    max_active = max(max_active, active)
+                try:
+                    time.sleep(0.05)
+                    original_replace(src, dst)
+                finally:
+                    with guard:
+                        active -= 1
+
+            with (
+                patch("pflow.registry.registry.os.replace", side_effect=slow_replace),
+                ThreadPoolExecutor(max_workers=len(registries)) as executor,
+            ):
+                list(
+                    executor.map(
+                        lambda item: item[0]._write_atomic({"nodes": {f"node-{item[1]}": {"module": "m"}}}),
+                        zip(registries, range(len(registries)), strict=True),
+                    )
+                )
+
+            assert max_active == 1
+            assert json.loads(registry_path.read_text(encoding="utf-8"))["nodes"]

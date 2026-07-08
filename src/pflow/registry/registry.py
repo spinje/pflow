@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 from collections.abc import Collection
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,8 @@ from typing import Any
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+_REGISTRY_IO_LOCK = threading.RLock()
 
 
 class Registry:
@@ -101,35 +104,38 @@ class Registry:
         Returns:
             Dictionary mapping node names to metadata
         """
-        # Check if registry exists
-        if not self.registry_path.exists():
-            logger.info("Registry not found, auto-discovering core nodes...")
-            # First time - auto-discover core nodes
-            self._auto_discover_core_nodes()
+        with _REGISTRY_IO_LOCK:
+            # Check if registry exists
+            if not self.registry_path.exists():
+                logger.info("Registry not found, auto-discovering core nodes...")
+                # First time - auto-discover core nodes
+                self._auto_discover_core_nodes()
 
-        # Try to load from file
-        nodes = self._load_from_file()
+            # Try to load from file
+            nodes = self._load_from_file()
 
-        # Check if core nodes need refresh (version change)
-        if self._core_nodes_outdated(nodes):
-            nodes = self._refresh_core_nodes(nodes)
+            # Check if core nodes need refresh (version change)
+            if self._core_nodes_outdated(nodes):
+                nodes = self._refresh_core_nodes(nodes)
 
-        # Cache the nodes (always cache the full set)
-        self._cached_nodes = nodes
+            # Cache the nodes (always cache the full set)
+            self._cached_nodes = nodes
 
-        # Apply filtering if requested (default behavior)
-        if not include_filtered:
-            filtered_nodes = {}
-            for node_name, node_data in nodes.items():
-                # Priority: module_path > module > file_path
-                # Use 'module' before 'file_path' so dotted patterns
-                # work correctly - file_path is a filesystem path that won't match
-                module_path = node_data.get("module_path") or node_data.get("module") or node_data.get("file_path", "")
-                if self.settings_manager.should_include_node(node_name, module_path):
-                    filtered_nodes[node_name] = node_data
-            return filtered_nodes
+            # Apply filtering if requested (default behavior)
+            if not include_filtered:
+                filtered_nodes = {}
+                for node_name, node_data in nodes.items():
+                    # Priority: module_path > module > file_path
+                    # Use 'module' before 'file_path' so dotted patterns
+                    # work correctly - file_path is a filesystem path that won't match
+                    module_path = (
+                        node_data.get("module_path") or node_data.get("module") or node_data.get("file_path", "")
+                    )
+                    if self.settings_manager.should_include_node(node_name, module_path):
+                        filtered_nodes[node_name] = node_data
+                return filtered_nodes
 
-        return nodes
+            return nodes
 
     def _load_from_file(self) -> dict[str, dict[str, Any]]:
         """Load registry from JSON file without auto-discovery.
@@ -183,22 +189,23 @@ class Registry:
             This completely replaces the nodes in the registry file.
             Manual edits will be lost on save.
         """
-        # Preserve existing wrapper metadata (version, timestamps, metadata)
-        existing = self._read_wrapper()
+        with _REGISTRY_IO_LOCK:
+            # Preserve existing wrapper metadata (version, timestamps, metadata)
+            existing = self._read_wrapper()
 
-        data = {
-            "version": existing.get("version", self._get_version()),
-            "last_core_scan": existing.get("last_core_scan", self._now_iso()),
-            "metadata": existing.get("metadata", {}),
-            "nodes": nodes,
-        }
+            data = {
+                "version": existing.get("version", self._get_version()),
+                "last_core_scan": existing.get("last_core_scan", self._now_iso()),
+                "metadata": existing.get("metadata", {}),
+                "nodes": nodes,
+            }
 
-        try:
-            self._write_atomic(data)
-            logger.info(f"Saved {len(nodes)} nodes to registry")
-        except Exception:
-            logger.exception("Failed to save registry")
-            raise
+            try:
+                self._write_atomic(data)
+                logger.info(f"Saved {len(nodes)} nodes to registry")
+            except Exception:
+                logger.exception("Failed to save registry")
+                raise
 
     def _write_atomic(self, data: dict[str, Any]) -> None:
         """Persist the registry wrapper to ``registry_path`` atomically.
@@ -210,19 +217,20 @@ class Registry:
         the complete old file or the complete new one. Mirrors the
         tempfile+replace pattern ``WorkflowManager``/``SettingsManager`` use.
         """
-        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
-        # Dot-prefixed temp file (hidden, namespaced) in the SAME dir as the
-        # target — matches settings.py/manager.py and keeps os.replace on one
-        # filesystem (cross-fs rename would raise).
-        fd, tmp = tempfile.mkstemp(dir=self.registry_path.parent, prefix=".registry.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, sort_keys=True)
-            os.replace(tmp, self.registry_path)
-        except BaseException:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
-            raise
+        with _REGISTRY_IO_LOCK:
+            self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+            # Dot-prefixed temp file (hidden, namespaced) in the SAME dir as the
+            # target — matches settings.py/manager.py and keeps os.replace on one
+            # filesystem (cross-fs rename would raise).
+            fd, tmp = tempfile.mkstemp(dir=self.registry_path.parent, prefix=".registry.", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, sort_keys=True)
+                os.replace(tmp, self.registry_path)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
+                raise
 
     def get_metadata(self, key: str, default: Any = None) -> Any:
         """Get metadata value from registry.
@@ -248,26 +256,27 @@ class Registry:
             key: The metadata key to set
             value: The value to store
         """
-        wrapper = self._read_wrapper()
+        with _REGISTRY_IO_LOCK:
+            wrapper = self._read_wrapper()
 
-        if "metadata" not in wrapper:
-            wrapper["metadata"] = {}
-        wrapper["metadata"][key] = value
+            if "metadata" not in wrapper:
+                wrapper["metadata"] = {}
+            wrapper["metadata"][key] = value
 
-        # Ensure required wrapper fields exist
-        if "nodes" not in wrapper:
-            wrapper["nodes"] = {}
-        if "version" not in wrapper:
-            wrapper["version"] = self._get_version()
-        if "last_core_scan" not in wrapper:
-            wrapper["last_core_scan"] = self._now_iso()
+            # Ensure required wrapper fields exist
+            if "nodes" not in wrapper:
+                wrapper["nodes"] = {}
+            if "version" not in wrapper:
+                wrapper["version"] = self._get_version()
+            if "last_core_scan" not in wrapper:
+                wrapper["last_core_scan"] = self._now_iso()
 
-        try:
-            self._write_atomic(wrapper)
-            logger.debug(f"Updated metadata key '{key}' in registry")
-        except Exception:
-            logger.exception("Failed to update registry metadata")
-            raise
+            try:
+                self._write_atomic(wrapper)
+                logger.debug(f"Updated metadata key '{key}' in registry")
+            except Exception:
+                logger.exception("Failed to update registry metadata")
+                raise
 
     def update_from_scanner(self, scan_results: list[dict[str, Any]]) -> None:
         """Update registry with scanner results.
@@ -410,19 +419,20 @@ class Registry:
                 omitted, defaults to "now" (safe for merge/post-refresh saves
                 that aren't wrapping a live scan).
         """
-        # Preserve existing metadata (MCP sync hashes, etc.)
-        existing = self._read_wrapper()
+        with _REGISTRY_IO_LOCK:
+            # Preserve existing metadata (MCP sync hashes, etc.)
+            existing = self._read_wrapper()
 
-        data = {
-            "version": self._get_version(),
-            "last_core_scan": scan_time or self._now_iso(),
-            "metadata": existing.get("metadata", {}),
-            "nodes": nodes,
-        }
+            data = {
+                "version": self._get_version(),
+                "last_core_scan": scan_time or self._now_iso(),
+                "metadata": existing.get("metadata", {}),
+                "nodes": nodes,
+            }
 
-        self._write_atomic(data)
+            self._write_atomic(data)
 
-        logger.info(f"Saved {len(nodes)} nodes to registry with metadata")
+            logger.info(f"Saved {len(nodes)} nodes to registry with metadata")
 
     def _core_nodes_outdated(self, nodes: dict[str, dict[str, Any]]) -> bool:
         """Check if core nodes need refresh.

@@ -1256,3 +1256,193 @@ Current expected state:
   commit.
 - The only remaining branch change after this entry is the progress-log update
   documenting that result.
+
+## 2026-07-08 — Manual Windows verification pass, UI follow-up still open
+
+Manual verification was continued on a real Windows machine after CI had gone
+green. The goal was to test pflow through real CLI workflows rather than rely
+only on the test suite.
+
+Confirmed under a normal Windows environment after elevation removed sandbox
+false negatives:
+- The earlier local failures around `os.replace()`, Git Bash process startup,
+  no-stdin workflow execution, cache DB writes, `save`, `report`, and
+  `write-file` were sandbox artifacts. They passed once run outside the
+  restricted sandbox.
+- Manual workflows in `scratchpads/task116-windows-manual/` exercised code
+  nodes, file outputs, shell execution through Git Bash, stdin with non-ASCII
+  text, approval pause/resume, saved workflows, `describe`, `history`,
+  `report`, `settings`, `list --json`, `probe`, `read-fields`, `mcp`, and
+  `mermaid`.
+- The Windows CI skip count remains explainable: local skip investigation found
+  the CI's 77 skips are deliberate platform exclusions, while the larger local
+  skip count came from `uv` not being on PATH in this shell.
+
+UI-specific verification:
+- `pflow guide ui`, `pflow ui --help`, and `pflow ui serve --help` were read.
+- The Python/API side of `pflow ui` served `/api/catalog`, `/api/graph`, and
+  `/api/source` successfully in earlier probes.
+- The browser frontend initially returned the expected API-only 503 because
+  `src/pflow/ui/static/` had not been built.
+- This Windows machine originally had Node 18.20.8, which failed the UI build
+  because the dependency tree requires Node 20+.
+- After Node was updated to 20.20.2, the real project build succeeded:
+  `npm run build` produced the frontend bundle in `src/pflow/ui/static/`.
+- npm itself hit Windows/sandbox `EPERM` unlink failures while repairing
+  `node_modules`; the build was unblocked by manually restoring the missing
+  `@rolldown/binding-win32-x64-msvc@1.0.3` optional native package.
+
+Open UI concern:
+- The last UI launch attempts were not clean enough to count as a fresh-agent
+  pass. They used a Python harness for process control, then switched back to
+  plain CLI commands.
+- Plain documented commands need investigation. In particular,
+  `pflow ui serve --help` advertises `[WORKFLOW]`, but
+  `pflow ui serve --port 8894 --no-open scratchpads\task116-windows-manual\code-only.pflow.md`
+  rejected the workflow path as an unexpected extra argument.
+- A concurrent plain shorthand test,
+  `pflow ui --port 8894 --no-open scratchpads\task116-windows-manual\code-only.pflow.md`,
+  was interrupted before its result was captured. Any leftover process from
+  that interrupted attempt was stopped.
+
+Next expected step: investigate the UI command parsing/launch path using only
+documented `pflow` commands, then open the built browser UI and verify
+`user-activity`, `focus`, `frame`, and `clear-focus` against a real connected
+Viewer window.
+
+## 2026-07-08 — UI serve parser fixed; visible browser pass should run outside Codex sandbox
+
+Investigated the documented UI command path from
+`scratchpads/task116-windows-manual/handoff-ui-verification-2026-07-08.md`.
+
+Confirmed the suspected parser bug without starting a server:
+- `pflow ui serve --port 8894 --no-open <workflow>` failed with
+  `Got unexpected extra argument (<workflow>)`.
+- Direct invocation of `serve_cmd` accepted the same argument shape.
+- Shorthand `pflow ui <workflow> --port 8894 --no-open` and
+  `pflow ui --port 8894 --no-open <workflow>` also parsed correctly.
+
+Root cause:
+- `UiGroup.resolve_command()` special-cased `serve` incorrectly. It returned
+  the hidden `serve` command while leaving `"serve"` in the remaining args, so
+  Click consumed `"serve"` as the optional `workflow` argument and rejected the
+  real workflow path as an extra argument.
+
+Fix:
+- `UiGroup.resolve_command()` now delegates to normal Click resolution for any
+  real subcommand, including `serve`; only non-command first arguments fall
+  through to the hidden serve command.
+- Added regression tests in `tests/test_cli/test_ui_commands.py` for explicit
+  `serve` with the workflow after options and shorthand with options before the
+  workflow.
+
+Local verification:
+- `python -m pytest tests/test_cli/test_ui_commands.py -q`: **55 passed**.
+- `ruff check src/pflow/cli/commands/ui.py tests/test_cli/test_ui_commands.py`:
+  green.
+- `ruff format --check src/pflow/cli/commands/ui.py tests/test_cli/test_ui_commands.py`:
+  green after formatting the touched files.
+
+Manual UI caveat:
+- A sandbox-launched `pflow ui serve` process did start and served `/` from the
+  built React bundle (`200`, root div present, bundle asset referenced).
+- The same process failed `/api/graph` with `[WinError 5] Access is denied:
+  'C:\\Users\\spinje\\.pflow'`, matching the earlier restricted-sandbox false
+  negatives. This is not a clean browser-verification process.
+- That sandbox-launched server was stopped by PID after confirming port 8894.
+
+Next expected step:
+- For the visible browser pass, run the documented command from a normal
+  visible PowerShell window, not through Codex's restricted tool host:
+  `.\.venv\Scripts\pflow.exe ui serve --port 8894 --no-open scratchpads\task116-windows-manual\code-only.pflow.md`
+- Then open the printed URL in the browser and verify `user-activity`, `focus`,
+  `frame`, and `clear-focus` report a connected Viewer (`sent_to: 1` for point
+  commands).
+
+## 2026-07-08 — Visible UI verification succeeded via clean Edge profile
+
+Retried the visual UI pass after the sandbox was opened.
+
+Results:
+- `pflow ui --port 8894 <workflow>` launched and opened a browser window.
+- Initial Chrome/default-browser path was not usable: the user observed repeated
+  Chrome extension / breakpoint application errors, and the Viewer never
+  registered (`windows: 0`).
+- The server itself stayed healthy throughout (`/api/health` responding).
+- A transient first-render registry replace error appeared in the browser:
+  `[WinError 5] Access is denied: 'C:\\Users\\spinje\\.pflow\\.registry.*.tmp'
+  -> 'C:\\Users\\spinje\\.pflow\\registry.json'`. A later `/api/graph` request
+  recovered and returned `200`, so this was not a persistent graph/build
+  failure.
+- Opening the same Viewer URL in Microsoft Edge with a temporary clean profile
+  and extensions disabled connected successfully:
+  `/api/health?workflow=<abs path>` returned `windows: 1`.
+
+Agent-driven walkthrough verification:
+- Sent `pflow ui focus`/`frame` commands for:
+  `shape-input`, `fan-out-words`, `choose-route`, `long-name`, and `message`.
+- Every point resolved exactly one target and reported
+  `sent to 1 window (1 visible, 0 backgrounded)`.
+- `user-activity` returned a `workflow_open` event for
+  `F:\\Projects\\pflow\\scratchpads\\task116-windows-manual\\code-only.pflow.md`.
+- `--say` captions were dispatched with the point commands, but voice narration
+  was unavailable because no Gemini TTS key was configured. This is expected
+  degrade behavior for the UI guide path: the point still lands; only audio is
+  missing.
+
+Successful browser command shape:
+- Server: `.\.venv\Scripts\pflow.exe ui --port 8894 <abs workflow path>`
+- Browser fallback used for verification:
+  Microsoft Edge with `--user-data-dir=<scratch profile>` and
+  `--disable-extensions`, opened to
+  `http://127.0.0.1:8894/?workflow=<urlencoded abs workflow path>`.
+
+## 2026-07-08 — Registry write race hardened after UI first-render denial
+
+Investigated the transient browser-render error from the visible UI pass:
+
+`[WinError 5] Access is denied: 'C:\\Users\\spinje\\.pflow\\.registry.*.tmp'
+-> 'C:\\Users\\spinje\\.pflow\\registry.json'`
+
+Findings:
+- The registry atomic writer already closed the temp file before
+  `os.replace()`, so the obvious "open temp handle" bug was not present.
+- The failure was transient: a later `/api/graph` request returned `200` with
+  the graph.
+- The UI server issues concurrent first-render/catalog/graph requests, and each
+  request can construct its own `Registry()`. On a cold or refresh-needed
+  registry, multiple threads can decide to write/refresh the same
+  `registry.json`. Windows is stricter than POSIX around simultaneous
+  replacement/opens of the same target, matching the observed temporary
+  `PermissionError`.
+
+Fix:
+- Added a module-level reentrant `_REGISTRY_IO_LOCK` in
+  `src/pflow/registry/registry.py`.
+- Serialized `Registry.load()` across first-use discovery/refresh, plus
+  `save()`, `set_metadata()`, `_save_with_metadata()`, and `_write_atomic()`.
+  This mirrors the MCP config race fix pattern from Task 116 round 6, but keeps
+  the lock local to registry I/O.
+- Added `test_concurrent_writes_serialize_replace_section`, which creates
+  multiple `Registry` instances sharing one `registry.json`, patches
+  `os.replace` to expose concurrent entry, and asserts only one thread can be
+  inside the replace section at a time.
+
+Verification:
+- `python -m pytest tests/test_registry/test_registry.py::TestRegistryAtomicWrite tests/test_cli/test_ui_commands.py tests/test_cli/test_ui.py -q`:
+  **113 passed, 1 skipped**.
+- `make check` could not run literally because `make` is not installed on this
+  Windows machine. The equivalent commands were run directly:
+  - `.venv\Scripts\uv.exe lock --locked`: passed.
+  - `.venv\Scripts\ruff.exe check .`: passed.
+  - `.venv\Scripts\ruff.exe format --check .`: passed.
+  - `.venv\Scripts\mypy.exe`: passed.
+  - `.venv\Scripts\deptry.exe src`: passed.
+  - `.venv\Scripts\pre-commit.exe run -a`: passed after using a temporary
+    `scratchpads/task116-windows-manual/precommit-shims/python3.cmd` shim,
+    because the local hook entries use `python3` and this Windows install only
+    exposes `python.exe`.
+
+Follow-up:
+- After installing `make` and `python3` on PATH, the literal `make check`
+  command also passed on this Windows machine.
