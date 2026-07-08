@@ -56,6 +56,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+pytest-cache-files-*/
 cover/
 
 # Translations
@@ -143,6 +144,7 @@ cython_debug/
 
 .temp/
 .archive/
+.test-home*/
 
 # Added by Task Master AI
 # Logs
