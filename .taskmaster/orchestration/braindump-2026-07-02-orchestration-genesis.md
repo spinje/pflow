@@ -1,7 +1,8 @@
 # Braindump: the orchestration system's genesis (2026-07-02)
 
-> Companion to `orchestrator-kickoff.md` + `orchestrator-progress-log.md`, written by the session
-> that created them. Zero overlap intended: the kickoff = the role, the log = the state, the
+> Companion to the `/start-orchestration` command (the "kickoff" this doc refers to throughout;
+> promoted from `orchestrator-kickoff.md` on 2026-07-08) + `orchestrator-progress-log.md`, written
+> by the session that created them. Zero overlap intended: the kickoff = the role, the log = the state, the
 > task-125 braindump = that task's tacit layer. This file = **why the system is shaped this way,
 > what's untested, and the homeless facts** — the context a future session needs to *maintain or
 > evolve* the system rather than operate it.
@@ -33,9 +34,9 @@ ASSUMPTION: they're right; but they're revisable without ceremony if the shape c
 - The kickoff has **never booted a fresh session**. Its first real use is its first test — expect
   gaps, and use the built-in mechanism (propose kickoff edits when the *process* changes) to fix
   them rather than working around silently.
-- UNCLEAR: the **invocation mechanism** was never decided — presumably the user points a fresh
-  session at the kickoff file. CONSIDER: promoting it to a skill/slash-command if boots become
-  frequent; don't build that speculatively.
+- RESOLVED 2026-07-08: the **invocation mechanism** is the `/start-orchestration` slash-command
+  (promoted from the kickoff file). Originally left open — whether to stay a pointed-at file or
+  become a command.
 - CONSIDER: back-porting the kickoff/log split to loudkult once it proves itself here.
 
 ## Homeless facts (nowhere else)

@@ -1,8 +1,13 @@
+---
+name: Start Orchestration
+description: Boot the pflow orchestrator role — verify state, choose what's next, prepare and launch builds.
+---
+
 # pflow Orchestrator — Kickoff
 
 _Evergreen role prompt. It contains no project state — everything dated (current arc, in-flight
-work, pending decisions, watch list) lives in **`orchestrator-progress-log.md`** beside this file.
-You are booting with no context window: this file tells you how to do the job and where to look;
+work, pending decisions, watch list) lives in **`.taskmaster/orchestration/orchestrator-progress-log.md`**.
+You are booting with no context window: this command tells you how to do the job and where to look;
 the log tells you where we are; **reality tells you what's true**. This layers ON TOP of CLAUDE.md
 (which you read automatically) — it repeats nothing from there._
 
@@ -21,8 +26,8 @@ you hand it.
 
 ## Boot sequence (every session, before anything else)
 
-1. Read `orchestrator-progress-log.md` → `## Now`. Treat every claim in it as a **pointer to
-   verify, not a fact** — the log's job is to tell you where to look.
+1. Read `.taskmaster/orchestration/orchestrator-progress-log.md` → `## Now`. Treat every claim in
+   it as a **pointer to verify, not a fact** — the log's job is to tell you where to look.
 2. Verify reality: `git fetch` + `git log --oneline -15 origin/main` · `gh pr list --state merged
    --limit 10` · `gh issue list --state open --limit 40` (scan for new since the log's stamp) ·
    `./scripts/tasks` for statuses · `git worktree list` for in-flight builds.
@@ -176,7 +181,7 @@ seam that forces them**, not in up-front documents.
 
 ## Where things live (pointers, not copies)
 
-- **State**: `orchestrator-progress-log.md` (beside this file) · CLAUDE.md roadmap ·
+- **State**: `.taskmaster/orchestration/orchestrator-progress-log.md` · CLAUDE.md roadmap ·
   `./scripts/tasks [N]` · `gh issue list` / `gh pr list` · `git worktree list`.
 - **Durable decisions**: `context/adr/` (+ `ADR-FORMAT.md` — the three criteria).
 - **Per task**: `.taskmaster/tasks/task_N/` — spec (current truth, edited in place) ·
@@ -187,10 +192,11 @@ seam that forces them**, not in up-front documents.
 
 ## Session-end duty (what keeps this system alive)
 
-Before you stop: update the log's `## Now` to be *true*, append one dated `## Log` entry (what
-happened, what's next, what to watch), and — if the session changed how this role should operate —
-propose an edit to THIS file. The log is the handoff; this file only changes when the *process*
-does.
+Before you stop: correct the log's `## Now` in place so it reads *true*, prepend one dated `## Log`
+entry (that section is append-only, newest first: what happened, what's next, what to watch), and —
+if the session changed how this role should operate —
+propose an edit to THIS command. The log is the handoff; this command only changes when the
+*process* does.
 
 ## Posture
 

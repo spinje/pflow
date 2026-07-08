@@ -1,8 +1,7 @@
 # Orchestrator Progress Log
 
-_Mutable state companion to `orchestrator-kickoff.md`. **`## Now` is edited in place and must
-always be true** (correct it the moment reality diverges); **`## Log` is append-only** (newest
-entry first). Every claim here is a pointer — verify against git/gh/`./scripts/tasks` at boot._
+_Mutable state companion to the `/start-orchestration` command — the current build state its boot
+sequence verifies against. `## Now` is the current truth; `## Log` is append-only, newest first._
 
 ## Now (last verified: 2026-07-04)
 
