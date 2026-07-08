@@ -206,6 +206,13 @@ class TestWindowsBashEnvironment:
         command = r"cat C:\Temp\a.txt && printf '%s' D:\Logs\out.txt"
         assert _translate_windows_paths_for_bash(command) == "cat /c/Temp/a.txt && printf '%s' /d/Logs/out.txt"
 
+    def test_translate_quoted_windows_paths_with_spaces(self):
+        command = r'cat "C:\Users\Jane Doe\in.txt" && cat "C:\Program Files\Git\README.txt"'
+        assert (
+            _translate_windows_paths_for_bash(command)
+            == 'cat "/c/Users/Jane Doe/in.txt" && cat "/c/Program Files/Git/README.txt"'
+        )
+
     def test_windows_runner_kills_process_tree_on_timeout(self, monkeypatch):
         monkeypatch.setattr(shell_module.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, raising=False)
 

@@ -84,8 +84,22 @@ def _translate_windows_paths_for_bash(command: str) -> str:
     """
     import re
 
-    pattern = re.compile(r"(?<![A-Za-z0-9_/-])([A-Za-z]:[\\/][^\s'\"|;&<>()`$]+)")
-    return pattern.sub(lambda match: _windows_path_to_bash(match.group(1)), command)
+    quoted_pattern = re.compile(r"(?P<quote>['\"])(?P<path>[A-Za-z]:[\\/][^'\"]+)(?P=quote)")
+    command = quoted_pattern.sub(
+        lambda match: f"{match.group('quote')}{_windows_path_to_bash(match.group('path'))}{match.group('quote')}",
+        command,
+    )
+
+    unquoted_pattern = re.compile(r"(?<![A-Za-z0-9_/-])([A-Za-z]:[\\/][^\s'\"|;&<>()`$]+)")
+    return unquoted_pattern.sub(lambda match: _windows_path_to_bash(match.group(1)), command)
+
+
+def _is_simple_which_probe(command: str) -> bool:
+    """Whether ``command`` is only a ``which`` lookup, not a compound shell form."""
+    stripped = command.strip()
+    if not stripped.startswith("which "):
+        return False
+    return not any(token in stripped for token in ("|", ";", "&", "<", ">", "\n", "(", ")", "`", "$("))
 
 
 def _terminate_windows_process_tree(pid: int) -> None:
@@ -479,7 +493,7 @@ class ShellNode(Node):
         # which returns non-zero when command doesn't exist (that's its purpose).
         # Keep this to a simple command so pipeline/downstream failures still surface.
         stripped_command = command.strip()
-        if exit_code != 0 and stripped_command.startswith("which ") and "|" not in stripped_command:
+        if exit_code != 0 and _is_simple_which_probe(stripped_command):
             return True, "which exit non-zero - command not found"
 
         # command -v returns 1 when command doesn't exist
@@ -529,7 +543,7 @@ class ShellNode(Node):
             return 1
         # Normalize simple which not-found to 1.
         stripped_command = command.strip()
-        if exit_code != 0 and stripped_command.startswith("which ") and "|" not in stripped_command:
+        if exit_code != 0 and _is_simple_which_probe(stripped_command):
             return 1
         # Normalize command -v not-found to 1 (only if no stderr content)
         if exit_code != 0 and not has_stderr_content and "command -v" in command:

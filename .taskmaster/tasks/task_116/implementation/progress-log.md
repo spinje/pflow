@@ -1474,3 +1474,37 @@ Accepted without code change:
 - Holding the registry lock across first-use discovery is intentional. Cold UI
   requests serialize once, which is the tradeoff that prevents concurrent
   Windows replaces during startup.
+
+## 2026-07-08 — Codex review evaluation for shell/stdin/tailer suggestions
+
+Evaluated PR review `4656009637` after the registry metadata follow-up.
+
+Actioned:
+- `_translate_windows_paths_for_bash()` now translates quoted absolute Windows
+  paths containing spaces as a whole token before applying the unquoted narrow
+  replacement. This fixes common paths like
+  `"C:\\Users\\Jane Doe\\in.txt"` and `"C:\\Program Files\\..."`.
+- Shell safe-pattern handling now treats only a simple `which <name>` probe as
+  benign. Compound forms such as `which missing; badcmd` or
+  `which missing || badcmd` no longer auto-succeed when the downstream command
+  fails.
+- On Windows, CLI stdin routing now asks the enhanced binary-aware reader first
+  so invalid UTF-8 is consumed once and returned as binary data instead of being
+  partially consumed by the UTF-8 text probe before fallback. Text results from
+  that path are normalized to the same newline semantics as `read_stdin()`, and
+  empty piped input still remains a valid empty string.
+
+Accepted without code change:
+- The UI tailer still treats incomplete traces with unknown lock status as live
+  on Windows. The review correctly identifies the precision gap, but the current
+  trace metadata has no reliable Windows liveness signal. A naive mtime timeout
+  would misclassify long-running quiet steps as stopped. Fixing this properly
+  should be a follow-up design around a Windows liveness marker/lock, not a
+  heuristic in Task 116.
+
+Verification:
+- Targeted regression tests:
+  `python -m pytest tests/test_nodes/test_shell/test_windows_bash.py::TestWindowsBashEnvironment::test_translate_quoted_windows_paths_with_spaces tests/test_nodes/test_shell/test_auto_handling.py::TestAutoHandlingWhich::test_compound_which_command_does_not_mask_downstream_failure tests/test_cli/test_run_stdin.py -q`:
+  **5 passed**.
+- `ruff check` and `ruff format --check` on the touched source/test files:
+  green. Ruff emitted cache-write warnings from the sandbox only.
