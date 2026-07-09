@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 import pflow.nodes.shell.shell as shell_module
-from pflow.nodes.shell.shell import ShellNode
+from pflow.nodes.shell.shell import ShellNode, _run_posix_shell_command
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +32,22 @@ def _use_subprocess_run_path(monkeypatch):
         )
 
     monkeypatch.setattr(shell_module, "_run_posix_shell_command", run_with_subprocess_run)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Direct POSIX shell runner coverage")
+def test_posix_runner_returns_binary_stdout_bytes():
+    """Real POSIX runner path must preserve undecodable stdout as bytes."""
+    result = _run_posix_shell_command(
+        "printf '\\377\\376\\375'",
+        stdin_bytes=None,
+        cwd=None,
+        env=None,
+        timeout=1,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == b"\xff\xfe\xfd"
+    assert result.stderr == b""
 
 
 class TestBinaryStdoutDetection:

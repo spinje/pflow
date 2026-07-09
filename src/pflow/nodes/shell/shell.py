@@ -7,6 +7,7 @@ import shutil
 import signal
 import subprocess
 import sys
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, ClassVar
@@ -119,6 +120,34 @@ def _terminate_windows_process_tree(pid: int) -> None:
         logger.debug("taskkill failed while terminating shell process tree", extra={"pid": pid})
 
 
+def _communicate_with_cleanup(
+    proc: subprocess.Popen[bytes],
+    command: str | list[str],
+    *,
+    stdin_bytes: bytes | None,
+    timeout: int | float,
+    terminate: Callable[[subprocess.Popen[bytes]], None],
+) -> tuple[bytes, bytes]:
+    """Run communicate(), cleaning up shell descendants on timeout/interruption."""
+    try:
+        return proc.communicate(input=stdin_bytes, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        terminate(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=1)
+        except (OSError, subprocess.TimeoutExpired):
+            stdout = exc.output or b""
+            stderr = exc.stderr or b""
+        raise subprocess.TimeoutExpired(
+            command, timeout, output=stdout or exc.output, stderr=stderr or exc.stderr
+        ) from exc
+    except (KeyboardInterrupt, SystemExit):
+        terminate(proc)
+        with suppress(OSError, subprocess.TimeoutExpired):
+            proc.communicate(timeout=1)
+        raise
+
+
 def _run_windows_bash_command(
     bash_path: str,
     command: str,
@@ -146,27 +175,19 @@ def _run_windows_bash_command(
         env=env,
         creationflags=creationflags,
     )
-    try:
-        stdout, stderr = proc.communicate(input=stdin_bytes, timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
+
+    def terminate_process_tree(proc: "subprocess.Popen[bytes]") -> None:
         _terminate_windows_process_tree(proc.pid)
         with suppress(OSError):
             proc.kill()
-        try:
-            stdout, stderr = proc.communicate(timeout=1)
-        except (OSError, subprocess.TimeoutExpired):
-            stdout = exc.output or b""
-            stderr = exc.stderr or b""
-        raise subprocess.TimeoutExpired(
-            argv, timeout, output=stdout or exc.output, stderr=stderr or exc.stderr
-        ) from exc
-    except (KeyboardInterrupt, SystemExit):
-        _terminate_windows_process_tree(proc.pid)
-        with suppress(OSError):
-            proc.kill()
-        with suppress(OSError, subprocess.TimeoutExpired):
-            proc.communicate(timeout=1)
-        raise
+
+    stdout, stderr = _communicate_with_cleanup(
+        proc,
+        argv,
+        stdin_bytes=stdin_bytes,
+        timeout=timeout,
+        terminate=terminate_process_tree,
+    )
     return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
 
 
@@ -185,6 +206,8 @@ def _run_posix_shell_command(
         getpgid = getattr(os, "getpgid", None)
         if killpg is not None and getpgid is not None:
             with suppress(OSError):
+                # Shell-node timeout is already expired, so cleanup is forceful
+                # to prevent pipe-inheriting grandchildren from blocking drain.
                 killpg(getpgid(proc.pid), getattr(signal, "SIGKILL", signal.SIGTERM))
         with suppress(OSError):
             proc.kill()
@@ -201,23 +224,13 @@ def _run_posix_shell_command(
         # cleanup can kill grandchildren that inherited stdout/stderr pipes.
         start_new_session=True,
     )
-    try:
-        stdout, stderr = proc.communicate(input=stdin_bytes, timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        terminate_process_group(proc)
-        try:
-            stdout, stderr = proc.communicate(timeout=1)
-        except (OSError, subprocess.TimeoutExpired):
-            stdout = exc.output or b""
-            stderr = exc.stderr or b""
-        raise subprocess.TimeoutExpired(
-            command, timeout, output=stdout or exc.output, stderr=stderr or exc.stderr
-        ) from exc
-    except (KeyboardInterrupt, SystemExit):
-        terminate_process_group(proc)
-        with suppress(OSError, subprocess.TimeoutExpired):
-            proc.communicate(timeout=1)
-        raise
+    stdout, stderr = _communicate_with_cleanup(
+        proc,
+        command,
+        stdin_bytes=stdin_bytes,
+        timeout=timeout,
+        terminate=terminate_process_group,
+    )
     return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
 
 
