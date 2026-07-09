@@ -25,10 +25,12 @@ def test_posix_runner_kills_process_group_on_timeout(monkeypatch):
 
         def __init__(self):
             self.communicate_calls = 0
+            self.communicate_timeouts = []
             self.killed = False
 
         def communicate(self, input=None, timeout=None, **kwargs):  # noqa: A002 - mirrors subprocess API.
             self.communicate_calls += 1
+            self.communicate_timeouts.append(timeout)
             if self.communicate_calls == 1:
                 raise subprocess.TimeoutExpired("sleep 10", timeout or 0, output=b"partial", stderr=b"err")
             self.returncode = -9
@@ -77,8 +79,39 @@ def test_posix_runner_kills_process_group_on_timeout(monkeypatch):
     }
     assert killpg_calls == [(4421, 9)]
     assert fake_proc.killed is True
+    assert fake_proc.communicate_timeouts == [0.1, 1]
     assert exc_info.value.output == b"captured"
     assert exc_info.value.stderr == b"stderr"
+
+
+def test_posix_runner_timeout_uses_partial_output_when_drain_still_times_out(monkeypatch):
+    """A missed pipe holder must not make timeout recovery block indefinitely."""
+
+    class FakeProc:
+        pid = 4321
+
+        def communicate(self, input=None, timeout=None, **kwargs):  # noqa: A002 - mirrors subprocess API.
+            raise subprocess.TimeoutExpired("sleep 10", timeout or 0, output=b"partial", stderr=b"err")
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr(shell_module.subprocess, "Popen", lambda *args, **kwargs: FakeProc())
+    monkeypatch.setattr(shell_module.os, "getpgid", lambda pid: pid + 100, raising=False)
+    monkeypatch.setattr(shell_module.os, "killpg", lambda pgid, sig: None, raising=False)
+    monkeypatch.setattr(shell_module.signal, "SIGKILL", 9, raising=False)
+
+    with pytest.raises(subprocess.TimeoutExpired) as exc_info:
+        _run_posix_shell_command(
+            "sleep 10",
+            stdin_bytes=None,
+            cwd=None,
+            env={"PATH": "x"},
+            timeout=0.1,
+        )
+
+    assert exc_info.value.output == b"partial"
+    assert exc_info.value.stderr == b"err"
 
 
 @pytest.mark.parametrize("raised", [KeyboardInterrupt, SystemExit])

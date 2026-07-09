@@ -152,7 +152,11 @@ def _run_windows_bash_command(
         _terminate_windows_process_tree(proc.pid)
         with suppress(OSError):
             proc.kill()
-        stdout, stderr = proc.communicate()
+        try:
+            stdout, stderr = proc.communicate(timeout=1)
+        except (OSError, subprocess.TimeoutExpired):
+            stdout = exc.output or b""
+            stderr = exc.stderr or b""
         raise subprocess.TimeoutExpired(
             argv, timeout, output=stdout or exc.output, stderr=stderr or exc.stderr
         ) from exc
@@ -201,7 +205,11 @@ def _run_posix_shell_command(
         stdout, stderr = proc.communicate(input=stdin_bytes, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         terminate_process_group(proc)
-        stdout, stderr = proc.communicate()
+        try:
+            stdout, stderr = proc.communicate(timeout=1)
+        except (OSError, subprocess.TimeoutExpired):
+            stdout = exc.output or b""
+            stderr = exc.stderr or b""
         raise subprocess.TimeoutExpired(
             command, timeout, output=stdout or exc.output, stderr=stderr or exc.stderr
         ) from exc

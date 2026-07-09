@@ -222,10 +222,12 @@ class TestWindowsBashEnvironment:
 
             def __init__(self):
                 self.communicate_calls = 0
+                self.communicate_timeouts = []
                 self.killed = False
 
             def communicate(self, data=None, timeout=None, **kwargs):
                 self.communicate_calls += 1
+                self.communicate_timeouts.append(timeout)
                 if self.communicate_calls == 1:
                     raise subprocess.TimeoutExpired(["bash", "-c", "sleep 10"], timeout or 0)
                 self.returncode = -9
@@ -266,6 +268,35 @@ class TestWindowsBashEnvironment:
             "check": False,
         }
         assert fake_proc.killed is True
+        assert fake_proc.communicate_timeouts == [0.1, 1]
+        assert exc_info.value.output == b"partial"
+
+    def test_windows_runner_timeout_uses_partial_output_when_drain_still_times_out(self, monkeypatch):
+        monkeypatch.setattr(shell_module.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, raising=False)
+
+        class FakeProc:
+            pid = 1234
+
+            def communicate(self, data=None, timeout=None, **kwargs):
+                raise subprocess.TimeoutExpired(["bash", "-c", "sleep 10"], timeout or 0, output=b"partial")
+
+            def kill(self):
+                pass
+
+        monkeypatch.setattr(shell_module.subprocess, "Popen", lambda *args, **kwargs: FakeProc())
+        with patch.object(shell_module.subprocess, "run") as mock_taskkill:
+            mock_taskkill.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+            with pytest.raises(subprocess.TimeoutExpired) as exc_info:
+                _run_windows_bash_command(
+                    r"C:\Git\bin\bash.exe",
+                    "sleep 10",
+                    stdin_bytes=None,
+                    cwd=None,
+                    env={"PATH": "x"},
+                    timeout=0.1,
+                )
+
+        mock_taskkill.assert_called_once()
         assert exc_info.value.output == b"partial"
 
     @pytest.mark.parametrize("raised", [KeyboardInterrupt, SystemExit])
