@@ -4,6 +4,7 @@ import base64
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import sys
 from contextlib import suppress
@@ -156,6 +157,42 @@ def _run_windows_bash_command(
             argv, timeout, output=stdout or exc.output, stderr=stderr or exc.stderr
         ) from exc
     return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
+
+
+def _run_posix_shell_command(
+    command: str,
+    *,
+    stdin_bytes: bytes | None,
+    cwd: str | None,
+    env: dict[str, str] | None,
+    timeout: int | float,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run a POSIX shell command with timeout semantics that kill child processes."""
+    proc = subprocess.Popen(
+        command,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE if stdin_bytes is not None else None,
+        cwd=cwd,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(input=stdin_bytes, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        killpg = getattr(os, "killpg", None)
+        getpgid = getattr(os, "getpgid", None)
+        if killpg is not None and getpgid is not None:
+            with suppress(OSError):
+                killpg(getpgid(proc.pid), getattr(signal, "SIGKILL", signal.SIGTERM))
+        with suppress(OSError):
+            proc.kill()
+        stdout, stderr = proc.communicate()
+        raise subprocess.TimeoutExpired(
+            command, timeout, output=stdout or exc.output, stderr=stderr or exc.stderr
+        ) from exc
+    return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
 
 
 def _resolve_windows_bash() -> str | None:
@@ -811,12 +848,9 @@ class ShellNode(Node):
             else:
                 # Execute the command with shell=True for full shell power
                 # Security: shell=True is intentional - this is a shell node that provides full shell access
-                result = subprocess.run(
+                result = _run_posix_shell_command(
                     command,
-                    shell=True,
-                    capture_output=True,
-                    text=False,
-                    input=stdin_bytes,
+                    stdin_bytes=stdin_bytes,
                     cwd=cwd,
                     env=full_env,
                     timeout=timeout,

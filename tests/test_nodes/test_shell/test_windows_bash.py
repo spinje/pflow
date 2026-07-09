@@ -171,10 +171,10 @@ class TestWindowsExecArgv:
         """On non-win32 the command still goes through shell=True as a string."""
         monkeypatch.setattr(sys, "platform", "linux")
         completed = subprocess.CompletedProcess(args="", returncode=0, stdout=b"hello\n", stderr=b"")
-        with patch.object(shell_module.subprocess, "run", return_value=completed) as mock_run:
+        with patch.object(shell_module, "_run_posix_shell_command", return_value=completed) as mock_run:
             _make_node().run({})
         assert mock_run.call_args.args[0] == "echo hello"
-        assert mock_run.call_args.kwargs.get("shell") is True
+        assert mock_run.call_args.kwargs["stdin_bytes"] is None
 
 
 class TestWindowsBashEnvironment:

@@ -4,11 +4,13 @@ Each test catches ONE specific real bug that would break binary workflows.
 """
 
 import base64
+import subprocess
 import sys
 from unittest.mock import Mock, patch
 
 import pytest
 
+import pflow.nodes.shell.shell as shell_module
 from pflow.nodes.shell.shell import ShellNode
 
 
@@ -16,6 +18,20 @@ from pflow.nodes.shell.shell import ShellNode
 def _use_subprocess_run_path(monkeypatch):
     """These tests mock subprocess.run; Git Bash coverage lives in test_windows_bash."""
     monkeypatch.setattr(sys, "platform", "linux")
+
+    def run_with_subprocess_run(command, *, stdin_bytes, cwd, env, timeout):
+        return subprocess.run(  # noqa: S602 - test shim preserves the mocked shell-node subprocess seam.
+            command,
+            shell=True,
+            capture_output=True,
+            text=False,
+            input=stdin_bytes,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+        )
+
+    monkeypatch.setattr(shell_module, "_run_posix_shell_command", run_with_subprocess_run)
 
 
 class TestBinaryStdoutDetection:
