@@ -134,4 +134,5 @@ def test_shell_timeout_kills_grandchild_holding_stdout_pipe():
     elapsed = time.monotonic() - start
     assert elapsed < 0.5
     assert action == "error"
-    assert shared["timeout"] is True
+    assert shared["exit_code"] == -1
+    assert "timed out" in shared["error"]

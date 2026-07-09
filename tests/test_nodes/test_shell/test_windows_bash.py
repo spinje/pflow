@@ -268,6 +268,57 @@ class TestWindowsBashEnvironment:
         assert fake_proc.killed is True
         assert exc_info.value.output == b"partial"
 
+    @pytest.mark.parametrize("raised", [KeyboardInterrupt, SystemExit])
+    def test_windows_runner_kills_process_tree_on_interrupt(self, monkeypatch, raised):
+        monkeypatch.setattr(shell_module.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, raising=False)
+
+        class FakeProc:
+            pid = 1234
+            returncode = None
+
+            def __init__(self):
+                self.communicate_calls = 0
+                self.killed = False
+
+            def communicate(self, data=None, timeout=None, **kwargs):
+                self.communicate_calls += 1
+                if self.communicate_calls == 1:
+                    raise raised()
+                self.returncode = -9
+                return b"", b""
+
+            def kill(self):
+                self.killed = True
+
+        fake_proc = FakeProc()
+        popen_calls = []
+
+        def fake_popen(*args, **kwargs):
+            popen_calls.append((args, kwargs))
+            return fake_proc
+
+        monkeypatch.setattr(shell_module.subprocess, "Popen", fake_popen)
+        with patch.object(shell_module.subprocess, "run") as mock_taskkill:
+            mock_taskkill.return_value = subprocess.CompletedProcess(args=[], returncode=0)
+            with pytest.raises(raised):
+                _run_windows_bash_command(
+                    r"C:\Git\bin\bash.exe",
+                    "sleep 10",
+                    stdin_bytes=None,
+                    cwd=None,
+                    env={"PATH": "x"},
+                    timeout=0.1,
+                )
+
+        assert popen_calls[0][0][0] == [r"C:\Git\bin\bash.exe", "-c", "sleep 10"]
+        assert popen_calls[0][1]["creationflags"] == 512
+        mock_taskkill.assert_called_once()
+        taskkill_argv = mock_taskkill.call_args.args[0]
+        assert taskkill_argv[0].lower().endswith("taskkill.exe")
+        assert taskkill_argv[1:] == ["/PID", "1234", "/T", "/F"]
+        assert fake_proc.killed is True
+        assert fake_proc.communicate_calls == 2
+
 
 class TestMissingBashRaisesFromPrep:
     """The silent-success regression guard: missing bash must raise, always."""

@@ -156,6 +156,13 @@ def _run_windows_bash_command(
         raise subprocess.TimeoutExpired(
             argv, timeout, output=stdout or exc.output, stderr=stderr or exc.stderr
         ) from exc
+    except (KeyboardInterrupt, SystemExit):
+        _terminate_windows_process_tree(proc.pid)
+        with suppress(OSError):
+            proc.kill()
+        with suppress(OSError, subprocess.TimeoutExpired):
+            proc.communicate(timeout=1)
+        raise
     return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
 
 
@@ -169,7 +176,7 @@ def _run_posix_shell_command(
 ) -> subprocess.CompletedProcess[bytes]:
     """Run a POSIX shell command with timeout semantics that kill child processes."""
 
-    def terminate_process_group(proc: Any) -> None:
+    def terminate_process_group(proc: "subprocess.Popen[bytes]") -> None:
         killpg = getattr(os, "killpg", None)
         getpgid = getattr(os, "getpgid", None)
         if killpg is not None and getpgid is not None:
