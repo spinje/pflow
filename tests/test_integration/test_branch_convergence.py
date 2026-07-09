@@ -799,7 +799,7 @@ class TestOutputResolutionErrors:
             - source: ${branch-a.stdout}
         """)
         child_path = tmp_path / "child.pflow.md"
-        child_path.write_text(child_md)
+        child_path.write_text(child_md, encoding="utf-8")
 
         # Parent: references child by file path
         parent_ir = {
@@ -872,7 +872,7 @@ class TestOutputResolutionErrors:
             ```
         """)
         child_path = tmp_path / "isolation_child.pflow.md"
-        child_path.write_text(child_md)
+        child_path.write_text(child_md, encoding="utf-8")
 
         parent_ir = {
             "nodes": [

@@ -24,6 +24,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import sys
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -147,6 +148,8 @@ def is_trace_locked(path: Path) -> bool | None:
 
     NOTE: detects DEATH, not HANG — a hung-but-alive process still holds the lock (reads ``True``). The
     staleness backstop for that case is deferred to GH #538."""
+    if sys.platform == "win32":
+        return None  # Windows: no advisory-lock probe → caller falls back to a heuristic
     try:
         import fcntl
     except ImportError:

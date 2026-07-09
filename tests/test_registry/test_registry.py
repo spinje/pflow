@@ -9,7 +9,12 @@ REFACTOR HISTORY:
 """
 
 import json
+import os
+import sys
 import tempfile
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -148,6 +153,9 @@ class TestRegistryDataPersistence:
             assert "old" not in loaded_data
             assert "new" in loaded_data
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="chmod-based access denial doesn't work on Windows (POSIX permission bits)"
+    )
     def test_handles_permission_errors_on_save(self):
         """Test that permission errors on save are properly raised."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1071,3 +1079,84 @@ class TestRegistryAtomicWrite:
 
             assert json.loads(registry_path.read_text())["nodes"]["shell"]["module"] == "m"
             assert [p.name for p in Path(tmpdir).iterdir()] == ["registry.json"]
+
+    def test_concurrent_writes_serialize_replace_section(self):
+        """Windows can deny replacing a file while another thread is replacing it.
+
+        UI startup can issue concurrent graph/catalog requests, and each request
+        may construct its own Registry instance. The registry's module-level lock
+        must therefore serialize the actual tempfile -> registry.json replace
+        section across instances, not just within one object.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+            registries = [Registry(registry_path) for _ in range(4)]
+            active = 0
+            max_active = 0
+            guard = threading.Lock()
+            original_replace = os.replace
+
+            def slow_replace(src: str, dst: str) -> None:
+                nonlocal active, max_active
+                with guard:
+                    active += 1
+                    max_active = max(max_active, active)
+                try:
+                    time.sleep(0.05)
+                    original_replace(src, dst)
+                finally:
+                    with guard:
+                        active -= 1
+
+            with (
+                patch("pflow.registry.registry.os.replace", side_effect=slow_replace),
+                ThreadPoolExecutor(max_workers=len(registries)) as executor,
+            ):
+                list(
+                    executor.map(
+                        lambda item: item[0]._write_atomic({"nodes": {f"node-{item[1]}": {"module": "m"}}}),
+                        zip(registries, range(len(registries)), strict=True),
+                    )
+                )
+
+            assert max_active == 1
+            assert json.loads(registry_path.read_text(encoding="utf-8"))["nodes"]
+
+    def test_get_metadata_serializes_with_atomic_replace(self):
+        """Metadata reads must not hold the target open during a Windows replace."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+            registry = Registry(registry_path)
+            registry._write_atomic({"metadata": {"status": "old"}, "nodes": {}})
+
+            replace_active = threading.Event()
+            replace_done = threading.Event()
+            read_during_replace = False
+            original_replace = os.replace
+            original_read_wrapper = Registry._read_wrapper
+
+            def slow_replace(src: str, dst: str) -> None:
+                replace_active.set()
+                try:
+                    time.sleep(0.05)
+                    original_replace(src, dst)
+                finally:
+                    replace_done.set()
+
+            def tracking_read_wrapper(self: Registry):
+                nonlocal read_during_replace
+                if replace_active.is_set() and not replace_done.is_set():
+                    read_during_replace = True
+                return original_read_wrapper(self)
+
+            with (
+                patch("pflow.registry.registry.os.replace", side_effect=slow_replace),
+                patch.object(Registry, "_read_wrapper", tracking_read_wrapper),
+                ThreadPoolExecutor(max_workers=1) as executor,
+            ):
+                future = executor.submit(registry._write_atomic, {"metadata": {"status": "new"}, "nodes": {}})
+                assert replace_active.wait(timeout=1)
+                assert registry.get_metadata("status") == "new"
+                future.result()
+
+            assert not read_during_replace

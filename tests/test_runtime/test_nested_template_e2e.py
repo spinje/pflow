@@ -211,7 +211,7 @@ class TestNestedTemplateE2E:
         # Test with WorkflowExecutor
         executor = WorkflowExecutor()
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".json", delete=False) as f:
             json.dump(workflow_ir, f)
             workflow_path = f.name
 

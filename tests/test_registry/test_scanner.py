@@ -68,7 +68,7 @@ class TestScannerBehavior:
             # Create __pycache__ directory with file
             pycache = Path(tmpdir) / "__pycache__"
             pycache.mkdir()
-            (pycache / "test.py").write_text("class TestNode: pass")
+            (pycache / "test.py").write_text("class TestNode: pass", encoding="utf-8")
 
             results = scan_for_nodes([Path(tmpdir)])
             assert results == []
@@ -80,25 +80,31 @@ class TestScannerBehavior:
 
             # Create file with Node import
             node_file = base_dir / "node_based.py"
-            node_file.write_text('''
+            node_file.write_text(
+                '''
 from pflow.core.node import Node
 
 class NodeBasedClass(Node):
     """This inherits from Node."""
     def exec(self, shared):
         pass
-''')
+''',
+                encoding="utf-8",
+            )
 
             # Create file with BaseNode import
             basenode_file = base_dir / "basenode_based.py"
-            basenode_file.write_text('''
+            basenode_file.write_text(
+                '''
 from pflow.core.node import BaseNode
 
 class BaseNodeClass(BaseNode):
     """This inherits from BaseNode."""
     def exec(self, shared):
         pass
-''')
+''',
+                encoding="utf-8",
+            )
 
             project_root = Path(__file__).parent.parent
             pocketflow_path = project_root / "pocketflow"
@@ -327,7 +333,7 @@ class TestExtractMetadataBehavior:
         assert metadata["class_name"] == "TestNode"
         assert metadata["name"] == "test-node"
         assert metadata["docstring"] == "Test node documentation."
-        assert "/project/shell.py" in metadata["file_path"]
+        assert "/project/shell.py" in metadata["file_path"].replace("\\", "/")
 
         # Test that interface was integrated
         assert "interface" in metadata

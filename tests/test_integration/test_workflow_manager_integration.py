@@ -455,7 +455,7 @@ class TestErrorHandling:
 
         # Corrupt the file (inside the workflow folder)
         workflow_path = workflow_manager.workflows_dir / "corrupt-test" / "corrupt-test.pflow.md"
-        with open(workflow_path, "w") as f:
+        with open(workflow_path, "w", encoding="utf-8") as f:
             f.write("This is not valid pflow markdown - no headings at all")
 
         # list_all should skip corrupted files with warning

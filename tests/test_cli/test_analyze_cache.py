@@ -15,6 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from pflow.cli.main import cli
+from pflow.core.trace_tree import normalize_workflow_path_key
 from tests.shared.trace_jsonl import write_trace_jsonl
 
 
@@ -349,8 +350,8 @@ def test_analyze_cache_json_scopes_validator_findings_to_workflow_path(tmp_path:
         if item["warning_id"] in {"cache.order-mismatch", "cache.prompt-body-duplicates-cache"}
     }
     assert scoped_errors == {
-        "cache.order-mismatch": str(workflow_path),
-        "cache.prompt-body-duplicates-cache": str(workflow_path),
+        "cache.order-mismatch": normalize_workflow_path_key(str(workflow_path)),
+        "cache.prompt-body-duplicates-cache": normalize_workflow_path_key(str(workflow_path)),
     }
 
 

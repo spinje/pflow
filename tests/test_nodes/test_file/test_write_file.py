@@ -33,7 +33,7 @@ class TestWriteFileNode:
             assert file_path in success_msg  # Shows actual file path
 
             # Verify file contents
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 assert f.read() == "Test content\nLine 2"
 
     def test_create_parent_directories(self):
@@ -52,7 +52,7 @@ class TestWriteFileNode:
             assert action == "default"
             assert os.path.exists(file_path)
 
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 assert f.read() == "Nested content"
 
     def test_tilde_path_expansion_with_directory_creation(self, monkeypatch):
@@ -65,6 +65,7 @@ class TestWriteFileNode:
         with tempfile.TemporaryDirectory() as fake_home:
             # Set up a fake home directory
             monkeypatch.setenv("HOME", fake_home)
+            monkeypatch.setenv("USERPROFILE", fake_home)
 
             # Use ~/ path with non-existent subdirectory
             tilde_path = "~/stories/cat_story.md"
@@ -91,7 +92,7 @@ class TestWriteFileNode:
             assert os.path.isdir(stories_dir)
 
             # Verify content
-            with open(expected_path) as f:
+            with open(expected_path, encoding="utf-8") as f:
                 assert f.read() == "Once upon a time, there was a clever cat..."
 
     def test_append_mode(self, tmp_path):
@@ -151,7 +152,7 @@ class TestWriteFileNode:
             assert action == "default"
             assert os.path.exists(file_path)
 
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 assert f.read() == ""
 
     def test_custom_encoding(self):
@@ -206,7 +207,7 @@ class TestWriteFileNode:
 
             assert action == "default"
 
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 assert f.read() == "From params"
 
     # Binary data support tests
@@ -315,7 +316,7 @@ class TestWriteFileNode:
             assert action == "default"
 
             # Verify text mode was used
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 content = f.read()
 
             assert content == "Plain text content\nLine 2", "Text mode should work without flag"
@@ -364,7 +365,7 @@ class TestWriteFileNode:
             assert action == "default"
 
             # Should write the base64 STRING, not decoded bytes
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 content = f.read()
 
             assert content == base64_string, "Explicit False flag should write base64 as text"
@@ -431,7 +432,7 @@ class TestWriteFileNode:
             assert action == "default"
 
             # Read and verify it's valid JSON
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 content = f.read()
 
             # Should be valid JSON (not Python repr)
@@ -466,7 +467,7 @@ class TestWriteFileNode:
             assert action == "default"
 
             # Verify valid JSON
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 content = f.read()
 
             parsed = json.loads(content)
@@ -494,7 +495,7 @@ class TestWriteFileNode:
             assert action == "default"
 
             # Verify unchanged
-            with open(file_path) as f:
+            with open(file_path, encoding="utf-8") as f:
                 content = f.read()
 
             assert content == test_string

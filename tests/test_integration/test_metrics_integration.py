@@ -153,7 +153,7 @@ class TestMetricsCollection:
         """Test that --output-format json includes top-level metrics."""
         runner = CliRunner(mix_stderr=False)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(simple_workflow))
             workflow_file = f.name
 
@@ -237,7 +237,7 @@ class TestMetricsCollection:
 
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", mock_complete)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(llm_workflow))
             workflow_file = f.name
 
@@ -276,7 +276,7 @@ class TestMetricsCollection:
             "start_node": "read",
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(error_workflow))
             workflow_file = f.name
 
@@ -306,7 +306,7 @@ class TestTraceGeneration:
         """Trace files should be created even without explicit flags."""
         runner = CliRunner(mix_stderr=False)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(simple_workflow))
             workflow_file = f.name
 
@@ -373,7 +373,7 @@ class TestTraceGeneration:
 
         monkeypatch.setattr("pflow.nodes.llm.llm.complete", mock_complete)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(llm_workflow))
             workflow_file = f.name
 
@@ -406,7 +406,7 @@ class TestTraceGeneration:
         """The --no-trace flag should suppress trace file creation."""
         runner = CliRunner(mix_stderr=False)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(simple_workflow))
             workflow_file = f.name
 
@@ -443,7 +443,7 @@ class TestTraceGeneration:
             "start_node": "invalid",
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(failing_workflow))
             workflow_file = f.name
 
@@ -624,7 +624,7 @@ class TestCLIFlags:
         """Trace files should be generated without specifying tracing flags."""
         runner = CliRunner(mix_stderr=False)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(simple_workflow))
             workflow_file = f.name
 
@@ -680,7 +680,7 @@ class TestCLIFlags:
         """JSON output should include metrics without requiring explicit trace flags."""
         runner = CliRunner(mix_stderr=False)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(simple_workflow))
             workflow_file = f.name
 
@@ -713,7 +713,7 @@ class TestJSONOutputStructure:
         """Test JSON structure for successful workflow execution."""
         runner = CliRunner(mix_stderr=False)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(simple_workflow))
             workflow_file = f.name
 
@@ -770,7 +770,7 @@ class TestJSONOutputStructure:
             "start_node": "bad",
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(error_workflow))
             workflow_file = f.name
 
@@ -803,7 +803,7 @@ class TestMetricsAccuracy:
         """Test that duration is measured accurately."""
         runner = CliRunner(mix_stderr=False)
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(simple_workflow))
             workflow_file = f.name
 
@@ -863,7 +863,7 @@ class TestMetricsAccuracy:
         ]
 
         for expected_count, workflow in workflows:
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
                 f.write(ir_to_markdown(workflow))
                 workflow_file = f.name
 

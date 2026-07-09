@@ -889,7 +889,12 @@ class TestRunEndpoint:
         argv = popen.call_args.args[0]
         assert argv == [sys.executable, "-m", "pflow.cli", "run", key, "--output-format", "json"]
         kwargs = popen.call_args.kwargs
-        assert kwargs["start_new_session"] is True
+        if sys.platform == "win32":
+            assert kwargs["creationflags"] == subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            assert "start_new_session" not in kwargs
+        else:
+            assert kwargs["start_new_session"] is True
+            assert "creationflags" not in kwargs
         assert kwargs["stdin"] == kwargs["stdout"] == kwargs["stderr"] == subprocess.DEVNULL
         assert kwargs["env"]["PFLOW_EXECUTION_ID"] == run_id  # forced onto the child so the pin resolves
 

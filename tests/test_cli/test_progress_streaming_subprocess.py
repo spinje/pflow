@@ -29,6 +29,7 @@ import sys
 
 import pytest
 
+from tests.conftest import set_isolated_home
 from tests.shared.markdown_utils import ir_to_markdown
 
 pytestmark = [
@@ -71,7 +72,7 @@ def subprocess_env(tmp_path_factory, uv_exe):
     (home / ".pflow").mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
-    env["HOME"] = str(home)
+    set_isolated_home(env, home)
     env.pop("PYTEST_CURRENT_TEST", None)
 
     # Prime the registry so the first real test isn't paying init cost

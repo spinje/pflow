@@ -17,6 +17,8 @@ import sys
 
 import pytest
 
+from tests.conftest import set_isolated_home
+
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.skipif(sys.platform == "win32", reason="Unix subprocess test"),
@@ -40,7 +42,7 @@ def subprocess_env(tmp_path_factory, uv_exe):
     (home / ".pflow").mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
-    env["HOME"] = str(home)
+    set_isolated_home(env, home)
     env.pop("PYTEST_CURRENT_TEST", None)
     return env
 

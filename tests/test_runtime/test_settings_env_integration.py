@@ -1,5 +1,6 @@
 """Tests for settings.env integration with workflow execution."""
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -377,26 +378,26 @@ class TestEndToEndIntegration:
         """Test inputs from multiple sources in realistic scenario."""
         settings_path = tmp_path / "settings.json"
         manager = SettingsManager(settings_path=settings_path)
-        manager.set_env("openai_api_key", "sk-test-key")
+        manager.set_env("task116_service_value", "settings-value")
         manager.set_env("temperature", "0.9")
 
         workflow_ir = {
             "inputs": {
-                "openai_api_key": {"required": True},
+                "task116_service_value": {"required": True},
                 "model": {"required": True},
                 "temperature": {"required": False, "default": "0.7"},
                 "max_tokens": {"required": False, "default": "100"},
             }
         }
 
-        # model from CLI, openai_api_key from settings, temperature from settings (overrides default)
+        # model from CLI, service value from settings, temperature from settings (overrides default)
         provided_params = {"model": "gpt-4"}
         settings_env = manager.load().env
 
         errors, defaults, _env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
         assert errors == []
-        assert defaults["openai_api_key"] == "sk-test-key"  # From settings
+        assert defaults["task116_service_value"] == "settings-value"  # From settings
         assert defaults["temperature"] == "0.9"  # From settings (overrides default)
         assert defaults["max_tokens"] == "100"  # From workflow default
 
@@ -609,6 +610,8 @@ class TestShellEnvironmentVariables:
 
     def test_shell_env_var_case_sensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that shell env var names are case-sensitive."""
+        if sys.platform == "win32":
+            pytest.skip("Windows environment variables are case-insensitive")
         monkeypatch.setenv("api_key", "lowercase")
         monkeypatch.setenv("API_KEY", "uppercase")
 

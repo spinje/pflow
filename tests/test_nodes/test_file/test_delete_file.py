@@ -15,7 +15,7 @@ class TestDeleteFileNode:
         """Test successful file deletion with confirmation."""
         with tempfile.TemporaryDirectory() as tmpdir:
             file_path = os.path.join(tmpdir, "test.txt")
-            with open(file_path, "w") as f:
+            with open(file_path, "w", encoding="utf-8") as f:
                 f.write("Test content")
 
             node = DeleteFileNode()
@@ -45,7 +45,7 @@ class TestDeleteFileNode:
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             file_path = os.path.join(tmpdir, "test.txt")
-            with open(file_path, "w") as f:
+            with open(file_path, "w", encoding="utf-8") as f:
                 f.write("Test content")
 
             node = DeleteFileNode()
@@ -67,7 +67,7 @@ class TestDeleteFileNode:
         """Test delete fails when confirmation flag is missing."""
         with tempfile.TemporaryDirectory() as tmpdir:
             file_path = os.path.join(tmpdir, "test.txt")
-            with open(file_path, "w") as f:
+            with open(file_path, "w", encoding="utf-8") as f:
                 f.write("Test content")
 
             node = DeleteFileNode()
@@ -105,7 +105,7 @@ class TestDeleteFileNode:
         """Test that confirm_delete cannot come from params."""
         with tempfile.TemporaryDirectory() as tmpdir:
             file_path = os.path.join(tmpdir, "test.txt")
-            with open(file_path, "w") as f:
+            with open(file_path, "w", encoding="utf-8") as f:
                 f.write("Test content")
 
             node = DeleteFileNode()

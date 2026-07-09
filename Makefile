@@ -21,38 +21,38 @@ check: ## Run code quality tools.
 .PHONY: test
 test: ## Test the code with pytest in parallel (excludes LLM tests that require API keys)
 	@echo "🚀 Testing code: Running non-e2e pytest in parallel with 4 workers (excluding LLM tests)"
-	@uv run python -m pytest -n 4 --dist=worksteal --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -m "not e2e"
+	@PYTHONWARNDEFAULTENCODING=1 uv run python -m pytest -n 4 --dist=worksteal --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -m "not e2e"
 
 .PHONY: test-e2e
 test-e2e: ## Run real subprocess / shell / pipe boundary tests in parallel
 	@echo "🚀 Testing e2e code: Running pytest in parallel with 4 workers (excluding LLM tests)"
-	@uv run python -m pytest -n 4 --dist=worksteal --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -m e2e
+	@PYTHONWARNDEFAULTENCODING=1 uv run python -m pytest -n 4 --dist=worksteal --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -m e2e
 
 .PHONY: test-debug
 test-debug: ## Test the code with pytest sequentially for debugging
 	@echo "🚀 Testing code: Running pytest sequentially (for debugging)"
-	@uv run python -m pytest -n 0 -vv --tb=short --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py
+	@PYTHONWARNDEFAULTENCODING=1 uv run python -m pytest -n 0 -vv --tb=short --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py
 
 .PHONY: test-llm
 test-llm: ## Run LLM integration tests with real API calls (requires API keys)
 	@echo "🚀 Testing LLM with real API calls"
 	@echo "📝 Note: Requires OPENAI_API_KEY in the environment (or ~/.pflow/settings.json env section)"
-	@RUN_LLM_TESTS=1 uv run python -m pytest tests/test_nodes/test_llm/test_llm_integration.py -v
+	@RUN_LLM_TESTS=1 PYTHONWARNDEFAULTENCODING=1 uv run python -m pytest tests/test_nodes/test_llm/test_llm_integration.py -v
 
 .PHONY: test-all
 test-all: ## Run all tests including LLM integration tests in parallel
 	@echo "🚀 Testing code: Running all tests including LLM integration (4 workers)"
-	@RUN_LLM_TESTS=1 uv run python -m pytest -n 4 --doctest-modules
+	@RUN_LLM_TESTS=1 PYTHONWARNDEFAULTENCODING=1 uv run python -m pytest -n 4 --doctest-modules
 
 .PHONY: test-all-local
 test-all-local: ## Run all non-LLM tests, including e2e, in parallel
 	@echo "🚀 Testing code: Running all non-LLM pytest tests in parallel with 4 workers"
-	@uv run python -m pytest -n 4 --dist=worksteal --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py
+	@PYTHONWARNDEFAULTENCODING=1 uv run python -m pytest -n 4 --dist=worksteal --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py
 
 .PHONY: test-with-skipped
 test-with-skipped: ## Run tests showing all skipped tests (useful for debugging)
 	@echo "🚀 Testing code: Running all tests (showing skipped)"
-	@uv run python -m pytest --doctest-modules -v | grep -E "PASSED|FAILED|SKIPPED|ERROR"
+	@PYTHONWARNDEFAULTENCODING=1 uv run python -m pytest --doctest-modules -v | grep -E "PASSED|FAILED|SKIPPED|ERROR"
 
 .PHONY: ui-build
 ui-build: ## Build the web UI bundle into src/pflow/ui/static (requires Node).

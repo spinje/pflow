@@ -469,7 +469,7 @@ class TestSmartFilterCaching:
             {"included_fields": ["field0", "field1"], "reasoning": "Test"},
         )
 
-        fields = tuple([(f"field{i}", "string") for i in range(60)])
+        fields = tuple((f"field{i}", "string") for i in range(60))
 
         # First call: cache miss (should call LLM)
         result1 = smart_filter_fields_cached(fields, threshold=50)

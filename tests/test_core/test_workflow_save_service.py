@@ -15,6 +15,7 @@ Updated for Task 107: Markdown workflow format (.pflow.md). File loading uses
 parse_markdown(), save uses markdown_content string instead of IR dict.
 """
 
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -266,7 +267,7 @@ class TestLoadAndValidateWorkflow:
         Bug prevented: Parse errors surface as generic exceptions, no guidance.
         """
         file_path = tmp_path / "bad.pflow.md"
-        file_path.write_text("This is not a valid workflow — no ## Steps section")
+        file_path.write_text("This is not a valid workflow — no ## Steps section", encoding="utf-8")
 
         assert file_path.exists(), "Test file should be created"
 
@@ -596,7 +597,7 @@ class TestDeleteDraftSafely:
         pflow_dir.mkdir(parents=True)
 
         draft = pflow_dir / "draft.json"
-        draft.write_text("{}")
+        draft.write_text("{}", encoding="utf-8")
 
         assert draft.exists(), "Draft file should exist before deletion"
 
@@ -615,7 +616,7 @@ class TestDeleteDraftSafely:
         pflow_dir.mkdir(parents=True)
 
         draft = pflow_dir / "draft.json"
-        draft.write_text("{}")
+        draft.write_text("{}", encoding="utf-8")
 
         assert draft.exists(), "Draft file should exist before deletion"
 
@@ -632,7 +633,7 @@ class TestDeleteDraftSafely:
         Critical: Prevents accidental deletion of important files (~/Documents, etc.).
         """
         unsafe_file = tmp_path / "important.json"
-        unsafe_file.write_text("{}")
+        unsafe_file.write_text("{}", encoding="utf-8")
 
         with patch("pflow.core.workflow.save_service.Path.home", return_value=tmp_path):
             result = delete_draft_safely(str(unsafe_file))
@@ -640,6 +641,10 @@ class TestDeleteDraftSafely:
             assert result is False
             assert unsafe_file.exists(), "File outside safe dir should NOT be deleted"
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="creates a real symlink — needs elevated privileges on Windows (Task 116: don't certify symlinks on win32)",
+    )
     def test_refuse_delete_symlinks(self, tmp_path: Path) -> None:
         """SECURITY: Refuse to delete symlinks (defense in depth).
 
@@ -651,7 +656,7 @@ class TestDeleteDraftSafely:
 
         # Create target file outside safe dir
         target = tmp_path / "target.json"
-        target.write_text("{}")
+        target.write_text("{}", encoding="utf-8")
 
         # Create symlink inside safe dir pointing to target
         symlink = pflow_dir / "draft.json"
@@ -676,7 +681,7 @@ class TestDeleteDraftSafely:
 
         # Try to delete file outside via path traversal
         target = tmp_path / "secret.txt"
-        target.write_text("important data")
+        target.write_text("important data", encoding="utf-8")
 
         # Create traversal path: .pflow/workflows/../../secret.txt
         traversal_path = str(pflow_dir / ".." / ".." / ".." / "secret.txt")
@@ -697,7 +702,7 @@ class TestDeleteDraftSafely:
         pflow_dir.mkdir(parents=True)
 
         draft = pflow_dir / "draft.json"
-        draft.write_text("{}")
+        draft.write_text("{}", encoding="utf-8")
 
         assert draft.exists(), "Draft file should exist before deletion attempt"
 

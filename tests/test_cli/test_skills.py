@@ -42,8 +42,9 @@ class TestSkillSaveCommand:
         # Verify success
         assert result.exit_code == 0
         assert "Published 'test-workflow' to Claude Code" in result.output
-        assert "Symlink: /home/user/project/.claude/skills/test-workflow/SKILL.md" in result.output
-        assert "Source:  /home/user/.pflow/workflows/test-workflow.pflow.md" in result.output
+        output = result.output.replace("\\", "/")
+        assert "Symlink: /home/user/project/.claude/skills/test-workflow/SKILL.md" in output
+        assert "Source:  /home/user/.pflow/workflows/test-workflow.pflow.md" in output
 
         # Verify workflow was enriched
         mock_enrich.assert_called_once()

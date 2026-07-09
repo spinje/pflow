@@ -21,12 +21,40 @@ work across the trace tree; flat per-event work doesn't need them.
 
 from __future__ import annotations
 
+import posixpath
+import re
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, overload
 
 EventTier = Literal["top", "batch_item", "sub_workflow_descendant"]
+
+
+@overload
+def normalize_workflow_path_key(path: None) -> None: ...
+
+
+@overload
+def normalize_workflow_path_key(path: str) -> str: ...
+
+
+def normalize_workflow_path_key(path: str | None) -> str | None:
+    """Normalize workflow-path identifiers used as trace/analyzer join keys."""
+    if path is None or path.startswith("ir-hash:"):
+        return path
+    normalized = path.replace("\\", "/")
+    if not normalized:
+        return normalized
+    drive_match = re.match(r"^([A-Za-z]:)(/.*)?$", normalized)
+    if drive_match:
+        drive = drive_match.group(1)
+        tail = drive_match.group(2) or "/"
+        return f"{drive}{posixpath.normpath(tail)}"
+    return posixpath.normpath(normalized)
+
+
+def _is_absolute_workflow_path_key(path: str) -> bool:
+    return path.startswith("/") or re.match(r"^[A-Za-z]:/", path) is not None
 
 
 @dataclass(frozen=True)
@@ -42,6 +70,9 @@ class WalkEvent:
     owner_node_id: str
     tier: EventTier
     workflow_path: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "workflow_path", normalize_workflow_path_key(self.workflow_path))
 
     @property
     def is_cached(self) -> bool:
@@ -589,7 +620,7 @@ def _collect_default_edges(events: Iterable[Mapping[str, Any]]) -> dict[str, str
                 if isinstance(paths, Mapping):
                     for node_id, path in paths.items():
                         if isinstance(node_id, str) and isinstance(path, str) and path:
-                            edges[node_id] = path
+                            edges[node_id] = normalize_workflow_path_key(path) or path
             # Recurse into batch items + their nested events
             for item in event.get("batch_items") or []:
                 if isinstance(item, Mapping):
@@ -654,7 +685,7 @@ def _child_workflow_path_from_batch_item(
     """
     explicit = event.get("workflow_path")
     if isinstance(explicit, str) and explicit:
-        return explicit
+        return normalize_workflow_path_key(explicit)
 
     resolved = _resolved_child_workflow_from_event(event)
     if resolved is None:
@@ -689,16 +720,20 @@ def _resolved_child_workflow_from_event(event: Mapping[str, Any]) -> str | None:
 
 
 def _resolve_relative_child_workflow_path(resolved: str, *, parent_workflow_path: str | None) -> str:
-    path = Path(resolved)
-    if path.is_absolute():
-        return resolved
-    if not parent_workflow_path:
-        return resolved
-
-    parent_path = Path(parent_workflow_path)
-    if not parent_path.is_absolute():
-        return resolved
-    return str((parent_path.parent / path).resolve())
+    resolved_key = normalize_workflow_path_key(resolved) or resolved
+    if _is_absolute_workflow_path_key(resolved_key):
+        return resolved_key
+    parent_key = normalize_workflow_path_key(parent_workflow_path)
+    if not parent_key or not _is_absolute_workflow_path_key(parent_key):
+        return resolved_key
+    return normalize_workflow_path_key(posixpath.join(posixpath.dirname(parent_key), resolved_key)) or resolved_key
 
 
-__all__ = ["LlmEventLeaf", "TraceTree", "WalkEvent", "batch_item_cost", "event_cost"]
+__all__ = [
+    "LlmEventLeaf",
+    "TraceTree",
+    "WalkEvent",
+    "batch_item_cost",
+    "event_cost",
+    "normalize_workflow_path_key",
+]

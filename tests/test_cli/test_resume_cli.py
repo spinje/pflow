@@ -92,7 +92,7 @@ def home(tmp_path, monkeypatch):
 @pytest.fixture
 def shell_wf(tmp_path):
     path = tmp_path / "wf.pflow.md"
-    path.write_text(_SHELL_WF)
+    path.write_text(_SHELL_WF, encoding="utf-8")
     return path
 
 
@@ -132,7 +132,7 @@ echo "gated action"
 @pytest.fixture
 def gate_wf(tmp_path):
     path = tmp_path / "gate_wf.pflow.md"
-    path.write_text(_GATE_WF)
+    path.write_text(_GATE_WF, encoding="utf-8")
     return path
 
 
@@ -279,7 +279,7 @@ def _run_to_failure_llm(wf: Path) -> str:
 
 def test_stale_hash_refusal_after_edit(home, shell_wf):
     exec_id = _run_to_failure(shell_wf)
-    shell_wf.write_text(shell_wf.read_text() + "\n<!-- edited -->\n")
+    shell_wf.write_text(shell_wf.read_text(encoding="utf-8") + "\n<!-- edited -->\n", encoding="utf-8")
     result = _runner().invoke(cli, ["resume", exec_id, "mode=ok"])
     assert result.exit_code == 1
     combined = result.stdout + result.stderr
@@ -289,7 +289,7 @@ def test_stale_hash_refusal_after_edit(home, shell_wf):
 
 def test_stale_hash_force_override_runs(home, shell_wf):
     exec_id = _run_to_failure(shell_wf)
-    shell_wf.write_text(shell_wf.read_text() + "\n<!-- edited -->\n")
+    shell_wf.write_text(shell_wf.read_text(encoding="utf-8") + "\n<!-- edited -->\n", encoding="utf-8")
     result = _runner().invoke(cli, ["resume", exec_id, "mode=ok", "--force"])
     assert result.exit_code == 0, result.stderr
 
@@ -492,7 +492,10 @@ def output_fail_wf(tmp_path):
         },
     }
     path = tmp_path / "outwf.pflow.md"
-    path.write_text(ir_to_markdown(ir, title="Output Fail Demo", description="Step succeeds; declared output missing."))
+    path.write_text(
+        ir_to_markdown(ir, title="Output Fail Demo", description="Step succeeds; declared output missing."),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -550,7 +553,7 @@ def test_dry_run_json_carries_resume_block(home, shell_wf):
 def test_dry_run_still_refuses_stale_workflow(home, shell_wf):
     """Preview mirrors the real resume: a stale workflow refuses without --force even for --dry-run."""
     exec_id = _run_to_failure(shell_wf)
-    shell_wf.write_text(shell_wf.read_text() + "\n<!-- edited -->\n")
+    shell_wf.write_text(shell_wf.read_text(encoding="utf-8") + "\n<!-- edited -->\n", encoding="utf-8")
     result = _runner().invoke(cli, ["resume", exec_id, "mode=ok", "--dry-run"])
     assert result.exit_code == 1
     assert "edited since the original run" in (result.stdout + result.stderr)
@@ -688,7 +691,7 @@ def _write_incomplete_trace_for(wf: Path, *, completed: list[dict], killed_node:
         })
     debug = Path.home() / ".pflow" / "debug"
     path = debug / format_trace_filename(wf_path, "wf", "20260101-000000")
-    path.write_text("\n".join(_json.dumps(line) for line in lines) + "\n")
+    path.write_text("\n".join(_json.dumps(line) for line in lines) + "\n", encoding="utf-8")
 
 
 def test_incomplete_between_nodes_resumes_at_successor_e2e(home, shell_wf):

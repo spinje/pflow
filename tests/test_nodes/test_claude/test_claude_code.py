@@ -31,6 +31,7 @@ Tests criteria from the specification:
 
 import asyncio
 import os
+import sys
 from typing import Any
 from unittest.mock import patch
 
@@ -130,12 +131,16 @@ def test_working_directory_missing(claude_node):
     with pytest.raises(ValueError) as exc_info:
         claude_node.prep(shared)
     assert "Working directory does not exist" in str(exc_info.value)
-    assert "/nonexistent/path" in str(exc_info.value)
+    message = str(exc_info.value).replace("\\", "/")
+    assert "nonexistent/path" in message
 
 
 # Test Criteria 5: Working directory restricted → ValueError with "Restricted directory"
 def test_working_directory_restricted(claude_node):
     """Test that restricted directories raise ValueError."""
+    if sys.platform == "win32":
+        pytest.skip("POSIX root/system-directory restrictions do not map to Windows")
+
     shared = {"__warnings__": {}}
 
     # Test multiple restricted directories
@@ -1008,7 +1013,7 @@ def test_working_directory_expansion(claude_node):
         prep_res = claude_node.prep(shared)
 
         # Should be expanded to absolute path
-        assert prep_res["cwd"].startswith("/")
+        assert os.path.isabs(prep_res["cwd"])
         assert "~" not in prep_res["cwd"]
 
 

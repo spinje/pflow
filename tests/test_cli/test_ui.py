@@ -18,6 +18,7 @@ import socket
 import sys
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import unquote
 
 import pytest
 from click.testing import CliRunner
@@ -731,8 +732,9 @@ class TestUiCommand:
         runner = CliRunner()
         with runner.isolated_filesystem():
             Path("wf.pflow.md").write_text(
-                "# x\n\n## Steps\n\n### a\n\nDo a thing now.\n\n- type: shell\n- command: echo hi\n"
+                "# x\n\n## Steps\n\n### a\n\nDo a thing now.\n\n- type: shell\n- command: echo hi\n", encoding="utf-8"
             )
+            expected_workflow = Path("wf.pflow.md").resolve()
             with (
                 patch("pflow.cli.commands.ui._port_available", return_value=False),
                 patch("pflow.cli.commands.ui._probe_health", return_value={"service": "pflow-ui"}),
@@ -743,8 +745,7 @@ class TestUiCommand:
 
         assert result.exit_code == 0, result.output
         encoded_workflow = mock_open.call_args.args[0].split("workflow=")[1]
-        # An absolute path url-encodes its slashes (%2F); the relative "wf.pflow.md" has none.
-        assert "%2F" in encoded_workflow
+        assert Path(unquote(encoded_workflow)) == expected_workflow
 
 
 class TestServeUrl:

@@ -273,7 +273,7 @@ def _write_jsonl_trace(path: Path, lines: list[dict[str, Any]]) -> Path:
     """
     import json
 
-    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
     return path
 
 

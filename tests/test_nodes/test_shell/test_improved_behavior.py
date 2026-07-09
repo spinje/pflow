@@ -1,10 +1,18 @@
 """Improved tests that verify actual behavior, not just superficial checks."""
 
 import os
+import re
+import sys
 import tempfile
 import time
 
 from pflow.nodes.shell.shell import ShellNode
+
+
+def _shell_path(path: str) -> str:
+    normalized = path.replace("\\", "/").rstrip("/")
+    normalized = re.sub(r"(?<![A-Za-z0-9_/-])([A-Za-z]):/", lambda m: f"/{m.group(1).lower()}/", normalized)
+    return normalized
 
 
 def run_shell_node(shared, **params):
@@ -142,21 +150,22 @@ class TestImprovedErrorDetection:
         assert "not found" in shared["stderr"].lower() or "nicht gefunden" in shared["stderr"].lower()
 
         # Permission denied or read-only (trying to write to root)
-        shared = {}
-        action = run_shell_node(shared, command="echo test > /test_file_root.txt")
-        assert action == "error"
-        assert shared["exit_code"] != 0
-        # Could be permission denied or read-only file system
-        stderr_lower = shared["stderr"].lower()
-        assert any(
-            msg in stderr_lower
-            for msg in [
-                "permission denied",
-                "read-only",
-                "keine berechtigung",
-                "operation not permitted",
-            ]
-        )
+        if sys.platform != "win32":
+            shared = {}
+            action = run_shell_node(shared, command="echo test > /test_file_root.txt")
+            assert action == "error"
+            assert shared["exit_code"] != 0
+            # Could be permission denied or read-only file system
+            stderr_lower = shared["stderr"].lower()
+            assert any(
+                msg in stderr_lower
+                for msg in [
+                    "permission denied",
+                    "read-only",
+                    "keine berechtigung",
+                    "operation not permitted",
+                ]
+            )
 
         # Syntax error
         shared = {}
@@ -189,7 +198,7 @@ class TestImprovedWorkingDirectory:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create a file in tmpdir
             test_file = os.path.join(tmpdir, "test.txt")
-            with open(test_file, "w") as f:
+            with open(test_file, "w", encoding="utf-8") as f:
                 f.write("content")
 
             # Try to read file with relative path from different directories
@@ -226,10 +235,10 @@ class TestImprovedTimeoutBehavior:
         os.unlink(temp_file)
 
         # Timeout before file creation
-        run_shell_node(shared, command=f"sleep 0.2 && touch {temp_file}", timeout=0.05)
+        run_shell_node(shared, command=f"sleep 2 && touch {temp_file}", timeout=0.05)
 
         # Brief wait to confirm process was killed
-        deadline = time.monotonic() + 0.10
+        deadline = time.monotonic() + 0.30
         while time.monotonic() < deadline:
             if os.path.exists(temp_file):
                 break
@@ -248,7 +257,7 @@ class TestShellSpecificBehaviors:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create some files
             for i in range(3):
-                open(os.path.join(tmpdir, f"file{i}.txt"), "w").close()
+                open(os.path.join(tmpdir, f"file{i}.txt"), "w", encoding="utf-8").close()
 
             shared = {}
             run_shell_node(shared, command="ls *.txt", cwd=tmpdir)
@@ -265,7 +274,8 @@ class TestShellSpecificBehaviors:
         run_shell_node(shared, command="echo ~")
 
         output = shared["stdout"].strip()
-        assert output == os.path.expanduser("~")
+        expected_home = os.environ.get("HOME") or os.path.expanduser("~")
+        assert _shell_path(output) == _shell_path(expected_home)
         assert output != "~"  # Should be expanded
 
     def test_shell_builtin_commands(self):
@@ -313,7 +323,7 @@ class TestRealWorldUseCases:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create original file
             original = os.path.join(tmpdir, "data.txt")
-            with open(original, "w") as f:
+            with open(original, "w", encoding="utf-8") as f:
                 f.write("important data")
 
             # Backup with timestamp

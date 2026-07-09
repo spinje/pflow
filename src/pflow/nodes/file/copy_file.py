@@ -94,6 +94,9 @@ class CopyFileNode(Node):
 
     def _check_disk_space(self, file_size: int, parent_dir: str | None, source_path: str, dest_path: str) -> None:
         """Check if there's enough disk space for the copy."""
+        if sys.platform == "win32":
+            return
+
         if file_size > 0:
             try:
                 stat = os.statvfs(parent_dir or ".")

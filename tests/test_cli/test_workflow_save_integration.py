@@ -23,7 +23,9 @@ LESSONS LEARNED:
 """
 
 import contextlib
+import sys
 
+import pytest
 import yaml
 from click.testing import CliRunner
 
@@ -162,6 +164,9 @@ class TestWorkflowSaveIntegration:
         assert output_file.exists()  # From workflow execution
         assert saved_file.exists()  # From save operation
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="chmod-based access denial doesn't work on Windows (POSIX permission bits)"
+    )
     def test_workflow_manager_integration_with_cli_error_handling(self, tmp_path):
         """Test that WorkflowManager handles permission errors gracefully."""
         workflows_dir = tmp_path / "readonly_workflows"

@@ -22,7 +22,7 @@ class TestIntegration:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create source file
             source_path = os.path.join(tmpdir, "source.txt")
-            with open(source_path, "w") as f:
+            with open(source_path, "w", encoding="utf-8") as f:
                 f.write("Source content\nWith multiple lines")
 
             # Read with ReadFileNode
@@ -47,7 +47,7 @@ class TestIntegration:
             write_node.post(shared, prep_res, exec_res)
 
             # Verify destination has raw content
-            with open(dest_path) as f:
+            with open(dest_path, encoding="utf-8") as f:
                 assert f.read() == "Source content\nWith multiple lines"
 
     def test_error_propagation(self):
@@ -84,7 +84,7 @@ class TestFileNodeIntegration:
 
     def test_path_normalization(self):
         """Test that paths are normalized (expanduser, abspath)."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", delete=False) as f:
             f.write("Test content")
             temp_path = f.name
 
@@ -129,7 +129,7 @@ class TestFileNodeIntegration:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create initial file
             original_path = os.path.join(tmpdir, "original.txt")
-            with open(original_path, "w") as f:
+            with open(original_path, "w", encoding="utf-8") as f:
                 f.write("Original content")
 
             shared = {}
@@ -173,5 +173,5 @@ class TestFileNodeIntegration:
 
             # Only new_path should remain
             assert os.path.exists(new_path)
-            with open(new_path) as f:
+            with open(new_path, encoding="utf-8") as f:
                 assert f.read() == "Original content"

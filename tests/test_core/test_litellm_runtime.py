@@ -884,7 +884,7 @@ def _scan_one_file(py_file: Path, rel_path: str) -> list[str]:
     """Return any direct-litellm-import violations found in ``py_file``."""
     source = py_file.read_text(encoding="utf-8")
     # Text prefilter: AST parsing is ~1ms per file but most pflow files
-    # never mention litellm. The substring check is ~1µs per file and
+    # never mention litellm. The substring check is ~1μs per file and
     # cuts the scan from ~250ms to ~50ms. Conservative — matches any
     # mention (comments/strings/identifiers), then the AST scan filters
     # those out by structure.

@@ -5,10 +5,13 @@ import json
 import logging
 import os
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_CONFIG_SAVE_LOCK = threading.RLock()
 
 
 class MCPServerManager:
@@ -78,12 +81,16 @@ class MCPServerManager:
             Configuration dictionary in standard MCP format
 
         """
+        with _CONFIG_SAVE_LOCK:
+            return self._load_locked()
+
+    def _load_locked(self) -> dict[str, Any]:
         if not self.config_path.exists():
             logger.info(f"No MCP server configuration found at {self.config_path}, returning empty config")
             return {"mcpServers": {}}
 
         try:
-            with open(self.config_path) as f:
+            with open(self.config_path, encoding="utf-8") as f:
                 config = json.load(f)
 
             # Ensure mcpServers exists
@@ -113,12 +120,16 @@ class MCPServerManager:
         if "mcpServers" not in config:
             raise ValueError("Configuration must have 'mcpServers' field")
 
+        with _CONFIG_SAVE_LOCK:
+            self._save_locked(config)
+
+    def _save_locked(self, config: dict[str, Any]) -> None:
         # Create temporary file in same directory for atomic write
         temp_fd, temp_path = tempfile.mkstemp(dir=self.config_path.parent, prefix=".mcp-servers-", suffix=".tmp")
 
         try:
             # Write to temporary file
-            with os.fdopen(temp_fd, "w") as f:
+            with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
                 json.dump(config, f, indent=2, sort_keys=True)
                 f.write("\n")  # Add final newline
 
@@ -170,10 +181,6 @@ class MCPServerManager:
         # Validate server name
         self._validate_server_name(name)
 
-        config = self.load()
-        servers = config.get("mcpServers", {})
-        is_update = name in servers
-
         # Build configuration based on transport
         if transport == "stdio":
             server_config = self._build_stdio_config(command, args, env)
@@ -185,9 +192,13 @@ class MCPServerManager:
         # Validate the complete configuration
         self.validate_server_config(server_config)
 
-        servers[name] = server_config
-        config["mcpServers"] = servers
-        self.save(config)
+        with _CONFIG_SAVE_LOCK:
+            config = self.load()
+            servers = config.get("mcpServers", {})
+            is_update = name in servers
+            servers[name] = server_config
+            config["mcpServers"] = servers
+            self._save_locked(config)
 
         # Log the action
         self._log_server_action(is_update, name, transport, command, url)

@@ -76,7 +76,10 @@ class TestAtomicWriteProtection:
             def failing_mkstemp(*args, **kwargs):
                 # Create temp file but simulate crash before writing completes
                 fd, _path = original_mkstemp(*args, **kwargs)
-                os.write(fd, b'{"partial":')  # Incomplete JSON
+                try:
+                    os.write(fd, b'{"partial":')  # Incomplete JSON
+                finally:
+                    os.close(fd)
                 raise OSError("Process crashed during write")
 
             with patch("tempfile.mkstemp", side_effect=failing_mkstemp), pytest.raises(OSError):
@@ -153,7 +156,7 @@ class TestConcurrentAccess:
             assert len(errors) == 0, f"Unexpected errors: {errors}"
 
             # CRITICAL: File must be valid JSON
-            with open(config_path) as f:
+            with open(config_path, encoding="utf-8") as f:
                 final_config = json.load(f)  # Should not raise
 
             # Should have servers (last-write-wins means some may be overwritten)

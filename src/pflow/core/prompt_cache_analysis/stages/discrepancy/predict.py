@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from pflow.core.exceptions import CompilationError, MarkdownParseError, SchemaValidationError, WorkflowValidationError
+from pflow.core.trace_tree import normalize_workflow_path_key
 from pflow.core.validation_utils import generate_dummy_parameters
 
 from ...context import _PREDICTION_SKIPPED, AnalysisContext, template_resolver
@@ -182,6 +183,10 @@ def _attach_predicted_cache_keys(
     except _PREDICTION_RECOVERABLE_EXCEPTIONS as exc:
         logger.debug("memo freshness prediction disabled: %s", exc, exc_info=True)
         _mark_all_prediction_skipped(predicted_cache_keys, cw_result, ctx)
+    predicted_cache_keys = {
+        (normalize_workflow_path_key(workflow_path), node_id): cache_key
+        for (workflow_path, node_id), cache_key in predicted_cache_keys.items()
+    }
     return (
         replace(
             ctx,

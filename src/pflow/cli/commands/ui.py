@@ -69,7 +69,7 @@ class UiGroup(click.Group):
         ctx: click.Context,
         args: list[str],
     ) -> tuple[str | None, click.Command | None, list[str]]:
-        if args and args[0] != "serve" and self.get_command(ctx, args[0]) is not None:
+        if args and self.get_command(ctx, args[0]) is not None:
             return super().resolve_command(ctx, args)
         return "serve", self.get_command(ctx, "serve"), args
 

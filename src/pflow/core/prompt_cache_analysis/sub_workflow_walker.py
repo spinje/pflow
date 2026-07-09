@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pflow.core.trace_tree import normalize_workflow_path_key
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult, resolve_sub_workflow
 
 from .context import AnalysisContext, _normalize_empty
@@ -203,6 +204,7 @@ def walk_cross_workflow(
     """
     resolver = resolve_child or resolve_sub_workflow
     seen = set(seen_paths) if seen_paths else set()
+    root_workflow_path = normalize_workflow_path_key(root_workflow_path)
     if root_workflow_path:
         seen.add(root_workflow_path)
     edges: list[CrossWorkflowEdge] = []
@@ -345,7 +347,7 @@ def _process_one_call(
         return
 
     # Cycle detection — re-entry of a path already on the recursion stack.
-    child_path_str = str(result.path) if result.path else None
+    child_path_str = normalize_workflow_path_key(result.path.as_posix()) if result.path else None
     child_label = child_path_str or "<inline>"
     cache_items_by_workflow[child_label] = _cache_items_as_tuple(result.ir)
     irs_by_workflow[child_label] = result.ir
@@ -464,6 +466,7 @@ def _build_parameters_by_workflow(
     stale_memo_uncheckable: set[tuple[str | None, str]] | None = None,
 ) -> dict[str | None, dict[str, Any]]:
     """Build workflow-scoped parameter views from cross-workflow input edges."""
+    root_workflow_path = normalize_workflow_path_key(root_workflow_path)
     params_by_workflow: dict[str | None, dict[str, Any]] = {root_workflow_path: dict(root_parameters)}
     irs_by_workflow = getattr(cw_result, "irs_by_workflow", {}) or {}
     remaining = list(getattr(cw_result, "edges", ()) or ())
@@ -472,11 +475,11 @@ def _build_parameters_by_workflow(
         made_progress = False
         next_remaining = []
         for edge in remaining:
-            parent_workflow = str(getattr(edge, "parent_workflow", root_workflow_path))
+            parent_workflow = normalize_workflow_path_key(str(getattr(edge, "parent_workflow", root_workflow_path)))
             if parent_workflow not in params_by_workflow:
                 next_remaining.append(edge)
                 continue
-            child_workflow = getattr(edge, "child_workflow", None)
+            child_workflow = normalize_workflow_path_key(getattr(edge, "child_workflow", None))
             child_input_name = getattr(edge, "child_input_name", None)
             if child_workflow is None or child_input_name is None:
                 continue
@@ -495,7 +498,7 @@ def _build_parameters_by_workflow(
                 continue
             if stale_memo_uncheckable is not None:
                 stale_memo_uncheckable.update(_unchecked_parent_memo_roots(edge, parent_ctx))
-            child_params = params_by_workflow.setdefault(str(child_workflow), {})
+            child_params = params_by_workflow.setdefault(child_workflow, {})
             child_params[str(child_input_name)] = resolved
             made_progress = True
         remaining = next_remaining

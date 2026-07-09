@@ -13,7 +13,7 @@ class TestReadFileNode:
 
     def test_successful_read(self):
         """Test reading a file successfully."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", delete=False, suffix=".txt") as f:
             f.write("Line 1\nLine 2\nLine 3")
             temp_path = f.name
 
@@ -53,7 +53,7 @@ class TestReadFileNode:
         assert "error" in shared
         error_msg = shared["error"]
         assert "exist" in error_msg.lower()  # More robust than exact string match
-        assert "/non/existent/file.txt" in error_msg  # Shows actual path
+        assert "non/existent/file.txt" in error_msg.replace("\\", "/")  # Shows actual path
         assert "content" not in shared
 
     def test_encoding_parameter(self):
@@ -113,7 +113,7 @@ class TestReadFileNode:
 
     def test_empty_file(self):
         """Test reading empty file."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", delete=False) as f:
             temp_path = f.name
 
         try:
@@ -132,7 +132,7 @@ class TestReadFileNode:
 
     def test_params_fallback(self):
         """Test using params when shared store doesn't have file_path."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", delete=False) as f:
             f.write("Test content")
             temp_path = f.name
 

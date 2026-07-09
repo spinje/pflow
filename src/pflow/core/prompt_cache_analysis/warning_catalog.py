@@ -181,7 +181,8 @@ _BATCH_PREWARM_BELOW_MIN_MESSAGE = (
 
 def _basename_for_workflow(path: str) -> str:
     """Strip directory components and the workflow suffix for compact rendering."""
-    name = path.rsplit("/", 1)[-1] if "/" in path else path
+    normalized = path.replace("\\", "/")
+    name = normalized.rsplit("/", 1)[-1] if "/" in normalized else normalized
     if name.endswith(".pflow.md"):
         return name[: -len(".pflow.md")]
     return name

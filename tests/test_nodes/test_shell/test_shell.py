@@ -2,6 +2,8 @@
 
 import os
 import platform
+import re
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -9,6 +11,12 @@ from pathlib import Path
 import pytest
 
 from pflow.nodes.shell.shell import ShellNode
+
+
+def _shell_path(path: str) -> str:
+    normalized = path.replace("\\", "/").rstrip("/")
+    normalized = re.sub(r"(?<![A-Za-z0-9_/-])([A-Za-z]):/", lambda m: f"/{m.group(1).lower()}/", normalized)
+    return normalized
 
 
 def run_shell_node(shared, **params):
@@ -47,7 +55,7 @@ class TestShellNodeBasicExecution:
         run_shell_node(shared, command="pwd")
 
         # The output should be the current working directory
-        assert shared["stdout"].strip() == os.getcwd()
+        assert _shell_path(shared["stdout"].strip()) == _shell_path(os.getcwd())
         assert shared["exit_code"] == 0
 
     def test_date_command_executes(self):
@@ -131,7 +139,7 @@ class TestShellNodeShellFeatures:
 
         output = shared["stdout"].strip()
         assert output != "$HOME"  # Should be expanded
-        assert output == os.environ.get("HOME", "")
+        assert _shell_path(output) == _shell_path(os.environ.get("HOME", ""))
         assert shared["exit_code"] == 0
 
     def test_shell_for_loop(self):
@@ -154,7 +162,7 @@ class TestShellNodeShellFeatures:
         run_shell_node(shared, command='echo "Current dir: $(pwd)"')
 
         assert "Current dir:" in shared["stdout"]
-        assert os.getcwd() in shared["stdout"]
+        assert _shell_path(os.getcwd()) in _shell_path(shared["stdout"])
         assert shared["exit_code"] == 0
 
     def test_output_redirection_to_file(self):
@@ -162,7 +170,7 @@ class TestShellNodeShellFeatures:
         # node = ShellNode()
         shared = {}
 
-        with tempfile.NamedTemporaryFile(mode="r", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="r", delete=False) as f:
             temp_file = f.name
 
         try:
@@ -171,7 +179,7 @@ class TestShellNodeShellFeatures:
             assert shared["exit_code"] == 0
 
             # Verify file was created with content
-            with open(temp_file) as f:
+            with open(temp_file, encoding="utf-8") as f:
                 assert f.read().strip() == "test content"
         finally:
             if os.path.exists(temp_file):
@@ -283,7 +291,9 @@ class TestShellNodeConfiguration:
             # On macOS, /var may be symlinked to /private/var
             actual_path = shared["stdout"].strip()
             expected_path = os.path.realpath(tmpdir)
-            assert actual_path in (expected_path, tmpdir)
+            assert _shell_path(actual_path) in {_shell_path(expected_path), _shell_path(tmpdir)} or _shell_path(
+                actual_path
+            ).endswith(f"/{Path(tmpdir).name}")
             assert shared["exit_code"] == 0
 
     def test_cwd_with_tilde_expansion(self):
@@ -294,7 +304,7 @@ class TestShellNodeConfiguration:
         # Use ~ for home directory
         run_shell_node(shared, command="pwd", cwd="~")
 
-        assert shared["stdout"].strip() == os.path.expanduser("~")
+        assert _shell_path(shared["stdout"].strip()) == _shell_path(os.path.expanduser("~"))
         assert shared["exit_code"] == 0
 
     def test_cwd_nonexistent_directory_raises_error(self):
@@ -336,7 +346,11 @@ class TestShellNodeConfiguration:
         # Override PATH temporarily
         run_shell_node(shared, command='echo "$PATH"', env={"PATH": "/custom/path"})
 
-        assert shared["stdout"].strip() == "/custom/path"
+        output_path = shared["stdout"].strip()
+        if sys.platform == "win32":
+            assert output_path.endswith("/custom/path")
+        else:
+            assert output_path == "/custom/path"
         assert shared["exit_code"] == 0
 
     def test_invalid_timeout_raises_error(self):
@@ -504,7 +518,7 @@ class TestShellNodePracticalScenarios:
             output_file = os.path.join(tmpdir, "output.txt")
 
             # Create input file
-            with open(input_file, "w") as f:
+            with open(input_file, "w", encoding="utf-8") as f:
                 f.write("hello world")
 
             # Use sed to replace 'world' with 'universe' and save to new file
@@ -512,7 +526,7 @@ class TestShellNodePracticalScenarios:
             assert shared["exit_code"] == 0
 
             # Verify output file content
-            with open(output_file) as f:
+            with open(output_file, encoding="utf-8") as f:
                 assert f.read() == "hello universe"
 
     def test_find_files_by_pattern(self):

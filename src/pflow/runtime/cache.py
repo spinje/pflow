@@ -13,6 +13,8 @@ import zlib
 from pathlib import Path
 from typing import Any
 
+from pflow.core.trace_tree import normalize_workflow_path_key
+
 logger = logging.getLogger(__name__)
 
 # Default TTL: 24 hours
@@ -32,6 +34,12 @@ _METADATA_KEY_SUFFIXES = (
     "_source_lines",  # Plural dict — per-code-block line ranges
     "_source_files",  # Per-file-reference resolution metadata
 )
+
+
+def _workflow_path_variants(workflow_path: str) -> tuple[str, ...]:
+    """Return canonical and legacy workflow path spellings for scoped cache reads."""
+    normalized = normalize_workflow_path_key(workflow_path)
+    return (normalized, workflow_path, normalized.replace("/", "\\"))
 
 
 def _make_serializable(obj: Any) -> Any:
@@ -349,11 +357,12 @@ class MemoizationCache:
                 # insertion counter, so the last-WRITTEN entry wins, which is what "latest"
                 # means here (the planner's historical cost/duration = the most recent run).
                 if workflow_path is not None:
+                    workflow_path_variants = _workflow_path_variants(workflow_path)
                     cursor = conn.execute(
                         "SELECT cache_key, output, created_at FROM cache_entries "
-                        "WHERE node_id = ? AND workflow_path = ? "
+                        "WHERE node_id = ? AND workflow_path IN (?, ?, ?) "
                         "ORDER BY created_at DESC, rowid DESC LIMIT 1",
-                        (node_id, workflow_path),
+                        (node_id, *workflow_path_variants),
                     )
                 else:
                     cursor = conn.execute(
@@ -411,7 +420,15 @@ class MemoizationCache:
                     """INSERT OR REPLACE INTO cache_entries
                        (cache_key, node_id, workflow_path, action, output, output_hash, created_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (cache_key, node_id, workflow_path, action, output_blob, output_hash, time.time()),
+                    (
+                        cache_key,
+                        node_id,
+                        normalize_workflow_path_key(workflow_path),
+                        action,
+                        output_blob,
+                        output_hash,
+                        time.time(),
+                    ),
                 )
                 conn.commit()
             finally:
@@ -465,7 +482,11 @@ class MemoizationCache:
             conn = self._connect()
             try:
                 if workflow_path:
-                    cursor = conn.execute("DELETE FROM cache_entries WHERE workflow_path = ?", (workflow_path,))
+                    workflow_path_variants = _workflow_path_variants(workflow_path)
+                    cursor = conn.execute(
+                        "DELETE FROM cache_entries WHERE workflow_path IN (?, ?, ?)",
+                        workflow_path_variants,
+                    )
                 else:
                     cursor = conn.execute("DELETE FROM cache_entries")
                 conn.commit()

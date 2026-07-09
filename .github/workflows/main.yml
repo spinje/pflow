@@ -59,6 +59,11 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      # Makes EncodingWarning fire (opt-in at the interpreter level) so the
+      # pytest filterwarnings=["error::EncodingWarning"] rule actually guards
+      # something — see pyproject.toml [tool.pytest.ini_options].
+      PYTHONWARNDEFAULTENCODING: "1"
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -77,13 +82,74 @@ jobs:
 
   # Summary job for branch protection — matrix jobs report as
   # "tests-and-type-check (3.10)" etc., so the bare name never resolves.
-  # Point the required status check at this job instead.
+  # Point the required status check at this job; it also gates the single
+  # Windows job now that Task 116 is green.
   tests-and-type-check-done:
     if: always()
-    needs: tests-and-type-check
+    needs: [tests-and-type-check, tests-windows]
     runs-on: ubuntu-latest
     steps:
       - run: |
           if [[ "${{ needs.tests-and-type-check.result }}" != "success" ]]; then
             exit 1
           fi
+          if [[ "${{ needs.tests-windows.result }}" != "success" ]]; then
+            exit 1
+          fi
+
+  # Task 116 Windows gate. Single Python version (not a matrix) —
+  # version-specific bugs are rarely Windows-specific, and this job is
+  # already the expensive one (Windows runners run ~2x slower).
+  tests-windows:
+    runs-on: windows-latest
+    # ~8k tests at ~2x runner slowness should land well under this; the cap
+    # exists so a hung test/npx spawn can't burn a runner for the 6h default.
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONWARNDEFAULTENCODING: "1"
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up the environment
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: "3.13"
+
+      # Cheap insurance for an unverified assumption (Task 116 braindump):
+      # "Git Bash is on the windows-latest runner PATH" is training
+      # knowledge, not something verified this session. If this ever prints
+      # WSL bash or nothing, ADR-0013's bash-on-windows premise needs
+      # rework before Chunk B (shell node / stdin) lands.
+      - name: 'Debug: bash resolution'
+        run: which bash && bash --version
+
+      - name: Run tests
+        run: uv run python -m pytest -n 2 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py
+
+      # LOAD-BEARING, not incidental: ubuntu mypy treats `sys.platform ==
+      # "win32"` branch bodies as statically unreachable and never
+      # type-checks them. This run is the ONLY static check the win32-only
+      # code this task adds (shell node bash resolution, win32 stdin
+      # detection, server creationflags) ever gets. `!cancelled()` so a red
+      # test step doesn't mask this signal during green-up iteration.
+      - name: Check typing
+        if: ${{ !cancelled() }}
+        run: uv run mypy
+
+      # Closes the one MCP assumption CI can close (task-116.md "Assumed
+      # correct" item): the mcp SDK resolving `npx` through its Windows
+      # `.cmd` shim when spawning a stdio server. Lockfile evidence says the
+      # SDK ships a win32 path (pywin32 dep); this proves spawning works.
+      # A CI step, not an e2e test, so local `make test-e2e` never grows a
+      # node/npx + network dependency. `pflow mcp sync` exits 1 on failure.
+      - name: 'MCP smoke: npx stdio server spawns on Windows'
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        run: |
+          npx --version
+          uv run pflow mcp add '{"mcpServers":{"everything":{"command":"npx","args":["-y","@modelcontextprotocol/server-everything"]}}}'
+          uv run pflow mcp sync everything

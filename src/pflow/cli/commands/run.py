@@ -6,6 +6,7 @@ import dataclasses
 import json
 import logging
 import os
+import sys
 import time
 import warnings
 from pathlib import Path
@@ -59,6 +60,17 @@ def _echo_trace(ctx: click.Context, message: str) -> None:
 
 def _read_stdin_data() -> tuple[str | None, StdinData | None]:
     """Read stdin data, trying text first then enhanced."""
+    if sys.platform == "win32":
+        enhanced_stdin = read_stdin_enhanced()
+        if enhanced_stdin is None:
+            return read_stdin_content(), None
+        if enhanced_stdin.is_text:
+            text = enhanced_stdin.text_data or ""
+            if text.endswith("\r"):
+                text = text[:-1]
+            return text.replace("\r\n", "\n").replace("\r", "\n"), None
+        return None, enhanced_stdin
+
     stdin_content = read_stdin_content()
 
     enhanced_stdin = None
@@ -190,7 +202,7 @@ def _generate_and_echo_report(ctx: click.Context, trace_file: Any, report: Any, 
         _echo_trace(ctx, f"📋 Execution report: {report_dir}")
         summary_path = report_dir / "summary.md"
         try:
-            summary_text = summary_path.read_text()
+            summary_text = summary_path.read_text(encoding="utf-8")
         except OSError:
             pass
         else:

@@ -308,7 +308,7 @@ class MCPConnectionPool:
 
 @asynccontextmanager
 async def _open_devnull() -> AsyncIterator[Any]:
-    f = open(os.devnull, "w")  # noqa: SIM115
+    f = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
     try:
         yield f
     finally:

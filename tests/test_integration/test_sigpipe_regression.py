@@ -59,7 +59,7 @@ class TestWorkflowBooleanParameterExecution:
         with runner.isolated_filesystem():
             # Create a file with substantial content (simulates HTTP fetch)
             large_content = "\n".join([f"Line {i}: some content here" for i in range(LARGE_DATA_LINES)])
-            with open("input.txt", "w") as f:
+            with open("input.txt", "w", encoding="utf-8") as f:
                 f.write(large_content)
 
             # Workflow that mimics the real bug scenario:
@@ -144,7 +144,7 @@ class TestWorkflowBooleanParameterExecution:
         with runner.isolated_filesystem():
             # Use shared constant for data size
             large_content = "x\n" * LARGE_DATA_LINES  # ~20KB
-            with open("input.txt", "w") as f:
+            with open("input.txt", "w", encoding="utf-8") as f:
                 f.write(large_content)
 
             workflow = {
@@ -185,7 +185,7 @@ class TestWorkflowBooleanParameterExecution:
 
         with runner.isolated_filesystem():
             large_content = "x\n" * LARGE_DATA_LINES  # ~20KB
-            with open("input.txt", "w") as f:
+            with open("input.txt", "w", encoding="utf-8") as f:
                 f.write(large_content)
 
             workflow = {
@@ -232,7 +232,7 @@ class TestLargeDataFlowWithShellNodes:
         with runner.isolated_filesystem():
             # Create input file just above pipe buffer size
             large_content = "data " * 4000  # ~20KB
-            with open("large.txt", "w") as f:
+            with open("large.txt", "w", encoding="utf-8") as f:
                 f.write(large_content)
 
             workflow = {
@@ -267,7 +267,7 @@ class TestLargeDataFlowWithShellNodes:
         with runner.isolated_filesystem():
             # Create file with enough lines to exceed pipe buffer
             large_content = "\n".join([f"Line {i}" for i in range(2000)])  # ~20KB
-            with open("lines.txt", "w") as f:
+            with open("lines.txt", "w", encoding="utf-8") as f:
                 f.write(large_content)
 
             workflow = {
@@ -337,7 +337,7 @@ Conclusion paragraph.
                 * 100
             )  # ~20KB
 
-            with open("webpage.txt", "w") as f:
+            with open("webpage.txt", "w", encoding="utf-8") as f:
                 f.write(webpage_content)
 
             workflow = {
@@ -393,7 +393,7 @@ Conclusion paragraph.
             assert "Workflow completed" in result.output or "Workflow executed successfully" in result.output
 
             # Verify the output is correct
-            images_content = Path("images.json").read_text().strip()
+            images_content = Path("images.json").read_text(encoding="utf-8").strip()
             assert images_content == "[]", f"Expected '[]', got: {images_content}"
 
     @pytest.mark.skipif(platform.system() == "Windows", reason="Unix shell patterns")
@@ -405,7 +405,7 @@ Conclusion paragraph.
         with runner.isolated_filesystem():
             large_content = "x\n" * LARGE_DATA_LINES  # ~20KB
 
-            with open("data.txt", "w") as f:
+            with open("data.txt", "w", encoding="utf-8") as f:
                 f.write(large_content)
 
             workflow = {

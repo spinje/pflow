@@ -4,9 +4,50 @@ Each test catches ONE specific real bug that would break binary workflows.
 """
 
 import base64
+import subprocess
+import sys
 from unittest.mock import Mock, patch
 
-from pflow.nodes.shell.shell import ShellNode
+import pytest
+
+import pflow.nodes.shell.shell as shell_module
+from pflow.nodes.shell.shell import ShellNode, _run_posix_shell_command
+
+
+@pytest.fixture(autouse=True)
+def _use_subprocess_run_path(monkeypatch):
+    """These tests mock subprocess.run; Git Bash coverage lives in test_windows_bash."""
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    def run_with_subprocess_run(command, *, stdin_bytes, cwd, env, timeout):
+        return subprocess.run(  # noqa: S602 - test shim preserves the mocked shell-node subprocess seam.
+            command,
+            shell=True,
+            capture_output=True,
+            text=False,
+            input=stdin_bytes,
+            cwd=cwd,
+            env=env,
+            timeout=timeout,
+        )
+
+    monkeypatch.setattr(shell_module, "_run_posix_shell_command", run_with_subprocess_run)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Direct POSIX shell runner coverage")
+def test_posix_runner_returns_binary_stdout_bytes():
+    """Real POSIX runner path must preserve undecodable stdout as bytes."""
+    result = _run_posix_shell_command(
+        "printf '\\377\\376\\375'",
+        stdin_bytes=None,
+        cwd=None,
+        env=None,
+        timeout=1,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == b"\xff\xfe\xfd"
+    assert result.stderr == b""
 
 
 class TestBinaryStdoutDetection:

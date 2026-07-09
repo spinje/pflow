@@ -1,5 +1,6 @@
 """Tests for skill service module."""
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,18 @@ from pflow.core.workflow.skill_service import (
     find_skill_for_workflow,
     generate_usage_section,
     remove_skill,
+)
+
+# Task 116 decision: tests that create real skill symlinks are skip-marked
+# on win32 — no copy-fallback, because the skill service is scheduled for a
+# symlink-free rebuild and certifying symlink behavior on Windows is wasted
+# work. (GitHub Windows runners run as admin, so these WOULD pass in CI;
+# the skip is a product decision, not a CI limitation — don't unskip just
+# because CI could go green.) Enrichment/usage tests that never touch the
+# filesystem symlink stay live on all platforms.
+skip_win32_symlinks = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="skill symlinks — service scheduled for symlink-free rebuild (Task 116 decision)",
 )
 
 # Sample workflow markdown for testing
@@ -414,6 +427,7 @@ class TestEnrichWorkflow:
         assert "branch" in ir_after.get("inputs", {})
 
 
+@skip_win32_symlinks
 class TestSkillEndToEnd:
     """End-to-end test for the full skill workflow."""
 
@@ -467,6 +481,7 @@ class TestSkillEndToEnd:
         assert "repo" in parse_result.ir.get("inputs", {})
 
 
+@skip_win32_symlinks
 class TestCreateSkillSymlink:
     """Test create_skill_symlink function."""
 
@@ -570,6 +585,7 @@ class TestCreateSkillSymlink:
         assert not symlink_path.parent.exists()
 
 
+@skip_win32_symlinks
 class TestFindPflowSkills:
     """Test find_pflow_skills function."""
 
@@ -754,6 +770,7 @@ class TestFindPflowSkills:
 class TestReEnrichment:
     """Test re-enrichment after workflow re-save."""
 
+    @skip_win32_symlinks
     def test_re_enrich_restores_usage_section_after_resave(self, tmp_path, monkeypatch):
         """Test that ## Usage section is restored after workflow save --force."""
         from unittest.mock import patch
@@ -814,6 +831,7 @@ class TestReEnrichment:
         # New workflow has no inputs, so command should have no params
         assert "pflow my-workflow\n" in content_after_reenrich
 
+    @skip_win32_symlinks
     def test_re_enrich_replaces_usage_not_duplicates(self, tmp_path, monkeypatch):
         """Test that re-enrichment replaces ## Usage, doesn't duplicate it."""
         from unittest.mock import patch

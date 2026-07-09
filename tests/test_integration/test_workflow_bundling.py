@@ -325,7 +325,7 @@ class TestSaveWorkflowWithOptionsBundles:
         """save_workflow_with_options() with source_path discovers deps and returns bundled list."""
         # Arrange
         (project_dir / "prompts").mkdir()
-        (project_dir / "prompts" / "agent.md").write_text("You are a coding assistant")
+        (project_dir / "prompts" / "agent.md").write_text("You are a coding assistant", encoding="utf-8")
 
         ir = {
             "nodes": [
@@ -339,7 +339,7 @@ class TestSaveWorkflowWithOptionsBundles:
         }
         workflow_path = project_dir / "bundle-test.pflow.md"
         markdown = ir_to_markdown(ir, title="Bundle Test")
-        workflow_path.write_text(markdown)
+        workflow_path.write_text(markdown, encoding="utf-8")
 
         # Act: use the service-layer function with an explicit WorkflowManager path
         # save_workflow_with_options uses WorkflowManager() with default path,
@@ -355,13 +355,13 @@ class TestSaveWorkflowWithOptionsBundles:
 
         # Assert: bundled_files list includes the discovered dependency
         assert len(bundled_files) >= 1
-        assert any("prompts/agent.md" in f for f in bundled_files)
+        assert any("prompts/agent.md" in f.replace("\\", "/") for f in bundled_files)
         assert validated_ir["nodes"][0]["id"] == "ask"
 
         # Assert: the actual bundled file exists on disk alongside the entry point
         bundle_dir = saved_path.parent
         assert (bundle_dir / "prompts" / "agent.md").exists()
-        assert (bundle_dir / "prompts" / "agent.md").read_text() == "You are a coding assistant"
+        assert (bundle_dir / "prompts" / "agent.md").read_text(encoding="utf-8") == "You are a coding assistant"
 
     def test_service_layer_no_source_path_no_bundling(
         self,
@@ -467,7 +467,7 @@ class TestFileReferencesResolveFromBundle:
         sub_dir.mkdir()
         data_dir = sub_dir / "data"
         data_dir.mkdir()
-        (data_dir / "prompt.md").write_text("Nested prompt content")
+        (data_dir / "prompt.md").write_text("Nested prompt content", encoding="utf-8")
 
         # Child workflow references ./data/prompt.md (relative to itself)
         child_ir: dict[str, Any] = {
@@ -480,7 +480,7 @@ class TestFileReferencesResolveFromBundle:
             ],
             "edges": [],
         }
-        (sub_dir / "child.pflow.md").write_text(ir_to_markdown(child_ir, title="Child Workflow"))
+        (sub_dir / "child.pflow.md").write_text(ir_to_markdown(child_ir, title="Child Workflow"), encoding="utf-8")
 
         # Parent workflow references the child by relative path
         parent_ir: dict[str, Any] = {
@@ -520,16 +520,17 @@ class TestFileReferencesResolveFromBundle:
         # Assert: child's file reference is at correct relative path
         # (relative to the child's location in the bundle)
         assert (bundle_dir / "sub" / "data" / "prompt.md").exists()
-        assert (bundle_dir / "sub" / "data" / "prompt.md").read_text() == "Nested prompt content"
+        assert (bundle_dir / "sub" / "data" / "prompt.md").read_text(encoding="utf-8") == "Nested prompt content"
 
         # Assert: bundled_files list shows paths relative to bundle root
-        assert "sub/child.pflow.md" in bundled_files
-        assert "sub/data/prompt.md" in bundled_files
+        bundled_files_normalized = [path.replace("\\", "/") for path in bundled_files]
+        assert "sub/child.pflow.md" in bundled_files_normalized
+        assert "sub/data/prompt.md" in bundled_files_normalized
 
         # Verify the child's file ref resolves correctly at runtime:
         # child is at bundle/sub/child.pflow.md, its base_dir = bundle/sub/
         # ./data/prompt.md resolves to bundle/sub/data/prompt.md
-        child_content = (bundle_dir / "sub" / "child.pflow.md").read_text()
+        child_content = (bundle_dir / "sub" / "child.pflow.md").read_text(encoding="utf-8")
         child_parsed = pm(child_content)
         child_base = bundle_dir / "sub"
         resolve_file_references(child_parsed.ir, child_base)
@@ -544,7 +545,7 @@ class TestFileReferencesResolveFromBundle:
 
         # Arrange
         (project_dir / "scripts").mkdir()
-        (project_dir / "scripts" / "setup.sh").write_text("#!/bin/bash\necho setup")
+        (project_dir / "scripts" / "setup.sh").write_text("#!/bin/bash\necho setup", encoding="utf-8")
 
         ir: dict[str, Any] = {
             "nodes": [
@@ -558,7 +559,7 @@ class TestFileReferencesResolveFromBundle:
         }
         markdown = ir_to_markdown(ir, title="Script Workflow")
         workflow_path = project_dir / "my-workflow.pflow.md"
-        workflow_path.write_text(markdown)
+        workflow_path.write_text(markdown, encoding="utf-8")
 
         # Act: save via service layer (uses isolate_pflow_config temp dir)
         _saved_path, _bundled_files, _workflow_ir = save_workflow_with_options(

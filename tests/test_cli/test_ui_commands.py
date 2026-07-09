@@ -76,6 +76,30 @@ class TestUiRouting:
         assert result.exit_code == 0, result.output
         assert "workflow=demo&watch=0" in result.output
 
+    def test_explicit_serve_accepts_workflow_after_options(self) -> None:
+        runner = CliRunner()
+        with (
+            patch.object(ui_module, "_port_available", return_value=True),
+            patch("uvicorn.Server.run") as run,
+        ):
+            result = runner.invoke(ui_module.ui_cmd, ["serve", "--port", "8894", "--no-open", "demo"])
+
+        assert result.exit_code == 0, result.output
+        assert "http://127.0.0.1:8894/?workflow=demo" in result.output
+        run.assert_called_once()
+
+    def test_shorthand_accepts_workflow_after_options(self) -> None:
+        runner = CliRunner()
+        with (
+            patch.object(ui_module, "_port_available", return_value=True),
+            patch("uvicorn.Server.run") as run,
+        ):
+            result = runner.invoke(ui_module.ui_cmd, ["--port", "8894", "--no-open", "demo"])
+
+        assert result.exit_code == 0, result.output
+        assert "http://127.0.0.1:8894/?workflow=demo" in result.output
+        run.assert_called_once()
+
 
 class TestServeRun:
     """`pflow ui <wf> --run <id>` (Task 175): smart open-or-switch. Fresh/no-viewer → open a pinned tab;

@@ -110,7 +110,9 @@ def test_discover_prefers_live_over_finished(tmp_path):
     _write_trace(live, wf, complete=False)
     os.utime(live, (1000, 1000))  # live is OLDER by mtime…
     os.utime(finished, (2000, 2000))  # …finished is newer — newest-by-mtime would wrongly pick it
-    with open(live) as streaming:  # the producer holds the flock for the run's life; simulate that here
+    with open(
+        live, encoding="utf-8"
+    ) as streaming:  # the producer holds the flock for the run's life; simulate that here
         fcntl.flock(streaming.fileno(), fcntl.LOCK_EX)
         assert discover_live_trace(wf, debug_dir=debug) == live
 

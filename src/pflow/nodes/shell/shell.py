@@ -3,20 +3,348 @@
 import base64
 import logging
 import os
+import shutil
+import signal
 import subprocess
+import sys
+from collections.abc import Callable
+from contextlib import suppress
+from pathlib import Path
 from typing import Any, ClassVar
 
 from pflow.core.node import Node
+from pflow.core.user_errors import UserFriendlyError
 
 logger = logging.getLogger(__name__)
+
+# Default Git for Windows install locations, probed last by
+# _resolve_windows_bash(). Module-level so tests can point the probes at
+# temp paths without patching Path.is_file globally.
+_GIT_BASH_DEFAULT_PATHS: tuple[str, ...] = (
+    r"C:\Program Files\Git\bin\bash.exe",
+    r"C:\Program Files (x86)\Git\bin\bash.exe",
+)
+
+
+def _git_bash_support_paths(bash_path: str) -> list[str]:
+    """Return Git-for-Windows directories that make non-login bash useful.
+
+    A clean end-user install often has ``Git\\cmd`` on PATH but not
+    ``Git\\usr\\bin``. ``bash -c`` is non-login/non-interactive, so seed PATH
+    from the resolved bash location instead of relying on profile startup.
+    """
+    path = Path(bash_path)
+    candidates: list[Path] = []
+    parent = path.parent
+
+    if parent.name.lower() == "bin" and parent.parent.name.lower() == "usr":
+        # C:\Program Files\Git\usr\bin\bash.exe
+        candidates.append(parent.parent.parent)
+    elif parent.name.lower() == "bin":
+        # C:\Program Files\Git\bin\bash.exe
+        candidates.append(parent.parent)
+
+    roots: list[Path] = []
+    for candidate in candidates:
+        if candidate not in roots:
+            roots.append(candidate)
+
+    support_paths: list[str] = []
+    for root in roots:
+        for subdir in (root / "usr" / "bin", root / "bin"):
+            if subdir.is_dir():
+                support_paths.append(str(subdir))
+    return support_paths
+
+
+def _prepare_windows_shell_env(base_env: dict[str, str] | None, bash_path: str) -> dict[str, str]:
+    """Prepare environment for Git Bash shell steps on Windows."""
+    full_env = dict(os.environ if base_env is None else base_env)
+    full_env.setdefault("MSYS_NO_PATHCONV", "1")
+
+    support_paths = _git_bash_support_paths(bash_path)
+    if support_paths:
+        current_path = full_env.get("PATH", "")
+        full_env["PATH"] = os.pathsep.join([*support_paths, current_path] if current_path else support_paths)
+    return full_env
+
+
+def _windows_path_to_bash(path_text: str) -> str:
+    drive = path_text[0].lower()
+    tail = path_text[2:].replace("\\", "/")
+    return f"/{drive}{tail}"
+
+
+def _translate_windows_paths_for_bash(command: str) -> str:
+    """Translate native absolute Windows paths embedded in POSIX shell commands.
+
+    The shell dialect is POSIX sh, but pflow's Python-side path values are
+    native Windows strings. Without this bridge, command templates like
+    ``cat C:\\Users\\...\\flag.txt`` are parsed by bash as ``C:Users...`` because
+    backslashes are escape characters. The translation is intentionally narrow:
+    drive-letter absolute paths without shell metacharacters.
+    """
+    import re
+
+    quoted_pattern = re.compile(r"(?P<quote>['\"])(?P<path>[A-Za-z]:[\\/][^'\"]+)(?P=quote)")
+    command = quoted_pattern.sub(
+        lambda match: f"{match.group('quote')}{_windows_path_to_bash(match.group('path'))}{match.group('quote')}",
+        command,
+    )
+
+    unquoted_pattern = re.compile(r"(?<![A-Za-z0-9_/-])([A-Za-z]:[\\/][^\s'\"|;&<>()`$]+)")
+    return unquoted_pattern.sub(lambda match: _windows_path_to_bash(match.group(1)), command)
+
+
+def _is_simple_which_probe(command: str) -> bool:
+    """Whether ``command`` is only a ``which`` lookup, not a compound shell form."""
+    stripped = command.strip()
+    if not stripped.startswith("which "):
+        return False
+    return not any(token in stripped for token in ("|", ";", "&", "<", ">", "\n", "(", ")", "`", "$("))
+
+
+def _terminate_windows_process_tree(pid: int) -> None:
+    """Best-effort termination for Git Bash and any child process it spawned."""
+    taskkill_path = shutil.which("taskkill") or r"C:\Windows\System32\taskkill.exe"
+    try:
+        result = subprocess.run(
+            [taskkill_path, "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return
+    if result.returncode != 0:
+        logger.debug("taskkill failed while terminating shell process tree", extra={"pid": pid})
+
+
+def _communicate_with_cleanup(
+    proc: subprocess.Popen[bytes],
+    command: str | list[str],
+    *,
+    stdin_bytes: bytes | None,
+    timeout: int | float,
+    terminate: Callable[[subprocess.Popen[bytes]], None],
+) -> tuple[bytes, bytes]:
+    """Run communicate(), cleaning up shell descendants on timeout/interruption."""
+    try:
+        return proc.communicate(input=stdin_bytes, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        terminate(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=1)
+        except (OSError, subprocess.TimeoutExpired):
+            stdout = exc.output or b""
+            stderr = exc.stderr or b""
+        raise subprocess.TimeoutExpired(
+            command, timeout, output=stdout or exc.output, stderr=stderr or exc.stderr
+        ) from exc
+    except (KeyboardInterrupt, SystemExit):
+        terminate(proc)
+        with suppress(OSError, subprocess.TimeoutExpired):
+            proc.communicate(timeout=1)
+        raise
+
+
+def _run_windows_bash_command(
+    bash_path: str,
+    command: str,
+    *,
+    stdin_bytes: bytes | None,
+    cwd: str | None,
+    env: dict[str, str],
+    timeout: int | float,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run a Git Bash command with timeout semantics that kill child processes.
+
+    On Windows, ``subprocess.run(timeout=...)`` kills only the bash process.
+    Children such as ``sleep`` can keep inherited pipe handles open, causing
+    communicate() to wait until the child exits. Killing the process tree keeps
+    shell-node timeout behavior consistent with POSIX.
+    """
+    argv = [bash_path, "-c", _translate_windows_paths_for_bash(command)]
+    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    proc = subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE if stdin_bytes is not None else None,
+        cwd=cwd,
+        env=env,
+        creationflags=creationflags,
+    )
+
+    def terminate_process_tree(proc: "subprocess.Popen[bytes]") -> None:
+        _terminate_windows_process_tree(proc.pid)
+        with suppress(OSError):
+            proc.kill()
+
+    stdout, stderr = _communicate_with_cleanup(
+        proc,
+        argv,
+        stdin_bytes=stdin_bytes,
+        timeout=timeout,
+        terminate=terminate_process_tree,
+    )
+    return subprocess.CompletedProcess(argv, proc.returncode, stdout, stderr)
+
+
+def _run_posix_shell_command(
+    command: str,
+    *,
+    stdin_bytes: bytes | None,
+    cwd: str | None,
+    env: dict[str, str] | None,
+    timeout: int | float,
+) -> subprocess.CompletedProcess[bytes]:
+    """Run a POSIX shell command with timeout semantics that kill child processes."""
+
+    def terminate_process_group(proc: "subprocess.Popen[bytes]") -> None:
+        killpg = getattr(os, "killpg", None)
+        getpgid = getattr(os, "getpgid", None)
+        if killpg is not None and getpgid is not None:
+            with suppress(OSError):
+                # Shell-node timeout is already expired, so cleanup is forceful
+                # to prevent pipe-inheriting grandchildren from blocking drain.
+                killpg(getpgid(proc.pid), getattr(signal, "SIGKILL", signal.SIGTERM))
+        with suppress(OSError):
+            proc.kill()
+
+    proc = subprocess.Popen(
+        command,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.PIPE if stdin_bytes is not None else None,
+        cwd=cwd,
+        env=env,
+        # Give the shell its own process group so timeout and Ctrl-C/SystemExit
+        # cleanup can kill grandchildren that inherited stdout/stderr pipes.
+        start_new_session=True,
+    )
+    stdout, stderr = _communicate_with_cleanup(
+        proc,
+        command,
+        stdin_bytes=stdin_bytes,
+        timeout=timeout,
+        terminate=terminate_process_group,
+    )
+    return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
+
+
+def _resolve_windows_bash() -> str | None:
+    """Resolve a Git Bash executable on Windows (ADR-0013).
+
+    Shell steps mean POSIX sh on every platform; on win32 that shell is
+    supplied by Git Bash, resolved deliberately — never a naive
+    ``which("bash")``, because on end-user machines that can be the WSL
+    launcher (``C:\\Windows\\System32\\bash.exe``), a separate Linux VM with
+    a different filesystem. CI can't catch that trap (runners put Git Bash
+    on PATH), so only the explicit rejection below protects real machines.
+
+    Resolution order:
+    1. ``PFLOW_BASH`` env var — trusted verbatim, not validated: the user set
+       it deliberately, and a wrong path produces a subprocess error naming
+       that path. Empty string counts as unset.
+    2. ``bash`` on PATH, rejected if it resolves under System32 (WSL trap).
+    3. Derived from the Git install: ``{bin,usr/bin}/bash.exe`` probed under
+       both the parent and grandparent of git.exe's directory — covers
+       git.exe resolving from ``Git\\cmd``, ``Git\\bin``, and
+       ``Git\\mingw64\\bin``.
+    4. Default Git for Windows install locations.
+
+    Deliberately uncached: a cached None would go stale in the long-lived MCP
+    server after the user installs Git, and a cache would cross-contaminate
+    tests that mock shutil.which. Resolution costs microseconds, once per
+    shell step.
+
+    Returns:
+        Absolute path to bash.exe, or None when no Git Bash could be found.
+    """
+    override = os.environ.get("PFLOW_BASH")
+    if override:
+        return override
+
+    on_path = shutil.which("bash")
+    if on_path and "system32" not in on_path.lower():
+        return on_path
+
+    git = shutil.which("git")
+    if git:
+        git_dir = Path(git).parent
+        for root in (git_dir.parent, git_dir.parent.parent):
+            for candidate in (root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"):
+                if candidate.is_file():
+                    return str(candidate)
+
+    for default in _GIT_BASH_DEFAULT_PATHS:
+        if Path(default).is_file():
+            return default
+
+    return None
+
+
+def _windows_bash_or_raise() -> str | None:
+    """Resolve the win32 POSIX shell for prep(), or raise install guidance.
+
+    Called from prep() and ONLY prep() — never exec(): exec_fallback()
+    converts every exec() raise into {exit_code: -2} without re-raising, and
+    post() then returns the SUCCESS action under ignore_errors: true — a
+    missing bash raised from exec() would become a silent green run with
+    empty stdout. prep() runs outside any try/except (core/node.py _run), so
+    a raise here reaches the diagnostic pipeline intact and is immune to
+    ignore_errors.
+
+    Returns:
+        Path to bash.exe on win32; None on every other platform.
+
+    Raises:
+        UserFriendlyError: On win32 when no Git Bash can be resolved.
+    """
+    if sys.platform != "win32":
+        return None
+
+    bash_path = _resolve_windows_bash()
+    if bash_path is None:
+        raise UserFriendlyError(
+            title="Shell steps need a POSIX shell, and none was found on this Windows system",
+            explanation=(
+                "pflow runs shell steps with POSIX shell semantics on every platform "
+                "so workflows behave identically everywhere. On Windows that shell is "
+                "provided by Git Bash, which could not be found (checked PATH, the Git "
+                "installation, and the default install locations)."
+            ),
+            suggestions=[
+                "Install Git for Windows from https://gitforwindows.org (includes Git Bash)",
+                "If bash is installed somewhere unusual, set the PFLOW_BASH environment "
+                'variable to its full path, e.g. PFLOW_BASH="C:\\Program Files\\Git\\bin\\bash.exe"',
+            ],
+            technical_details=(
+                "WSL bash (C:\\Windows\\System32\\bash.exe) is deliberately not used: it "
+                "executes inside a separate Linux VM with a different filesystem. See ADR-0013."
+            ),
+        )
+    return bash_path
 
 
 class ShellNode(Node):
     """
     Execute shell commands with full Unix power.
 
-    WARNING: This node executes commands with shell=True for maximum compatibility
-    with pipes, redirects, and shell constructs. Only run trusted commands.
+    Shell dialect contract (ADR-0013): a shell step means POSIX sh semantics
+    on EVERY platform. On Unix, commands run via shell=True (/bin/sh); on
+    Windows they run through Git Bash (["bash", "-c", command], resolved by
+    _resolve_windows_bash) — never cmd.exe or PowerShell, so one command
+    string means the same thing everywhere. Windows without Git for Windows
+    gets a structured install-guidance error, not a different dialect.
+    Native dialects, if ever wanted, must arrive as additive opt-in
+    per-step parameters — never by changing what an unadorned step means.
+
+    WARNING: This node executes commands through a full shell for maximum
+    compatibility with pipes, redirects, and shell constructs. Only run
+    trusted commands.
 
     Security features:
     - Blocks obviously dangerous patterns (rm -rf /, fork bombs, device writes)
@@ -238,10 +566,11 @@ class ShellNode(Node):
         ):
             return True, "ripgrep exit 1 with empty stderr - no matches"
 
-        # which returns 1 when command doesn't exist (that's its purpose)
-        # BUT only if stderr is empty - otherwise a downstream command likely failed
-        if exit_code != 0 and not has_stderr_content and command.strip().startswith("which "):
-            return True, "which exit 1 with empty stderr - command not found"
+        # which returns non-zero when command doesn't exist (that's its purpose).
+        # Keep this to a simple command so pipeline/downstream failures still surface.
+        stripped_command = command.strip()
+        if exit_code != 0 and _is_simple_which_probe(stripped_command):
+            return True, "which exit non-zero - command not found"
 
         # command -v returns 1 when command doesn't exist
         # BUT only if stderr is empty - otherwise a downstream command likely failed
@@ -288,8 +617,9 @@ class ShellNode(Node):
             and ("No such file or directory" in stderr or "cannot access" in stderr)
         ):
             return 1
-        # Normalize which not-found to 1 (only if no stderr content)
-        if exit_code != 0 and not has_stderr_content and command.strip().startswith("which "):
+        # Normalize simple which not-found to 1.
+        stripped_command = command.strip()
+        if exit_code != 0 and _is_simple_which_probe(stripped_command):
             return 1
         # Normalize command -v not-found to 1 (only if no stderr content)
         if exit_code != 0 and not has_stderr_content and "command -v" in command:
@@ -434,6 +764,7 @@ class ShellNode(Node):
 
         Raises:
             ValueError: If command is missing or dangerous
+            UserFriendlyError: On Windows when no Git Bash can be resolved (ADR-0013)
         """
         # Get command from params (required)
         command = self.params.get("command")
@@ -485,6 +816,11 @@ class ShellNode(Node):
         if not isinstance(timeout, (int, float)) or timeout <= 0:
             raise ValueError(f"Invalid timeout value: {timeout}")
 
+        # Resolve the POSIX shell on Windows (ADR-0013). Must happen in prep,
+        # not exec — see _windows_bash_or_raise for why moving it breaks
+        # error reporting under ignore_errors.
+        bash_path = _windows_bash_or_raise()
+
         # Audit log all commands (useful for debugging and security reviews)
         logger.info(
             f"[AUDIT] Preparing command: {command[:100]}{'...' if len(command) > 100 else ''}",
@@ -505,6 +841,7 @@ class ShellNode(Node):
             "timeout": timeout,
             "ignore_errors": ignore_errors,
             "strip_newline": strip_newline,
+            "bash_path": bash_path,
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -534,18 +871,29 @@ class ShellNode(Node):
             # Encode stdin to bytes for text=False mode
             stdin_bytes = stdin.encode("utf-8") if stdin else None
 
-            # Execute the command with shell=True for full shell power
-            # Security: shell=True is intentional - this is a shell node that provides full shell access
-            result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=False,
-                input=stdin_bytes,
-                cwd=cwd,
-                env=full_env,
-                timeout=timeout,
-            )
+            if sys.platform == "win32":
+                # ADR-0013: POSIX sh everywhere — on Windows the command runs
+                # through Git Bash (resolved in prep()), never cmd.exe, so one
+                # shell dialect works on every platform.
+                bash_path = prep_res["bash_path"]
+                result = _run_windows_bash_command(
+                    bash_path,
+                    command,
+                    stdin_bytes=stdin_bytes,
+                    cwd=cwd,
+                    env=_prepare_windows_shell_env(full_env, bash_path),
+                    timeout=timeout,
+                )
+            else:
+                # Execute the command with shell=True for full shell power
+                # Security: shell=True is intentional - this is a shell node that provides full shell access
+                result = _run_posix_shell_command(
+                    command,
+                    stdin_bytes=stdin_bytes,
+                    cwd=cwd,
+                    env=full_env,
+                    timeout=timeout,
+                )
 
             logger.info(
                 f"[AUDIT] Command completed with exit code {result.returncode}",
@@ -553,6 +901,7 @@ class ShellNode(Node):
             )
 
             # Handle stdout - try decode, fallback to binary
+            stdout: str | bytes
             try:
                 stdout = result.stdout.decode("utf-8")
                 stdout_is_binary = False
@@ -562,6 +911,7 @@ class ShellNode(Node):
                 stdout_is_binary = True
 
             # Handle stderr - try decode, fallback to binary
+            stderr: str | bytes
             try:
                 stderr = result.stderr.decode("utf-8")
                 stderr_is_binary = False

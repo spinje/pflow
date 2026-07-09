@@ -21,6 +21,7 @@ import subprocess
 
 import pytest
 
+from tests.conftest import set_isolated_home
 from tests.shared.markdown_utils import write_workflow_file
 
 
@@ -42,6 +43,8 @@ def test_stdin_has_data_returns_true_for_fifo(monkeypatch):
     import stat
 
     from pflow.core.shell_integration import stdin_has_data
+
+    monkeypatch.setattr("sys.platform", "linux")
 
     class MockStdin:
         closed = False
@@ -185,7 +188,7 @@ def test_stdin_no_hang_integration(tmp_path, uv_exe):
     # via timeout, so subprocess startup speed directly affects reliability.
     # A minimal registry (one node) starts faster than the full registry (~30 nodes).
     env = os.environ.copy()
-    env["HOME"] = str(tmp_path)
+    set_isolated_home(env, tmp_path)
 
     pflow_dir = tmp_path / ".pflow"
     pflow_dir.mkdir(exist_ok=True)

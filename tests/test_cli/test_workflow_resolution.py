@@ -173,19 +173,19 @@ class TestWorkflowResolutionCLI:
             "ir_version": "1.0",
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             content = ir_to_markdown(workflow_data)
             f.write(content)
-            f.flush()
+            workflow_path = f.name
 
-            try:
-                with patch("pflow.cli.commands.run.execute_json_workflow") as mock_execute:
-                    result = runner.invoke(main, [f.name])
+        try:
+            with patch("pflow.cli.commands.run.execute_json_workflow") as mock_execute:
+                result = runner.invoke(main, [workflow_path])
 
-                    assert result.exit_code == 0
-                    mock_execute.assert_called_once()
-            finally:
-                Path(f.name).unlink()
+                assert result.exit_code == 0
+                mock_execute.assert_called_once()
+        finally:
+            Path(workflow_path).unlink()
 
     def test_workflow_not_found_shows_suggestions(self):
         """Test that helpful suggestions are shown when workflow not found."""
@@ -343,18 +343,18 @@ class TestWorkflowResolutionCLI:
             "ir_version": "1.0",
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow_data))
-            f.flush()
+            workflow_path = f.name
 
-            try:
-                with patch("pflow.cli.commands.run.execute_json_workflow"):
-                    result = runner.invoke(main, ["--verbose", f.name])
+        try:
+            with patch("pflow.cli.commands.run.execute_json_workflow"):
+                result = runner.invoke(main, ["--verbose", workflow_path])
 
-                    assert result.exit_code == 0
-                    assert f"cli: Loading workflow from file: {f.name}" in result.output
-            finally:
-                Path(f.name).unlink()
+                assert result.exit_code == 0
+                assert f"cli: Loading workflow from file: {workflow_path}" in result.output
+        finally:
+            Path(workflow_path).unlink()
 
     def test_type_inference_for_parameters(self):
         """Test that parameter types are correctly inferred."""
@@ -523,25 +523,25 @@ class TestEdgeCases:
         """Test error handling for invalid markdown in workflow file."""
         runner = click.testing.CliRunner()
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+        with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             # Write content that is not a valid workflow (no ## Steps section)
             f.write("# Not a Workflow\n\nJust some text.\n")
-            f.flush()
+            workflow_path = f.name
 
-            try:
-                result = runner.invoke(main, [f.name])
+        try:
+            result = runner.invoke(main, [workflow_path])
 
-                # Invalid workflow should cause an error
-                assert result.exit_code != 0
-            finally:
-                Path(f.name).unlink()
+            # Invalid workflow should cause an error
+            assert result.exit_code != 0
+        finally:
+            Path(workflow_path).unlink()
 
     def test_permission_error_on_file(self, tmp_path):
         """Test permission error yields helpful message."""
         runner = click.testing.CliRunner()
 
         wf = tmp_path / "wf.pflow.md"
-        wf.write_text("# Test\n\n## Steps\n\n### a\n\nDesc.\n\n- type: shell\n")
+        wf.write_text("# Test\n\n## Steps\n\n### a\n\nDesc.\n\n- type: shell\n", encoding="utf-8")
 
         def raise_perm(*args, **kwargs):
             raise PermissionError

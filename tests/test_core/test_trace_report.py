@@ -5,6 +5,7 @@ produced from trace JSON files.
 """
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -514,6 +515,10 @@ class TestGenerateReport:
         with pytest.raises(ReportGenerationError, match="not a directory"):
             validate_report_output_dir(report_path, allow_unmarked_existing=False)
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="creates a real symlink — needs elevated privileges on Windows (Task 116: don't certify symlinks on win32)",
+    )
     def test_existing_symlink_target_is_refused(self, tmp_path: Path) -> None:
         target = tmp_path / "target"
         target.mkdir()

@@ -2,11 +2,18 @@
 
 import logging
 import os
+import re
 import tempfile
 
 import pytest
 
 from pflow.nodes.shell.shell import ShellNode
+
+
+def _shell_path(path: str) -> str:
+    normalized = path.replace("\\", "/").rstrip("/")
+    normalized = re.sub(r"(?<![A-Za-z0-9_/-])([A-Za-z]):/", lambda m: f"/{m.group(1).lower()}/", normalized)
+    return normalized
 
 
 def run_shell_node(shared, **params):
@@ -357,8 +364,8 @@ EOF"""
         lines = shared["stdout"].strip().split("\n")
 
         # First line should be /tmp, second should be current directory
-        assert tmpdir in lines[0] or "/private/tmp" in lines[0]  # macOS compatibility
-        assert lines[1] == os.getcwd()
+        assert _shell_path(tmpdir) in _shell_path(lines[0]) or "/private/tmp" in lines[0]  # macOS compatibility
+        assert _shell_path(lines[1]) == _shell_path(os.getcwd())
 
     def test_command_grouping(self):
         """Test command grouping with curly braces."""

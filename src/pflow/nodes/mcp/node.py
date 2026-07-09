@@ -271,7 +271,7 @@ class MCPNode(Node):
             else:
                 # Open os.devnull as a file to get a proper TextIO object
                 # ExitStack will ensure it's properly closed
-                errlog = stack.enter_context(open(os.devnull, "w"))
+                errlog = stack.enter_context(open(os.devnull, "w", encoding="utf-8"))
 
             # Execute with timeout (Py3.11+ uses asyncio.timeout; Py3.10 falls back to wait_for)
             async def _run_session() -> dict:
@@ -482,7 +482,7 @@ class MCPNode(Node):
                 f"Run 'pflow mcp add {server_name}' to configure the server."
             )
 
-        with open(config_path) as f:
+        with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
 
         # Use standard MCP format key

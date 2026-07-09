@@ -56,6 +56,7 @@ coverage.xml
 *.py,cover
 .hypothesis/
 .pytest_cache/
+pytest-cache-files-*/
 cover/
 
 # Translations
@@ -143,6 +144,7 @@ cython_debug/
 
 .temp/
 .archive/
+.test-home*/
 
 # Added by Task Master AI
 # Logs
@@ -151,6 +153,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 dev-debug.log
+.npm-cache/
 # Dependency directories
 node_modules/
 # Environment variables
