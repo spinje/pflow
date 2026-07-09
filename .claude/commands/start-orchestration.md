@@ -94,7 +94,7 @@ debt cluster that must be *seen* even when it's deliberately deferred.
 
 ### 5. Launch
 ```
-uv run pflow git-worktree-task-creator \
+uv run pflow examples/real-workflows/git-worktree-task-creator/workflow.pflow.md \
   task_description='<Task N — title | #NNN — title>' \
   work_type=task|issue \
   copy_folder=scratchpads/<subject> \

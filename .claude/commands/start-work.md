@@ -36,7 +36,7 @@ Ask the questions one at a time, waiting for feedback on each question before co
 
 If a question can be answered by exploring the codebase, explore the codebase instead. Questions to the user and exploring the codebase using subagents can be done in paralell or interleaved if that makes more sense.
 
-When ready, start investigating the codebase to understand the FULL problem space and where the relevant code is located. Start by using the @agent-pflow-codebase-searcher subagent to gather this information, and verify all your assumptions and ambiguity.
+When ready, start investigating the codebase to understand the FULL problem space and where the relevant code is located. Start by using the `pflow-codebase-searcher` subagent to gather this information, and verify all your assumptions and ambiguity.
 
 Only read code yourself if you are sure its going to be highly relevant when implementing.
 

@@ -11,7 +11,7 @@ Analyze an implementation plan and recommend where to split it across multiple a
 
 ## Input
 
-Plan file path (optional): **$ARGUMENTS**
+Use the plan file path from the user's request, if one was provided.
 
 If empty, ask the user which plan to analyze. Common locations: `.taskmaster/tasks/task_*/implementation/*.md`, `docs/plans/*.md`, etc.
 

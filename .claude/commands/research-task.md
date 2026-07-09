@@ -4,7 +4,7 @@ description: Research task requirements using parallel subagents
 
 You are currently working on a task that requires deep understanding of the system and potentially external research and resources to be implemented correctly.
 
-To help you gain full understanding of the task and the system, you will need to deploy @agent-pflow-codebase-researcher subagents IN PARALLEL to gather information from the codebase and external resources.
+To help you gain full understanding of the task and the system, deploy `pflow-codebase-searcher` subagents IN PARALLEL to gather information from the codebase and external resources.
 
 Before you deploy the subagents, you will need to do the following:
 

@@ -21,7 +21,7 @@ Implement an existing implementation plan without shortcuts, keeping the progres
 - Don't take shortcuts. Prioritize simplicity of the FINAL code, not how easy it is to get there. When in
   doubt: what would the top 10% of codebases similar to this one implement — has the plan considered it?
 - Skipping or altering any plan step requires a clear written rationale in the progress log. Deferring
-  something because it's easiest is not a rationale. 
+  something because it's easiest is not a rationale.
 - Doing something else is only valid if the plan is unclear, incomplete or contradictory.
 - Update the progress log continually as decisions and discoveries happen, not retrospectively.
 - Tests ship with the implementation. `make check` must be green before the scope counts as done.

@@ -34,7 +34,7 @@
       "template-params",
       "multiple-required-inputs"
     ],
-    "examples/test-worktree.pflow.md": [
+    "examples/real-workflows/git-worktree-task-creator/workflow.pflow.md": [
       "cache-false",
       "llm-node",
       "shell-templates"
@@ -84,16 +84,17 @@
     "reader": "c64dc5795b242d70d852c35f9250cc2b",
     "writer": "0ad13978f47208978f692b089405acba"
   },
-  "examples/test-worktree.pflow.md": {
-    "analyze_task": "6b7726ecbb52b25c62c94c7c1d19330f",
-    "create_worktree": "5970edf0ffb46be72f2ad84e1c3898cb",
-    "get_directory": "33c830618882bc975db4e0ef6ccd85de",
-    "git_current_branch": "33c830618882bc975db4e0ef6ccd85de",
-    "git_status": "33c830618882bc975db4e0ef6ccd85de",
-    "launch_claude": "c229bbc280915c68f142c05d177a7fd9",
-    "launch_cursor": "68774f66623f5f1a58b444bfd3a010d7",
-    "output_status": "778888ef88576e23889c73f24c24d38c",
-    "remove_existing_worktree": "b12c05c948994d17d102e0590c757bad"
+  "examples/real-workflows/git-worktree-task-creator/workflow.pflow.md": {
+    "analyze-task": "cc64ec14aaa2ab9aa6f79808bad4227b",
+    "copy-folder": "2cfb5454651cd6e8d5a24063ef059b60",
+    "create-worktree": "3cafcc188e9e34a5a32c2a260928c203",
+    "get-branch": "33c830618882bc975db4e0ef6ccd85de",
+    "get-repo-root": "33c830618882bc975db4e0ef6ccd85de",
+    "launch-cli": "715bd1126d5cfdf68dcd2af9e8f8469c",
+    "launch-cursor": "2c6fd749b1505c4416a790b4aa7afd75",
+    "output-status": "459e5f8341b84441832f695049b995e6",
+    "parse-result": "7bfb1df430e1b746eed6aa357d557e22",
+    "resolve-description": "c04d99dc55f1640a7bcbb3d448ea7059"
   },
   "examples/test_llm_templates.pflow.md": {
     "generate": "5486d8f3047f8de66ae7cfbf4ab72b30"

@@ -25,8 +25,8 @@ Should you use subagents to fix the errors?
 If yes, please carefully consider and followthe following requirements:
 
 Requirements if using subagents:
-- Use the @write-tests-fixer subagent to fix issues in tests
-- Use the @code-implementer subagent to fix issues in code
+- Use the `test-writer-fixer` subagent to fix issues in tests
+- Use the `code-implementer` subagent to fix issues in code
 - Only assign one subagent per file (never use the same subagent for errors in multiple files)
 - Define a termination criteria for each subagent
 - Provide a comprehensive context and instructions to each subagent

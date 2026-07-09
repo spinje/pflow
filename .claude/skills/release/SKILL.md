@@ -34,7 +34,7 @@ git fetch --tags
 
 ### 2. Determine the tag range
 
-If the user provided `$ARGUMENTS`, use it as `since_tag`. Otherwise, detect the latest tag:
+If the user provided an explicit `since_tag` in their request, use it. Otherwise, detect the latest tag:
 
 ```bash
 git describe --tags --abbrev=0
