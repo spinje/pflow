@@ -168,6 +168,16 @@ def _run_posix_shell_command(
     timeout: int | float,
 ) -> subprocess.CompletedProcess[bytes]:
     """Run a POSIX shell command with timeout semantics that kill child processes."""
+
+    def terminate_process_group(proc: Any) -> None:
+        killpg = getattr(os, "killpg", None)
+        getpgid = getattr(os, "getpgid", None)
+        if killpg is not None and getpgid is not None:
+            with suppress(OSError):
+                killpg(getpgid(proc.pid), getattr(signal, "SIGKILL", signal.SIGTERM))
+        with suppress(OSError):
+            proc.kill()
+
     proc = subprocess.Popen(
         command,
         shell=True,
@@ -176,22 +186,23 @@ def _run_posix_shell_command(
         stdin=subprocess.PIPE if stdin_bytes is not None else None,
         cwd=cwd,
         env=env,
+        # Give the shell its own process group so timeout and Ctrl-C/SystemExit
+        # cleanup can kill grandchildren that inherited stdout/stderr pipes.
         start_new_session=True,
     )
     try:
         stdout, stderr = proc.communicate(input=stdin_bytes, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
-        killpg = getattr(os, "killpg", None)
-        getpgid = getattr(os, "getpgid", None)
-        if killpg is not None and getpgid is not None:
-            with suppress(OSError):
-                killpg(getpgid(proc.pid), getattr(signal, "SIGKILL", signal.SIGTERM))
-        with suppress(OSError):
-            proc.kill()
+        terminate_process_group(proc)
         stdout, stderr = proc.communicate()
         raise subprocess.TimeoutExpired(
             command, timeout, output=stdout or exc.output, stderr=stderr or exc.stderr
         ) from exc
+    except (KeyboardInterrupt, SystemExit):
+        terminate_process_group(proc)
+        with suppress(OSError, subprocess.TimeoutExpired):
+            proc.communicate(timeout=1)
+        raise
     return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
 
 
