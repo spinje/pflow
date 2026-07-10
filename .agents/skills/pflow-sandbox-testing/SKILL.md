@@ -1,94 +1,149 @@
 ---
 name: pflow-sandbox-testing
-description: Run pflow's pytest suite efficiently from Codex sandbox mode. Use when validating this repository and running into problems with `uv run` or `make test` panics, tests try to write `~/.pflow`, or subprocess CLI tests fail because they invoke Homebrew `uv`.
+description: Run focused pflow tests and CLI checks safely inside Codex sandbox mode on Windows, macOS, or Linux. Use when `make test`, `make check`, or `uv run` fails because of sandboxed caches or home-directory writes; Windows Git Bash or subprocess tests fail; or validation must be split between local focused checks and GitHub Actions.
 ---
 
 # Pflow Sandbox Testing
 
-## Commands
+## Operating Rules
 
-Use the existing virtualenv directly. In this sandbox, `uv run ...` can panic before Python starts:
+1. Detect the host platform and invoke the existing virtualenv directly. Do not use `uv run` merely to launch Python or pytest inside the sandbox.
+2. Run the smallest test path that proves the change. Expand scope only when the preceding layer passes.
+3. On Windows, bound every unfamiliar batch to 30 seconds. If it reaches the limit, terminate it and its exact child process tree; do not retry a broader command.
+4. Do not run pflow's full Windows suite in the Codex sandbox. Use GitHub Actions for authoritative Windows shell, subprocess, e2e, and full-suite validation.
+5. Treat sandbox-specific failures as environment evidence, not product regressions, until a focused reproduction succeeds outside the restricted boundary or fails in CI.
 
-```bash
-HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest <paths-or-options>
+## Direct Virtualenv Commands
+
+Set `PYTHONWARNDEFAULTENCODING=1` in the environment so pytest-xdist workers inherit the encoding-warning guard. Do not replace it with `python -X warn_default_encoding` in parallel runs; interpreter flags do not propagate to xdist worker interpreters.
+
+### Windows PowerShell
+
+```powershell
+$env:PYTHONWARNDEFAULTENCODING = "1"
+.\.venv\Scripts\python.exe -m pytest tests\test_core\test_duration_format.py -q
 ```
 
-Use `/private/tmp`, not `/tmp`, because macOS may report physical paths as `/private/tmp`; some shell cwd tests compare against `os.path.expanduser("~")`.
+If tests use `Path.home()` or write pflow state, redirect both Windows home variables to writable temp space:
 
-Focused example:
-
-```bash
-HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest tests/test_core/test_duration_format.py -q
+```powershell
+$testHome = Join-Path $env:TEMP "pflow-test-home"
+New-Item -ItemType Directory -Force $testHome | Out-Null
+$env:HOME = $testHome
+$env:USERPROFILE = $testHome
 ```
 
-Near-full sandbox baseline:
+### macOS
 
 ```bash
-HOME=/private/tmp/pflow-test-home .venv/bin/python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py -k 'not test_dry_run_json_mode_emits_no_stderr and not test_litellm_not_imported_by_cli_main and not test_progress_streams_before_downstream_nodes_complete'
+HOME=/private/tmp/pflow-test-home \
+PYTHONWARNDEFAULTENCODING=1 \
+.venv/bin/python -m pytest tests/test_core/test_duration_format.py -q
 ```
 
-Known baseline at creation time: `5372 passed, 18 skipped` (might have changed since then).
+Use `/private/tmp` because physical-path comparisons may resolve `/tmp` to `/private/tmp`.
 
-## Manual pflow Verification
+### Linux
 
-The pflow CLI works in this sandbox, but prefer the project virtualenv directly:
+```bash
+HOME="${TMPDIR:-/tmp}/pflow-test-home" \
+PYTHONWARNDEFAULTENCODING=1 \
+.venv/bin/python -m pytest tests/test_core/test_duration_format.py -q
+```
+
+## Validation Ladder
+
+Use these layers in order:
+
+1. **Collection diagnosis:** `python -m pytest --collect-only -qq <scope>`
+2. **Focused behavior:** one test, class, or file
+3. **Related regression surface:** a small explicit list of files
+4. **Directory batch:** only when its expected runtime is known and bounded
+5. **Broader POSIX run:** only when proportional to the task
+6. **Full Windows or broad e2e run:** GitHub Actions
+
+Example broader non-e2e macOS run:
+
+```bash
+HOME=/private/tmp/pflow-test-home \
+PYTHONWARNDEFAULTENCODING=1 \
+.venv/bin/python -m pytest -n 4 --dist=worksteal --doctest-modules \
+  --ignore=tests/test_nodes/test_llm/test_llm_integration.py -m "not e2e"
+```
+
+Do not hard-code historical pass counts in validation reports. Report the command, platform, exit status, and current result.
+
+## Windows Sandbox Failure Signatures
+
+### uv cache access
+
+`uv`, `make test`, or `make check` may try to access `%LOCALAPPDATA%\uv\cache` and fail with `Access is denied`. Use `.venv\Scripts\python.exe` or the relevant `.venv\Scripts\*.exe` tool directly. Do not relocate or rebuild the environment as a workaround.
+
+### Git Bash process creation
+
+Shell-dependent tests may fail with:
+
+```text
+bash.exe: *** fatal error - couldn't create signal pipe, Win32 error 5
+```
+
+This is a sandbox process-permission failure. Stop the affected batch; repeated shell launches create a large failure storm and can make pytest spend excessive time formatting and transporting failures. Validate non-shell behavior locally and defer Git Bash behavior to Windows CI.
+
+### Buffered or silent long runs
+
+No output does not prove a run is healthy. If a bounded command yields a running process, enforce the original deadline. Terminating the parent tool call may leave `make`, `python`, or `bash` children alive on Windows, so record the run's start time or PIDs and verify that only processes created by that run are stopped. Never kill unrelated user processes by name alone.
+
+## Other Sandbox Failure Signatures
+
+- `Attempted to create a NULL object` or `Tokio executor failed` before Python starts: bypass `uv` and use the virtualenv executable directly.
+- Writes under `~/.pflow` or the real user home fail: redirect home to a writable temp root.
+- Network, remote MCP, LiteLLM, or external API checks fail: treat restricted network or credentials as the leading cause; do not weaken tests to make them pass.
+- A required validation genuinely needs downloads, credentials, network, or writes outside workspace/temp: request the appropriate permission instead of constructing a brittle workaround.
+
+## Quality Checks Without `make check`
+
+Run only the tools relevant to the change through `.venv` when `uv lock` or tool caches are blocked. Examples on Windows:
+
+```powershell
+.\.venv\Scripts\ruff.exe check <paths>
+.\.venv\Scripts\ruff.exe format --check <paths>
+.\.venv\Scripts\python.exe -m mypy <paths>
+```
+
+Do not claim that `make check` passed when only selected tools ran. Lock consistency, pre-commit, and the complete quality gate remain separate checks for an unrestricted environment or CI.
+
+## Manual pflow Checks
+
+Prefer the virtualenv CLI directly:
+
+```powershell
+.\.venv\Scripts\pflow.exe --help
+.\.venv\Scripts\pflow.exe guide core
+```
+
+On macOS:
 
 ```bash
 HOME=/private/tmp/pflow-test-home .venv/bin/pflow --help
 HOME=/private/tmp/pflow-test-home .venv/bin/pflow guide core
 ```
 
-Bare `pflow` may not be on `PATH`. If you need commands or subprocesses to resolve `pflow` by name, prepend the virtualenv:
+On Linux:
 
 ```bash
-HOME=/private/tmp/pflow-test-home PATH="$PWD/.venv/bin:$PATH" pflow --help
+HOME="${TMPDIR:-/tmp}/pflow-test-home" .venv/bin/pflow --help
+HOME="${TMPDIR:-/tmp}/pflow-test-home" .venv/bin/pflow guide core
 ```
 
-Use `HOME=/private/tmp/pflow-test-home` for manual workflow runs too. This keeps pflow traces and caches under `/private/tmp/pflow-test-home/.pflow` instead of trying to write to the real home directory.
+Good sandbox checks include `--validate-only`, `--dry-run`, `--print`, JSON output, and code or local-file workflows confined to workspace/temp. On Windows, do not use shell-node workflows to certify behavior after the Git Bash signal-pipe failure appears.
 
-Manual scratch workflow pattern:
+## CI Handoff
 
-```bash
-HOME=/private/tmp/pflow-test-home .venv/bin/pflow scratchpads/example/workflow.pflow.md --validate-only
-HOME=/private/tmp/pflow-test-home .venv/bin/pflow scratchpads/example/workflow.pflow.md key=value --print
-```
+Use the latest Windows GitHub Actions job to distinguish a sandbox limitation from a repository regression. CI is authoritative for:
 
-Good manual regression checks in this sandbox:
+- the full Windows suite;
+- Git Bash and real subprocess behavior;
+- e2e tests and subprocess CLI entry points;
+- global `uv`/Make integration outside sandbox filesystem restrictions.
 
-- `shell`, `code`, and local `file` workflows that read/write inside the repository or `/private/tmp`
-- CLI help and guide commands
-- `--validate-only`, `--dry-run`, `--print`, and `--output-format json` behavior
-
-Sandbox limits to keep in mind:
-
-- Network is restricted, so `http`, remote MCP, LiteLLM, and external API workflows may fail for environment reasons.
-- Filesystem writes are limited to the workspace and writable temp roots; workflows writing elsewhere may hit permission errors.
-- Read-only inspection of accessible local folders can work, but do not assume arbitrary user-home writes are allowed.
-
-## Sandbox Permissions
-
-If an important command fails because of sandbox permissions, shared metadata outside the workspace, restricted network access, blocked credentials, GUI access, or non-interactive approval limits, stop and ask the user to run `/permissions` and choose **"approve for me"**. Do this before trying connector workarounds, hand-assembling commits through APIs, or building brittle alternatives around the sandbox.
-
-Common symptoms:
-
-- `git add` or `git commit` cannot create `.git/.../index.lock`
-- `git push` cannot reach the remote because network is restricted
-- `gh pr create`, `gh auth status`, or other `gh` commands fail because the CLI cannot access credentials or network
-- dependency managers, package downloads, external CLIs, browser/GUI tools, or subprocesses fail only because they need access outside the sandbox
-
-## Known Failures
-
-Do not trust `make test` or `uv run ...` inside this sandbox. `uv` may fail with:
-
-```text
-Attempted to create a NULL object.
-Tokio executor failed
-```
-
-The three excluded tests spawn `/opt/homebrew/bin/uv` directly, so they fail for sandbox/tooling reasons:
-
-- `tests/test_cli/test_dry_run_subprocess.py::test_dry_run_json_mode_emits_no_stderr`
-- `tests/test_cli/test_lazy_imports.py::test_litellm_not_imported_by_cli_main`
-- `tests/test_cli/test_progress_streaming_subprocess.py::TestRealSubprocessProgressRendering::test_progress_streams_before_downstream_nodes_complete`
-
-If tests write to `/Users/<username>/.pflow`, set `HOME=/private/tmp/pflow-test-home`. `ExecutionCache` uses `Path.home() / ".pflow"` and otherwise hits sandbox permission errors.
+When handing off, state which focused checks passed, which checks were skipped because of sandbox boundaries, and which CI job must provide the remaining proof.

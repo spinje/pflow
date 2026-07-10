@@ -178,7 +178,7 @@ Other markers used across the suite:
 | `make test-all-local` | `-n 4 --dist=worksteal` | `test_llm_integration.py` only |
 | `make test-llm` | sequential | Only runs LLM-specific tests |
 | `make test-all` | `-n 4` | Nothing — runs everything |
-| `make test-with-skipped` | sequential | Nothing — shows skip reasons |
+| `make test-with-skipped` | sequential | LLM integration — shows non-paid skip reasons |
 
 All commands include `--doctest-modules`, but `pyproject.toml` sets `testpaths = ["tests"]`, so collection only ever reaches `tests/` — **`src/pflow/` doctests are NOT collected by any `make` target**. They run only when pytest is pointed directly at a source path, e.g. `pytest --doctest-modules src/pflow/runtime/template_validation/type_checker.py`. Keep src doctests runnable anyway: if `testpaths` ever gains `src`, a stale example becomes a build failure.
 
@@ -198,6 +198,8 @@ def test_cli_subprocess(tmp_path, uv_exe, prepared_subprocess_env):
 **Rule: ONE subprocess test per bug/feature is usually enough.** Use unit tests for edge cases (1000x faster).
 
 **Marker rule**: real subprocess / pipe / shell-boundary CLI tests must be marked `e2e` so they do not run in default `make test`. Use in-process `CliRunner` or `WorkflowRunner` tests for the broad matrix, and keep subprocess tests as narrow contract pins.
+
+**External-tool rule**: the default suite may exercise the shell node, but it must not require incidental runner tools such as `jq` or a `python3` alias. Use the active Python environment for generic JSON/stdin assertions. If an external executable is itself the integration boundary under test, mark that narrow test `e2e` and skip with an explicit availability check when the tool is absent.
 
 **Trace rule**: do not rely on trace files unless the test is marked `trace_files`. If the test only needs runtime trace events, assert on `result.trace.events`; if it needs serialized JSON, add `@pytest.mark.trace_files`.
 

@@ -59,11 +59,6 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      # Makes EncodingWarning fire (opt-in at the interpreter level) so the
-      # pytest filterwarnings=["error::EncodingWarning"] rule actually guards
-      # something — see pyproject.toml [tool.pytest.ini_options].
-      PYTHONWARNDEFAULTENCODING: "1"
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -74,19 +69,20 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Run tests
-        # Use -n 2 for CI (conservative for 2-core GitHub runners)
-        run: uv run python -m pytest -n 2 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py
+        # Exercise the same entry point contributors use. The Make target
+        # owns the EncodingWarning environment inherited by xdist workers.
+        run: make test-all-local PYTEST_WORKERS=2
 
       - name: Check typing
         run: uv run mypy
 
   # Summary job for branch protection — matrix jobs report as
   # "tests-and-type-check (3.10)" etc., so the bare name never resolves.
-  # Point the required status check at this job; it also gates the single
-  # Windows job now that Task 116 is green.
+  # Point the required status check at this job; it also gates the Windows
+  # suite, Windows MCP smoke, and macOS Make compatibility smoke test.
   tests-and-type-check-done:
     if: always()
-    needs: [tests-and-type-check, tests-windows]
+    needs: [tests-and-type-check, tests-windows, tests-windows-mcp-smoke, tests-macos-make]
     runs-on: ubuntu-latest
     steps:
       - run: |
@@ -96,20 +92,18 @@ jobs:
           if [[ "${{ needs.tests-windows.result }}" != "success" ]]; then
             exit 1
           fi
+          if [[ "${{ needs.tests-windows-mcp-smoke.result }}" != "success" ]]; then
+            exit 1
+          fi
+          if [[ "${{ needs.tests-macos-make.result }}" != "success" ]]; then
+            exit 1
+          fi
 
-  # Task 116 Windows gate. Single Python version (not a matrix) —
-  # version-specific bugs are rarely Windows-specific, and this job is
-  # already the expensive one (Windows runners run ~2x slower).
-  tests-windows:
-    runs-on: windows-latest
-    # ~8k tests at ~2x runner slowness should land well under this; the cap
-    # exists so a hung test/npx spawn can't burn a runner for the 6h default.
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash
-    env:
-      PYTHONWARNDEFAULTENCODING: "1"
+  # macOS ships an older GNU Make than Linux and Windows. Keep a focused
+  # smoke test on the built-in Make so target-specific export syntax remains
+  # compatible while the Linux matrix owns broad version coverage.
+  tests-macos-make:
+    runs-on: macos-latest
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -119,16 +113,57 @@ jobs:
         with:
           python-version: "3.13"
 
-      # Cheap insurance for an unverified assumption (Task 116 braindump):
-      # "Git Bash is on the windows-latest runner PATH" is training
-      # knowledge, not something verified this session. If this ever prints
-      # WSL bash or nothing, ADR-0013's bash-on-windows premise needs
-      # rework before Chunk B (shell node / stdin) lands.
-      - name: 'Debug: bash resolution'
-        run: which bash && bash --version
+      - name: Run encoding canary through built-in Make
+        run: |
+          /usr/bin/make --version
+          /usr/bin/make test PYTEST_WORKERS=2 'PYTEST=uv run python -m pytest tests/test_encoding_warning_net.py'
 
-      - name: Run tests
-        run: uv run python -m pytest -n 2 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py
+  # Task 116 Windows gate. Single Python version (not a matrix) —
+  # version-specific bugs are rarely Windows-specific, and this job is
+  # already the expensive one (Windows runners run ~2x slower).
+  tests-windows:
+    runs-on: windows-latest
+    # ~8k tests at ~2x runner slowness should land well under this; the cap
+    # exists so a hung test or subprocess can't burn a runner for the 6h default.
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Exercise the shell implementation contributors actually install.
+      # windows-latest also exposes Cygwin Bash, so relying on PATH would
+      # silently test different path and HOME semantics from Git for Windows.
+      PFLOW_BASH: C:\Program Files\Git\bin\bash.exe
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up the environment
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: "3.13"
+
+      - name: Install GNU Make
+        shell: pwsh
+        run: choco install make --version=4.4.1 --yes --no-progress
+
+      - name: Verify Git Bash used by pflow
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath $env:PFLOW_BASH -PathType Leaf)) {
+            throw "Git Bash was not found at PFLOW_BASH=$env:PFLOW_BASH"
+          }
+          & $env:PFLOW_BASH --version
+
+      - name: Run tests through native Windows Make
+        # Force cmd.exe so Git Bash on the runner cannot hide Windows recipe
+        # incompatibilities. This reproduces the contributor path that caught
+        # the original regression.
+        shell: pwsh
+        env:
+          # Keep timing evidence in the job log while benchmarking four workers.
+          PYTEST_ADDOPTS: --durations=25
+        run: make SHELL=cmd.exe .SHELLFLAGS=/C test-all-local PYTEST_WORKERS=4
 
       # LOAD-BEARING, not incidental: ubuntu mypy treats `sys.platform ==
       # "win32"` branch bodies as statically unreachable and never
@@ -140,14 +175,28 @@ jobs:
         if: ${{ !cancelled() }}
         run: uv run mypy
 
+  # Keep the network-dependent MCP spawn proof off the Windows test critical
+  # path. The summary job still gates it, but it runs in parallel with pytest.
+  tests-windows-mcp-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up the environment
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: "3.13"
+
       # Closes the one MCP assumption CI can close (task-116.md "Assumed
       # correct" item): the mcp SDK resolving `npx` through its Windows
-      # `.cmd` shim when spawning a stdio server. Lockfile evidence says the
-      # SDK ships a win32 path (pywin32 dep); this proves spawning works.
-      # A CI step, not an e2e test, so local `make test-e2e` never grows a
-      # node/npx + network dependency. `pflow mcp sync` exits 1 on failure.
+      # `.cmd` shim when spawning a stdio server. A CI step, not an e2e test,
+      # so local `make test-e2e` never grows a node/npx + network dependency.
       - name: 'MCP smoke: npx stdio server spawns on Windows'
-        if: ${{ !cancelled() }}
         timeout-minutes: 10
         run: |
           npx --version

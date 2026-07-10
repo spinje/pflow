@@ -42,7 +42,7 @@ def metadata_value(metadata: str, key: str, source: Path) -> str:
 
 
 def render_skill(source: Path, name: str | None = None) -> str:
-    metadata, body = split_frontmatter(source.read_text(), source)
+    metadata, body = split_frontmatter(source.read_text(encoding="utf-8"), source)
     skill_name = name or metadata_value(metadata, "name", source)
     description = metadata_value(metadata, "description", source)
     return f"---\nname: {json.dumps(skill_name)}\ndescription: {json.dumps(description)}\n---\n{body}"
@@ -50,7 +50,7 @@ def render_skill(source: Path, name: str | None = None) -> str:
 
 def render_command_skill(source: Path) -> str:
     """Render a Claude command as a Codex skill without changing its source."""
-    metadata, body = split_frontmatter(source.read_text(), source)
+    metadata, body = split_frontmatter(source.read_text(encoding="utf-8"), source)
     body = translate_command_arguments(body)
     body = body.replace("{{task_id}}", "<task_id>")
     body = CLAUDE_COMMAND_AGENT.sub(r"\1", body)
@@ -77,7 +77,7 @@ def translate_command_arguments(body: str) -> str:
 
 
 def render_agent(source: Path) -> str:
-    metadata, body = split_frontmatter(source.read_text(), source)
+    metadata, body = split_frontmatter(source.read_text(encoding="utf-8"), source)
     if TRIPLE_LITERAL_QUOTE in body:
         raise ValueError(f"{source}: instructions contain {TRIPLE_LITERAL_QUOTE!r}")
     name = metadata_value(metadata, "name", source)
@@ -91,13 +91,13 @@ def render_agent(source: Path) -> str:
 
 
 def ensure_content(target: Path, expected: str, write: bool, result: SyncResult) -> None:
-    if target.is_file() and target.read_text() == expected:
+    if target.is_file() and target.read_text(encoding="utf-8") == expected:
         return
     if not write:
         result.errors.append(f"Generated asset is stale: {target}")
         return
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(expected)
+    target.write_text(expected, encoding="utf-8")
     result.changed.append(target)
 
 
@@ -109,7 +109,7 @@ def synchronize_skill(source_dir: Path, target_dir: Path, write: bool, result: S
     for relative_path in source_files:
         source = source_dir / relative_path
         target = target_dir / relative_path
-        expected = render_skill(source) if relative_path == Path("SKILL.md") else source.read_text()
+        expected = render_skill(source) if relative_path == Path("SKILL.md") else source.read_text(encoding="utf-8")
         ensure_content(target, expected, write, result)
 
     if not target_dir.exists():
@@ -148,7 +148,12 @@ def synchronize(root: Path, write: bool) -> SyncResult:
 
     agents_source = root / ".claude/agents"
     protocol_source = agents_source / "REVIEW-PROTOCOL.md"
-    ensure_content(root / ".codex/agents/REVIEW-PROTOCOL.md", protocol_source.read_text(), write, result)
+    ensure_content(
+        root / ".codex/agents/REVIEW-PROTOCOL.md",
+        protocol_source.read_text(encoding="utf-8"),
+        write,
+        result,
+    )
     for source in sorted(agents_source.glob("*.md")):
         if source == protocol_source:
             continue

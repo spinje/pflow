@@ -1,4 +1,4 @@
-"""Integration test for MCP → Shell → jq workflow.
+"""Integration tests for passing MCP-shaped data through shell stdin.
 
 This tests the complete fix for the shell stdin template variable issue,
 simulating the exact user scenario that was failing.
@@ -11,20 +11,21 @@ JSON/strings when passed as stdin to shell commands.
 from pflow.registry import Registry
 from pflow.runtime import compile_workflow
 from pflow.runtime.engine import WorkflowEngine
+from tests.shared.shell_command_utils import python_json_command
 
 
 class TestMCPShellIntegration:
-    """Test MCP dict output → shell stdin → jq processing."""
+    """Test MCP dict output → shell stdin → JSON processing."""
 
-    def test_mcp_dict_to_shell_with_jq(self):
-        """Test that MCP dict can be piped to jq via shell stdin.
+    def test_mcp_dict_to_shell_json_processing(self):
+        """Test that an MCP dict can be processed via shell stdin.
 
         This was the original failing scenario:
         - Upstream node stores dict in shared store
         - Template ${mock-mcp.result} resolves to dict
         - Shell node receives dict in stdin param
         - Type adaptation converts dict → JSON string
-        - jq processes the JSON from stdin
+        - A command processes the JSON from stdin
         """
         # Pre-seed mock MCP data into shared store, then use shell to extract
         mcp_data = {
@@ -49,7 +50,7 @@ class TestMCPShellIntegration:
                     "type": "shell",
                     "params": {
                         "stdin": "${mock_mcp_data}",  # This is a dict!
-                        "command": "jq -r '.data.valueRanges[0].values | map(.[0]) | .[-1]'",
+                        "command": python_json_command('data["data"]["valueRanges"][0]["values"][-1][0]'),
                     },
                 },
             ],
@@ -67,17 +68,20 @@ class TestMCPShellIntegration:
         # Verify success
         assert action == "default"
 
-        # Verify jq extracted the last URL
+        # Verify the command extracted the last URL.
         assert "https://open.spotify.com/track/xyz" in shared["extract-url"]["stdout"]
 
     def test_mcp_nested_dict_extraction(self):
-        """Test extracting nested data from MCP dict via jq."""
+        """Test extracting nested data from an MCP dict as JSON."""
         workflow_ir = {
             "nodes": [
                 {
                     "id": "extract-email",
                     "type": "shell",
-                    "params": {"stdin": "${mock_mcp_data}", "command": "jq -r '.user.profile.email'"},
+                    "params": {
+                        "stdin": "${mock_mcp_data}",
+                        "command": python_json_command('data["user"]["profile"]["email"]'),
+                    },
                 },
             ],
             "edges": [],
@@ -100,7 +104,10 @@ class TestMCPShellIntegration:
                 {
                     "id": "extract-second",
                     "type": "shell",
-                    "params": {"stdin": "${mock_mcp_data}", "command": "jq -r '.[1].name'"},
+                    "params": {
+                        "stdin": "${mock_mcp_data}",
+                        "command": python_json_command('data[1]["name"]'),
+                    },
                 },
             ],
             "edges": [],
@@ -171,8 +178,11 @@ class TestMCPShellIntegration:
                     "type": "shell",
                     "params": {
                         "stdin": "${sheets_data}",
-                        # Simplified command that just extracts the last URL using jq
-                        "command": "jq -r '.data.valueRanges[0].values | map(.[0]) | map(select(contains(\"spotify.com\"))) | .[-1]'",
+                        # Extract the last value containing a Spotify URL.
+                        "command": python_json_command(
+                            '[value[0] for value in data["data"]["valueRanges"][0]["values"] '
+                            'if "spotify.com" in value[0]][-1]'
+                        ),
                     },
                 },
             ],

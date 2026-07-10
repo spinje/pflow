@@ -134,12 +134,15 @@ class TestShellNodeShellFeatures:
         # node = ShellNode()
         shared = {}
 
-        # HOME should be set in any Unix environment
-        run_shell_node(shared, command="echo $HOME")
+        # Git Bash mounts the native Windows temp directory at /tmp, so compare
+        # native paths rather than treating /tmp and C:\...\Temp as different.
+        command = 'cygpath -w "$HOME"' if sys.platform == "win32" else "echo $HOME"
+        run_shell_node(shared, command=command)
 
         output = shared["stdout"].strip()
         assert output != "$HOME"  # Should be expanded
-        assert _shell_path(output) == _shell_path(os.environ.get("HOME", ""))
+        expected_home = os.environ.get("HOME", "")
+        assert os.path.normcase(os.path.realpath(output)) == os.path.normcase(os.path.realpath(expected_home))
         assert shared["exit_code"] == 0
 
     def test_shell_for_loop(self):

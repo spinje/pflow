@@ -9,6 +9,7 @@ import pytest
 from pflow.runtime import compile_workflow
 from pflow.runtime.engine import WorkflowEngine
 from tests.shared.registry_utils import ensure_test_registry
+from tests.shared.shell_command_utils import python_json_command
 
 
 @pytest.fixture
@@ -35,7 +36,7 @@ class TestInlineObjectParsingE2E:
                     "type": "shell",
                     "params": {
                         "stdin": {"data": "${get-data.stdout}"},
-                        "command": "jq '.data.count'",
+                        "command": python_json_command('data["data"]["count"]'),
                     },
                 },
             ],
@@ -47,7 +48,7 @@ class TestInlineObjectParsingE2E:
         engine = WorkflowEngine()
         engine.run(workflow, shared)
 
-        # jq should have been able to access .data.count
+        # The downstream command can access the parsed object, not a JSON string.
         assert "3" in shared["process"]["stdout"]
 
     def test_multiple_sources_combined(self, registry):
@@ -73,7 +74,7 @@ class TestInlineObjectParsingE2E:
                             "first": "${source-a.stdout}",
                             "second": "${source-b.stdout}",
                         },
-                        "command": "jq '.first.a + .second.b'",
+                        "command": python_json_command('data["first"]["a"] + data["second"]["b"]'),
                     },
                 },
             ],
@@ -107,7 +108,7 @@ class TestInlineObjectParsingE2E:
                     "type": "shell",
                     "params": {
                         "stdin": {"items": "${get-items.stdout}"},
-                        "command": "jq '.items | length'",
+                        "command": python_json_command('len(data["items"])'),
                     },
                 },
             ],
@@ -168,7 +169,7 @@ class TestInlineObjectParsingE2E:
                     "type": "shell",
                     "params": {
                         "stdin": {"outer": {"inner": {"config": "${get-config.stdout}"}}},
-                        "command": "jq '.outer.inner.config.debug'",
+                        "command": python_json_command('json.dumps(data["outer"]["inner"]["config"]["debug"])'),
                     },
                 },
             ],
@@ -202,7 +203,7 @@ class TestInlineObjectParsingE2E:
                             "static": {"fixed": "value"},
                             "number": 42,
                         },
-                        "command": "jq '.dynamic.items[0] + .number'",
+                        "command": python_json_command('data["dynamic"]["items"][0] + data["number"]'),
                     },
                 },
             ],

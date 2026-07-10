@@ -5,6 +5,7 @@ since subprocess.run() requires string or None for input.
 """
 
 from pflow.nodes.shell.shell import ShellNode
+from tests.shared.shell_command_utils import python_json_command
 
 
 class TestDictListToJSON:
@@ -13,7 +14,7 @@ class TestDictListToJSON:
     def test_dict_stdin_serialized_to_json(self):
         """Dict in stdin should be JSON serialized."""
         node = ShellNode()
-        node.set_params({"command": "jq -r '.key'", "stdin": {"key": "value"}})
+        node.set_params({"command": python_json_command('data["key"]'), "stdin": {"key": "value"}})
         shared = {}
 
         action = node.run(shared)
@@ -24,7 +25,7 @@ class TestDictListToJSON:
     def test_list_stdin_serialized_to_json(self):
         """List in stdin should be JSON serialized."""
         node = ShellNode()
-        node.set_params({"command": "jq -r '.[0]'", "stdin": [1, 2, 3]})
+        node.set_params({"command": python_json_command("data[0]"), "stdin": [1, 2, 3]})
         shared = {}
 
         action = node.run(shared)
@@ -36,7 +37,7 @@ class TestDictListToJSON:
         """Complex nested structures should serialize correctly."""
         data = {"user": {"name": "John", "age": 30}, "items": [{"id": 1}, {"id": 2}]}
         node = ShellNode()
-        node.set_params({"command": "jq -r '.user.name'", "stdin": data})
+        node.set_params({"command": python_json_command('data["user"]["name"]'), "stdin": data})
         shared = {}
 
         action = node.run(shared)
@@ -67,7 +68,7 @@ class TestDictListToJSON:
         """Dict with quotes and special chars should serialize correctly."""
         data = {"text": "He said \"hello\" and 'goodbye'"}
         node = ShellNode()
-        node.set_params({"command": "jq -r '.text'", "stdin": data})
+        node.set_params({"command": python_json_command('data["text"]'), "stdin": data})
         shared = {}
 
         action = node.run(shared)
@@ -196,7 +197,7 @@ class TestTemplateIntegration:
         """Dict value (as resolved from template variable) should be JSON serialized for stdin."""
         node = ShellNode()
         node.set_params({
-            "command": "jq -r '.data.url'",
+            "command": python_json_command('data["data"]["url"]'),
             "stdin": {"data": {"url": "https://example.com"}},
         })
         shared = {}
@@ -208,7 +209,10 @@ class TestTemplateIntegration:
     def test_list_stdin_from_resolved_template(self):
         """List value (as resolved from template variable) should be JSON serialized for stdin."""
         node = ShellNode()
-        node.set_params({"command": "jq -r '.[1]'", "stdin": ["first", "second", "third"]})
+        node.set_params({
+            "command": python_json_command("data[1]"),
+            "stdin": ["first", "second", "third"],
+        })
         shared = {}
 
         action = node.run(shared)
@@ -226,7 +230,7 @@ class TestTemplateIntegration:
         assert shared["stdout"] == "42"
 
     def test_mcp_json_response(self):
-        """Simulates real MCP response (dict) being piped to jq."""
+        """Simulates a real MCP response (dict) being processed as JSON."""
         node = ShellNode()
 
         # Simulated MCP response structure
@@ -237,7 +241,7 @@ class TestTemplateIntegration:
 
         node.set_params({
             "stdin": mcp_result,
-            "command": "jq -r '.data.valueRanges[0].values[0][0]'",
+            "command": python_json_command('data["data"]["valueRanges"][0]["values"][0][0]'),
         })
         shared = {}
 
@@ -270,7 +274,7 @@ class TestEdgeCases:
         """Dict with None values should serialize correctly."""
         data = {"key": None, "other": "value"}
         node = ShellNode()
-        node.set_params({"command": "jq -r '.other'", "stdin": data})
+        node.set_params({"command": python_json_command('data["other"]'), "stdin": data})
         shared = {}
 
         action = node.run(shared)
@@ -281,7 +285,7 @@ class TestEdgeCases:
         """Nested lists of dicts should serialize correctly."""
         data = [{"id": 1, "name": "first"}, {"id": 2, "name": "second"}]
         node = ShellNode()
-        node.set_params({"command": "jq -r '.[1].name'", "stdin": data})
+        node.set_params({"command": python_json_command('data[1]["name"]'), "stdin": data})
         shared = {}
 
         action = node.run(shared)

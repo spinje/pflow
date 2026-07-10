@@ -414,20 +414,34 @@ class TestMissingBashRaisesFromPrep:
         assert result.shared_after.get("exit_code") != 0
 
 
-# Resolved at import, BEFORE any test patches sys.platform: shutil.which has
-# its own `sys.platform == "win32"` branch (PATHEXT probing) that would return
+# This class is a POSIX-host probe: it forces pflow down the win32 branch while
+# still launching the host's native bash.  Do not resolve or run it on actual
+# Windows.  There, ``shutil.which("bash")`` may select the WSL launcher or a
+# Cygwin shell and would bypass the production resolver's Git Bash safeguards;
+# the ordinary Windows shell suite already exercises the real win32 path.
+#
+# Resolve at import, BEFORE any test patches sys.platform: shutil.which has its
+# own ``sys.platform == "win32"`` branch (PATHEXT probing) that would return
 # None for extensionless /usr/bin/bash once the fake platform is in place.
-_REAL_BASH = shutil.which("bash")
+_HOST_IS_WINDOWS = sys.platform == "win32"
+_REAL_BASH = None if _HOST_IS_WINDOWS else shutil.which("bash")
 
 
-@pytest.mark.skipif(_REAL_BASH is None, reason="needs a real bash to exercise the win32 exec branch")
+@pytest.mark.skipif(
+    _REAL_BASH is None,
+    reason=(
+        "POSIX-host-only probe; native Windows uses the production Git Bash resolver tests"
+        if _HOST_IS_WINDOWS
+        else "needs a real bash to exercise the win32 exec branch"
+    ),
+)
 class TestWindowsExecRealBash:
-    """Run the win32 exec branch against a REAL bash (available on Linux/macOS).
+    """Run the win32 exec branch against a real bash on Linux/macOS hosts.
 
     The argv-shape test above mocks subprocess.run, so it can't catch a broken
-    kwarg in the win32 call (e.g. dropped stdin piping or capture). On Windows
-    CI the whole shell suite exercises this branch; these two tests give the
-    same signal on every Linux run, before any push.
+    kwarg in the win32 call (e.g. dropped stdin piping or capture). The native
+    Windows suite exercises the production resolver and execution path; these
+    tests provide equivalent subprocess coverage on POSIX hosts before a push.
     """
 
     @pytest.fixture(autouse=True)

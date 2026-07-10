@@ -20,6 +20,7 @@ from typing import Any
 from pflow.registry.registry import Registry
 from pflow.runtime import compile_workflow
 from pflow.runtime.engine import WorkflowEngine
+from tests.shared.shell_command_utils import python_json_command
 
 
 def _compile_and_run(workflow_ir: dict[str, Any], initial_params: dict[str, Any]) -> dict[str, Any]:
@@ -41,7 +42,7 @@ class TestShellStdinTypePreservation:
         """THE USE CASE: Multiple data sources combined in stdin.
 
         This is the exact scenario from Task 103 that motivated the fix.
-        Users want to pass multiple upstream results to jq/python for processing.
+        Users want to pass multiple upstream results to CLI tools for processing.
         """
         workflow_ir = {
             "inputs": {
@@ -128,8 +129,8 @@ class TestShellStdinTypePreservation:
         assert parsed["flag"] is True
         assert parsed["items"] == ["a", "b", "c"]
 
-    def test_shell_stdin_with_jq_processing(self):
-        """Real-world: Use jq to process combined data sources."""
+    def test_shell_stdin_with_json_processing(self):
+        """Real-world: process combined JSON data sources."""
         workflow_ir = {
             "inputs": {
                 "user": {"type": "object", "required": True},
@@ -141,8 +142,9 @@ class TestShellStdinTypePreservation:
                     "type": "shell",
                     "params": {
                         "stdin": {"user": "${user}", "settings": "${settings}"},
-                        # jq merges user and settings objects
-                        "command": "jq -c '.user + .settings'",
+                        "command": python_json_command(
+                            'json.dumps({**data["user"], **data["settings"]}, separators=(",", ":"))'
+                        ),
                     },
                 }
             ],
@@ -158,7 +160,7 @@ class TestShellStdinTypePreservation:
             },
         )
 
-        # jq should successfully merge the objects
+        # The command should successfully merge the objects.
         result = json.loads(shared["merge"]["stdout"])
 
         assert result["name"] == "Alice"
