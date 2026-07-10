@@ -5,6 +5,7 @@ including template-resolved values (set directly as resolved params).
 """
 
 from pflow.nodes.shell.shell import ShellNode
+from tests.shared.shell_command_utils import python_json_command
 
 
 class TestShellStdinParameterFallback:
@@ -68,7 +69,7 @@ class TestShellStdinParameterFallback:
 
         json_data = '{"key": "value with \'quotes\' and special $chars"}'
 
-        node.set_params({"command": "jq -r '.key'", "stdin": json_data})
+        node.set_params({"command": python_json_command('data["key"]'), "stdin": json_data})
 
         shared = {}
 
@@ -116,7 +117,10 @@ class TestShellStdinWithComplexData:
         # Simulated MCP response (JSON string with nested data)
         mcp_result = '{"successful":true,"data":{"url":"https://open.spotify.com/track/xyz"}}'
 
-        node.set_params({"stdin": mcp_result, "command": "jq -r '.data.url'"})
+        node.set_params({
+            "stdin": mcp_result,
+            "command": python_json_command('data["data"]["url"]'),
+        })
 
         shared = {}
 

@@ -7,6 +7,7 @@ Escape hatch: Use complex templates ("prefix ${var}") to keep raw strings.
 """
 
 from pflow.runtime.template_resolver import TemplateResolver
+from tests.shared.shell_command_utils import python_json_command
 
 
 class TestInlineObjectJsonParsing:
@@ -163,10 +164,10 @@ class TestNoDoubleParsing:
 
 
 class TestRealWorldScenarios:
-    """Integration-style tests with realistic shell → jq patterns."""
+    """Integration-style tests with realistic shell JSON patterns."""
 
     def test_curl_response_in_stdin(self):
-        """Typical pattern: curl output → process with jq."""
+        """Typical pattern: curl output → process structured JSON."""
         context = {"api-call": {"stdout": '{"status": "ok", "data": {"users": [{"id": 1}, {"id": 2}]}}\n'}}
         result = TemplateResolver.resolve_nested({"stdin": {"response": "${api-call.stdout}"}}, context)
         assert result["stdin"]["response"]["status"] == "ok"
@@ -290,7 +291,7 @@ class TestValidationRuntimeConsistency:
                     "params": {
                         # This is the inline object pattern we're testing
                         "stdin": {"data": "${get-json.stdout}"},
-                        "command": "jq '.data.items | length'",
+                        "command": python_json_command('len(data["data"]["items"])'),
                     },
                 },
             ],
@@ -305,7 +306,7 @@ class TestValidationRuntimeConsistency:
         engine = WorkflowEngine()
         engine.run(workflow, shared)
 
-        # jq could access .data.items, proving JSON was parsed
+        # The command accessed .data.items, proving JSON was parsed.
         assert "3" in shared["use-json"]["stdout"]
 
     def test_resolver_and_variable_exists_agree(self):

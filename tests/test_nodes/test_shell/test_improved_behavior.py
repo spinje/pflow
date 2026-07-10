@@ -1,18 +1,12 @@
 """Improved tests that verify actual behavior, not just superficial checks."""
 
 import os
-import re
 import sys
 import tempfile
 import time
 
 from pflow.nodes.shell.shell import ShellNode
-
-
-def _shell_path(path: str) -> str:
-    normalized = path.replace("\\", "/").rstrip("/")
-    normalized = re.sub(r"(?<![A-Za-z0-9_/-])([A-Za-z]):/", lambda m: f"/{m.group(1).lower()}/", normalized)
-    return normalized
+from tests.shared.shell_command_utils import python_command
 
 
 def run_shell_node(shared, **params):
@@ -271,11 +265,14 @@ class TestShellSpecificBehaviors:
         """Test that ~ is expanded in shell commands."""
         shared = {}
 
-        run_shell_node(shared, command="echo ~")
+        # Git Bash mounts the native Windows temp directory at /tmp, so compare
+        # native paths rather than treating /tmp and C:\...\Temp as different.
+        command = "cygpath -w ~" if sys.platform == "win32" else "echo ~"
+        run_shell_node(shared, command=command)
 
         output = shared["stdout"].strip()
         expected_home = os.environ.get("HOME") or os.path.expanduser("~")
-        assert _shell_path(output) == _shell_path(expected_home)
+        assert os.path.normcase(os.path.realpath(output)) == os.path.normcase(os.path.realpath(expected_home))
         assert output != "~"  # Should be expanded
 
     def test_shell_builtin_commands(self):
@@ -312,8 +309,10 @@ class TestRealWorldUseCases:
         """Test using Python one-liner for JSON processing."""
         shared = {}
 
-        # Create JSON and process with Python
-        command = '''echo '{"name": "test", "value": 42}' | python3 -c "import sys, json; d=json.load(sys.stdin); print(d['value'])"'''
+        # Use the interpreter running pytest; clean Windows environments do not
+        # necessarily provide a separate ``python3`` executable.
+        process_json = python_command("import sys,json; data=json.load(sys.stdin); print(data['value'])")
+        command = f"""echo '{{"name": "test", "value": 42}}' | {process_json}"""
         run_shell_node(shared, command=command)
 
         assert "42" in shared["stdout"]

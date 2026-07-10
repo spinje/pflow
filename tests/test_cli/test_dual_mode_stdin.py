@@ -15,6 +15,7 @@ LESSONS LEARNED:
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -522,6 +523,7 @@ class TestWorkflowChaining:
     """
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
+    @pytest.mark.skipif(shutil.which("jq") is None, reason="requires jq for the workflow-chain integration boundary")
     def test_workflow_chaining_producer_to_consumer(self, tmp_path, uv_exe, prepared_subprocess_env):
         """Test that two workflows can be chained via Unix pipe.
 
@@ -588,6 +590,7 @@ class TestWorkflowChaining:
         assert result.stdout.strip() == "3", f"Expected '3' but got '{result.stdout.strip()}'"
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
+    @pytest.mark.skipif(shutil.which("jq") is None, reason="requires jq for the workflow-chain integration boundary")
     def test_three_stage_pipeline(self, tmp_path, uv_exe, prepared_subprocess_env):
         """Test three workflows chained via pipes: producer | transform | consumer."""
         # Producer: generates [1,2,3,4,5]

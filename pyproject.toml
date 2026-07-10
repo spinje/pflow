@@ -161,8 +161,10 @@ markers = [
 # do with pflow, and would also swallow the tmp_path blind spot above across
 # the whole test suite rather than catching it where it matters — a
 # regression inside pflow's own source. Only fires when the interpreter runs
-# with PYTHONWARNDEFAULTENCODING=1 (set in Makefile test targets + CI job
-# envs) or -X warn_default_encoding — the filter alone is inert without it.
+# with PYTHONWARNDEFAULTENCODING=1 (exported by Makefile test targets and tox)
+# or -X warn_default_encoding — the filter alone is inert without it. The
+# environment variable is required for parallel runs so xdist workers inherit
+# the setting.
 filterwarnings = ["error::EncodingWarning:pflow.*"]
 
 [tool.ruff]

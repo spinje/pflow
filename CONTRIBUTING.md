@@ -4,7 +4,16 @@ So you want to contribute — cool. Here's what you need to know to get going wi
 
 ## Setting up
 
-You'll need Python 3.10+ and [uv](https://docs.astral.sh/uv/) (we use uv instead of pip for everything).
+You'll need Python 3.10+, [uv](https://docs.astral.sh/uv/), and [GNU Make](https://www.gnu.org/software/make/) available on `PATH`. We use uv instead of pip for everything.
+
+On Windows, also install [Git for Windows](https://gitforwindows.org/) for pflow's shell-node tests. GNU Make can be installed with `winget install --id ezwinports.make --exact`. Restart your terminal after installing command-line tools so it receives the updated `PATH`.
+
+Verify the prerequisites before cloning:
+
+```bash
+uv --version
+make --version
+```
 
 ```bash
 git clone https://github.com/spinje/pflow.git
@@ -12,16 +21,18 @@ cd pflow
 make install
 ```
 
-That installs dependencies and sets up pre-commit hooks. If `make install` works and you can run `make test` without everything catching fire, you're good.
+That installs dependencies and sets up pre-commit hooks. If `make install` works and you can run `make test`, you're good.
 
 ## Running things
 
 ```bash
-make test    # runs the full test suite with pytest
-make check   # linting, type checking, the whole quality gauntlet
+make test            # fast default: excludes e2e and paid LLM tests
+make test-e2e        # subprocess, shell, and pipe boundary tests
+make test-all-local  # all non-paid tests, including e2e
+make check           # linting, formatting, pre-commit, mypy, and deptry
 ```
 
-Run both before you open a PR. CI will catch it anyway, but it's faster to catch it locally than to wait for GitHub Actions to tell you what you already could've known.
+Run `make test-all-local` and `make check` before you open a PR. CI will catch it anyway, but it's faster to catch it locally than to wait for GitHub Actions to tell you what you already could've known.
 
 ## Making changes
 
@@ -30,7 +41,7 @@ The usual fork-and-PR flow:
 1. Fork the repo
 2. Create a branch off `main` (call it whatever makes sense, I don't care about branch naming conventions)
 3. Make your changes
-4. Run `make test` and `make check`
+4. Run `make test-all-local` and `make check`
 5. Open a PR against `main`
 
 That's basically it.
