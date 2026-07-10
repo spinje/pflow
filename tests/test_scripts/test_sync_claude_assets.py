@@ -85,3 +85,16 @@ def test_write_translates_claude_only_command_syntax(tmp_path: Path) -> None:
     assert "task_description='THE TASK DESCRIPTION'" in rendered
     assert "Run this command before proceeding:\n\n```bash\ngit branch --show-current\n```" in rendered
     assert "demo\n<task_id>" in rendered
+
+
+def test_rejects_skill_command_name_collision(tmp_path: Path) -> None:
+    root = make_root(tmp_path)
+    write_file(
+        root / ".claude/skills/demo-command/SKILL.md",
+        "---\nname: demo-command\ndescription: Conflicting skill\n---\n",
+    )
+
+    result = sync_claude_assets.synchronize(root, write=True)
+
+    assert result.changed == []
+    assert result.errors == ["Claude skill and command share generated Codex skill name: demo-command"]

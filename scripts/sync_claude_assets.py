@@ -133,7 +133,17 @@ def synchronize(root: Path, write: bool) -> SyncResult:
     result = SyncResult()
 
     skills_source = root / ".claude/skills"
-    for source_dir in sorted(path for path in skills_source.iterdir() if path.is_dir()):
+    skill_dirs = sorted(path for path in skills_source.iterdir() if path.is_dir())
+    commands_source = root / ".claude/commands"
+    commands = sorted(commands_source.glob("*.md"))
+    collisions = sorted({source_dir.name for source_dir in skill_dirs} & {source.stem for source in commands})
+    if collisions:
+        result.errors.extend(
+            f"Claude skill and command share generated Codex skill name: {name}" for name in collisions
+        )
+        return result
+
+    for source_dir in skill_dirs:
         synchronize_skill(source_dir, root / ".agents/skills" / source_dir.name, write, result)
 
     agents_source = root / ".claude/agents"
@@ -144,8 +154,7 @@ def synchronize(root: Path, write: bool) -> SyncResult:
             continue
         ensure_content(root / ".codex/agents" / f"{source.stem}.toml", render_agent(source), write, result)
 
-    commands_source = root / ".claude/commands"
-    for source in sorted(commands_source.glob("*.md")):
+    for source in commands:
         target = root / ".agents/skills" / source.stem / "SKILL.md"
         ensure_content(target, render_command_skill(source), write, result)
 

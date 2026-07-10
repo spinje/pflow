@@ -277,6 +277,10 @@ else:
 lines = dict(line.split('=', 1) for line in response.strip().splitlines() if '=' in line)
 branch_type = lines.get('BRANCH_TYPE', 'feat').strip()
 branch_name = lines.get('BRANCH_NAME', 'task').strip()
+if branch_type not in ('feat', 'fix', 'docs', 'refactor', 'test'):
+    raise ValueError(f"branch_type must be feat, fix, docs, refactor, or test, got {branch_type!r}")
+if not re.fullmatch(r'[a-z0-9]+(?:-[a-z0-9]+)*', branch_name):
+    raise ValueError(f"branch_name must be lowercase kebab-case, got {branch_name!r}")
 
 # Anchor the branch on the issue/task number so it is unique and traceable, and
 # labelled by tracker so a bare number isn't ambiguous between a GitHub issue and
@@ -398,7 +402,7 @@ Copies an optional folder (typically a gitignored scratchpad with research notes
 - ignore_errors: true
 
 ```shell command
-FOLDER='${copy_folder}' && WORKTREE='${parse-result.result.worktree_path}' && if [ -n "$FOLDER" ]; then if [ -d "$FOLDER" ]; then PARENT=$(dirname "$FOLDER") && mkdir -p "$WORKTREE/$PARENT" && cp -r "$FOLDER" "$WORKTREE/$PARENT/" && echo "Copied $FOLDER to worktree"; else echo "Warning: folder '$FOLDER' not found, skipping" >&2; fi; else echo 'No folder to copy'; fi
+FOLDER='${copy_folder}' && ROOT='${get-repo-root.stdout}' && WORKTREE='${parse-result.result.worktree_path}' && if [ -n "$FOLDER" ]; then if [ -d "$ROOT/$FOLDER" ]; then PARENT=$(dirname "$FOLDER") && mkdir -p "$WORKTREE/$PARENT" && cp -r "$ROOT/$FOLDER" "$WORKTREE/$PARENT/" && echo "Copied $FOLDER to worktree"; else echo "Warning: folder '$FOLDER' not found under repo root, skipping" >&2; fi; else echo 'No folder to copy'; fi
 ```
 
 ### output-status

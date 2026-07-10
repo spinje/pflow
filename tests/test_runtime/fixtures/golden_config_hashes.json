@@ -86,14 +86,14 @@
   },
   "examples/real-workflows/git-worktree-task-creator/workflow.pflow.md": {
     "analyze-task": "cc64ec14aaa2ab9aa6f79808bad4227b",
-    "copy-folder": "2cfb5454651cd6e8d5a24063ef059b60",
+    "copy-folder": "799054d272095cf0bf142f3864b069fb",
     "create-worktree": "3cafcc188e9e34a5a32c2a260928c203",
     "get-branch": "33c830618882bc975db4e0ef6ccd85de",
     "get-repo-root": "33c830618882bc975db4e0ef6ccd85de",
     "launch-cli": "715bd1126d5cfdf68dcd2af9e8f8469c",
     "launch-cursor": "2c6fd749b1505c4416a790b4aa7afd75",
     "output-status": "459e5f8341b84441832f695049b995e6",
-    "parse-result": "7bfb1df430e1b746eed6aa357d557e22",
+    "parse-result": "e69a7a677d1b5b4f5367201c12522262",
     "resolve-description": "c04d99dc55f1640a7bcbb3d448ea7059"
   },
   "examples/test_llm_templates.pflow.md": {
