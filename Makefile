@@ -86,7 +86,7 @@ test-all-local: ## Run all non-LLM tests, including e2e, in parallel
 .PHONY: test-with-skipped
 test-with-skipped: ## Run non-paid tests showing skip reasons (useful for debugging)
 	@echo [test] Running all tests without paid API calls and showing skip reasons
-	@$(PYTEST) --doctest-modules --ignore=$(LLM_INTEGRATION_TEST) -v -rs
+	@$(PYTEST) $(PYTEST_NON_LLM) -v -rs
 
 .PHONY: ui-build
 ui-build: ## Build the web UI bundle into src/pflow/ui/static (requires Node).

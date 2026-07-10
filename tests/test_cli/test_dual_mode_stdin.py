@@ -15,7 +15,6 @@ LESSONS LEARNED:
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,6 +26,7 @@ from click.testing import CliRunner
 from pflow.cli.main import main
 from tests.conftest import set_isolated_home
 from tests.shared.markdown_utils import ir_to_markdown
+from tests.shared.shell_command_utils import python_json_command
 
 
 def _skip_uv_sandbox_panic(result):
@@ -523,7 +523,6 @@ class TestWorkflowChaining:
     """
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
-    @pytest.mark.skipif(shutil.which("jq") is None, reason="requires jq for the workflow-chain integration boundary")
     def test_workflow_chaining_producer_to_consumer(self, tmp_path, uv_exe, prepared_subprocess_env):
         """Test that two workflows can be chained via Unix pipe.
 
@@ -557,7 +556,7 @@ class TestWorkflowChaining:
                 {
                     "id": "count",
                     "type": "shell",
-                    "params": {"stdin": "${data}", "command": "jq length"},
+                    "params": {"stdin": "${data}", "command": python_json_command("len(data)")},
                 }
             ],
             "edges": [],
@@ -590,7 +589,6 @@ class TestWorkflowChaining:
         assert result.stdout.strip() == "3", f"Expected '3' but got '{result.stdout.strip()}'"
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
-    @pytest.mark.skipif(shutil.which("jq") is None, reason="requires jq for the workflow-chain integration boundary")
     def test_three_stage_pipeline(self, tmp_path, uv_exe, prepared_subprocess_env):
         """Test three workflows chained via pipes: producer | transform | consumer."""
         # Producer: generates [1,2,3,4,5]
@@ -606,7 +604,16 @@ class TestWorkflowChaining:
         transform = {
             "ir_version": "0.1.0",
             "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
-            "nodes": [{"id": "double", "type": "shell", "params": {"stdin": "${data}", "command": "jq '[.[] * 2]'"}}],
+            "nodes": [
+                {
+                    "id": "double",
+                    "type": "shell",
+                    "params": {
+                        "stdin": "${data}",
+                        "command": python_json_command("[item * 2 for item in data]"),
+                    },
+                }
+            ],
             "edges": [],
             "start_node": "double",
             "outputs": {"result": {"source": "${double.stdout}"}},
@@ -616,7 +623,13 @@ class TestWorkflowChaining:
         consumer = {
             "ir_version": "0.1.0",
             "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
-            "nodes": [{"id": "sum", "type": "shell", "params": {"stdin": "${data}", "command": "jq 'add'"}}],
+            "nodes": [
+                {
+                    "id": "sum",
+                    "type": "shell",
+                    "params": {"stdin": "${data}", "command": python_json_command("sum(data)")},
+                }
+            ],
             "edges": [],
             "start_node": "sum",
             "outputs": {"result": {"source": "${sum.stdout}"}},

@@ -143,7 +143,7 @@ class TestShellStdinTypePreservation:
                     "params": {
                         "stdin": {"user": "${user}", "settings": "${settings}"},
                         "command": python_json_command(
-                            'json.dumps(data["user"] | data["settings"], separators=(",", ":"))'
+                            'json.dumps({**data["user"], **data["settings"]}, separators=(",", ":"))'
                         ),
                     },
                 }
