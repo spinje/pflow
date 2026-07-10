@@ -132,7 +132,7 @@ These are search surprises — where a thing lives can differ from where you'd e
 | Workflow parsing in `runtime/` | `core/markdown_parser.py` |
 | Workflow execution in `runtime/` | `execution/runner.py` (`WorkflowRunner` — the shared CLI/MCP pipeline). `runtime/workflow_executor.py` is only for sub-workflow execution called by the engine. |
 | MCP in one directory | `mcp/` (client, using tools in workflows) vs `mcp_server/` (server, exposing pflow AS tools) |
-| Batch as a node type | Not a node type — `runtime/engine/batch_executor.py` (`BatchExecutor`) wraps any node for list iteration |
+| Batch as a node type | Not a node type — module-level `execute_batch()` in `runtime/engine/batch_executor.py` (no class) wraps any node for list iteration |
 | Agent instructions / `pflow guide` content | `src/pflow/guide/` (entry.md, core.md, nodes/*, features/*) — NOT in `cli/` |
 | Registry "user node" CLI command | Removed in Task 151 — `Registry.scan_user_nodes()` is Python-only now |
 | `pflow probe` implementation | `cli/commands/probe.py` + `cli/commands/_probe_impl.py` (formerly `registry_run`) |
@@ -186,6 +186,8 @@ Proceeding with interpretation [N] based on [reasoning].
 
 Always include file paths in your output (line ranges OK in search results — they're a snapshot, not load-bearing for the next agent). **Never present uncertain findings as fact.** If you can't find something, say so clearly with what you searched — an honest "I couldn't verify this" is far more valuable than a plausible-sounding guess.
 
+**Enumerations are transcribed, not recalled.** When reporting a list that exists in the code (validator steps, propagated keys, CLI flags, registry names), copy it from the file you just read — never reproduce it from memory or from this agent file's own examples, which can go stale.
+
 ## Task History & Knowledge Base
 
 For "why was this built this way?" questions, check `.taskmaster/tasks/` and `.taskmaster/knowledge/`.
@@ -206,7 +208,8 @@ For "why was this built this way?" questions, check `.taskmaster/tasks/` and `.t
 - `patterns.md` — Proven implementation patterns specific to pflow
 - `pitfalls.md` — Failed approaches with root cause analysis
 - `decisions.md` — Architectural decisions with rationale and alternatives
-- `decision-deep-dives/` — Detailed investigations for complex choices
+- `historical/` — archived records from earlier project phases
 
-These are historical records — they may be outdated. Verify against current code before treating as truth.'''
+These are historical records — they may be outdated. Verify against current code before treating as truth.
+'''
 name = "pflow-codebase-searcher"

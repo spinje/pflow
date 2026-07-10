@@ -8,6 +8,8 @@ install: ## Install the virtual environment and install the pre-commit hooks
 check: ## Run code quality tools.
 	@echo "🚀 Checking lock file consistency with 'pyproject.toml'"
 	@uv lock --locked
+	@echo "🚀 Checking Claude/Codex reusable assets are synchronized"
+	@uv run python scripts/sync_claude_assets.py --check
 	@echo "🚀 Linting ALL files (git-agnostic, catches untracked): ruff"
 	@uv run ruff check .
 	@uv run ruff format --check .
@@ -17,6 +19,10 @@ check: ## Run code quality tools.
 	@uv run mypy
 	@echo "🚀 Checking for obsolete dependencies: Running deptry"
 	@uv run deptry src
+
+.PHONY: sync-claude-assets
+sync-claude-assets: ## Regenerate Codex assets derived from Claude sources.
+	@uv run python scripts/sync_claude_assets.py --write
 
 .PHONY: test
 test: ## Test the code with pytest in parallel (excludes LLM tests that require API keys)

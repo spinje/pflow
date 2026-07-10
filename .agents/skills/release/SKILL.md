@@ -1,8 +1,6 @@
 ---
-name: release
-description: Run the pflow release process — generate changelog, bump version, commit, and create GitHub Release
-argument-hint: [since_tag]
-allowed-tools: Bash(uv run pflow:*), Bash(git:*), Bash(gh:*), Bash(cat:*), Bash(sed:*), Read, Glob, Grep, Edit, Monitor
+name: "release"
+description: "Run the pflow release process \u2014 generate changelog, bump version, commit, and create GitHub Release"
 ---
 
 # Release Process
@@ -34,7 +32,7 @@ git fetch --tags
 
 ### 2. Determine the tag range
 
-If the user provided `$ARGUMENTS`, use it as `since_tag`. Otherwise, detect the latest tag:
+If the user provided an explicit `since_tag` in their request, use it. Otherwise, detect the latest tag:
 
 ```bash
 git describe --tags --abbrev=0
@@ -99,9 +97,10 @@ Once the user confirms the version (which may differ from the suggested one), up
 version = "<confirmed-version>"
 ```
 
-**src/pflow/cli/main.py** — the hardcoded fallback version (search for the `except Exception` block near `pkg_version("pflow-cli")`):
+**src/pflow/cli/main.py** — the hardcoded fallback version in `_get_version()` (the `except Exception` block near `pkg_version("pflow-cli")`). Replace the returned literal:
 ```python
-            ver = "<confirmed-version>"
+    except Exception:
+        return "<confirmed-version>"
 ```
 
 Then update the lockfile and verify:
@@ -119,14 +118,22 @@ Read `docs/roadmap.mdx` and check if any items listed under "Now" or "Next" were
 
 ### 6. Commit
 
-Stage and commit the release artifacts together:
+Stage the release artifacts, then **STOP and show the user the full diff before committing**:
 
 ```bash
 git add pyproject.toml src/pflow/cli/main.py uv.lock CHANGELOG.md docs/changelog.mdx releases/<version>-context.md
+git diff --cached
+```
+
+**Do NOT run `git commit` until the user has reviewed the diff and explicitly approves.** Showing the diff is not the same as approval — the user must say go. The version confirmation in step 4 covers the version number only, not the committed content. Also confirm `git status --short` shows no unexpected untracked files — remove any stray artifacts before staging.
+
+Once approved:
+
+```bash
 git commit -m "<version> changelog and version bump"
 ```
 
-Show the user the diff before committing. Do NOT push yet.
+Do NOT push yet.
 
 ### 7. Push
 
@@ -165,9 +172,11 @@ After creating the release:
        echo "$line"
        exit 0
      fi
-     sleep 20
+     sleep 10
    done
    ```
+
+   The `sleep 10` interval bounds how long after CI actually finishes the exit-notification takes to fire (up to ~10s). Don't go much lower — it only trades more `gh` API calls for marginal latency.
 
    The script stays silent while CI is queued or running; one notification arrives with the final line (e.g. `completed success 24770302049 v0.12.0` or `completed failure 24770302049 v0.12.0`). **Check the `conclusion` field** — `success` means proceed, anything else means investigate via `gh run view <databaseId> --log-failed`.
 

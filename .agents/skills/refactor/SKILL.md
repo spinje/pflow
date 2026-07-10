@@ -1,13 +1,7 @@
 ---
-name: "source-command-refactor"
+name: "refactor"
 description: "Analyze, plan, and execute structural refactors (file splits, subdirectory extraction, module reorganization)"
 ---
-
-# source-command-refactor
-
-Use this skill when the user asks to run the migrated source command `refactor`.
-
-## Command Template
 
 # Structural Refactor
 

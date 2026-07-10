@@ -1,4 +1,0 @@
-interface:
-  display_name: "Pflow Sandbox Testing"
-  short_description: "Run pflow tests inside Codex sandbox"
-  default_prompt: "Use $pflow-sandbox-testing to run this project's tests correctly in sandbox mode."

@@ -58,7 +58,7 @@ BASELINE_WORKFLOWS: tuple[FixtureWorkflow, ...] = (
         shapes=("branching", "code-node", "next-routing"),
     ),
     FixtureWorkflow(
-        rel_path="examples/test-worktree.pflow.md",
+        rel_path="examples/real-workflows/git-worktree-task-creator/workflow.pflow.md",
         shapes=("cache-false", "llm-node", "shell-templates"),
         inputs={"task_description": "implement caching"},
     ),

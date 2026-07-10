@@ -1,61 +1,30 @@
 ---
-name: worktree-pflow
-description: Create an isolated git worktree for a development task in this repo. Use when the user wants to start work on a new task, GitHub issue, feature, or bugfix in a separate worktree and branch — e.g. "create a worktree for X", "start work on issue 484", "set up a branch for this task". Runs the saved pflow workflow git-worktree-task-creator, which generates a conventional branch name, creates the worktree, and opens an editor plus a coding agent session pointed at it. Do not use for committing, pushing, or ordinary in-place edits.
+name: "worktree-pflow"
+description: "Create a git worktree"
 ---
+Create a git worktree for pflow development.
 
-# Worktree (pflow)
+Run this command before proceeding:
 
-Create a git worktree for development by running the saved pflow workflow
-`git-worktree-task-creator`. It generates a conventional branch name
-(feat/fix/docs/refactor/test), creates a sibling-folder worktree
-(`<repo-root>-worktrees/...`), and — by default — opens Cursor and a coding
-agent session pointed at the new worktree.
+```bash
+git branch --show-current
+```
 
-## How to run
+Build and run the command:
+```bash
+uv run pflow examples/real-workflows/git-worktree-task-creator/workflow.pflow.md task_description='THE TASK DESCRIPTION'
+```
 
-1. Check the current branch (needed for the base-branch rule below):
+**Parameter rules:**
+- If the user has not supplied a task description, ask the user to clarify what task they want to create a worktree for.
+- **If the work is a GitHub issue (the user gives an issue number, an issue URL, or says "issue"), add `work_type=issue`.** This labels it as a GitHub issue (not a pflow `.taskmaster` task) when the launched Claude session opens, so a bare issue number like `443` isn't mistaken for a task id and no task scaffolding is created. Omit it (defaults to `work_type=task`) for ordinary `.taskmaster` tasks.
+- If the current branch is NOT `main`, add `base_branch=main` to the command (unless the user explicitly wants to branch from the current branch).
+- If the user mentions a folder or scratchpad to copy into the worktree, add `copy_folder=<relative-path>` (path relative to repo root, e.g. `copy_folder=scratchpads/my-research`).
+- **If the user asks to start the session with codex instead of Claude Code** (e.g. "use codex", "start with codex"), add `agent=codex`. Defaults to `agent=claude` otherwise. `open_cli` remains the on/off gate for launching the agent regardless of which one is selected.
+- **If the user specifies a model** for the coding agent (e.g. "use opus", "run it on sonnet"), add `model=<model>` — passed through as `--model` to whichever agent launches (both `claude` and `codex` accept it). Accepts an alias (`opus`, `sonnet`) or a full model id (`claude-opus-4-8`). Omit it to use the agent's own default model.
+- If the user specifically asks NOT to open cursor or the coding agent, add `open_cli=false` and/or `open_cursor=false`.
+- **The workflow refuses to clobber an existing worktree/branch by default.** If it errors that the branch/worktree already exists and the user wants to re-run the **same** task and discard the old one, add `overwrite=true`. Do NOT add it just to make a collision go away for a *different* task — a collision between different tasks signals the branch name wasn't specific enough, so pass a more descriptive `task_description` instead.
 
-   ```bash
-   git branch --show-current
-   ```
+Let the user know if the worktree was created successfully and display the path to the worktree.
 
-2. Build and run the command, substituting the user's task description:
-
-   ```bash
-   uv run pflow git-worktree-task-creator task_description='THE TASK DESCRIPTION' agent=codex
-   ```
-
-   `agent=codex` launches a new **Codex** session in the worktree (matching this
-   session). Pass `agent=claude` instead if the user wants Claude Code.
-
-## Parameter rules
-
-- **Empty description**: if the user hasn't said what the task is, ask them to
-  clarify before running — don't guess.
-- **GitHub issue**: if the work is a GitHub issue (the user gives an issue
-  number, an issue URL, or says "issue"), add `work_type=issue`. This labels it
-  as a GitHub issue (not a pflow `.taskmaster` task) so a bare number like `484`
-  isn't mistaken for a task id and no task scaffolding is created. Omit it
-  (defaults to `work_type=task`) for ordinary `.taskmaster` tasks.
-- **Base branch**: if the current branch is NOT `main`, add `base_branch=main`
-  (unless the user explicitly wants to branch from the current branch). The
-  workflow errors if you're on a feature branch without an explicit
-  `base_branch`, to prevent building on unmerged work.
-- **Copy a folder**: if the user mentions a folder or scratchpad to carry into
-  the worktree, add `copy_folder=<relative-path>` (relative to repo root, e.g.
-  `copy_folder=scratchpads/my-research`). Useful for gitignored notes that
-  wouldn't exist in a fresh checkout.
-- **Which agent**: defaults to `agent=codex` from this skill. Pass
-  `agent=claude` if the user asks for Claude Code.
-- **Model**: if the user specifies a model for the coding agent (e.g. "use
-  opus", "on sonnet"), add `model=<model>` — passed through as `--model` to
-  whichever agent launches (both `claude` and `codex` accept it). Accepts an
-  alias (`opus`, `sonnet`) or a full model id; omit to use the agent's default.
-- **Don't open things**: `open_claude=false` skips launching the coding agent
-  entirely (this gate applies to whichever `agent` is selected);
-  `open_cursor=false` skips opening Cursor.
-
-After it runs, tell the user whether the worktree was created and show the
-worktree path. Mention that Cursor and the selected coding agent (Codex by
-default, or Claude Code if `agent=claude`) have been opened in the new worktree,
-unless those were disabled.
+Also let the user know that Cursor and the selected coding agent (Claude Code by default, or Codex if `agent=codex`) have been opened in the new worktree (if using default values for open_cli and open_cursor).

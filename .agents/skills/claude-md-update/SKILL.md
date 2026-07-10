@@ -1,13 +1,7 @@
 ---
-name: "source-command-claude-md-update"
+name: "claude-md-update"
 description: "Read before updating CLAUDE.md files"
 ---
-
-# source-command-claude-md-update
-
-Use this skill when the user asks to run the migrated source command `claude-md-update`.
-
-## Command Template
 
 Your task is to keep the CLAUDE.md files in the project in perfect shape.
 
