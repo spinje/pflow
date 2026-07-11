@@ -3,78 +3,115 @@
 _Mutable state companion to the `/start-orchestration` command — the current build state its boot
 sequence verifies against. `## Now` is the current truth; `## Log` is append-only, newest first._
 
-## Now (last verified: 2026-07-04)
+## Now (last verified: 2026-07-11)
 
-**Current arc: resume/HITL — 125 ✅ → 164 ✅ → 174 ✅ → 171 (in flight) → 176.** 164 (PR #559, closes
-#255) + 174 (PR #560) merged 2026-07-04; their worktrees pruned; roadmap + specs reconciled.
+**Current arc: resume/HITL — 125 ✅ → 164 ✅ → 174 ✅ → 171 ✅ → 176 (READY TO LAUNCH).**
+The 176 spec-refresh + decision session ran 2026-07-11: spec fully rewritten against verified
+main (three parallel audits + personal spot-checks), 3-item decision ledger LOCKED by the owner
+(escalation-answering IN · greying IN-phased-last · `resolved_via:"ui"` OUT — rationale in the
+ledger, do not re-litigate), brief at `scratchpads/task-176-web-approval-bridge/BRIEF.md`.
+**Awaiting owner go on: commit the spec/brief to main, then launch the worktree (fable).** Key
+verified facts that reshaped the task: the gate payload does NOT reach the browser (both server
+read paths are deliberate allowlists — real server-side half); resume has full JSON output but
+exit 1 conflates refusal/failure; a paused-gate answer never hits side-effect confirm;
+`PFLOW_EXECUTION_ID` is run-only (resume needs the mirror hook); paused runs are terminal →
+immune to #566; the spawn needs extraction (3rd consumer) + the win32 branch. No new ADR —
+nothing hard-to-reverse decided (resolved_via deferral is additive-later; ADR-0009 already
+covers the surface pattern).
 
-**IN FLIGHT: Task 171** in worktree `feat-durable-resume-tokens` (branch `feat/durable-resume-tokens`,
-launched on **fable** 2026-07-04, based on `2e2eb9e8`). Brief at
-`scratchpads/task-171-durable-resume/BRIEF.md`. **Launched WITHOUT a pre-decision session** (owner
-call) — the brief carries the 5 open decisions with recs as plan-time items; the builder must surface
-the two **format-shaping** ones (paused-status encoding · gated-runs-require-trace) to the owner
-before committing. **Sole engine/trace toucher — keep it that way** (#542 retention must wait for it).
-On merge: verify personally, reconcile roadmap (171 → ✅, unblocks 176), check the `resumed_from`
-run-list UI shipped. Reference (the 164/171 build context):
-- **Read `task_164/task-review.md` FIRST** — the shipped-substrate handoff (invariants that must not
-  break, the `paused` insertion point, gotchas). The 171 spec already absorbed the handoff (banner +
-  "UI attempt-chain rendering" section) — trust the review over any pre-impl phrasing.
-- **Loader-extraction trigger:** the resume loader (~400 lines: `ResumeSource`/`load_resume_source`/
-  entry resolvers) accreted in `runtime/workflow_trace.py`. 171's `paused` arm is the third consumer
-  → **extract to `runtime/resume_source.py` FIRST** (parity net first, zero behavior change).
-- **171 now also owns the `resumed_from` run-list UI** (owner decision 07-04; ADR-0010 consequence
-  updated) — surface `resumed_from` in `/api/runs` + link chains in the run selector.
-- Open decisions to settle at 171 start: MCP/`--no-trace` gated-runs-require-trace · paused-status
-  encoding (rec `final_status:"paused"` trailer) · pause exit code · token security (rec: trust local
-  fs, record it) · MCP structured-result token surface. **#542 (retention) must be designed
-  WITH/AFTER 171** — a `paused` trace is a live obligation, not a prunable debug artifact.
+**171 shipped** (PR #563, merged 2026-07-05, squash `e55f0d30`; verified personally 2026-07-11 —
+worktree tip content incl. the post-review `isdecimal` fix confirmed in main). Read
+`task_171/task-review.md` before any resume/gate/trace work. Beyond-spec deltas that change 176's
+ground: **MCP now streams traces** (the never-stream special case is deleted); exit code **4 =
+paused** (beside 3 = denied); trace format **2.7.0** (`final_status:"paused"` + `paused_node_id` +
+`gate_request` on the `run.complete` trailer); loader extracted to `runtime/resume_source.py`;
+`ExecutionResult.is_durable_pause` is the single durability home (CLI + MCP consume it); `/api/runs`
+surfaces `resumed_from` + UI paused badge/chain marker shipped. Follow-on filed: **#562** (resumable
+inline workflows — trace stores workflow content).
 
-**What 164/174 actually shipped (deeper than spec — read the reviews):** 164 = `pflow resume` for
-failed AND interrupted runs (Decision 3 landed IN); entry = the `_terminal_failure_root` frontier
-rule (replaced Decision 9's event-order rule after a proven both-fail-chain bug — ADR-0010 amended
-2×); trace format **2.6.0** (`resumed_from`/`restored`); zero-event runs now finalize `failed`
-(global semantics change); 3 deep-review proven-bug fixes (failed events never seeded — also fixed
-`--only` degraded-snapshot; incomplete-tail entry; escalation fold-at-load). 174 = `--say` TTS +
-self-pacing walkthroughs (playback-beacon closed loop, blocked-hold); NodeCallout reuse held;
-ADR-0011/0012 written; **zero engine/runtime contact** — the parallel-lane collision analysis was
-validated in practice.
+**Unplanned lane shipped while 171 was in flight: Task 116 Windows Compatibility** (PR #564, merged
+2026-07-07 — jumped the queue from "Later"; roadmap + task Status reconciled 2026-07-11). ADR-0013:
+POSIX-sh-everywhere — shell steps are Git-Bash-backed on win32, never a cmd/PowerShell fallback.
+Blocking `windows-latest` CI job is live. Hardening tail also merged: #570 (shared Claude/Codex agent
+assets), #571 + #573 (Windows test workflow fix + speed), #576 (zero-warning suite, explicit
+encoding + `EncodingWarning` net). Spawned issues: **#566** (Windows liveness signal for streamed
+trace UI — no `fcntl`; explicitly NOT an mtime heuristic), **#567** (POSIX shell-node process-group
+kill on timeout — Windows tree-kills, POSIX leaks grandchildren), **#568** (track/cancel detached
+UI-launched runs, must respect ADR-0008), **#572** (Windows dev test workflow portability), **#574**
+(pytest isolation fixture overhead), **#575** (code-node bare I/O uses locale encoding on Windows).
 
-**Worktrees:** 164/174 pruned. **HELD — needs a user call:** `feat-unified-node-storage` is clean but
-its branch is `docs/task-133-crash-tail-scope` (name ≠ dir) with ONE unmerged docs commit `41281872`
-([skip review], crash-tail scoping) — the "rejected premise, safe to prune" label doesn't match; do
-not force-delete blind. Many other merged `fix-*`/`feat-*` trees also remain (broader cleanup not yet
-done — not proposed this session).
+**Status drift needing a user call (found 2026-07-11):** `./scripts/tasks` shows **117** and **163**
+as "in progress" — neither has a live worktree or recent commits. Likely stale vocabulary (163 is ✅
+in the CLAUDE.md roadmap), but don't flip blind — confirm with the owner whether 163's harness is
+genuinely iterative-ongoing and whether 117 was ever started.
 
-**Parallel-lane candidates (verified 2026-07-02 unless marked):**
-- **#561** (new, spawned by 174) — TTS clip cache for `--say`; deferred design task, backlog.
-- **#546** — pinned-run resolve race (real bug in shipped 175 launch; small; disjoint from 125).
-- **#541** ruff drift — **likely already resolved by #557's single-sourcing → verify + close.**
-- **#538** liveness backstop · **#544** `llm_*` write-side canonicalization · **#549** post-#539
-  visibility cleanup · **#528** CLI `--output-format` stragglers.
-- **#542** trace retention — ⚠️ **design WITH/AFTER 171** (paused traces are live obligations;
-  sequencing comment posted on the issue 2026-07-02).
-- **#357** memo-cache drift — guard merged (#524), fix worktree existed
-  (`fix/fix-cache-key-drift`); issue state **UNVERIFIED since 2026-06-23 → check**.
+**Worktrees:** `feat-durable-resume-tokens` verified fully merged → prune candidate (clean, content
+in main). **HELD — needs a user call:** `feat-unified-node-storage` is clean but its branch is
+`docs/task-133-crash-tail-scope` (name ≠ dir) with ONE unmerged docs commit `41281872` ([skip
+review], crash-tail scoping) — do not force-delete blind. ~25 other merged `fix-*`/`feat-*` trees
+remain (broader cleanup still not done).
+
+**Parallel-lane candidates (re-scanned 2026-07-11; deep-verified 2026-07-02 unless marked):**
+- **#542** trace retention — **NOW UNBLOCKED** (its gate was "design WITH/AFTER 171"). Design must
+  treat `paused` traces as live obligations, never prunable; `resume list` depends on trailer scan.
+- **#562** resumable inline workflows — natural 171 follow-on; touches trace format → serialize
+  with any other trace toucher.
+- **#546** pinned-run resolve race · **#561** TTS clip cache (design, backlog) · **#538** liveness
+  backstop (now partially superseded by #566's Windows framing? — check before starting either).
+- **#541** ruff drift — likely resolved by #557 → verify + close (still pending since 07-03).
+- **#544** `llm_*` write-side canonicalization · **#549** post-#539 visibility cleanup · **#528**
+  CLI `--output-format` stragglers.
+- **#565** (new 07-07) — probe advertises MCP tool outputs as top-level `${success}` but values
+  live under `result.*` — agent-facing correctness bug, small, likely registry/probe surface.
+- **#357** memo-cache drift — issue state UNVERIFIED since 2026-06-23 → check.
 
 **Watch list (non-obvious, easy to miss):**
-- 125 pre-flight #1: confirm the UI tailer + frontend tolerate an unknown event `kind`
-  (`run_tailer.py` + web) before emitting the `gate` event.
-- 125 scope trap: the escalation **trigger** is half-designed (Task 99 unbuilt; signal mechanism
-  flagged "known-broken" in the 2026-06-02 braindump) — surface as an explicit scoping decision;
-  don't let it silently double the task.
-- **Engine hot spot:** 125 and 164 both edit `_execute_node`/engine internals → strictly
-  sequential, never parallel worktrees.
-- Recurring fact-conflation attractor: `is_trace_locked` (probe, `ui/run_tailer.py:135`) vs
-  `_lock_trace_handle` (writer flock, `workflow_trace.py:74-90`) — two independent agents got
-  this wrong; distrust docs that place the probe in `workflow_trace.py`.
-- **Task 170** (One Template Language, Refactors backlog) conflicts with 164 in `plan.py`
-  (planner-mirror braindump) — do not run them in parallel.
-- Trace-touching work (171's new `paused` status especially): the Task-159 baseline
-  (`task_159/baseline/verify.sh`, restored green via #535) is a free outer regression net — run it.
-- All spec file:line refs were refreshed 2026-07-02; this area moves fast — re-verify at
-  implementation time.
+- **176 pre-flight:** refresh the spec against post-171 main (MCP-streams-now, exit-4, trace 2.7.0,
+  `resume_source.py`, `is_durable_pause`) — 176 was drafted against the pre-171 world.
+- **Trace-format seam is hot:** 171 (2.7.0) + #562 + #542 all touch trace/trailer semantics —
+  serialize; never fan out.
+- Recurring fact-conflation attractor: `is_trace_locked` (probe, `ui/run_tailer.py`) vs
+  `_lock_trace_handle` (writer flock, `workflow_trace.py`) — two independent agents got this
+  wrong; distrust docs that place the probe in `workflow_trace.py`. #566 adds a Windows dimension.
+- Trace-touching work: the Task-159 baseline (`task_159/baseline/verify.sh`, restored green via
+  #535) is a free outer regression net — run it.
+- Windows is now a **blocking CI gate** — any new platform-sensitive code (subprocess, encoding,
+  paths, `fcntl`) must clear `tests-windows`; ADR-0013 governs shell semantics.
+- Spec file:line refs were last bulk-refreshed 2026-07-02 and the repo has since absorbed #557's
+  format pass + 116's 117-file diff — treat ALL file:line refs as stale; re-verify at use.
 
 ## Log (append-only, newest first)
+
+### 2026-07-11 — Task 176 spec-refresh + decision session (same session as the boot below)
+Ran the 176-start sitting. Three parallel opus audits (UI server / web frontend / resume CLI)
+classified every draft claim; personal spot-checks confirmed the load-bearing four. Draft's
+biggest false assumption killed: trailer keys do NOT forward generically — `_RUN_COMPLETE_FIELDS`
+(`run_tailer.py:611`) and `_run_entry` (`server.py:1178`) are deliberate allowlists, so 176 has a
+real server-side half (light-wire `paused_node_id` + on-demand masked `gate_request` endpoint —
+orchestrator-owned plan call). Step-back audit caught two gaps the spec couldn't know: the
+DEVNULL fire-and-forget spawn makes refused resumes silent no-ops (fix: in-process pre-flight,
+the `/api/run` pattern) and `PFLOW_EXECUTION_ID` is honored by `run` only (resume needs the
+mirror hook or the browser can't pin the new attempt). Owner locked 3 decisions (ledger in the
+spec): escalations IN, greying IN-phased-last, `resolved_via:"ui"` OUT — approved on the
+plain-language rationale now recorded verbatim in ledger #3 (spoofable, no consumer, fails the
+deletion test; lineage is the structural provenance). Spec rewritten in place with provenance;
+brief written (curated index, trust notes). Collisions recorded: #546/#568 serialized behind
+176; #542 semantic rule (paused traces un-prunable) in both places. No ADR (nothing
+hard-to-reverse). **Left off: awaiting owner go to commit spec+brief and launch the worktree on
+fable; held worktree + #541 + 117/163 statuses still pending from the boot.**
+
+### 2026-07-11 — boot: week-stale log reconciled; 171 + 116 shipped
+Boot verification (user prompt: "171 and 116 completed and a lot more") found `## Now` a week
+stale. Verified merged reality: **171** (PR #563, 07-05 — read the PR body; worktree tip's
+post-review `isdecimal` fix confirmed present in `runtime/resume_source.py` on main → worktree
+prunable) and **116 Windows** (PR #564, 07-07, ADR-0013) + its hardening tail (#570/#571/#573/#576).
+Six new issues slotted into lanes (#562 trace follow-on; #565 probe bug; #566/#567/#568 Windows/
+process lifecycle; #572/#574 test-infra hygiene). Reconciled: CLAUDE.md (116 → ✅, removed from
+Later), task-116 Status → done (its flip condition — blocking green Windows gate — was met at
+merge), this log's `## Now` rewritten. **#542 retention is now unblocked** (its gate was 171).
+Flagged, not fixed: tasks 117 + 163 read "in progress" with no live work — owner call. **Left off:
+176 is next on the critical path but its spec predates 171's beyond-spec deltas → spec refresh
+required before launch; held worktree + #541 close + 117/163 status still await the user.**
 
 ### 2026-07-04 — 164 + 174 merged; post-merge reconcile
 Both shipped: 164 (PR #559, closes #255) and 174 (PR #560). Read both task-reviews — both went

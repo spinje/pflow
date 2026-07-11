@@ -2,169 +2,268 @@
 
 ## Description
 
-Close the approval loop in the browser: once Task 125 ships the gate primitive and Task 171 ships
-durable pause/resume, the live overlay will *show* a paused gate (the `gate` trace event) but offer
-no way to *act* on it — this task adds approve/deny controls that spawn `pflow resume
-<execution-id> --approve yes|no`, the same ADR-0008-conformant observe-and-spawn pattern as the
-shipped `POST /api/run`. It also owns the **Resume button on failed/interrupted runs** (folded in
-2026-07-04 — same UI→`pflow resume` plumbing, different entry arm; see the section below).
+Close the approval loop in the browser: 125 shipped the gate primitive, 171 shipped durable
+pause/resume — so a gated run launched from `pflow ui` pauses durably and the UI *shows* it
+(amber banner, ⏸ selector mark), but offers no way to *act* on it. This task adds the gate panel
+(Approve/Deny for approvals, option-choose for escalations) that spawns
+`pflow resume <execution-id> --approve yes|no` / `--choose "<answer>"` — the same
+ADR-0008-conformant observe-and-spawn pattern as the shipped `POST /api/run`. It also owns the
+**Resume button on failed/interrupted runs**, the **⏸ frontier-node badge**, and the **un-run
+region greying** on pinned terminal replays.
 
-> **Deliberately thin draft (2026-07-02).** This task exists so the bridge has a home and a place in
-> the build order — NOT as a design. Every mechanism named below is ASSUMED from the 2026-07-02
-> spec refresh of Tasks 125/164/171; **design this against the SHIPPED 125/171 code at task start,
-> not against their specs** (the Task-171-carve lesson: specs written ahead of their substrate go
-> stale; re-verify everything).
+> **Refreshed 2026-07-11 against main (post-171 `e55f0d30`, post-116 `646fdae7`)** — three
+> parallel code audits + personal spot-checks; every claim below is verified against current code
+> unless marked otherwise. Line numbers are a snapshot; file + symbol are the load-bearing
+> identifiers. The 2026-07-02 draft's mechanisms were assumptions; the load-bearing ones that
+> proved FALSE are called out inline. **Read `task_171/task-review.md` before touching anything
+> resume/gate/trace.**
 
 ## Status
 
 not started
 
-> Draft — blocked on Tasks 125 → 164 → 171 (see Dependencies).
+## Decision ledger
+
+1. **Escalation answering in the browser — DECIDED IN (owner, 2026-07-11).** The gate panel is
+   kind-switched: `action_approval` → Approve/Deny; `decision_escalation` → options + free-text
+   answer delivered via `pflow resume <id> --choose`. Rationale: the agent-operated run is the
+   scenario this bridge exists for, and escalations are its centerpiece; `--choose` works fully
+   non-TTY and the payload is self-contained by contract.
+2. **Un-run greying (canvas replay truth) — DECIDED IN (owner, 2026-07-11)**, phased LAST with an
+   explicit cut-line: if it drags, it ships as a follow-up issue — it is presentation-only and
+   touches nothing the other deliverables need.
+3. **`resolved_via: "ui"` — DECIDED OUT for v1 (owner, 2026-07-11).** The bridge's answers record
+   `"flag"` — truthful (the answer IS delivered via `pflow resume --approve`, which primes the
+   flag mechanism). Plain-language rationale the decision was approved on: a `"ui"` marker would
+   be **self-reported and spoofable** (an agent can pass the same hidden flag/env), **nothing
+   consumes the label today** (no report or UI filters on `resolved_via`), and it needs a
+   three-layer plumbing channel whose only job is carrying one word into a log line — it fails
+   the deletion test. Provenance already exists in a stronger, structural form: the answering
+   resume creates a separate attempt trace linked by `resumed_from`. Reversible: adding `"ui"`
+   later is additive; wait for the first real consumer (an actual audit view) and then decide
+   whether self-reported provenance is even the right mechanism. Do NOT re-derive this in-task.
 
 ## Priority
 
-low (immediately after 171; small)
+medium (next on the critical path; the resume/HITL arc's closing piece)
 
 ## Problem
 
-Browser-launched runs are non-TTY by construction (`POST /api/run` spawns with
-`stdin=subprocess.DEVNULL` — `src/pflow/ui/server.py:853-858`). So the moment gates ship: a gated
-workflow launched from `pflow ui` pauses durably (171), the overlay renders "waiting for approval"
-(125's `gate` event) — and the user must leave the browser for a terminal to answer. An observable
-gap that is hit on day one of 125+171, on the product's own primary demo surface.
+Browser-launched runs are non-TTY by construction — `POST /api/run` spawns with
+`stdin=subprocess.DEVNULL` (`src/pflow/ui/server.py:1102-1109`; the draft's `:853-858` ref
+drifted). So a gated workflow launched from `pflow ui` pauses durably (171), the UI shows the
+paused fact — and the user must leave the browser for a terminal to answer. Hit on day one of
+gates, on the product's own primary demo surface.
+
+## What already shipped vs. what this task builds (verified 2026-07-11)
+
+**Already shipped by 171 Phase 4 — do NOT rebuild:** the run-level paused surfaces. `RunProgress`
+paused arm (amber "Run paused" banner, `RunProgress.tsx:24-41`), `RunSelector` ⏸ mark +
+`⤷ resumed from` jump-link chain marker (`RunSelector.tsx:33-35, 136-165`),
+`RunInfo.resumed_from` (`types.ts:96-98`, emitted at `server.py:1197`). All unit-tested.
+
+**Genuinely new (the four deliverables):**
+1. The gate panel — render the `GateRequest` payload, kind-switched controls (ledger #1).
+2. Resume button on failed/interrupted runs.
+3. ⏸ badge on the paused frontier node.
+4. Un-run region greying on pinned terminal replays (ledger #2 — phased last, cut-line).
+
+## The wire gap (the draft's biggest false assumption)
+
+The draft said "the tailer forwards trailer keys generically — no producer change expected."
+**FALSE.** Both server read paths are *deliberate* allowlists, built to keep bulky payloads off
+the SSE wire (their own comments say so — PR #543 review):
+
+- SSE / live overlay: `_RUN_COMPLETE_FIELDS` (`ui/run_tailer.py:611-618`) — no `paused_node_id`,
+  no `gate_request`.
+- `GET /api/runs`: `_run_entry` (`ui/server.py:1178-1198`) — same; and its cheap tail reader
+  `read_run_status` extracts only `final_status` from the trailer.
+
+Zero code in `ui/` or `web/` reads `paused_node_id`/`gate_request` today (grep-verified). So the
+bridge has a real server-side half. **Recommended wire shape (plan-level, orchestrator-owned):**
+put `paused_node_id` (a small string) on the light wires (`_RUN_COMPLETE_FIELDS` + `_run_entry`,
+extending the tail parser to extract it), and fetch the full `gate_request` (can exceed 64KB)
+**on demand** when the panel opens — a dedicated read endpoint, or server-side reuse of the
+trailer read. Do not spread the payload onto the SSE wire; the allowlist exists precisely to
+prevent that. Apply `masked_gate_dict` (`core/gate.py:141-152`) before serving the payload to the
+browser — masking is display-surface policy, and the browser is a display surface.
+
+Layering is already sanctioned: `ui/ → runtime/` imports are legal (the rule is one-way,
+`runtime/ ↛ ui/`; precedent `server.py:1023` imports `compile_workflow`), so the server may use
+`runtime/resume_source.py` (`list_paused_runs`, `PausedRun`) directly.
 
 ## Solution (the pattern — canonical statement in task-171.md "Consumers & synergies")
 
 Any approval surface = **read the gate → render `GateRequest` → deliver the answer via
 `pflow resume`**. For the web UI:
 
-1. Overlay already shows the paused gate (`gate` event / `paused` trailer) — Task 125/171 work,
-   not this task's.
-2. Detail panel renders the `GateRequest` payload (self-contained by contract — a remote human can
-   decide from the payload alone) with Approve/Deny controls.
-3. `POST /api/approve` → server spawns `pflow resume <execution-id> --approve yes|no` as a detached
-   subprocess. The server stays a pure observer (ADR-0008); this is its second sanctioned spawn,
-   structurally identical to `/api/run`. Guarded by the shared `_require_local_origin` Host-header
-   check like every mutating POST (Task 175 precedent).
+1. Panel/callout renders the (masked) `GateRequest`, kind-switched (ledger #1). Natural homes,
+   both shipped and content-agnostic: `NodeCallout` (flow-space box anchored at the paused node —
+   already hosts `RunProgress` and the say bubbles) and/or a boolean-gated panel like `RunPanel`
+   (deliberately *outside* the `selectedId` three-panel selection model — copy that precedent to
+   avoid racing it).
+2. `POST /api/approve` (and the resume trigger) → server spawns `pflow resume ...` detached.
+   Second sanctioned spawn, structurally identical to `/api/run`. **Extract the spawn helper** —
+   `/api/run`'s spawn is inline (`server.py:1102-1109`) and this task makes three consumers
+   (run / approve / resume): a real seam by the project's own rule. The helper MUST carry the
+   win32 detach branch Task 116 added (`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` vs
+   `start_new_session=True`).
+3. Origin guarding is **automatic**: the draft's `_require_local_origin` never existed — the real
+   guard is the global `_LoopbackOnly` ASGI middleware (`server.py:542-567`, installed at
+   `:1364`), which covers every new route with no per-handler call.
 
-Earlier sizing estimate: ~50 lines of bridge. If it grows past "small," something is wrong — the
-engine and payload were designed so surfaces are cheap (the payload is the seam).
+**Two hard rules from the step-back audit (both verified gaps, not theory):**
 
-## The agent-operated run (added 2026-07-02 — from the 125 planning session)
+- **No silent no-ops.** The `/api/run` spawn is fire-and-forget with all streams DEVNULL — a
+  *refused* resume (superseded, stale, still-running, answer-required…) would exit 1 invisibly.
+  Mirror `/api/run`'s pre-flight pattern: validate **in-process** (via `load_resume_source` /
+  the refusal family) and return 4xx with diagnostics BEFORE spawning; only a validated answer
+  spawns. (Task-175 rule: "spawn failures surface, never a silent no-op.")
+- **Pin the resumed attempt.** `PFLOW_EXECUTION_ID` is honored only by the `run` command
+  (`cli/commands/run.py:301`) — `resume` ignores it today. Add the same env hook to the resume
+  path (mirroring run.py's consume-and-pop) so the server can mint the new attempt's id and the
+  browser pins it immediately, exactly like `/api/run` launches. Without it the browser must
+  scan for `resumed_from` — racy and slower. (Small CLI change; verify placement against
+  `_dispatch_resume` → `execute_json_workflow`.)
 
-The scenario this bridge really serves: the run's *operator* is an AI agent (Claude Code via
-shell, or the MCP server), but the gate's *approver* must be the human behind it. Named
-honestly during 125 planning:
+## The resume surface, as a machine caller sees it (verified 2026-07-11)
 
-- **The gate is not a security boundary against the operating agent.** An agent with shell
-  access under the user's account can pass `--auto-approve=<node-id>`, run `pflow resume
-  <token> --approve`, or simply edit the workflow to delete the gate. No local design
-  prevents this — true prevention needs a secret outside the agent's reach, which doesn't
-  exist within one account.
-- What the design provides instead is **deliberate + visible + auditable** bypass: the flag
-  names the exact gate (and appears verbatim in the command the agent's own harness asks the
-  human to approve, one layer up); every gate resolution event carries `resolved_via:
-  prompt | flag | ui` (125 ships `prompt|flag`; this task adds `ui`), so "which gates were
-  self-approved by an agent" is a trivial trace audit; and 125's non-TTY gate error
-  explicitly instructs agents to ask their human before using `--auto-approve`.
-- This task's UI button is the **convenient human path** for agent-operated runs: the agent
-  relays the link, the human clicks approve in a surface the agent isn't driving. That's the
-  practical answer to "how does the human stay in the loop when an agent runs the workflow"
-  — convenience + audit, not enforcement.
+- `pflow resume` and `pflow resume list` both support `--output-format json` — refusals included
+  (`output_error` → `format_error_json`), and a JSON-mode `ResumeAnswerRequiredError` carries the
+  masked gate payload in `context["gate"]`. `resume list --output-format json` emits
+  `execution_id`, `workflow_name`, `paused_node_id`, `gate_kind`, `paused_at`, `resume_command`.
+- Exit codes: 0 success · 1 refusal OR resumed-run failure · 2 usage · 3 denied (`--approve no`
+  re-fires the gate deny-primed — a real denied attempt trace that consumes the token) · 4 the
+  resumed tail paused again · 130 interrupt. **Trap: exit 1 conflates refusal with downstream
+  failure** — the bridge distinguishes via JSON diagnostics, never via exit code alone.
+- A paused-gate answer **never** hits the side-effect confirmation — paused sources skip it
+  (`resume.py:575-582`; the answer flag is itself consent). The side-effect dialog matters only
+  for the failed-run Resume button (below).
+- `--auto-approve`/`--approve` resolve APPROVAL gates only (kind-checked,
+  `gate_prompt.py:77-85`); escalations need `--choose`, which is validated + folded at LOAD time
+  (the escalating step is never re-run, so no fresh gate-resolution line appears — don't build UI
+  that waits for one). `--approve` and `--choose` are mutually exclusive.
+- Answer refusals a paused run can hit (map each to a panel state): `ResumeAnswerRequiredError`
+  (missing/wrong flag), `ResumeStaleWorkflowError`, `ResumeSupersededError` (offer the newer
+  attempt), `ResumeStillRunningError`, `ResumeFidelityError`.
 
-## Resume button on failed/interrupted runs (folded in from the 164 wrap-up, owner decision 2026-07-04)
+## Resume button on failed/interrupted runs
 
-164 shipped resume as CLI-only; 171 makes chains *visible* in the UI (its "UI attempt-chain
-rendering" section); this task makes them *actionable* — a Resume control on a run whose
-`final_status` is `failed` or `incomplete`, spawning `pflow resume <execution-id>` via the same
-observe-and-spawn seam as the approval controls (one spawn helper serves both; that's why the
-button lives here and not in 171).
+Same spawn helper, different entry arm. Verified design facts:
 
-Design notes recorded now so the designer doesn't hit them cold (verify against shipped code at
-task start, per this draft's standing caveat):
+- Bare `pflow resume` on a failed run with a side-effecting entry K hard-errors non-TTY with
+  `ResumeSideEffectConfirmationError` naming **K's id + registry type** (`exceptions.py:1332`),
+  so the browser confirmation dialog is buildable from the pre-flight refusal alone: render K +
+  type + "its side effects may fire again", then spawn with `--force` only after explicit ack.
+  Never pass `--force` without the dialog. Same ack pattern for `ResumeStaleWorkflowError`
+  ("edited since the original run").
+- Idempotent K (`llm`) resumes with no dialog — mirror the CLI's silent path.
+- Refusals are the UX: superseded → offer the newer attempt; nothing-to-resume; still-running;
+  gate-stopped — panel states, never silence.
+- Whether the failed-run button and the paused-gate controls share one panel is a build-time
+  call — the spawn helper and pre-flight are shared either way.
 
-- **The spawn is non-TTY by construction** (`stdin=subprocess.DEVNULL`), so a side-effecting
-  entry step K makes bare `pflow resume` hard-error (`ResumeSideEffectConfirmationError`,
-  Decision 4 — deliberate agent-safety posture). The browser confirmation dialog therefore IS
-  the confirmation: render K + its registry type + "its side effects may fire again" (the same
-  what/why the CLI confirm shows), and spawn with `--force` only after explicit user ack. Never
-  pass `--force` without the dialog. Same handling for the stale-workflow gate
-  (`ResumeStaleWorkflowError`): surface "edited since the failed run" and require the ack.
-- **Refusals are the UX, not errors to swallow**: the loader's typed refusal family
-  (superseded → offer the newer attempt; gate-stopped/denied; nothing-to-resume; still-running)
-  maps to specific panel states. Exit-code-1 spawn output must reach the panel (the 175
-  "spawn failures surface, never a silent no-op" rule).
-- **Idempotent K (llm) resumes without a dialog** — mirror the CLI's silent path; don't
-  blanket-confirm every resume.
-- Whether the button also serves `paused` runs (171's arm) with approve/deny folded into one
-  control is a task-start design call — the plumbing is shared either way.
+## Canvas truth: ⏸ frontier badge + un-run greying
 
-## Canvas truth for paused runs: ⏸ frontier badge + un-run greying (owner idea, folded in 2026-07-05)
+1. **⏸ badge** — a CLIENT-synthesized per-node status derived from `paused_node_id` (once it's on
+   the wire), NOT a new trace event status. The pipeline already synthesizes exactly this way
+   twice (`unrecorded` via `applyStatus`/`markUnmatched`, `stopped` on flock-death —
+   `graph/focus.ts:33-72`); follow that pattern: add `paused` to the `NodeStatus` union
+   (`types.ts:30`), a `GLYPH` + label + CSS arm in `StatusBadge.tsx`, light the node matching
+   `paused_node_id`. `events.ts` `RUN_STATUSES` (the per-node EVENT allowlist, `events.ts:64`)
+   stays untouched — the 171-plan rule, still binding. Clicking the ⏸ node is the natural entry
+   to the gate panel.
+2. **Greying** — a third restyle pass beside `applyFocus`/`applyStatus` (`graph/focus.ts`): pure
+   style-pass over the laid-out React Flow snapshot, NO re-layout. Pinned terminal replays ONLY,
+   never live runs (owner scoping 2026-07-05 — a live shrinking grey region duplicates the badge
+   animation and would flicker). Care points: CSS-order composition with `.node.dimmed` /
+   `.node.hover-mark` (equal specificity, order decides — `index.css:952` comment) and both
+   densities. Phased last, cut-line per ledger #2.
 
-Proposed by the owner while driving 171's shipped UI: a paused run's canvas is nearly mute about
-the pause — completed nodes wear their badges, but the gated node looks identical to any node
-that never ran; the pause position lives only in the callout text and banner. Two additions,
-scoped here because the ⏸ badge is the natural ANCHOR the approval controls (this task's core)
-attach to:
+## The agent-operated run (unchanged framing, one correction)
 
-1. **⏸ badge on the frontier node** — the paused-at node gets an amber pause badge on the same
-   corner `StatusBadge` surface (mirroring ✓/!/spinner). Data already exists: the paused trailer
-   carries `paused_node_id` (+ the full `gate_request`), and the tailer forwards trailer keys
-   generically — verify the join at task start, but no producer change is expected. This is a
-   CLIENT-synthesized per-node status derived from the banner, NOT a new trace event status —
-   `events.ts` `RUN_STATUSES` (the per-node EVENT allowlist) stays untouched (the 171-plan rule).
-   Clicking the ⏸ node is then the natural entry to the gate panel → Approve/Deny.
-2. **Grey out the not-yet-run region** — dim nodes and edges the pinned run never executed, so
-   the canvas reads: bright = ran, ⏸/! = frontier, grey = still owed. Design this as generic
-   "run-replay truth", not a paused-only feature: failed runs have the same shape, and on a
-   success replay the not-taken branches greying is genuinely informative. Owner-aligned scoping
-   call (2026-07-05 discussion): pinned terminal replays ONLY, never live runs (a live shrinking
-   grey region duplicates what the badges animate and would flicker). Reuse the existing cheap
-   restyle machinery (the focus-dim pass — no re-layout); the care point is composition with
-   focus-dimming, hover marks, and both densities.
-
-Sizing: the badge is small (a day-ish with tests + real-browser check); the greying is the larger
-half (composition testing). Both are presentation-only — zero engine/trace changes, consistent
-with this task's "if the bridge needs engine changes, escalate" rule.
+The scenario this bridge serves: the run's operator is an AI agent, the gate's approver is the
+human behind it. The gate is not a security boundary against the operating agent — the design
+provides deliberate + visible + auditable bypass, and this task's UI is the convenient human
+path (the agent relays the link; the human clicks in a surface the agent isn't driving).
+**Correction to the draft:** the audit story rests on attempt-chain lineage (`resumed_from`) and
+the gate-resolution lines' existing `prompt|flag` vocabulary — NOT on a `resolved_via: "ui"`
+value (ledger #3, OUT).
 
 ## Explicitly out of scope
 
-- **Slack / email / webhook / any external surface.** Deliberately NOT tasked (Core Directive:
-  solve observed problems, not theorized ones). The generalized pattern + the two constraints for
-  whoever builds the first external bridge (the additive `on_pause` notification hook; bridges own
-  their own authn — pflow's trust boundary stays "can run the CLI locally") are recorded in
-  `task-171.md` "Consumers & synergies". Write that task when a real need is observed.
-- Any engine/payload changes — if the bridge needs them, the 125/171 contracts failed; escalate
-  rather than patch around.
+- **Slack / email / webhook / any external surface** (observed-problems rule). The generalized
+  pattern + constraints for the first external bridge live in `task-171.md` "Consumers &
+  synergies" (`on_pause` hook is additive-later; bridges own their authn).
+- Engine or trace-format changes. The wire work is UI-server projection only (allowlists +
+  endpoint); the one CLI change (resume `PFLOW_EXECUTION_ID`) mirrors an existing pattern. If the
+  bridge needs more than that, the 125/171 contracts failed — escalate rather than patch around.
+- Process cancel / PID tracking (#568's scope). Note: a durably paused run has NO live process
+  (it exited 4) — deny is a trace operation, not a kill.
 
-## Dependencies
+## Windows / platform notes (post-116, all verified)
 
-- **Task 125** — the gate primitive, `GateRequest`, the `gate` trace event.
-- **Task 164** — the resume machinery (`load_resume_source`, engine re-entry, attempt chains).
-  **Read `.taskmaster/tasks/task_164/task-review.md` first** (shipped-substrate handoff:
-  refusal family, side-effect policy, invariants). One fact for the merged-control design call
-  above, written nowhere else UI-adjacent: `--auto-approve` pre-approves APPROVAL gates only
-  (`gate_prompt.py`, kind-checked) — escalations always need a delivered decision, so an
-  escalation-paused run can never be resumed by a flag alone.
-- **Task 171** — durable pause (`paused` trailer), `execution_id` token, the `pflow resume` verb.
-- Shipped substrate: Task 169 SSE + #529 robustness; Task 175 `/api/run` spawn pattern +
-  `_require_local_origin`.
+- A paused run writes a terminal `run.complete` trailer → `complete=True` → the liveness probe
+  short-circuits before the lock check. **The bridge is immune to the Windows "unknown lock =
+  live" weakness (#566).** Favorable and load-bearing — don't re-open it.
+- The spawn helper carries the win32 detach branch (above). Windows CI (`tests-windows`) is a
+  blocking gate — any new subprocess/encoding/path code must clear it; ADR-0013 governs.
 
-## Verification (sketch — firm up at task start)
+## Collisions & sequencing (verified 2026-07-11)
 
-- Gated workflow launched from `pflow ui` → pauses; overlay shows the gate; Approve in the browser
-  → run continues as a new attempt (`resumed_from` chain) and completes; Deny → clean cancellation
-  surfaced in the UI.
-- The approve POST is rejected without a local Host header; spawn failures surface in the panel,
-  never a silent no-op.
-- Failed-run Resume button: side-effecting K → confirmation dialog naming K + type, then resumes
-  (spawn carries `--force`); idempotent K resumes without a dialog; a superseded source surfaces
-  the newer attempt instead of resuming; refusals render as panel states, never silent.
-- Real-browser verification required (CLI cannot see the UI) — same posture as Tasks 173/175.
+- **#546** (pinned-run resolve race) and **#568** (detached-run lifecycle) live on exactly this
+  task's surfaces (`RunTailer._resolve_pinned`, the `/api/run` spawn) — **serialized behind 176**,
+  never parallel. The resumed-attempt pin inherits #546's cold-start race; tolerate, don't fix
+  here.
+- **#542** (trace retention): no file collision, one semantic rule recorded both places —
+  retention must treat `paused` traces as un-prunable live obligations, and must not be
+  *implemented* while 176's trailer-reading surface is in flight.
+- **#562** (inline resumable) touches `resume_source.py` + engine conjuncts and flips the
+  `TestInlinePausePromise` pins — keep serialized with any trace-format work; mostly disjoint
+  from 176 but do not run both against `resume_source.py` concurrently.
+
+## Verification
+
+- Gated workflow launched from `pflow ui` → pauses; ⏸ badge on the frontier node; panel renders
+  the masked payload; Approve → new attempt pinned immediately (`resumed_from` chain) and
+  completes; Deny → denied attempt surfaced (exit 3 is success-shaped for "user said no").
+- Escalation-paused run → options render; choose (numeric and free text) → run continues from
+  the decision.
+- Every refusal (superseded / stale / still-running / answer-required) surfaces as a panel state
+  with diagnostics — spawn only after in-process pre-flight passes; prove the no-silent-no-op
+  rule with a deliberate refusal.
+- Failed-run Resume: side-effecting K → dialog naming K + type → `--force` spawn; idempotent K →
+  no dialog; superseded → offers the newer attempt.
+- Approve POST rejected for non-loopback Host (middleware — verify, don't re-implement).
+- Greying: pinned terminal replay dims un-run nodes/edges; composes with focus-dim + hover marks
+  in both densities; never active on a live run.
+- **Real-browser verification required** (CLI cannot see the UI — Tasks 173/175 posture; use
+  `screenshot-pflow-web-ui`; kill any stale `pflow ui` server first — the reuse-if-up probe
+  serves old code, a recorded 171 gotcha).
+- Regression nets: the 171 test battery (`test_resume_source.py`, `test_gate_pause.py`,
+  `test_paused_cli.py`, `test_resume_list_cli.py`), vitest, and the Task-159 baseline
+  (`task_159/baseline/verify.sh`) if anything trace-adjacent moves.
+
+## Dependencies (all shipped)
+
+- **Task 125** — gate primitive, `GateRequest`, ADR-0009 (payload is the seam).
+- **Task 164** — resume machinery. Read `task_164/task-review.md` for the refusal family +
+  side-effect policy.
+- **Task 171** — durable pause. **Read `task_171/task-review.md` FIRST** — invariants
+  (pause-is-a-promise, one consumption policy, `is_durable_pause`), gotchas (trailer keys ride
+  generic round-trip, NOT `META_KEYS`; oversized trailers), and the answer-delivery patterns.
+- Shipped substrate: Task 169 SSE + #529; Task 175 `/api/run` spawn + pre-flight +
+  typed-client error surfacing (`web/src/api/client.ts:126-140` `runWorkflow` → `ApiError` →
+  inline diagnostics — copy this pattern verbatim for approve/resume).
 
 ## References
 
-- `task-171.md` "Consumers & synergies" (the canonical bridge pattern + external-surface notes).
-- `task-125.md` "Phasing → Web approval" + "Decision payload: `GateRequest`".
-- ADR-0008 (observe, never host), ADR-0007 (WebSocket pre-authorized if ever needed).
-- `src/pflow/ui/server.py` (`/api/run` spawn + `_require_local_origin` precedents).
+- `task-171.md` "Consumers & synergies" (canonical bridge pattern); `task_171/task-review.md`.
+- ADR-0008 (observe, never host — incl. the "MCP runs stream too" 171 update), ADR-0009
+  (approval-surface bridges), ADR-0013 (Windows shell contract).
+- Key files: `ui/server.py` (spawn `:1102`, `_LoopbackOnly` `:542`, `_run_entry` `:1178`),
+  `ui/run_tailer.py` (`_RUN_COMPLETE_FIELDS` `:611`, `read_run_status` `:107`),
+  `runtime/resume_source.py` (`list_paused_runs`, refusal raises), `cli/commands/resume.py`,
+  `core/gate.py` (`masked_gate_dict`, `option_labels`), `web/src/api/{client,events}.ts`,
+  `web/src/components/{NodeCallout,RunPanel,nodes/StatusBadge}.tsx`, `web/src/graph/focus.ts`,
+  `web/src/types.ts`.

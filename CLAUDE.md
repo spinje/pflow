@@ -238,6 +238,7 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - ✅ Task 164: Resume Workflow From a Failed Node
 - ✅ Task 174: Agent Voice Narration — "Point & Say"
 - ✅ Task 171: Durable Resume Tokens & Non-TTY Gates
+- ✅ Task 116: Windows Compatibility
 
 ### Planned Features (in order of priority)
 
@@ -291,7 +292,6 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - Task 112: Pre-execution Type Validation
 - Task 113: TypeScript Code Node
 - Task 114: Lightweight Custom Nodes
-- Task 116: Windows Compatibility
 - Task 167: LSP Support for `.pflow.md`
 
 > **Task commands:**

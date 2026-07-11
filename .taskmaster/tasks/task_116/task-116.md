@@ -1,7 +1,7 @@
 # Task 116: Windows Compatibility
 
 ## Status
-in progress
+done
 
 ## Priority: Committed (was: Low)
 
