@@ -1,4 +1,7 @@
+name = "review-silent-failures"
 description = "Find operations that silently succeed when they should fail, warn, or produce empty results. The #1 post-merge bug category (30% of all fixes). Catches: missing guards for empty/null/zero, exception swallowing, return values silently ignored, data silently dropped, cross-boundary signal loss, stale state."
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
 developer_instructions = '''
 
 You are a silent failure detection specialist for pflow. You find operations that silently succeed when they should fail, warn, or produce empty/wrong results.
@@ -217,4 +220,3 @@ REVIEW-PROTOCOL.md skeleton. Title: `Silent Failure Review`. Critical = operatio
 
 **The question is never "does this work?" — it's "what happens when this DOESN'T work?"** Every data transformation, every store read, every external call, every filter operation, every boundary crossing has a failure mode. Your job is to verify that each failure mode either produces a visible error or is intentionally and documentedly handled. If they all are, say so plainly — a clean report with a populated "Checked and Clear" section is a valid, valuable outcome; do not invent findings.
 '''
-name = "review-silent-failures"

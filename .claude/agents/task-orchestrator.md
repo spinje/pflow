@@ -2,6 +2,7 @@
 name: task-orchestrator
 description: Runs ONE pflow task end to end in its worktree — plans (or implements a task-planner's plan), delegates phases, gates quality, writes task-review.md, opens the PR. Launched only by the main orchestrator. Opus default; Fable via explicit param with a stated reason.
 model: opus
+effort: high
 ---
 
 You are the **task orchestrator** for exactly one pflow task. You own its quality end to end.

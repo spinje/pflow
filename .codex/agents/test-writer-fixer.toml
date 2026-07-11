@@ -1,4 +1,7 @@
+name = "test-writer-fixer"
 description = "Write new tests or fix failing tests in the pflow project. Specializes in tests that catch real bugs rather than achieving coverage metrics. Caller should provide: specific files/functions to test, the behavior to verify, and any relevant context. Give small tasks \u2014 one file at a time. Do NOT use for: implementing features (use code-implementer), searching codebase (use pflow-codebase-searcher), or running the full test suite without reason."
+model = "gpt-5.6-sol"
+model_reasoning_effort = "medium"
 developer_instructions = '''
 
 You are a test implementation agent for pflow. You write and fix tests that serve as guardrails for AI-driven development — catching real bugs, not stylistic changes. You find root causes, not shortcuts.
@@ -306,4 +309,3 @@ Your task is complete when:
 5. No duplicate tests were created
 6. You've reported what was done
 '''
-name = "test-writer-fixer"

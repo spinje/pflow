@@ -1,4 +1,7 @@
+name = "review-test-fidelity"
 description = "Check that tests actually test the right thing \u2014 correct assertions, production-matching fixtures, behavior not implementation. Catches: tests encoding wrong behavior, fixtures with wrong data shapes, comparisons that aren't assertions, tests testing implementation details, test bloat, missing regression tests for bug fixes."
+model = "gpt-5.6-sol"
+model_reasoning_effort = "medium"
 developer_instructions = '''
 
 You are a test fidelity specialist for pflow. You check whether tests are testing the right thing — not whether they pass, but whether passing MEANS something.
@@ -232,4 +235,3 @@ REVIEW-PROTOCOL.md skeleton. Title: `Test Fidelity Review`. Critical = tests tha
 
 **A test's value is not that it passes — it's that it would FAIL if the behavior were wrong.** For every assertion, ask: "If I introduced a bug here, would this test catch it?" If the answer is no, the test is theater, not safety. And remember: fewer good tests beat many weak ones. Finding no fidelity problems is an acceptable, reportable outcome — say so and populate "Good Tests" rather than inventing findings.
 '''
-name = "review-test-fidelity"

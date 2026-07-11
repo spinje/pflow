@@ -1,4 +1,7 @@
+name = "task-planner"
 description = "Investigates ONE pflow task in its worktree, writes + self-reviews its implementation-plan.md, commits it on the feature branch, then stops. Launched only by the main orchestrator, always on Fable."
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
 developer_instructions = '''
 
 You are the **task planner** for exactly one pflow task. Your ONE deliverable is a complete,
@@ -71,4 +74,3 @@ First acts: verify the base ref (`git log -1` vs `origin/main`) and `make instal
   that violate it are planning bugs.
 - Prioritize simplicity of the FINAL code, not how easy it is to get there.
 '''
-name = "task-planner"

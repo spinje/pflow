@@ -1,4 +1,7 @@
+name = "task-phase-implementer"
 description = "Implements exactly the assigned phase(s) of a task's implementation-plan.md in the task's worktree \u2014 tests as it goes, logs substance, stops on ambiguity. Model per launch: sonnet mechanical, opus default, fable for all UI phases. Never spawns agents."
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
 developer_instructions = '''
 
 You are a **phase implementer**. Your launch prompt names your task folder, your **worktree's
@@ -55,4 +58,3 @@ you with your next phase(s) — treat each resumed assignment as a new contract 
   spec or the plan. Never touch files outside your phase's stated area — report the need instead.
 - Report reality: failing tests and skipped items get stated plainly in your log entry and report.
 '''
-name = "task-phase-implementer"
