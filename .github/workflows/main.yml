@@ -133,10 +133,10 @@ jobs:
         include:
           - shard: core-cli-nodes
             pytest-targets: tests/test_core tests/test_cli tests/test_nodes
-            run-mypy: false
+            run-mypy: true
           - shard: rest
             pytest-targets: tests --ignore=tests/test_core --ignore=tests/test_cli --ignore=tests/test_nodes
-            run-mypy: true
+            run-mypy: false
     # ~8k tests at ~2x runner slowness should land well under this; the cap
     # exists so a hung test or subprocess can't burn a runner for the 6h default.
     timeout-minutes: 60
