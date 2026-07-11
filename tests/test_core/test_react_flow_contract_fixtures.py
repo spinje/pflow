@@ -25,7 +25,7 @@ _REGEN = "uv run python -m tests.fixtures.react_flow_contracts._generate"
 def test_committed_contract_fixture_matches_live_renderer(name: str) -> None:
     path = CONTRACT_DIR / f"{name}.json"
     assert path.exists(), f"missing committed fixture {path} — regenerate: {_REGEN}"
-    committed = json.loads(path.read_text())
+    committed = json.loads(path.read_text(encoding="utf-8"))
     live = render_contract(name)
     assert committed == live, (
         f"web/src/test/fixtures/contracts/{name}.json no longer matches the live renderer "

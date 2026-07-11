@@ -260,14 +260,14 @@ def test_retry_config_does_not_change_memo_cache_key(tmp_path: Path) -> None:
     first_shared.update(first.resolved_defaults)
     WorkflowEngine().run(first, first_shared)
 
-    assert tracking_file.read_text().count("executed") == 1
+    assert tracking_file.read_text(encoding="utf-8").count("executed") == 1
 
     second = compile_workflow(ir_with_retry({"max": 3, "wait": 0.25, "backoff": "exponential"}), registry)
     second_shared: dict[str, Any] = {"__memoization_cache__": cache}
     second_shared.update(second.resolved_defaults)
     WorkflowEngine().run(second, second_shared)
 
-    assert tracking_file.read_text().count("executed") == 1
+    assert tracking_file.read_text(encoding="utf-8").count("executed") == 1
     assert second_shared["tracked"] == first_shared["tracked"]
 
 

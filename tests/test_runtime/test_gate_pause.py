@@ -181,7 +181,8 @@ class TestNestingGuard:
         child.write_text(
             "# Child\n\nChild whose gated step shares the parent host's id.\n\n## Steps\n\n"
             "### review\n\nGated child step.\n\n- type: shell\n- approval: required\n\n"
-            "```shell command\necho child-review\n```\n"
+            "```shell command\necho child-review\n```\n",
+            encoding="utf-8",
         )
         ir = {
             "ir_version": "0.1.0",
@@ -205,7 +206,8 @@ class TestNestingGuard:
         child.write_text(
             "# Child\n\nChild with a gated step.\n\n## Steps\n\n"
             "### gated-step\n\nGated child action.\n\n- type: shell\n- approval: required\n\n"
-            "```shell command\necho child-action\n```\n"
+            "```shell command\necho child-action\n```\n",
+            encoding="utf-8",
         )
         ir = {
             "ir_version": "0.1.0",
@@ -276,7 +278,8 @@ def test_failed_child_gate_stop_still_refuses_naming_the_gate(tmp_path, monkeypa
     child.write_text(
         "# Child\n\nChild with a gated step.\n\n## Steps\n\n"
         "### child-gate\n\nGated child action.\n\n- type: shell\n- approval: required\n\n"
-        "```shell command\necho child-action\n```\n"
+        "```shell command\necho child-action\n```\n",
+        encoding="utf-8",
     )
     wf_path = tmp_path / "parent.pflow.md"
     ir = {

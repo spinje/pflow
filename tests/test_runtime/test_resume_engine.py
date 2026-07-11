@@ -259,7 +259,7 @@ def test_resume_of_a_resume_seeds_from_newest_attempt_alone(tmp_path, flaky_step
     """Chain: run1 fails at step2 → attempt A fails at step3 → attempt B resumes
     from A's trace ALONE (upstream present via A's re-recorded restored events)."""
     exit_file = tmp_path / "step3-exit"
-    exit_file.write_text("1")
+    exit_file.write_text("1", encoding="utf-8")
     wf = _write_three_step_workflow(tmp_path, step3_suffix=f"; exit $(cat {exit_file})")
     _, source_1 = _fail_then_load(wf, flaky_step2)
 
@@ -267,7 +267,7 @@ def test_resume_of_a_resume_seeds_from_newest_attempt_alone(tmp_path, flaky_step
     assert not attempt_a.success, "attempt A was supposed to fail at step3"
     a_path = attempt_a.trace.save_to_file()
 
-    exit_file.write_text("0")
+    exit_file.write_text("0", encoding="utf-8")
     source_a = load_resume_source(execution_id=attempt_a.trace.execution_id, debug_dir=a_path.parent)
     # Decision 6 direct pin: A's trace alone carries the restored step1 event.
     assert source_a.entry_node_id == "step3"
@@ -298,7 +298,7 @@ def test_restored_large_output_reinterns_blob_and_round_trips(tmp_path, flaky_st
     expected_text = json.dumps({"response": big_response})
 
     exit_file = tmp_path / "step3-exit"
-    exit_file.write_text("1")
+    exit_file.write_text("1", encoding="utf-8")
     wf = _write_three_step_workflow(tmp_path, step3_suffix=f"; exit $(cat {exit_file})")
     _, source_1 = _fail_then_load(wf, flaky_step2)
 
@@ -319,7 +319,7 @@ def test_restored_large_output_reinterns_blob_and_round_trips(tmp_path, flaky_st
     assert set(step1_line["node_output"]["response"]) == {BLOB_SENTINEL}
 
     # A second resume resolves the blob back to the FULL value and seeds it.
-    exit_file.write_text("0")
+    exit_file.write_text("0", encoding="utf-8")
     source_a = load_resume_source(execution_id=attempt_a.trace.execution_id, debug_dir=a_path.parent)
     step1_event = next(e for e in source_a.events if e["node_id"] == "step1")
     assert step1_event["node_output"]["response"] == expected_text
@@ -412,7 +412,9 @@ def test_has_resumable_step_agrees_with_the_loader_on_common_cases(tmp_path) -> 
 
     def run(ir: dict[str, Any], name: str) -> Any:
         path = tmp_path / f"{name}.pflow.md"
-        path.write_text(ir_to_markdown(ir, title=name, description=f"{name} workflow for the parity pin."))
+        path.write_text(
+            ir_to_markdown(ir, title=name, description=f"{name} workflow for the parity pin."), encoding="utf-8"
+        )
         return WorkflowRunner().run(str(path), {}, RunnerConfig())
 
     # (a) A normal node failure → resumable on BOTH surfaces.
@@ -595,7 +597,7 @@ def test_branch_resume_converged_coalesce_reads_restored_value(tmp_path) -> None
     """K sits on one conditional branch; after resume the converged ``??`` output
     resolves from the RESTORED branch node (a1), with the untaken branch absent."""
     exit_file = tmp_path / "a2-exit"
-    exit_file.write_text("1")
+    exit_file.write_text("1", encoding="utf-8")
     wf = tmp_path / "branch.pflow.md"
     wf.write_text(textwrap.dedent(_BRANCH_WORKFLOW).format(exit_file=exit_file), encoding="utf-8")
 
@@ -603,7 +605,7 @@ def test_branch_resume_converged_coalesce_reads_restored_value(tmp_path) -> None
     assert not run1.success
     trace_path = run1.trace.save_to_file()
 
-    exit_file.write_text("0")
+    exit_file.write_text("0", encoding="utf-8")
     source = load_resume_source(execution_id=run1.trace.execution_id, debug_dir=trace_path.parent)
     assert source.entry_node_id == "a2"
 
@@ -636,7 +638,7 @@ def test_restored_subworkflow_and_batch_hosts_are_childless_and_reseed(tmp_path)
         child,
     )
     exit_file = tmp_path / "k-exit"
-    exit_file.write_text("1")
+    exit_file.write_text("1", encoding="utf-8")
     wf = tmp_path / "parent.pflow.md"
     write_workflow_file(
         {
@@ -681,7 +683,7 @@ def test_restored_subworkflow_and_batch_hosts_are_childless_and_reseed(tmp_path)
     assert [r["stdout"] for r in a_events["fan"]["node_output"]["results"]] == ["item-a", "item-b"]
 
     # Attempt B seeds BOTH hosts from A's childless events alone.
-    exit_file.write_text("0")
+    exit_file.write_text("0", encoding="utf-8")
     source_a = load_resume_source(execution_id=attempt_a.trace.execution_id, debug_dir=a_path.parent)
     attempt_b = _resume(wf, source_a)
     assert attempt_b.success, [str(d) for d in attempt_b.diagnostics]
@@ -773,9 +775,9 @@ def test_loop_k_restarts_at_iteration_one(tmp_path) -> None:
             iteration: int
             from pathlib import Path
 
-            with Path("{iter_file_literal}").open("a") as fh:
+            with Path("{iter_file_literal}").open("a", encoding="utf-8") as fh:
                 fh.write(f"{{iteration}}\\n")
-            if Path("{fail_flag_literal}").read_text().strip() == "1":
+            if Path("{fail_flag_literal}").read_text(encoding="utf-8").strip() == "1":
                 raise RuntimeError("injected loop failure")
             result: bool = True
             ```

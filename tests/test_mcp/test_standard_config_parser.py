@@ -25,7 +25,8 @@ class TestStandardConfigParser:
                         "env": {"GITHUB_TOKEN": "test-token"},
                     }
                 }
-            })
+            }),
+            encoding="utf-8",
         )
 
         manager = MCPServerManager()
@@ -41,7 +42,9 @@ class TestStandardConfigParser:
     def test_parse_stdio_without_type_field(self, tmp_path):
         """Test that missing 'type' field defaults to stdio."""
         config_file = tmp_path / "test.mcp.json"
-        config_file.write_text(json.dumps({"mcpServers": {"test-server": {"command": "node", "args": ["server.js"]}}}))
+        config_file.write_text(
+            json.dumps({"mcpServers": {"test-server": {"command": "node", "args": ["server.js"]}}}), encoding="utf-8"
+        )
 
         manager = MCPServerManager()
         servers = manager.parse_standard_mcp_config(config_file)
@@ -62,7 +65,8 @@ class TestStandardConfigParser:
                         "headers": {"Authorization": "Bearer token123"},
                     }
                 }
-            })
+            }),
+            encoding="utf-8",
         )
 
         manager = MCPServerManager()
@@ -77,7 +81,8 @@ class TestStandardConfigParser:
         """Test that SSE transport is rejected with clear error."""
         config_file = tmp_path / "sse.mcp.json"
         config_file.write_text(
-            json.dumps({"mcpServers": {"sse-server": {"type": "sse", "url": "https://example.com/sse"}}})
+            json.dumps({"mcpServers": {"sse-server": {"type": "sse", "url": "https://example.com/sse"}}}),
+            encoding="utf-8",
         )
 
         manager = MCPServerManager()
@@ -90,7 +95,7 @@ class TestStandardConfigParser:
     def test_missing_mcpservers_key(self, tmp_path):
         """Test error when mcpServers wrapper is missing."""
         config_file = tmp_path / "invalid.json"
-        config_file.write_text(json.dumps({"servers": {"test": {"command": "test"}}}))
+        config_file.write_text(json.dumps({"servers": {"test": {"command": "test"}}}), encoding="utf-8")
 
         manager = MCPServerManager()
         with pytest.raises(ValueError) as exc_info:
@@ -107,7 +112,7 @@ class TestStandardConfigParser:
     def test_invalid_json(self, tmp_path):
         """Test error handling for invalid JSON."""
         config_file = tmp_path / "invalid.json"
-        config_file.write_text("{ invalid json }")
+        config_file.write_text("{ invalid json }", encoding="utf-8")
 
         manager = MCPServerManager()
         with pytest.raises(ValueError) as exc_info:
@@ -125,7 +130,8 @@ class TestStandardConfigParser:
                     "server2": {"type": "http", "url": "https://example.com/mcp"},
                     "server3": {"command": "cmd3", "env": {"KEY": "value"}},
                 }
-            })
+            }),
+            encoding="utf-8",
         )
 
         manager = MCPServerManager()
@@ -153,7 +159,8 @@ class TestAddServersFromFile:
         mcp_file.write_text(
             json.dumps({
                 "mcpServers": {"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}}
-            })
+            }),
+            encoding="utf-8",
         )
 
         # Add servers from the file
@@ -173,12 +180,12 @@ class TestAddServersFromFile:
 
         # First add
         mcp_file1 = tmp_path / "test1.json"
-        mcp_file1.write_text(json.dumps({"mcpServers": {"test": {"command": "old-command"}}}))
+        mcp_file1.write_text(json.dumps({"mcpServers": {"test": {"command": "old-command"}}}), encoding="utf-8")
         manager.add_servers_from_file(mcp_file1)
 
         # Second add with same name
         mcp_file2 = tmp_path / "test2.json"
-        mcp_file2.write_text(json.dumps({"mcpServers": {"test": {"command": "new-command"}}}))
+        mcp_file2.write_text(json.dumps({"mcpServers": {"test": {"command": "new-command"}}}), encoding="utf-8")
         added = manager.add_servers_from_file(mcp_file2)
 
         assert added == ["test"]
@@ -200,7 +207,8 @@ class TestAddServersFromFile:
                     "server2": {"type": "http", "url": "https://example.com"},
                     "server3": {"command": "cmd3"},
                 }
-            })
+            }),
+            encoding="utf-8",
         )
 
         added = manager.add_servers_from_file(mcp_file)
@@ -216,7 +224,7 @@ class TestAddServersFromFile:
         manager = MCPServerManager(config_path)
 
         mcp_file = tmp_path / "test.json"
-        mcp_file.write_text(json.dumps({"mcpServers": {"test": {"command": "test"}}}))
+        mcp_file.write_text(json.dumps({"mcpServers": {"test": {"command": "test"}}}), encoding="utf-8")
 
         manager.add_servers_from_file(mcp_file)
 
@@ -233,7 +241,10 @@ class TestEnvironmentVariableDefaults:
         """Test ${VAR:-default} syntax when VAR is not set."""
         config_file = tmp_path / "test.json"
         config_file.write_text(
-            json.dumps({"mcpServers": {"test": {"command": "test", "env": {"TOKEN": "${MISSING_VAR:-default_token}"}}}})
+            json.dumps({
+                "mcpServers": {"test": {"command": "test", "env": {"TOKEN": "${MISSING_VAR:-default_token}"}}}
+            }),
+            encoding="utf-8",
         )
 
         manager = MCPServerManager()
@@ -248,7 +259,8 @@ class TestEnvironmentVariableDefaults:
         """Test default values in HTTP URLs."""
         config_file = tmp_path / "test.json"
         config_file.write_text(
-            json.dumps({"mcpServers": {"api": {"type": "http", "url": "${API_URL:-http://localhost:3000}/mcp"}}})
+            json.dumps({"mcpServers": {"api": {"type": "http", "url": "${API_URL:-http://localhost:3000}/mcp"}}}),
+            encoding="utf-8",
         )
 
         manager = MCPServerManager()
@@ -271,7 +283,8 @@ class TestEnvironmentVariableDefaults:
                         },
                     }
                 }
-            })
+            }),
+            encoding="utf-8",
         )
 
         manager = MCPServerManager()
@@ -290,7 +303,8 @@ class TestHTTPAuthConversion:
         config_file.write_text(
             json.dumps({
                 "mcpServers": {"api": {"type": "http", "url": "https://api.example.com", "token": "bearer_token_123"}}
-            })
+            }),
+            encoding="utf-8",
         )
 
         manager = MCPServerManager()
@@ -313,7 +327,8 @@ class TestHTTPAuthConversion:
                         "apiKeyHeader": "X-Custom-Key",
                     }
                 }
-            })
+            }),
+            encoding="utf-8",
         )
 
         manager = MCPServerManager()
@@ -332,7 +347,8 @@ class TestHTTPAuthConversion:
                 "mcpServers": {
                     "api": {"type": "http", "url": "https://api.example.com", "username": "user", "password": "pass"}
                 }
-            })
+            }),
+            encoding="utf-8",
         )
 
         manager = MCPServerManager()
@@ -355,7 +371,8 @@ class TestHTTPAuthConversion:
                         "auth": {"type": "custom", "special_field": "value"},
                     }
                 }
-            })
+            }),
+            encoding="utf-8",
         )
 
         manager = MCPServerManager()

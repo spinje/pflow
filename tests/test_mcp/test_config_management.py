@@ -33,7 +33,7 @@ class TestAtomicWriteProtection:
             manager.add_server("github", "stdio", "npx", ["@modelcontextprotocol/server-github"])
 
             # Read the original content
-            original_content = config_path.read_text()
+            original_content = config_path.read_text(encoding="utf-8")
             original_data = json.loads(original_content)
 
             # Simulate atomic rename failure (the critical moment)
@@ -45,10 +45,10 @@ class TestAtomicWriteProtection:
 
             # CRITICAL: Original file must be untouched
             assert config_path.exists()
-            assert config_path.read_text() == original_content
+            assert config_path.read_text(encoding="utf-8") == original_content
 
             # Verify content is still valid
-            current_data = json.loads(config_path.read_text())
+            current_data = json.loads(config_path.read_text(encoding="utf-8"))
             assert current_data == original_data
             assert "github" in current_data["mcpServers"]
             assert "slack" not in current_data["mcpServers"]
@@ -311,7 +311,7 @@ class TestSecurityValidation:
             # The patterns should be stored as literal strings
             # If they were executed, we'd see different content
             # For example, ${VAR`whoami`} would become the actual username
-            raw_content = config_path.read_text()
+            raw_content = config_path.read_text(encoding="utf-8")
 
             # These dangerous patterns should exist as literal strings
             assert "${VAR && echo hacked}" in raw_content  # Not executed

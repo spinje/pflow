@@ -239,7 +239,7 @@ class TestValidateOnlyEdgeCases:
         """Should show helpful error for invalid markdown workflow."""
         workflow_path = tmp_path / "bad.pflow.md"
         # Missing ## Steps section — invalid markdown workflow
-        workflow_path.write_text("# Bad Workflow\n\nJust some text, no steps.\n")
+        workflow_path.write_text("# Bad Workflow\n\nJust some text, no steps.\n", encoding="utf-8")
 
         result = invoke_cli(["--validate-only", str(workflow_path)])
 
@@ -250,7 +250,7 @@ class TestValidateOnlyEdgeCases:
     def test_validate_only_rejects_json_files(self, tmp_path: Path) -> None:
         """Should show helpful error when a .json file is passed."""
         workflow_path = tmp_path / "old.json"
-        workflow_path.write_text('{"nodes": []}')
+        workflow_path.write_text('{"nodes": []}', encoding="utf-8")
 
         result = invoke_cli(["--validate-only", str(workflow_path)])
 
@@ -586,7 +586,7 @@ class TestValidationErrorDiagnosticShape:
             "- command: echo hello\n"
         )
         workflow_path = tmp_path / "typo.pflow.md"
-        workflow_path.write_text(workflow_md)
+        workflow_path.write_text(workflow_md, encoding="utf-8")
 
         result = invoke_cli(["--validate-only", str(workflow_path)])
 
@@ -612,7 +612,7 @@ class TestValidationErrorDiagnosticShape:
             "- command: echo hello\n"
         )
         workflow_path = tmp_path / "typo.pflow.md"
-        workflow_path.write_text(workflow_md)
+        workflow_path.write_text(workflow_md, encoding="utf-8")
 
         result = invoke_cli(["--validate-only", "--output-format", "json", str(workflow_path)])
 
@@ -641,7 +641,7 @@ class TestValidationErrorDiagnosticShape:
             "- command: echo hello\n"
         )
         workflow_path = tmp_path / "typo.pflow.md"
-        workflow_path.write_text(workflow_md)
+        workflow_path.write_text(workflow_md, encoding="utf-8")
 
         result = invoke_cli([str(workflow_path)])
 

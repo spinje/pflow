@@ -516,7 +516,7 @@ def prepared_subprocess_env(tmp_path_factory, precomputed_core_registry_nodes):
         "last_core_scan": datetime.now().isoformat(),
         "nodes": precomputed_core_registry_nodes,
     }
-    registry_path.write_text(_json.dumps(registry_data, indent=2))
+    registry_path.write_text(_json.dumps(registry_data, indent=2), encoding="utf-8")
 
     env = os.environ.copy()
     set_isolated_home(env, home)

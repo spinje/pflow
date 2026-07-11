@@ -124,7 +124,8 @@ class BaseNodeClass(BaseNode):
 
             # Create file with import error
             import_err_file = base_dir / "import_error.py"
-            import_err_file.write_text("""
+            import_err_file.write_text(
+                """
 import nonexistent_module
 
 from pflow.core.node import BaseNode
@@ -132,7 +133,9 @@ from pflow.core.node import BaseNode
 class WontLoad(BaseNode):
     def exec(self, shared):
         pass
-""")
+""",
+                encoding="utf-8",
+            )
 
             # Should handle import error gracefully
             results = scan_for_nodes([base_dir])
@@ -147,11 +150,14 @@ class WontLoad(BaseNode):
 
             # Create file with syntax error
             syntax_file = base_dir / "syntax_error.py"
-            syntax_file.write_text("""
+            syntax_file.write_text(
+                """
 # Intentional syntax error
 def broken(:
     pass
-""")
+""",
+                encoding="utf-8",
+            )
 
             # Should skip this file without crashing
             results = scan_for_nodes([base_dir])
@@ -164,7 +170,8 @@ def broken(:
 
             # Create node with custom name
             custom_file = base_dir / "custom.py"
-            custom_file.write_text('''
+            custom_file.write_text(
+                '''
 from pflow.core.node import BaseNode
 
 class CustomNode(BaseNode):
@@ -173,7 +180,9 @@ class CustomNode(BaseNode):
 
     def exec(self, shared):
         shared["custom"] = True
-''')
+''',
+                encoding="utf-8",
+            )
 
             project_root = Path(__file__).parent.parent
             pocketflow_path = project_root / "pocketflow"
@@ -192,7 +201,8 @@ class CustomNode(BaseNode):
             base_dir = Path(tmpdir)
 
             multi_file = base_dir / "multi_inherit.py"
-            multi_file.write_text('''
+            multi_file.write_text(
+                '''
 from pflow.core.node import BaseNode
 
 class Mixin:
@@ -205,7 +215,9 @@ class MultiInheritNode(BaseNode, Mixin):
 
     def exec(self, shared):
         shared["mixin"] = self.mixin_method()
-''')
+''',
+                encoding="utf-8",
+            )
 
             project_root = Path(__file__).parent.parent
             pocketflow_path = project_root / "pocketflow"
@@ -224,7 +236,8 @@ class MultiInheritNode(BaseNode, Mixin):
             base_dir = Path(tmpdir)
 
             indirect_file = base_dir / "indirect.py"
-            indirect_file.write_text('''
+            indirect_file.write_text(
+                '''
 from pflow.core.node import BaseNode
 
 class IntermediateNode(BaseNode):
@@ -241,7 +254,9 @@ class IndirectNode(IntermediateNode):
 
     def exec(self, shared):
         shared["result"] = "indirect inheritance works"
-''')
+''',
+                encoding="utf-8",
+            )
 
             project_root = Path(__file__).parent.parent
             pocketflow_path = project_root / "pocketflow"
@@ -263,7 +278,7 @@ class IndirectNode(IntermediateNode):
 
             # Add init files for proper package structure
             for p in [Path(tmpdir) / "a", Path(tmpdir) / "a" / "b", Path(tmpdir) / "a" / "b" / "c", deep_path]:
-                (p / "__init__.py").write_text("")
+                (p / "__init__.py").write_text("", encoding="utf-8")
 
             # Add a node in the deepest directory
             node_content = '''
@@ -274,7 +289,7 @@ class DeepNode(BaseNode):
     def exec(self, shared):
         pass
 '''
-            (deep_path / "deep_node.py").write_text(node_content)
+            (deep_path / "deep_node.py").write_text(node_content, encoding="utf-8")
 
             project_root = Path(__file__).parent.parent
             pocketflow_path = project_root / "pocketflow"
@@ -292,9 +307,9 @@ class DeepNode(BaseNode):
             directory = Path(tmpdir)
 
             # Create various special files
-            (directory / "__init__.py").write_text("")
-            (directory / "setup.py").write_text("# Setup file")
-            (directory / "conftest.py").write_text("# Pytest config")
+            (directory / "__init__.py").write_text("", encoding="utf-8")
+            (directory / "setup.py").write_text("# Setup file", encoding="utf-8")
+            (directory / "conftest.py").write_text("# Pytest config", encoding="utf-8")
 
             # Should handle these files without crashing
             results = scan_for_nodes([directory])
@@ -423,25 +438,31 @@ class TestScannerIntegrationScenarios:
 
             # Create valid node
             valid_file = base_dir / "valid.py"
-            valid_file.write_text('''
+            valid_file.write_text(
+                '''
 from pflow.core.node import BaseNode
 
 class ValidNode(BaseNode):
     """A valid node among errors."""
     def exec(self, shared):
         pass
-''')
+''',
+                encoding="utf-8",
+            )
 
             # Create file with syntax error
-            (base_dir / "syntax_error.py").write_text("def broken(: pass")
+            (base_dir / "syntax_error.py").write_text("def broken(: pass", encoding="utf-8")
 
             # Create file with import error
-            (base_dir / "import_error.py").write_text("""
+            (base_dir / "import_error.py").write_text(
+                """
 import nonexistent
 from pflow.core.node import BaseNode
 class BadNode(BaseNode):
     def exec(self, shared): pass
-""")
+""",
+                encoding="utf-8",
+            )
 
             project_root = Path(__file__).parent.parent
             pocketflow_path = project_root / "pocketflow"
@@ -458,20 +479,26 @@ class BadNode(BaseNode):
         """Test scanning multiple directories at once."""
         with tempfile.TemporaryDirectory() as tmpdir1, tempfile.TemporaryDirectory() as tmpdir2:
             # Create node in first directory
-            (Path(tmpdir1) / "node1.py").write_text('''
+            (Path(tmpdir1) / "node1.py").write_text(
+                '''
 from pflow.core.node import BaseNode
 class Node1(BaseNode):
     """First test node."""
     def exec(self, shared): pass
-''')
+''',
+                encoding="utf-8",
+            )
 
             # Create node in second directory
-            (Path(tmpdir2) / "node2.py").write_text('''
+            (Path(tmpdir2) / "node2.py").write_text(
+                '''
 from pflow.core.node import BaseNode
 class Node2(BaseNode):
     """Second test node."""
     def exec(self, shared): pass
-''')
+''',
+                encoding="utf-8",
+            )
 
             project_root = Path(__file__).parent.parent
             pocketflow_path = project_root / "pocketflow"

@@ -45,7 +45,7 @@ def test_registry_load_respects_settings(tmp_path):
 
     # Create test registry file
     registry_path = tmp_path / "registry.json"
-    registry_path.write_text(json.dumps(registry_data))
+    registry_path.write_text(json.dumps(registry_data), encoding="utf-8")
 
     # Create test settings that deny some nodes
     settings_data = {
@@ -55,7 +55,7 @@ def test_registry_load_respects_settings(tmp_path):
         },
     }
     settings_path = tmp_path / "settings.json"
-    settings_path.write_text(json.dumps(settings_data))
+    settings_path.write_text(json.dumps(settings_data), encoding="utf-8")
 
     # Mock the settings manager to use our test settings
     with patch("pflow.core.settings.SettingsManager") as MockSettingsManager:
@@ -138,7 +138,7 @@ def test_dotted_module_pattern_filtering(tmp_path):
 
     # Create test registry file
     registry_path = tmp_path / "registry.json"
-    registry_path.write_text(json.dumps(registry_data))
+    registry_path.write_text(json.dumps(registry_data), encoding="utf-8")
 
     # Create settings that deny http nodes using dotted pattern
     settings_data = {
@@ -148,7 +148,7 @@ def test_dotted_module_pattern_filtering(tmp_path):
         },
     }
     settings_path = tmp_path / "settings.json"
-    settings_path.write_text(json.dumps(settings_data))
+    settings_path.write_text(json.dumps(settings_data), encoding="utf-8")
 
     # Create registry and settings manager with test paths
     settings_manager = SettingsManager(settings_path=settings_path)

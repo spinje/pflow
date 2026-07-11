@@ -103,7 +103,7 @@ def _write_trace(
         lines = flatten_trace_to_lines(data)
         rc_idx = next(i for i, line in enumerate(lines) if line.get("kind") == "run.complete")
         lines = lines[:rc_idx] + gate_lines + lines[rc_idx:]
-        path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+        path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
     else:
         write_trace_jsonl(path, data)
     return path
@@ -324,7 +324,7 @@ def _write_incomplete_trace(
             "run_id": execution_id,
         })
     path = debug_dir / format_trace_filename(workflow_path, name, timestamp)
-    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
     return path
 
 
@@ -962,23 +962,25 @@ def test_by_execution_id_skips_corrupt_matched_trace(tmp_path: Path) -> None:
     Mirrors the workflow_path arm's skip-corrupt posture (via _iter_workflow_traces).
     """
     path = _write_trace(tmp_path, execution_id="corrupt-1", timestamp="20260101-000000")
-    lines = path.read_text().splitlines()
+    lines = path.read_text(encoding="utf-8").splitlines()
     lines.insert(1, "{ this is not valid json")  # corrupt an EARLY line (not the tolerated final one)
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     with pytest.raises(ResumeSourceMissingError):
         load_resume_source(execution_id="corrupt-1", debug_dir=tmp_path)
 
 
 def test_iter_raw_trace_lines_tolerates_truncated_final_line(tmp_path: Path) -> None:
     path = tmp_path / "t.json"
-    path.write_text('{"kind": "meta"}\n{"kind": "gate", "node_id": "g"}\n{"kind": "even')  # truncated tail
+    path.write_text(
+        '{"kind": "meta"}\n{"kind": "gate", "node_id": "g"}\n{"kind": "even', encoding="utf-8"
+    )  # truncated tail
     lines = list(_iter_raw_trace_lines(path))
     assert [line.get("kind") for line in lines] == ["meta", "gate"]  # tail dropped, no raise
 
 
 def test_iter_raw_trace_lines_raises_on_earlier_malformed_line(tmp_path: Path) -> None:
     path = tmp_path / "t.json"
-    path.write_text('{"kind": "meta"}\n{ broken\n{"kind": "run.complete"}\n')  # malformed MIDDLE line
+    path.write_text('{"kind": "meta"}\n{ broken\n{"kind": "run.complete"}\n', encoding="utf-8")  # malformed MIDDLE line
     with pytest.raises(json.JSONDecodeError):
         list(_iter_raw_trace_lines(path))
 

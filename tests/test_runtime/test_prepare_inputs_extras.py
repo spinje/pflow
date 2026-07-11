@@ -267,7 +267,7 @@ The output.
     def test_cli_rejects_typo_with_fuzzy_suggestion(self, tmp_path, prepared_subprocess_env):
         """Typo 'lyric' for declared 'lyrics' → 'Did you mean' hint rendered to stderr."""
         workflow_file = tmp_path / "wf.pflow.md"
-        workflow_file.write_text(self._WORKFLOW)
+        workflow_file.write_text(self._WORKFLOW, encoding="utf-8")
 
         # Clean env to avoid CliRunner-style logger suppression
         env = {k: v for k, v in prepared_subprocess_env.items() if k != "PYTEST_CURRENT_TEST"}
@@ -275,6 +275,7 @@ The output.
             [sys.executable, "-m", "pflow.cli", str(workflow_file), "lyrics=song", "lyric=typo"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             env=env,
             timeout=60,
         )

@@ -80,6 +80,7 @@ def subprocess_env(tmp_path_factory, uv_exe):
         [uv_exe, "run", "pflow", "registry", "list", "--json"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         shell=False,
         env=env,
     )
@@ -93,6 +94,7 @@ def _run_pflow(uv_exe: str, env: dict, workflow_path) -> subprocess.CompletedPro
         [uv_exe, "run", "pflow", str(workflow_path)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         shell=False,
         env=env,
     )
@@ -177,7 +179,7 @@ class TestRealSubprocessProgressRendering:
             "edges": [],
         }
         workflow_file = tmp_path / "fail.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = _run_pflow(uv_exe, subprocess_env, workflow_file)
         _skip_if_uv_sandbox_panics(result)
@@ -234,7 +236,8 @@ class TestRealSubprocessProgressRendering:
                     },
                 ],
                 "edges": [],
-            })
+            }),
+            encoding="utf-8",
         )
 
         outer_path = tmp_path / "outer.pflow.md"
@@ -261,7 +264,8 @@ class TestRealSubprocessProgressRendering:
                     },
                 ],
                 "edges": [],
-            })
+            }),
+            encoding="utf-8",
         )
 
         result = _run_pflow(uv_exe, subprocess_env, outer_path)
@@ -350,7 +354,8 @@ class TestRealSubprocessProgressRendering:
                     },
                 ],
                 "edges": [],
-            })
+            }),
+            encoding="utf-8",
         )
 
         # Parent workflow: parallel batch over 4 items, each runs the inner workflow
@@ -372,7 +377,8 @@ class TestRealSubprocessProgressRendering:
                     },
                 ],
                 "edges": [],
-            })
+            }),
+            encoding="utf-8",
         )
 
         result = _run_pflow(uv_exe, subprocess_env, outer_path)
@@ -448,12 +454,13 @@ class TestRealSubprocessProgressRendering:
             "edges": [],
         }
         workflow_path = tmp_path / "verbose.pflow.md"
-        workflow_path.write_text(ir_to_markdown(workflow))
+        workflow_path.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = subprocess.run(  # noqa: S603
             [uv_exe, "run", "pflow", "-v", str(workflow_path)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=False,
             env=subprocess_env,
         )
@@ -516,7 +523,8 @@ class TestRealSubprocessProgressRendering:
                     },
                 ],
                 "edges": [],
-            })
+            }),
+            encoding="utf-8",
         )
 
         # Middle workflow: parallel batch over the innermost workflow
@@ -538,7 +546,8 @@ class TestRealSubprocessProgressRendering:
                     },
                 ],
                 "edges": [],
-            })
+            }),
+            encoding="utf-8",
         )
 
         # Outer workflow: parallel batch over the middle workflow
@@ -560,7 +569,8 @@ class TestRealSubprocessProgressRendering:
                     },
                 ],
                 "edges": [],
-            })
+            }),
+            encoding="utf-8",
         )
 
         result = _run_pflow(uv_exe, subprocess_env, outer_path)
@@ -629,13 +639,14 @@ class TestRealSubprocessProgressRendering:
             "edges": [],
         }
         workflow_path = tmp_path / "only_zero_skip.pflow.md"
-        workflow_path.write_text(ir_to_markdown(workflow))
+        workflow_path.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         # Snapshot --only needs a prior full run to restore upstream from.
         seed = subprocess.run(  # noqa: S603
             [uv_exe, "run", "pflow", str(workflow_path)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=False,
             env=subprocess_env,
         )
@@ -646,6 +657,7 @@ class TestRealSubprocessProgressRendering:
             [uv_exe, "run", "pflow", str(workflow_path), "--only", "only_step"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=False,
             env=subprocess_env,
         )
@@ -704,13 +716,14 @@ class TestRealSubprocessProgressRendering:
             "edges": [],
         }
         workflow_path = tmp_path / "print_only.pflow.md"
-        workflow_path.write_text(ir_to_markdown(workflow))
+        workflow_path.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         # Snapshot --only needs a prior full run to restore upstream from.
         seed = subprocess.run(  # noqa: S603
             [uv_exe, "run", "pflow", str(workflow_path)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=False,
             env=subprocess_env,
         )
@@ -721,6 +734,7 @@ class TestRealSubprocessProgressRendering:
             [uv_exe, "run", "pflow", "-p", str(workflow_path), "--only", "step_b"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=False,
             env=subprocess_env,
         )
@@ -767,12 +781,13 @@ class TestRealSubprocessProgressRendering:
             "edges": [],
         }
         workflow_path = tmp_path / "print_plain.pflow.md"
-        workflow_path.write_text(ir_to_markdown(workflow))
+        workflow_path.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = subprocess.run(  # noqa: S603
             [uv_exe, "run", "pflow", "-p", str(workflow_path)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=False,
             env=subprocess_env,
         )
@@ -844,13 +859,14 @@ class TestRealSubprocessProgressRendering:
             "edges": [],
         }
         workflow_path = tmp_path / "barrier.pflow.md"
-        workflow_path.write_text(ir_to_markdown(workflow))
+        workflow_path.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         proc = subprocess.Popen(  # noqa: S603
             [uv_exe, "run", "pflow", str(workflow_path)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
             bufsize=1,  # line-buffered reads so readline returns as data arrives
             env=subprocess_env,
             shell=False,
@@ -913,12 +929,13 @@ class TestRealSubprocessProgressRendering:
             "edges": [],
         }
         workflow_path = tmp_path / "json_mode.pflow.md"
-        workflow_path.write_text(ir_to_markdown(workflow))
+        workflow_path.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = subprocess.run(  # noqa: S603
             [uv_exe, "run", "pflow", "--output-format", "json", str(workflow_path)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=False,
             env=subprocess_env,
         )
@@ -976,12 +993,13 @@ class TestRealSubprocessProgressRendering:
             "edges": [],
         }
         workflow_path = tmp_path / "json_print_mode.pflow.md"
-        workflow_path.write_text(ir_to_markdown(workflow))
+        workflow_path.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = subprocess.run(  # noqa: S603
             [uv_exe, "run", "pflow", "--output-format", "json", "-p", str(workflow_path)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=False,
             env=subprocess_env,
         )
@@ -1030,12 +1048,13 @@ class TestRealSubprocessProgressRendering:
             "edges": [],
         }
         workflow_path = tmp_path / "json_fail.pflow.md"
-        workflow_path.write_text(ir_to_markdown(workflow))
+        workflow_path.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = subprocess.run(  # noqa: S603
             [uv_exe, "run", "pflow", "--output-format", "json", str(workflow_path)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=False,
             env=subprocess_env,
         )
@@ -1091,7 +1110,7 @@ class TestRealSubprocessProgressRendering:
             "edges": [],
         }
         workflow_path = tmp_path / "timeout.pflow.md"
-        workflow_path.write_text(ir_to_markdown(workflow))
+        workflow_path.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = _run_pflow(uv_exe, subprocess_env, workflow_path)
         _skip_if_uv_sandbox_panics(result)
@@ -1177,7 +1196,7 @@ class TestRealSubprocessProgressRendering:
             "edges": [],
         }
         workflow_path = tmp_path / "gh194_routing.pflow.md"
-        workflow_path.write_text(ir_to_markdown(workflow))
+        workflow_path.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = _run_pflow(uv_exe, subprocess_env, workflow_path)
         _skip_if_uv_sandbox_panics(result)

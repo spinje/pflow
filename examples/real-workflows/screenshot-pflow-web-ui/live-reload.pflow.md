@@ -76,7 +76,7 @@ distinct purpose ("Finalize…") so the remap check can tell which node is focus
     python3 - "${wf_file}" <<'PY'
     import sys
     content = "# Live Reload Probe\n\nThrowaway workflow for the live-reload skill check.\n\n## Steps\n\n### greet\n\nGreet the world to begin the run.\n\n- type: shell\n- command: echo hello\n\n### done\n\nFinalize and report completion of the run.\n\n- type: shell\n- command: echo done\n"
-    open(sys.argv[1], "w").write(content)
+    open(sys.argv[1], "w", encoding="utf-8").write(content)
     PY
 
 ### opened
@@ -120,7 +120,7 @@ Append a node at the end (does NOT renumber existing nodes) — the in-place + v
     python3 - "${wf_file}" <<'PY'
     import sys
     block = "\n### tail\n\nAppended tail step for the in-place check.\n\n- type: shell\n- command: echo tail\n"
-    open(sys.argv[1], "a").write(block)
+    open(sys.argv[1], "a", encoding="utf-8").write(block)
     PY
 
 ### wait_append
@@ -160,10 +160,10 @@ in its description — the remap + source-pane-refresh check.
     python3 - "${wf_file}" <<'PY'
     import sys
     p = sys.argv[1]
-    s = open(p).read()
+    s = open(p, encoding="utf-8").read()
     block = "### middle\n\nRELOADMARKER inserted-before step for the remap check.\n\n- type: shell\n- command: echo middle\n\n"
     s = s.replace("### done", block + "### done", 1)
-    open(p, "w").write(s)
+    open(p, "w", encoding="utf-8").write(s)
     PY
 
 ### wait_insert
@@ -203,7 +203,7 @@ Overwrite the source with an INVALID workflow (unknown node type → 422).
     python3 - "${wf_file}" <<'PY'
     import sys
     content = "# Broken\n\n## Steps\n\n### x\n\nA step with an unknown type.\n\n- type: nonexistent_type_zzz\n"
-    open(sys.argv[1], "w").write(content)
+    open(sys.argv[1], "w", encoding="utf-8").write(content)
     PY
 
 ### wait_corrupt

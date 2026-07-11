@@ -191,7 +191,7 @@ Use shared fixtures from `tests/conftest.py` for real CLI subprocess tests:
 ```python
 def test_cli_subprocess(tmp_path, uv_exe, prepared_subprocess_env):
     env = prepared_subprocess_env
-    completed = subprocess.run([uv_exe, "run", "pflow", "--help"], capture_output=True, text=True, env=env)
+    completed = subprocess.run([uv_exe, "run", "pflow", "--help"], capture_output=True, text=True, encoding="utf-8", env=env)
     assert completed.returncode == 0
 ```
 
@@ -202,6 +202,8 @@ def test_cli_subprocess(tmp_path, uv_exe, prepared_subprocess_env):
 **External-tool rule**: the default suite may exercise the shell node, but it must not require incidental runner tools such as `jq` or a `python3` alias. Use the active Python environment for generic JSON/stdin assertions. If an external executable is itself the integration boundary under test, mark that narrow test `e2e` and skip with an explicit availability check when the tool is absent.
 
 **Trace rule**: do not rely on trace files unless the test is marked `trace_files`. If the test only needs runtime trace events, assert on `result.trace.events`; if it needs serialized JSON, add `@pytest.mark.trace_files`.
+
+**Encoding rule** (suite-wide, not just subprocess tests): all text-mode file and subprocess I/O must pass `encoding="utf-8"` — `write_text`/`read_text`/`open`/`fdopen`, `subprocess.run(text=True, ...)`, and python-code snippets embedded in workflow strings alike. The suite runs under PEP 597 (`PYTHONWARNDEFAULTENCODING=1`) with a blanket `error::EncodingWarning` filter, so a bare call is a hard test failure, and on Windows it would silently write cp1252. Binary-mode (`"rb"`/`"wb"`) and deliberate byte-semantics tests are exempt.
 
 For timeout-sensitive tests (e.g., hang detection), you can use minimal inline setup to avoid fixture overhead:
 ```python

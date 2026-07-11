@@ -48,6 +48,7 @@ def prepared_subprocess_env(tmp_path_factory, uv_exe):
         [uv_exe, "run", "pflow", "registry", "list", "--json"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         shell=False,
         env=env,
     )
@@ -82,7 +83,7 @@ class TestDualModeStdinBehavior:
         }
 
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         runner = CliRunner()
         # Use file path directly (new interface - no --file flag)
@@ -179,7 +180,7 @@ class TestDualModeStdinBehavior:
         }
 
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_file)], input="piped data")
@@ -208,7 +209,7 @@ class TestDualModeStdinBehavior:
         }
 
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_file)])
@@ -242,7 +243,7 @@ class TestDualModeStdinBehavior:
         }
 
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         runner = CliRunner()
         # Pipe "piped_value" but also provide CLI param - CLI should win
@@ -251,7 +252,7 @@ class TestDualModeStdinBehavior:
         assert result.exit_code == 0
         # Verify the CLI value was used, not the piped value
         assert output_file.exists()
-        written_content = output_file.read_text()
+        written_content = output_file.read_text(encoding="utf-8")
         assert written_content == "cli_value", f"Expected 'cli_value' but got '{written_content}'"
 
     def test_empty_stdin_treated_as_no_input(self, tmp_path):
@@ -277,7 +278,7 @@ class TestDualModeStdinBehavior:
         }
 
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         runner = CliRunner()
         # Pipe empty string - treated as no input
@@ -321,7 +322,7 @@ class TestRealShellIntegration:
         }
 
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         # Test real shell pipe
         env = prepared_subprocess_env
@@ -331,6 +332,7 @@ class TestRealShellIntegration:
             input="Test data from pipe",
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=False,
             env=env,
         )
@@ -393,6 +395,7 @@ class TestRealShellIntegration:
             input=json_data,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=False,
             env=env,
         )
@@ -431,7 +434,7 @@ class TestBinaryAndLargeStdinBehavior:
         }
 
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         # Create a temporary binary file to simulate binary stdin
         binary_data = b"Binary\x00Data\xff"
@@ -457,6 +460,7 @@ class TestBinaryAndLargeStdinBehavior:
                     stdin=binary_stdin,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
                     shell=False,
                     env=env,
                 )
@@ -494,7 +498,7 @@ class TestBinaryAndLargeStdinBehavior:
         }
 
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         # Create large data (1MB)
         large_data = "x" * (1024 * 1024)
@@ -507,7 +511,7 @@ class TestBinaryAndLargeStdinBehavior:
         assert result.exit_code == 0, f"Expected success but got: {result.output}"
         # Verify the data was actually written correctly
         assert output_file.exists(), "Output file should have been created"
-        assert output_file.read_text() == large_data, "Large data should be written correctly"
+        assert output_file.read_text(encoding="utf-8") == large_data, "Large data should be written correctly"
 
 
 @pytest.mark.e2e
@@ -566,8 +570,8 @@ class TestWorkflowChaining:
 
         producer_file = tmp_path / "producer.pflow.md"
         consumer_file = tmp_path / "consumer.pflow.md"
-        producer_file.write_text(ir_to_markdown(producer))
-        consumer_file.write_text(ir_to_markdown(consumer))
+        producer_file.write_text(ir_to_markdown(producer), encoding="utf-8")
+        consumer_file.write_text(ir_to_markdown(consumer), encoding="utf-8")
 
         env = prepared_subprocess_env
 
@@ -578,6 +582,7 @@ class TestWorkflowChaining:
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=True,
             env=env,
             timeout=30,
@@ -638,9 +643,9 @@ class TestWorkflowChaining:
         producer_file = tmp_path / "producer.pflow.md"
         transform_file = tmp_path / "transform.pflow.md"
         consumer_file = tmp_path / "consumer.pflow.md"
-        producer_file.write_text(ir_to_markdown(producer))
-        transform_file.write_text(ir_to_markdown(transform))
-        consumer_file.write_text(ir_to_markdown(consumer))
+        producer_file.write_text(ir_to_markdown(producer), encoding="utf-8")
+        transform_file.write_text(ir_to_markdown(transform), encoding="utf-8")
+        consumer_file.write_text(ir_to_markdown(consumer), encoding="utf-8")
 
         env = prepared_subprocess_env
 
@@ -650,6 +655,7 @@ class TestWorkflowChaining:
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=True,
             env=env,
             timeout=30,
@@ -686,7 +692,7 @@ class TestWorkflowChaining:
         }
 
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         env = prepared_subprocess_env
 
@@ -696,6 +702,7 @@ class TestWorkflowChaining:
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=True,
             env=env,
             timeout=30,
@@ -726,7 +733,7 @@ class TestWorkflowChaining:
         }
 
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         env = prepared_subprocess_env
 
@@ -736,6 +743,7 @@ class TestWorkflowChaining:
             cmd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             shell=True,
             env=env,
             timeout=30,
@@ -744,7 +752,7 @@ class TestWorkflowChaining:
         _skip_uv_sandbox_panic(result)
         assert result.returncode == 0, f"Failed: stdout={result.stdout}, stderr={result.stderr}"
         assert output_file.exists(), "Output file should exist"
-        content = output_file.read_text()
+        content = output_file.read_text(encoding="utf-8")
         assert content == "got:[]", f"Expected 'got:[]' but got '{content}'"
 
 
@@ -763,7 +771,7 @@ class TestJSONOutputFormat:
             "start_node": "echo1",
         }
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         # mix_stderr=False: see note on test_multiple_stdin_error_json_output.
         runner = CliRunner(mix_stderr=False)
@@ -791,7 +799,7 @@ class TestJSONOutputFormat:
             "start_node": "echo1",
         }
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_file)], input="piped data")
@@ -818,7 +826,7 @@ class TestJSONOutputFormat:
             "start_node": "echo1",
         }
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         # mix_stderr=False: under click 8.1 (transitive pin from litellm 1.83.x),
         # CliRunner defaults to mix_stderr=True which merges stderr into stdout
@@ -860,7 +868,7 @@ class TestJSONOutputFormat:
             "start_node": "echo1",
         }
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_file)], input="piped data")

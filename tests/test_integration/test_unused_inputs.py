@@ -250,8 +250,8 @@ def test_no_false_positive_for_input_used_in_batch_prompt_files(tmp_path: Path) 
     validation, making template variables inside prompt files invisible.
     """
     # 1. Create external prompt files that reference the sub-workflow input
-    (tmp_path / "prompt-a.prompt.md").write_text("Analyze emotionally:\n\n${content}")
-    (tmp_path / "prompt-b.prompt.md").write_text("Analyze factually:\n\n${content}")
+    (tmp_path / "prompt-a.prompt.md").write_text("Analyze emotionally:\n\n${content}", encoding="utf-8")
+    (tmp_path / "prompt-b.prompt.md").write_text("Analyze factually:\n\n${content}", encoding="utf-8")
 
     # 2. Sub-workflow: declares 'content' input, uses it via batch prompt files
     sub_workflow_ir = {
@@ -306,7 +306,7 @@ def test_no_false_positive_for_input_used_in_batch_prompt_files(tmp_path: Path) 
     # 4. Validate the parent workflow (same pipeline as production — registry included
     #    so Step 7 enforcement runs, matching the production CLI/MCP paths).
     parent_path = tmp_path / "parent-workflow.pflow.md"
-    content = parent_path.read_text()
+    content = parent_path.read_text(encoding="utf-8")
     result = parse_markdown(content)
     ir = result.ir
     normalize_ir(ir)
@@ -337,7 +337,7 @@ def test_genuinely_unused_input_still_caught_alongside_prompt_file_inputs(tmp_pa
     for sub-workflows with file references.
     """
     # Prompt file uses ${content} but NOT ${debug_mode}
-    (tmp_path / "prompt.prompt.md").write_text("Analyze:\n\n${content}")
+    (tmp_path / "prompt.prompt.md").write_text("Analyze:\n\n${content}", encoding="utf-8")
 
     sub_workflow_ir = {
         "inputs": {
@@ -389,7 +389,7 @@ def test_genuinely_unused_input_still_caught_alongside_prompt_file_inputs(tmp_pa
     write_workflow_file(parent_workflow_ir, tmp_path / "parent.pflow.md", title="Parent Workflow")
 
     parent_path = tmp_path / "parent.pflow.md"
-    result = parse_markdown(parent_path.read_text())
+    result = parse_markdown(parent_path.read_text(encoding="utf-8"))
     ir = result.ir
     normalize_ir(ir)
     resolve_file_references(ir, tmp_path)
@@ -471,7 +471,7 @@ def test_missing_prompt_file_in_sub_workflow_reports_validation_error(tmp_path: 
 
     # 3. Validate the parent workflow
     parent_path = tmp_path / "parent-workflow.pflow.md"
-    content = parent_path.read_text()
+    content = parent_path.read_text(encoding="utf-8")
     result = parse_markdown(content)
     ir = result.ir
     normalize_ir(ir)

@@ -201,11 +201,11 @@ def test_memo_cache_prevents_reexecution(tmp_path: Any) -> None:
 
     # First run: node executes
     _run_workflow(ir, cache)
-    assert tracking_file.read_text().count("exec") == 1
+    assert tracking_file.read_text(encoding="utf-8").count("exec") == 1
 
     # Second run: node should be cached
     _run_workflow(ir, cache)
-    assert tracking_file.read_text().count("exec") == 1, "Node was re-executed on memo cache hit!"
+    assert tracking_file.read_text(encoding="utf-8").count("exec") == 1, "Node was re-executed on memo cache hit!"
 
 
 def test_memo_cache_records_execution_state(tmp_path: Any) -> None:
@@ -356,11 +356,13 @@ def test_memo_cache_no_write_on_error(tmp_path: Any) -> None:
 
     # First run: node returns "error"
     _run_workflow(ir, cache)
-    assert tracking_file.read_text().count("fail") == 1
+    assert tracking_file.read_text(encoding="utf-8").count("fail") == 1
 
     # Second run: error result should NOT have been cached
     _run_workflow(ir, cache)
-    assert tracking_file.read_text().count("fail") == 2, "Error result should not be cached — node must re-execute"
+    assert tracking_file.read_text(encoding="utf-8").count("fail") == 2, (
+        "Error result should not be cached — node must re-execute"
+    )
 
 
 # ---------------------------------------------------------------------------

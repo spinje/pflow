@@ -80,7 +80,8 @@ def test_report_command_generates_from_trace(tmp_path: Path, monkeypatch):
     # Run a workflow first to generate a trace
     workflow = tmp_path / "test.pflow.md"
     workflow.write_text(
-        "# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- cache: false\n- command: echo hi\n"
+        "# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- cache: false\n- command: echo hi\n",
+        encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(tmp_path))
     runner = click.testing.CliRunner()
@@ -101,7 +102,8 @@ def test_report_flag_generates_report(tmp_path: Path, monkeypatch):
     # Create a minimal workflow
     workflow = tmp_path / "test.pflow.md"
     workflow.write_text(
-        "# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- cache: false\n- command: echo hi\n"
+        "# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- cache: false\n- command: echo hi\n",
+        encoding="utf-8",
     )
     report_dir = tmp_path / "report"
 
@@ -123,7 +125,8 @@ def test_report_flag_overrides_no_trace(tmp_path: Path, monkeypatch):
     """Test that --report overrides --no-trace (report requires trace data)."""
     workflow = tmp_path / "test.pflow.md"
     workflow.write_text(
-        "# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- cache: false\n- command: echo hi\n"
+        "# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- cache: false\n- command: echo hi\n",
+        encoding="utf-8",
     )
     report_dir = tmp_path / "report"
 
@@ -144,14 +147,14 @@ def test_report_command_refuses_non_empty_unmarked_output_dir(tmp_path: Path, mo
     report_dir = tmp_path / "report"
     report_dir.mkdir()
     existing = report_dir / "notes.md"
-    existing.write_text("keep")
+    existing.write_text("keep", encoding="utf-8")
 
     runner = click.testing.CliRunner()
     result = runner.invoke(main, ["report", str(trace_file), "-o", str(report_dir)])
 
     assert result.exit_code == 1
     assert "without .pflow-report.json" in result.output
-    assert existing.read_text() == "keep"
+    assert existing.read_text(encoding="utf-8") == "keep"
     assert not (report_dir / "summary.md").exists()
 
 
@@ -167,11 +170,12 @@ def test_report_dir_preflight_refuses_before_workflow_execution(tmp_path: Path, 
         "Say hello.\n\n"
         "- type: shell\n"
         "- cache: false\n"
-        f"- command: echo ran > {side_effect}\n"
+        f"- command: echo ran > {side_effect}\n",
+        encoding="utf-8",
     )
     report_dir = tmp_path / "report"
     report_dir.mkdir()
-    (report_dir / "notes.md").write_text("keep")
+    (report_dir / "notes.md").write_text("keep", encoding="utf-8")
 
     monkeypatch.setenv("HOME", str(tmp_path))
     runner = click.testing.CliRunner()
@@ -198,7 +202,8 @@ def test_auto_report_rerun_with_only_removes_downstream_pages(tmp_path: Path, mo
         "Second step.\n\n"
         "- type: shell\n"
         "- cache: false\n"
-        "- command: echo second\n"
+        "- command: echo second\n",
+        encoding="utf-8",
     )
     report_dir = tmp_path / ".pflow" / "reports" / "test"
 
@@ -215,7 +220,7 @@ def test_auto_report_rerun_with_only_removes_downstream_pages(tmp_path: Path, mo
     assert (report_dir / "01-first.md").exists()
     assert not (report_dir / "02-second.md").exists()
     assert (report_dir / ".pflow-report.json").exists()
-    assert "Nodes: 1/2 (--only 'first', 1 skipped)" in (report_dir / "summary.md").read_text()
+    assert "Nodes: 1/2 (--only 'first', 1 skipped)" in (report_dir / "summary.md").read_text(encoding="utf-8")
 
 
 def test_report_command_echoes_summary_to_stderr(tmp_path: Path, monkeypatch):
@@ -372,7 +377,8 @@ def test_run_report_flag_echoes_summary_to_stderr(tmp_path: Path, monkeypatch):
     """`pflow <workflow> --report` mirrors the inline stderr echo."""
     workflow = tmp_path / "test.pflow.md"
     workflow.write_text(
-        "# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- cache: false\n- command: echo hi\n"
+        "# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- cache: false\n- command: echo hi\n",
+        encoding="utf-8",
     )
     report_dir = tmp_path / "report"
 

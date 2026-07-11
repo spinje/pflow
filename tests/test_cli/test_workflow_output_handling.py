@@ -503,7 +503,7 @@ class TestWorkflowOutputHandling:
             "edges": [],
         }
         workflow_file = tmp_path / "only-output-contract.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         # Snapshot --only needs a prior full run to restore upstream from. Trace
         # filenames are microsecond-granular (issue #443), so these rapid full +

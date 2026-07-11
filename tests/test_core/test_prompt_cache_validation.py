@@ -513,10 +513,11 @@ def test_parser_to_validator_pipeline_emits_order_mismatch(tmp_path) -> None:
         "- type: llm\n"
         "- prompt_cache: [concept_brief, concept]\n"
         "- model: anthropic/claude-sonnet-4-5\n\n"
-        "```prompt\nPrompt body referencing ${concept} and ${concept_brief}.\n```\n"
+        "```prompt\nPrompt body referencing ${concept} and ${concept_brief}.\n```\n",
+        encoding="utf-8",
     )
 
-    ir = parse_markdown(workflow_path.read_text()).ir
+    ir = parse_markdown(workflow_path.read_text(encoding="utf-8")).ir
     ir.setdefault("ir_version", "0.1.0")
     diagnostics = WorkflowValidator.validate(ir, workflow_file=workflow_path)
 
@@ -562,7 +563,8 @@ def test_v6_subworkflow_invalid_on_non_llm_via_real_validator(tmp_path) -> None:
         "- type: shell\n"
         "- prompt_cache: [topic]\n"
         "- prewarm: true\n\n"
-        '```shell command\necho "${topic}"\n```\n'
+        '```shell command\necho "${topic}"\n```\n',
+        encoding="utf-8",
     )
     parent_path = tmp_path / "parent.pflow.md"
     parent_path.write_text(
@@ -575,11 +577,12 @@ def test_v6_subworkflow_invalid_on_non_llm_via_real_validator(tmp_path) -> None:
         "- type: workflow\n"
         f"- workflow: ./{child_path.name}\n"
         "- inputs:\n"
-        "    topic: ${topic}\n"
+        "    topic: ${topic}\n",
+        encoding="utf-8",
     )
 
     # Drive the standard WorkflowValidator path (mirrors `pflow validate-only`).
-    parent_ir = parse_markdown(parent_path.read_text()).ir
+    parent_ir = parse_markdown(parent_path.read_text(encoding="utf-8")).ir
     parent_ir.setdefault("ir_version", "0.1.0")
     diagnostics = WorkflowValidator.validate(parent_ir, workflow_file=parent_path)
 
@@ -841,7 +844,7 @@ def test_external_prompt_file_resolved_at_save_then_overlap_detected(tmp_path) -
     from pflow.core.workflow.save_service import save_workflow_with_options
 
     prompt_file = tmp_path / "creative-direction.prompt.md"
-    prompt_file.write_text("Use the concept ${concept} to draft a song.")
+    prompt_file.write_text("Use the concept ${concept} to draft a song.", encoding="utf-8")
 
     workflow_file = tmp_path / "song-creator.pflow.md"
     workflow_file.write_text(
@@ -855,13 +858,14 @@ def test_external_prompt_file_resolved_at_save_then_overlap_detected(tmp_path) -
         "- type: llm\n"
         "- prompt: ./creative-direction.prompt.md\n"
         "- prompt_cache: [concept]\n"
-        "- model: anthropic/claude-sonnet-4-5\n"
+        "- model: anthropic/claude-sonnet-4-5\n",
+        encoding="utf-8",
     )
 
     with pytest.raises(WorkflowValidationError) as excinfo:
         save_workflow_with_options(
             "song-creator-overlap-test",
-            workflow_file.read_text(),
+            workflow_file.read_text(encoding="utf-8"),
             source_path=workflow_file,
         )
     diagnostic_ids = {d.id for d in (excinfo.value.validation_errors or [])}
@@ -889,7 +893,7 @@ def test_cli_save_subprocess_with_overlap_exits_nonzero(tmp_path, uv_exe, prepar
     import subprocess
 
     prompt_file = tmp_path / "creative-direction.prompt.md"
-    prompt_file.write_text("Use the concept ${concept} to draft a song.")
+    prompt_file.write_text("Use the concept ${concept} to draft a song.", encoding="utf-8")
 
     workflow_file = tmp_path / "song-creator.pflow.md"
     workflow_file.write_text(
@@ -903,7 +907,8 @@ def test_cli_save_subprocess_with_overlap_exits_nonzero(tmp_path, uv_exe, prepar
         "- type: llm\n"
         "- prompt: ./creative-direction.prompt.md\n"
         "- prompt_cache: [concept]\n"
-        "- model: anthropic/claude-sonnet-4-5\n"
+        "- model: anthropic/claude-sonnet-4-5\n",
+        encoding="utf-8",
     )
 
     completed = subprocess.run(  # noqa: S603 — fixture-controlled args, mirrors the established subprocess CLI test pattern
@@ -919,6 +924,7 @@ def test_cli_save_subprocess_with_overlap_exits_nonzero(tmp_path, uv_exe, prepar
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=prepared_subprocess_env,
         timeout=60,
     )
@@ -1293,7 +1299,8 @@ def test_thinking_temperature_mismatch_pflow_save_subprocess_exits_nonzero(
         "- model: anthropic/claude-haiku-4-5\n"
         "- reasoning_effort: low\n"
         "- temperature: 0.3\n"
-        "- prompt: ${question}\n"
+        "- prompt: ${question}\n",
+        encoding="utf-8",
     )
 
     completed = subprocess.run(  # noqa: S603 — fixture-controlled args, mirrors the established subprocess CLI test pattern
@@ -1309,6 +1316,7 @@ def test_thinking_temperature_mismatch_pflow_save_subprocess_exits_nonzero(
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=prepared_subprocess_env,
         timeout=60,
     )

@@ -15,7 +15,7 @@ from tests.shared.markdown_utils import ir_to_markdown
 
 def _read_frontmatter(workflow_file):
     """Read and parse YAML frontmatter from a .pflow.md file."""
-    content = workflow_file.read_text()
+    content = workflow_file.read_text(encoding="utf-8")
     parts = content.split("---", 2)
     assert len(parts) >= 3, f"Expected frontmatter in {workflow_file}"
     return yaml.safe_load(parts[1])

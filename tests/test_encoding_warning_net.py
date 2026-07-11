@@ -1,8 +1,8 @@
 """Canary for the EncodingWarning regression net (Task 116).
 
 The net is a chain with an inert-by-default failure mode: the pyproject
-`filterwarnings = ["error::EncodingWarning:pflow.*"]` entry promotes
-encoding-less IO in pflow's own source to test failures, but Python only
+`filterwarnings = ["error::EncodingWarning", ...]` entry promotes
+encoding-less IO anywhere in the repo to test failures, but Python only
 EMITS EncodingWarning when the interpreter starts with
 PYTHONWARNDEFAULTENCODING=1 / -X warn_default_encoding (PEP 597). Delete the
 env var from the Makefile or tox, or "simplify" the filter line, and the net
@@ -60,14 +60,28 @@ def test_encoding_regression_in_pflow_source_fails_loudly(tmp_path):
 
 
 @encoding_warning_inactive
-def test_net_stays_scoped_to_pflow_modules(tmp_path):
-    """The same call attributed to a non-pflow module must stay an ordinary
-    warning. Red here means the filter was widened back to a blanket
-    `error::EncodingWarning` — the exact regression documented as Bug 4 in the
-    Task 116 progress log (third-party and tmp_path-fixture warnings become
-    hundreds of unrelated hard failures)."""
+def test_net_covers_test_code_too(tmp_path):
+    """An encoding-less open() attributed to a test module must also be a hard
+    error. The net was widened from `pflow.*` to a blanket filter once every
+    test call site carried an explicit encoding — red here means the filter
+    was narrowed back and the test suite can silently regrow encoding-less IO
+    that ruff PLW1514 cannot see (fdopen, untyped fixture-derived paths)."""
     target = tmp_path / "data.txt"
     target.write_text("x", encoding="utf-8")
 
-    # Must not raise; the emitted warning lands in the pytest summary residue.
-    _open_without_encoding_as("tests._encoding_net_canary", target)
+    with pytest.raises(EncodingWarning):
+        _open_without_encoding_as("tests._encoding_net_canary", target)
+
+
+@encoding_warning_inactive
+def test_third_party_litellm_stays_ignored(tmp_path):
+    """litellm's own encoding-less opens are not pflow's bug to fail on.
+    Red here means the `ignore::EncodingWarning:litellm.*` entry was dropped —
+    the blanket error filter would then detonate on litellm import-time IO
+    (json_loader.py, endpoint_factory.py) in tests that touch LLM paths."""
+    target = tmp_path / "data.txt"
+    target.write_text("x", encoding="utf-8")
+
+    # Must not raise and must not surface as a warning — the ignore filter
+    # swallows it entirely.
+    _open_without_encoding_as("litellm._encoding_net_canary", target)

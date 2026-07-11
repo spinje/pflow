@@ -126,7 +126,7 @@ class TestResolveFileReferences:
         """Text file content substituted into prompt param."""
         prompt_dir = tmp_path / "prompts"
         prompt_dir.mkdir()
-        (prompt_dir / "system.md").write_text("You are helpful\n${concept.title}")
+        (prompt_dir / "system.md").write_text("You are helpful\n${concept.title}", encoding="utf-8")
 
         ir = _make_ir([{"id": "n1", "type": "llm", "params": {"prompt": "./prompts/system.md"}}])
         resolve_file_references(ir, tmp_path)
@@ -136,7 +136,7 @@ class TestResolveFileReferences:
 
     def test_yaml_param_resolution(self, tmp_path: Path) -> None:
         """YAML file content parsed into dict for output_schema param."""
-        (tmp_path / "schema.yaml").write_text("type: object\nproperties:\n  name:\n    type: string")
+        (tmp_path / "schema.yaml").write_text("type: object\nproperties:\n  name:\n    type: string", encoding="utf-8")
 
         ir = _make_ir([{"id": "n1", "type": "llm", "params": {"output_schema": "./schema.yaml"}}])
         resolve_file_references(ir, tmp_path)
@@ -148,7 +148,9 @@ class TestResolveFileReferences:
 
     def test_batch_string_resolution(self, tmp_path: Path) -> None:
         """Entire batch config loaded from external YAML file."""
-        (tmp_path / "batch.yaml").write_text("items:\n  - focus: ai\n    prompt: hello\nparallel: true")
+        (tmp_path / "batch.yaml").write_text(
+            "items:\n  - focus: ai\n    prompt: hello\nparallel: true", encoding="utf-8"
+        )
 
         ir = _make_ir([{"id": "n1", "type": "llm", "batch": "./batch.yaml", "params": {}}])
         resolve_file_references(ir, tmp_path)
@@ -165,7 +167,7 @@ class TestResolveFileReferences:
         Previously raised a YAML error because the `{` in `${candidate}` was read as a
         nested flow mapping — the same bug as inline params, now fixed at this surface too.
         """
-        (tmp_path / "batch.yaml").write_text("items:\n  - { contender: ${candidate} }\n")
+        (tmp_path / "batch.yaml").write_text("items:\n  - { contender: ${candidate} }\n", encoding="utf-8")
 
         ir = _make_ir([{"id": "n1", "type": "llm", "batch": "./batch.yaml", "params": {}}])
         resolve_file_references(ir, tmp_path)
@@ -176,8 +178,8 @@ class TestResolveFileReferences:
         """File references inside inline batch items resolved."""
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        (prompts_dir / "ai.md").write_text("Check for AI tells")
-        (prompts_dir / "cliche.md").write_text("Check for cliches")
+        (prompts_dir / "ai.md").write_text("Check for AI tells", encoding="utf-8")
+        (prompts_dir / "cliche.md").write_text("Check for cliches", encoding="utf-8")
 
         ir = _make_ir([
             {
@@ -203,8 +205,8 @@ class TestResolveFileReferences:
 
     def test_multiple_nodes_resolved(self, tmp_path: Path) -> None:
         """File references in different nodes resolved independently."""
-        (tmp_path / "prompt.md").write_text("prompt content")
-        (tmp_path / "code.py").write_text("result: str = 'hello'")
+        (tmp_path / "prompt.md").write_text("prompt content", encoding="utf-8")
+        (tmp_path / "code.py").write_text("result: str = 'hello'", encoding="utf-8")
 
         ir = _make_ir([
             {"id": "n1", "type": "llm", "params": {"prompt": "./prompt.md"}},
@@ -253,7 +255,7 @@ class TestResolveFileReferences:
 
     def test_yaml_parse_error(self, tmp_path: Path) -> None:
         """Invalid YAML in batch file raises error."""
-        (tmp_path / "bad.yaml").write_text("items:\n  - [broken")
+        (tmp_path / "bad.yaml").write_text("items:\n  - [broken", encoding="utf-8")
 
         ir = _make_ir([{"id": "n1", "type": "llm", "batch": "./bad.yaml", "params": {}}])
 
@@ -264,7 +266,7 @@ class TestResolveFileReferences:
         """Paths resolve relative to base_dir, not CWD."""
         sub = tmp_path / "sub" / "prompts"
         sub.mkdir(parents=True)
-        (sub / "foo.md").write_text("from sub")
+        (sub / "foo.md").write_text("from sub", encoding="utf-8")
 
         ir = _make_ir([{"id": "n1", "type": "llm", "params": {"prompt": "./prompts/foo.md"}}])
         resolve_file_references(ir, tmp_path / "sub")
@@ -273,7 +275,7 @@ class TestResolveFileReferences:
 
     def test_provenance_tracking(self, tmp_path: Path) -> None:
         """_source_files records the original relative path."""
-        (tmp_path / "p.md").write_text("content")
+        (tmp_path / "p.md").write_text("content", encoding="utf-8")
 
         ir = _make_ir([{"id": "n1", "type": "llm", "params": {"prompt": "./p.md"}}])
         resolve_file_references(ir, tmp_path)
@@ -282,7 +284,7 @@ class TestResolveFileReferences:
 
     def test_idempotent(self, tmp_path: Path) -> None:
         """Running resolution twice doesn't break anything or corrupt provenance."""
-        (tmp_path / "p.md").write_text("content")
+        (tmp_path / "p.md").write_text("content", encoding="utf-8")
 
         ir = _make_ir([{"id": "n1", "type": "llm", "params": {"prompt": "./p.md"}}])
         resolve_file_references(ir, tmp_path)
@@ -303,7 +305,7 @@ class TestResolveFileReferences:
         prompts_dir = tmp_path / "prompts"
         workflows_dir.mkdir()
         prompts_dir.mkdir()
-        (prompts_dir / "shared.md").write_text("shared prompt content")
+        (prompts_dir / "shared.md").write_text("shared prompt content", encoding="utf-8")
 
         ir = _make_ir([{"id": "n1", "type": "llm", "params": {"prompt": "../prompts/shared.md"}}])
         resolve_file_references(ir, workflows_dir)
@@ -338,7 +340,7 @@ class TestResolveFileReferences:
 
     def test_mixed_file_and_inline_params(self, tmp_path: Path) -> None:
         """Some params are file refs, others are inline — both handled correctly."""
-        (tmp_path / "system.md").write_text("Be helpful")
+        (tmp_path / "system.md").write_text("Be helpful", encoding="utf-8")
 
         ir = _make_ir([
             {
@@ -359,7 +361,7 @@ class TestResolveFileReferences:
 
     def test_batch_items_mixed(self, tmp_path: Path) -> None:
         """Only file-reference values in batch items are resolved."""
-        (tmp_path / "p.md").write_text("file content")
+        (tmp_path / "p.md").write_text("file content", encoding="utf-8")
 
         ir = _make_ir([
             {
@@ -380,7 +382,7 @@ class TestResolveFileReferences:
 
     def test_batch_items_non_resolvable_param_untouched(self, tmp_path: Path) -> None:
         """Non-resolvable params in batch items are not resolved even if they look like paths."""
-        (tmp_path / "data.md").write_text("should not be inlined")
+        (tmp_path / "data.md").write_text("should not be inlined", encoding="utf-8")
 
         ir = _make_ir([
             {
@@ -400,7 +402,7 @@ class TestResolveFileReferences:
 
     def test_non_resolvable_param_untouched(self, tmp_path: Path) -> None:
         """Params not in FILE_RESOLVABLE_PARAMS are never resolved."""
-        (tmp_path / "target.md").write_text("should not be inlined")
+        (tmp_path / "target.md").write_text("should not be inlined", encoding="utf-8")
 
         ir = _make_ir([
             {

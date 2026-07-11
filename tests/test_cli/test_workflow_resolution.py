@@ -556,7 +556,7 @@ class TestEdgeCases:
         runner = click.testing.CliRunner()
 
         wf = tmp_path / "wf.pflow.md"
-        wf.write_text("placeholder")
+        wf.write_text("placeholder", encoding="utf-8")
 
         def raise_decode(*args, **kwargs):
             raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")

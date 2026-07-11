@@ -494,8 +494,8 @@ class TestFrontendFallback:
         """With a bundle present, ``/`` serves index.html, assets resolve, and the
         API routes still win (they are registered before the static mount)."""
         (tmp_path / "assets").mkdir()
-        (tmp_path / "index.html").write_text("<!doctype html><div id=root></div>")
-        (tmp_path / "assets" / "app.js").write_text("console.log('hi')")
+        (tmp_path / "index.html").write_text("<!doctype html><div id=root></div>", encoding="utf-8")
+        (tmp_path / "assets" / "app.js").write_text("console.log('hi')", encoding="utf-8")
 
         with patch("pflow.ui.server._STATIC_DIR", tmp_path):
             client = _local(create_app())
@@ -518,8 +518,8 @@ class TestFrontendFallback:
         rebuild (the recurring stale-canvas debugging trap).
         """
         (tmp_path / "assets").mkdir()
-        (tmp_path / "index.html").write_text("<!doctype html><div id=root></div>")
-        (tmp_path / "assets" / "app-CAFE1234.js").write_text("console.log('hi')")
+        (tmp_path / "index.html").write_text("<!doctype html><div id=root></div>", encoding="utf-8")
+        (tmp_path / "assets" / "app-CAFE1234.js").write_text("console.log('hi')", encoding="utf-8")
 
         with patch("pflow.ui.server._STATIC_DIR", tmp_path):
             client = _local(create_app())

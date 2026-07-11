@@ -97,7 +97,7 @@ class TestRegistryDataPersistence:
         """Test that empty registry files are handled gracefully."""
         with tempfile.TemporaryDirectory() as tmpdir:
             registry_path = Path(tmpdir) / "empty.json"
-            registry_path.write_text("")
+            registry_path.write_text("", encoding="utf-8")
             registry = Registry(registry_path)
 
             # Should return empty dict, not crash
@@ -108,7 +108,7 @@ class TestRegistryDataPersistence:
         """Test that corrupted JSON files are handled gracefully."""
         with tempfile.TemporaryDirectory() as tmpdir:
             registry_path = Path(tmpdir) / "corrupt.json"
-            registry_path.write_text("{ invalid json }")
+            registry_path.write_text("{ invalid json }", encoding="utf-8")
             registry = Registry(registry_path)
 
             # Should return empty dict, not crash
@@ -840,9 +840,9 @@ class TestRegistrySourceMtimeRefresh:
         # package's __dict__, so sys.modules manipulation alone is insufficient.)
         fake_nodes = tmp_path / "fake_nodes"
         fake_nodes.mkdir()
-        (fake_nodes / "__init__.py").write_text("")
+        (fake_nodes / "__init__.py").write_text("", encoding="utf-8")
         sample = fake_nodes / "sample.py"
-        sample.write_text("# placeholder")
+        sample.write_text("# placeholder", encoding="utf-8")
 
         monkeypatch.setattr(pflow.nodes, "__file__", str(fake_nodes / "__init__.py"))
 
@@ -881,7 +881,7 @@ class TestRegistrySourceMtimeRefresh:
         registry._auto_discover_core_nodes()
         after = time_mod.time()
 
-        stored_iso = json.loads((tmp_path / "registry.json").read_text())["last_core_scan"]
+        stored_iso = json.loads((tmp_path / "registry.json").read_text(encoding="utf-8"))["last_core_scan"]
         stored_ts = datetime.fromisoformat(stored_iso).timestamp()
 
         # Stored must be at/after invocation start AND at least ~40ms before scan end
@@ -906,11 +906,11 @@ class TestRegistrySourceMtimeRefresh:
 
         fake_nodes = tmp_path / "fake_nodes"
         fake_nodes.mkdir()
-        (fake_nodes / "__init__.py").write_text("")
+        (fake_nodes / "__init__.py").write_text("", encoding="utf-8")
         bad = fake_nodes / "a_bad.py"
-        bad.write_text("")
+        bad.write_text("", encoding="utf-8")
         good = fake_nodes / "b_good.py"
-        good.write_text("")
+        good.write_text("", encoding="utf-8")
 
         monkeypatch.setattr(pflow.nodes, "__file__", str(fake_nodes / "__init__.py"))
 
@@ -961,7 +961,7 @@ class TestRegistryFormatConsistency:
             registry.save(updated_nodes)
 
             # Step 3: Verify structured format is preserved
-            raw = json.loads(registry_path.read_text())
+            raw = json.loads(registry_path.read_text(encoding="utf-8"))
             assert "nodes" in raw, "save() must write structured format with 'nodes' key"
             assert "version" in raw, "save() must preserve version in structured format"
 
@@ -1002,7 +1002,7 @@ class TestRegistryFormatConsistency:
             assert registry.get_metadata("nonexistent", "default") == "default"
 
             # Verify file is structured
-            raw = json.loads(registry_path.read_text())
+            raw = json.loads(registry_path.read_text(encoding="utf-8"))
             assert "nodes" in raw
             assert "metadata" in raw
             assert raw["metadata"]["key1"] == "value1"
@@ -1017,7 +1017,7 @@ class TestRegistryFormatConsistency:
                 "shell": {"module": "m", "class_name": "C", "type": "core"},
                 "__metadata__": {"mcp_config_hash": "old"},
             }
-            registry_path.write_text(json.dumps(flat_data))
+            registry_path.write_text(json.dumps(flat_data), encoding="utf-8")
 
             registry = Registry(registry_path)
             nodes = registry._load_from_file()
@@ -1042,7 +1042,7 @@ class TestRegistryAtomicWrite:
             registry_path = Path(tmpdir) / "registry.json"
             registry = Registry(registry_path)
             registry.save({"shell": {"module": "m", "class_name": "C", "type": "core"}})
-            original = registry_path.read_text()
+            original = registry_path.read_text(encoding="utf-8")
 
             class _Unserializable:
                 pass
@@ -1052,7 +1052,7 @@ class TestRegistryAtomicWrite:
             with pytest.raises(TypeError):
                 registry._write_atomic({"nodes": {"bad": _Unserializable()}})
 
-            assert registry_path.read_text() == original, "failed write corrupted the registry"
+            assert registry_path.read_text(encoding="utf-8") == original, "failed write corrupted the registry"
             # Only the intact registry remains — no temp debris. iterdir is robust
             # to hidden dot-prefixed temp files across Python versions; glob is not.
             assert [p.name for p in Path(tmpdir).iterdir()] == ["registry.json"]
@@ -1077,7 +1077,7 @@ class TestRegistryAtomicWrite:
             registry = Registry(registry_path)
             registry.save({"shell": {"module": "m", "class_name": "C", "type": "core"}})
 
-            assert json.loads(registry_path.read_text())["nodes"]["shell"]["module"] == "m"
+            assert json.loads(registry_path.read_text(encoding="utf-8"))["nodes"]["shell"]["module"] == "m"
             assert [p.name for p in Path(tmpdir).iterdir()] == ["registry.json"]
 
     def test_concurrent_writes_serialize_replace_section(self):

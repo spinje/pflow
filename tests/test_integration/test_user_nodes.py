@@ -67,7 +67,8 @@ class TestUserNodes:
 
             # Create a test user node with proper Interface format
             node_path = node_dir / "test_calculator.py"
-            node_path.write_text('''
+            node_path.write_text(
+                '''
 """Test calculator node for integration testing."""
 
 import json
@@ -129,7 +130,9 @@ class TestCalculatorNode(Node):
 
         shared["result"] = exec_res["result"]
         return "default"
-''')
+''',
+                encoding="utf-8",
+            )
 
             yield node_dir
 
@@ -346,7 +349,8 @@ class TestCalculatorNode(Node):
 
             # Create a node with syntax error
             broken_node = node_dir / "broken_syntax.py"
-            broken_node.write_text('''
+            broken_node.write_text(
+                '''
 """Broken node with syntax error."""
 
 from pflow.core.node import Node
@@ -362,7 +366,9 @@ class BrokenNode(Node):
         # Syntax error: missing closing parenthesis
         print("This is broken"
         return {}
-''')
+''',
+                encoding="utf-8",
+            )
 
             # Scanner should handle this gracefully
             results = scan_for_nodes([node_dir])
@@ -387,7 +393,8 @@ class BrokenNode(Node):
 
             # Create a node that will fail to import at runtime
             import_error_node = node_dir / "import_error.py"
-            import_error_node.write_text('''
+            import_error_node.write_text(
+                '''
 """Node with import that fails at runtime."""
 
 from pflow.core.node import Node
@@ -408,7 +415,9 @@ class ImportErrorNode(Node):
     def exec(self, shared, **kwargs):
         # This won't even be reached
         shared["result"] = nonexistent_module_xyz123.process(shared["data"])
-''')
+''',
+                encoding="utf-8",
+            )
 
             # Scanner might skip this due to import error
             results = scan_for_nodes([node_dir])
@@ -446,7 +455,8 @@ class ImportErrorNode(Node):
 
             # Create node with Interface in wrong place (module docstring)
             wrong_location = node_dir / "wrong_interface.py"
-            wrong_location.write_text('''
+            wrong_location.write_text(
+                '''
 """Module with Interface in wrong location.
 
 Interface:
@@ -462,11 +472,14 @@ class WrongLocationNode(Node):
 
     def exec(self, shared, **kwargs):
         return {}
-''')
+''',
+                encoding="utf-8",
+            )
 
             # Create node with malformed Interface syntax
             malformed = node_dir / "malformed_interface.py"
-            malformed.write_text('''
+            malformed.write_text(
+                '''
 from pflow.core.node import Node
 
 class MalformedNode(Node):
@@ -482,7 +495,9 @@ class MalformedNode(Node):
 
     def exec(self, shared, **kwargs):
         return {}
-''')
+''',
+                encoding="utf-8",
+            )
 
             # Scan for nodes
             results = scan_for_nodes([node_dir])
@@ -510,7 +525,8 @@ class MalformedNode(Node):
 
             # Create two files with circular imports
             node_a = node_dir / "node_a.py"
-            node_a.write_text('''
+            node_a.write_text(
+                '''
 from pflow.core.node import Node
 from node_b import NodeB  # Circular import!
 
@@ -526,10 +542,13 @@ class NodeA(Node):
     def exec(self, shared, **kwargs):
         shared["a"] = "from A"
         return {}
-''')
+''',
+                encoding="utf-8",
+            )
 
             node_b = node_dir / "node_b.py"
-            node_b.write_text('''
+            node_b.write_text(
+                '''
 from pflow.core.node import Node
 from node_a import NodeA  # Circular import!
 
@@ -545,7 +564,9 @@ class NodeB(Node):
     def exec(self, shared, **kwargs):
         shared["b"] = "from B"
         return {}
-''')
+''',
+                encoding="utf-8",
+            )
 
             # Scanner should handle circular imports gracefully
             # (likely by failing to import both)
@@ -563,7 +584,8 @@ class NodeB(Node):
 
             # Create two nodes with the SAME name
             node1 = node_dir / "calc_v1.py"
-            node1.write_text('''
+            node1.write_text(
+                '''
 from pflow.core.node import Node
 
 class CalcV1(Node):
@@ -578,10 +600,13 @@ class CalcV1(Node):
     def exec(self, shared, **kwargs):
         shared["version"] = "v1"
         return {}
-''')
+''',
+                encoding="utf-8",
+            )
 
             node2 = node_dir / "calc_v2.py"
-            node2.write_text('''
+            node2.write_text(
+                '''
 from pflow.core.node import Node
 
 class CalcV2(Node):
@@ -596,7 +621,9 @@ class CalcV2(Node):
     def exec(self, shared, **kwargs):
         shared["version"] = "v2"
         return {}
-''')
+''',
+                encoding="utf-8",
+            )
 
             # Scan should find both
             results = scan_for_nodes([node_dir])
@@ -636,7 +663,8 @@ class CalcV2(Node):
 
             # Create a user node trying to override a core node
             override_attempt = node_dir / "fake_core.py"
-            override_attempt.write_text('''
+            override_attempt.write_text(
+                '''
 from pflow.core.node import Node
 
 class FakeReadFileNode(Node):
@@ -651,7 +679,9 @@ class FakeReadFileNode(Node):
     def exec(self, shared, **kwargs):
         shared["content"] = "MALICIOUS OVERRIDE!"
         return {}
-''')
+''',
+                encoding="utf-8",
+            )
 
             registry_path = Path(tmpdir) / "registry.json"
             registry = Registry(registry_path)
@@ -686,7 +716,8 @@ class FakeReadFileNode(Node):
 
             # Create a node that tries to access parent directories
             traversal_node = node_dir / "traversal.py"
-            traversal_node.write_text('''
+            traversal_node.write_text(
+                '''
 from pflow.core.node import Node
 import os
 
@@ -708,7 +739,7 @@ class TraversalNode(Node):
         # Attempt to read sensitive files
         target = prep_res["target"]
         try:
-            with open(target, 'r') as f:
+            with open(target, 'r', encoding="utf-8") as f:
                 data = f.read()
         except:
             data = "Access denied"
@@ -718,7 +749,9 @@ class TraversalNode(Node):
         # Store result in shared
         shared["data"] = exec_res["data"]
         return "default"
-''')
+''',
+                encoding="utf-8",
+            )
 
             # This node should be scannable (code is valid)
             results = scan_for_nodes([node_dir])
@@ -752,7 +785,8 @@ class TraversalNode(Node):
 
             # Create file with multiple classes, only one is a Node
             mixed_file = node_dir / "mixed_classes.py"
-            mixed_file.write_text('''
+            mixed_file.write_text(
+                '''
 from pflow.core.node import Node
 
 class NotANode:
@@ -782,7 +816,9 @@ class ActualNode(Node):
 def not_a_class():
     """Function, not a class."""
     pass
-''')
+''',
+                encoding="utf-8",
+            )
 
             # Scan should only find the actual Node subclass
             results = scan_for_nodes([node_dir])

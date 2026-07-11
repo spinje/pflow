@@ -526,7 +526,7 @@ class TestAutoDiscoveryIntegration:
             mock_manager.config_path = tmp_path / ".pflow" / "mcp-servers.json"
             mock_manager.config_path.parent.mkdir(parents=True, exist_ok=True)
             # Create a valid JSON config file
-            mock_manager.config_path.write_text('{"mcpServers": {}}')
+            mock_manager.config_path.write_text('{"mcpServers": {}}', encoding="utf-8")
 
             # Set up registry metadata to force sync
             registry.set_metadata("mcp_last_sync_time", 0)

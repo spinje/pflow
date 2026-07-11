@@ -705,7 +705,7 @@ path = Path(mintlify_file) if mintlify_file else None
 if not path or not path.is_file():
     examples_text = ''
 else:
-    content = path.read_text()
+    content = path.read_text(encoding="utf-8")
     updates = re.findall(r'<Update.*?</Update>', content, re.DOTALL)
     labeled = [f'Example {i}:\n{u}' for i, u in enumerate(updates[:4], 1)]
     examples_text = '\n\n'.join(labeled)
@@ -877,7 +877,7 @@ if unmatched_reviews:
         unmatched_reviews,
     ])
 
-outfile.write_text('\n'.join(parts))
+outfile.write_text('\n'.join(parts), encoding="utf-8")
 result: str = str(outfile)
 ```
 
@@ -904,7 +904,7 @@ from pathlib import Path
 
 path = Path(changelog_file)
 if path.exists():
-    existing = path.read_text()
+    existing = path.read_text(encoding="utf-8")
     lines = existing.split('\n', 1)
     if lines[0].startswith('# '):
         rest = lines[1] if len(lines) > 1 else ''
@@ -914,7 +914,7 @@ if path.exists():
 else:
     content = '# Changelog\n\n' + new_section + '\n'
 
-path.write_text(content)
+path.write_text(content, encoding="utf-8")
 result: str = changelog_file
 ```
 
@@ -943,7 +943,7 @@ if not mintlify_file:
 else:
     path = Path(mintlify_file)
     if path.exists():
-        existing = path.read_text()
+        existing = path.read_text(encoding="utf-8")
         lines = existing.split('\n')
         fence_count = 0
         insert_after = -1
@@ -966,7 +966,7 @@ else:
             'icon: "clock"\nrss: true\n---\n\n' + new_section + '\n'
         )
 
-    path.write_text(content)
+    path.write_text(content, encoding="utf-8")
     msg = mintlify_file
 
 result: str = msg

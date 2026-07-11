@@ -110,7 +110,7 @@ class TestGenerateReport:
         # return None — degrade, never crash. This is the generate_report reader-path proof; it is a
         # DISTINCT path from the format_version rejection above (that one loads, then rejects by version).
         legacy = tmp_path / "legacy-single-object.json"
-        legacy.write_text(json.dumps(_make_trace(nodes=[_make_event()])))
+        legacy.write_text(json.dumps(_make_trace(nodes=[_make_event()])), encoding="utf-8")
         assert generate_report(legacy, str(tmp_path / "report")) is None
 
     def test_creates_report_directory(self, tmp_path: Path) -> None:
@@ -123,7 +123,7 @@ class TestGenerateReport:
         assert report_dir is not None
         assert report_dir.is_dir()
         assert (report_dir / "summary.md").exists()
-        marker = json.loads((report_dir / ".pflow-report.json").read_text())
+        marker = json.loads((report_dir / ".pflow-report.json").read_text(encoding="utf-8"))
         assert marker["format"] == "pflow.report"
         assert marker["format_version"] == 1
         assert marker["workflow_name"] == "test-workflow"
@@ -202,7 +202,7 @@ class TestGenerateReport:
         report_dir = generate_report(trace_file, str(tmp_path / "report"))
 
         assert report_dir is not None
-        markdown = (report_dir / "01-fail-batch.md").read_text()
+        markdown = (report_dir / "01-fail-batch.md").read_text(encoding="utf-8")
         assert "## Batch Errors" in markdown
         assert "[0] RuntimeError: forced batch failure for oversized-item" in markdown
         assert "label='oversized-item'; payload=<str" in markdown
@@ -246,7 +246,7 @@ class TestGenerateReport:
         report_dir = generate_report(trace_file, str(tmp_path / "report"))
 
         assert report_dir is not None
-        markdown = (report_dir / "01-ok-batch.md").read_text()
+        markdown = (report_dir / "01-ok-batch.md").read_text(encoding="utf-8")
         assert "## Batch Errors" not in markdown
         assert "## Output" in markdown
         # The regression catcher: this key is suppressed if `and errors` is removed.
@@ -464,29 +464,29 @@ class TestGenerateReport:
         report_path = tmp_path / "report"
         report_path.mkdir()
         existing = report_path / "notes.md"
-        existing.write_text("do not replace")
+        existing.write_text("do not replace", encoding="utf-8")
         trace_file = tmp_path / "trace.json"
         write_trace_jsonl(trace_file, _make_trace(nodes=[_make_event()]))
 
         with pytest.raises(ReportGenerationError, match="without \\.pflow-report\\.json"):
             generate_report(trace_file, str(report_path))
 
-        assert existing.read_text() == "do not replace"
+        assert existing.read_text(encoding="utf-8") == "do not replace"
         assert not (report_path / "summary.md").exists()
 
     def test_explicit_invalid_marker_is_refused(self, tmp_path: Path) -> None:
         report_path = tmp_path / "report"
         report_path.mkdir()
-        (report_path / ".pflow-report.json").write_text("{not-json")
+        (report_path / ".pflow-report.json").write_text("{not-json", encoding="utf-8")
         existing = report_path / "old.md"
-        existing.write_text("old")
+        existing.write_text("old", encoding="utf-8")
         trace_file = tmp_path / "trace.json"
         write_trace_jsonl(trace_file, _make_trace(nodes=[_make_event()]))
 
         with pytest.raises(ReportGenerationError, match="invalid \\.pflow-report\\.json"):
             generate_report(trace_file, str(report_path))
 
-        assert existing.read_text() == "old"
+        assert existing.read_text(encoding="utf-8") == "old"
         assert not (report_path / "summary.md").exists()
 
     def test_auto_unmarked_existing_directory_is_replaced_for_migration(
@@ -497,7 +497,7 @@ class TestGenerateReport:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         report_path = tmp_path / ".pflow" / "reports" / "test-workflow"
         report_path.mkdir(parents=True)
-        (report_path / "stale.md").write_text("stale")
+        (report_path / "stale.md").write_text("stale", encoding="utf-8")
         trace_file = tmp_path / "trace.json"
         write_trace_jsonl(trace_file, _make_trace(nodes=[_make_event(node_id="fresh")]))
 
@@ -510,7 +510,7 @@ class TestGenerateReport:
 
     def test_existing_target_file_is_refused(self, tmp_path: Path) -> None:
         report_path = tmp_path / "report"
-        report_path.write_text("not a directory")
+        report_path.write_text("not a directory", encoding="utf-8")
 
         with pytest.raises(ReportGenerationError, match="not a directory"):
             validate_report_output_dir(report_path, allow_unmarked_existing=False)
@@ -542,7 +542,7 @@ class TestGenerateReport:
         write_trace_jsonl(second_trace_file, _make_trace(nodes=[_make_event(node_id="new")]))
 
         generate_report(first_trace_file, str(report_path))
-        old_summary = (report_path / "summary.md").read_text()
+        old_summary = (report_path / "summary.md").read_text(encoding="utf-8")
 
         def fail_write_node_files(
             _events: list[dict[str, Any]],
@@ -557,7 +557,7 @@ class TestGenerateReport:
         with pytest.raises(RuntimeError, match="render exploded"):
             generate_report(second_trace_file, str(report_path))
 
-        assert (report_path / "summary.md").read_text() == old_summary
+        assert (report_path / "summary.md").read_text(encoding="utf-8") == old_summary
         assert (report_path / "01-old.md").exists()
         assert not (report_path / "01-new.md").exists()
         assert not list(tmp_path.glob(".report.tmp-*"))
@@ -570,10 +570,10 @@ class TestGenerateReport:
         report_path = tmp_path / "report"
         report_path.mkdir()
         old_file = report_path / "old.md"
-        old_file.write_text("old")
+        old_file.write_text("old", encoding="utf-8")
         temp_path = tmp_path / ".report.tmp-test"
         temp_path.mkdir()
-        (temp_path / "new.md").write_text("new")
+        (temp_path / "new.md").write_text("new", encoding="utf-8")
 
         original_rename = Path.rename
 
@@ -588,7 +588,7 @@ class TestGenerateReport:
             _replace_report_dir(report_path, temp_path)
 
         assert report_path.is_dir()
-        assert (report_path / "old.md").read_text() == "old"
+        assert (report_path / "old.md").read_text(encoding="utf-8") == "old"
         assert not (report_path / "new.md").exists()
         assert temp_path.exists()
 

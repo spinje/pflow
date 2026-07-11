@@ -364,7 +364,7 @@ class TestMCPNodeErrorHandling:
                 "github": {"command": "npx", "args": ["@modelcontextprotocol/server-github"]},
             }
         }
-        config_file.write_text(json.dumps(config_data))
+        config_file.write_text(json.dumps(config_data), encoding="utf-8")
 
         node = MCPNode()
 

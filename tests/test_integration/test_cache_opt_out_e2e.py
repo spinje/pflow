@@ -33,7 +33,8 @@ Read external state that changes between runs.
 ```shell command
 echo current-state
 ```
-"""
+""",
+            encoding="utf-8",
         )
 
         runner = WorkflowRunner()

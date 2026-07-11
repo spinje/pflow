@@ -645,4 +645,4 @@ def test_nested_workflow_with_real_nodes(tmp_path):
 
         # Verify the file was actually written
         assert (tmp_path / "output.txt").exists()
-        assert (tmp_path / "output.txt").read_text() == "Hello from nested workflow!"
+        assert (tmp_path / "output.txt").read_text(encoding="utf-8") == "Hello from nested workflow!"

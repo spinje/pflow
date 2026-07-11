@@ -1850,7 +1850,7 @@ def test_subworkflow_failure_trace_json_has_no_diagnostic_repr(tmp_path):
     assert result.trace is not None
     with patch("pathlib.Path.home", return_value=tmp_path):
         trace_path = result.trace.save_to_file()
-    raw = trace_path.read_text()
+    raw = trace_path.read_text(encoding="utf-8")
     assert "_pflow_child_failure" in raw, "structured child failure must reach the saved trace"
     assert "Diagnostic(" not in raw, "no Diagnostic object may be stringified into the trace"
 

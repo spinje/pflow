@@ -77,13 +77,14 @@ def test_side_effecting_resume_non_tty_refuses_without_hanging(tmp_path, uv_exe,
     env = dict(prepared_subprocess_env)
     env.pop("PYTEST_CURRENT_TEST", None)  # production-like logging (pitfall in subprocess_env docs)
     wf = tmp_path / "wf.pflow.md"
-    wf.write_text(_WF)
+    wf.write_text(_WF, encoding="utf-8")
 
     # 1) Real failed run streams a trace and prints the resume target.
     fail = subprocess.run(  # noqa: S603
         [uv_exe, "run", "pflow", str(wf), "mode=bad"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=env,
         timeout=120,
     )
@@ -103,6 +104,7 @@ def test_side_effecting_resume_non_tty_refuses_without_hanging(tmp_path, uv_exe,
             stdin=read_fd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             env=env,
             timeout=45,
         )

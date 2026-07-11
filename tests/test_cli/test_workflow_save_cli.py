@@ -53,7 +53,7 @@ class TestWorkflowSaveCLI:
         saved_file = home_pflow / "my-workflow" / "my-workflow.pflow.md"
         assert saved_file.exists(), "Workflow file should be created"
 
-        content = saved_file.read_text()
+        content = saved_file.read_text(encoding="utf-8")
         # Saved file should have YAML frontmatter
         assert content.startswith("---\n")
         # Should contain the workflow content
@@ -90,7 +90,9 @@ class TestWorkflowSaveCLI:
 
         # Write a markdown file that parses but produces invalid IR (missing type on node)
         draft = tmp_path / "bad.pflow.md"
-        draft.write_text("# Bad\n\nBad workflow.\n\n## Steps\n\n### node1\n\nA node.\n\n- id: node1\n")
+        draft.write_text(
+            "# Bad\n\nBad workflow.\n\n## Steps\n\n### node1\n\nA node.\n\n- id: node1\n", encoding="utf-8"
+        )
 
         result = runner.invoke(
             save_cmd,
@@ -284,7 +286,7 @@ class TestWorkflowSaveCLI:
 
         # Verify overwrite happened — saved file should contain new node
         existing = home_pflow / "my-workflow" / "my-workflow.pflow.md"
-        content = existing.read_text()
+        content = existing.read_text(encoding="utf-8")
         assert "### new" in content
 
     def test_force_save_invalid_content_preserves_existing(
@@ -307,7 +309,7 @@ class TestWorkflowSaveCLI:
 
         existing = home_pflow / "my-workflow" / "my-workflow.pflow.md"
         assert existing.exists()
-        original_content = existing.read_text()
+        original_content = existing.read_text(encoding="utf-8")
 
         # Try to force-save invalid content over it
         broken_ir = {
@@ -328,7 +330,7 @@ class TestWorkflowSaveCLI:
 
         # The existing valid workflow must survive
         assert existing.exists(), "Valid workflow was deleted before validation caught the error"
-        assert existing.read_text() == original_content, "Valid workflow content was modified"
+        assert existing.read_text(encoding="utf-8") == original_content, "Valid workflow content was modified"
 
     def test_workflow_save_rejects_overwrite_without_force(
         self, runner: click.testing.CliRunner, tmp_path: Any, sample_workflow_ir: dict[str, Any]

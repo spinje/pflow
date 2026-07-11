@@ -186,7 +186,7 @@ class TestMermaidOutputFlag:
 
         assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}\noutput: {result.output}"
         assert output_path.exists()
-        content = output_path.read_text()
+        content = output_path.read_text(encoding="utf-8")
         assert "graph LR" in content
         assert "step1" in content
         # Mermaid should NOT be on stdout (it went to file)
@@ -218,7 +218,7 @@ class TestMermaidNestedWorkflowExpansion:
             f"- type: workflow\n"
             f"- workflow: {child_path}\n"
         )
-        parent_path.write_text(parent_md)
+        parent_path.write_text(parent_md, encoding="utf-8")
 
         result = _invoke([str(parent_path)])
 
@@ -235,14 +235,15 @@ class TestMermaidMarkdownOutput:
         workflow_path = tmp_path / "wf.pflow.md"
         workflow_path.write_text(
             "# My Cool Workflow\n\nThis workflow does amazing things.\n\n"
-            "## Steps\n\n### step1\n\nDoes a thing nicely.\n\n- type: shell\n- command: echo hi\n"
+            "## Steps\n\n### step1\n\nDoes a thing nicely.\n\n- type: shell\n- command: echo hi\n",
+            encoding="utf-8",
         )
         output_path = tmp_path / "diagram.md"
 
         result = _invoke([str(workflow_path), "-o", str(output_path)])
 
         assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}\noutput: {result.output}"
-        content = output_path.read_text()
+        content = output_path.read_text(encoding="utf-8")
         assert content.startswith("# My Cool Workflow\n")
         assert "This workflow does amazing things." in content
         assert "```mermaid\n" in content
@@ -264,7 +265,7 @@ class TestMermaidMarkdownOutput:
         result = _invoke([str(workflow_path), "-o", str(output_path)])
 
         assert result.exit_code == 0
-        content = output_path.read_text()
+        content = output_path.read_text(encoding="utf-8")
         assert content.startswith("graph LR\n")
         assert "```mermaid" not in content
 
@@ -284,7 +285,7 @@ class TestMermaidDescriptionsFlag:
             "- type: shell\n"
             "- command: echo hello\n"
         )
-        workflow_path.write_text(workflow_md)
+        workflow_path.write_text(workflow_md, encoding="utf-8")
 
         result = _invoke(["--descriptions", str(workflow_path)])
 

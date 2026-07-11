@@ -78,6 +78,7 @@ Echoes.
         [uv_exe, "run", "pflow", "--dry-run", "--output-format", "json", str(wf)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         shell=False,
         env=subprocess_env,
         cwd=str(tmp_path),
