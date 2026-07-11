@@ -1,3 +1,3 @@
-# Codex
+## Codex Agents running in Sandbox
 
-Use `pflow-sandbox-testing` for tests: it avoids sandbox `uv`, home-write, and subprocess failures.
+Use `pflow-sandbox-testing` skill before running any tests: it lets you avoid sandbox `uv`, home-write, and subprocess failures.
