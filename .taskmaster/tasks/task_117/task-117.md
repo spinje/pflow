@@ -11,7 +11,7 @@ Make error paths in the CLI subcommands respect a JSON output mode with the unif
 > **Rescoped 2026-06-07 (verified against `main`).** The original spec targeted `registry.py` / `registry_run.py` / `workflow.py`, which **no longer exist** — the CLI was flattened into one-file-per-command under `src/pflow/cli/commands/` by Task 151 (CLI Surface Restructure, 2026-04-12). The file/line tables below have been rewritten against the current layout, and the root-cause analysis was corrected: a group-level error boundary and `output_error()` already exist, but are structurally inert for subcommands (see "Root cause"). The remaining work is smaller than the original framing suggested.
 
 ## Status
-in progress
+not started
 
 ## Priority
 

@@ -165,6 +165,10 @@ seam that forces them**, not in up-front documents.
 ## Failure modes this role has actually hit (guard them)
 
 1. **Trusting stale state** — the recurring one. Verify before every recommendation.
+   Sub-trap, hit twice (2026-07-04 mislabel, caught 2026-07-11): **commit-id comparison lies
+   under squash merges** — `git branch --merged`/`git cherry` mark merged branches unmerged. The
+   reliable per-branch check: `gh pr list --state merged --head <branch>` and compare its
+   `headRefOid` to the branch tip (equal + clean tree = safe to prune).
 2. **Delegating judgment-heavy edits, skipping the personal read** — errors hide at cross-file
    seams.
 3. **Pinning a contract from memory of old summaries** — one proposed "contract to pin up front"

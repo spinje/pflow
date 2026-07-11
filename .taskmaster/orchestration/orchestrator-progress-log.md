@@ -5,12 +5,18 @@ sequence verifies against. `## Now` is the current truth; `## Log` is append-onl
 
 ## Now (last verified: 2026-07-11)
 
-**Current arc: resume/HITL — 125 ✅ → 164 ✅ → 174 ✅ → 171 ✅ → 176 (READY TO LAUNCH).**
-The 176 spec-refresh + decision session ran 2026-07-11: spec fully rewritten against verified
-main (three parallel audits + personal spot-checks), 3-item decision ledger LOCKED by the owner
-(escalation-answering IN · greying IN-phased-last · `resolved_via:"ui"` OUT — rationale in the
-ledger, do not re-litigate), brief at `scratchpads/task-176-web-approval-bridge/BRIEF.md`.
-**Awaiting owner go on: commit the spec/brief to main, then launch the worktree (fable).** Key
+**Current arc: resume/HITL — 125 ✅ → 164 ✅ → 174 ✅ → 171 ✅ → 176 (IN FLIGHT).**
+**IN FLIGHT: Task 176** in worktree `feat-web-ui-approval-bridge` (branch
+`feat/web-ui-approval-bridge`, launched on **fable** 2026-07-11, based on `276672a4` — the commit
+carrying the refreshed spec). Brief verified present in the worktree
+(`scratchpads/task-176-web-approval-bridge/BRIEF.md`). The 176 spec-refresh + decision session
+ran the same day: spec fully rewritten against verified main (three parallel audits + personal
+spot-checks), 3-item decision ledger LOCKED by the owner (escalation-answering IN · greying
+IN-phased-last · `resolved_via:"ui"` OUT — rationale in the ledger, do not re-litigate).
+**On merge:** verify personally (esp. the pre-flight no-silent-no-op rule and the resume
+`PFLOW_EXECUTION_ID` hook — both were orchestrator catches, not spec inheritance), reconcile
+roadmap (176 → ✅ closes the resume/HITL arc), check whether the greying cut-line was exercised
+(→ follow-up issue), then #546/#568 unblock (serialized behind 176). Key
 verified facts that reshaped the task: the gate payload does NOT reach the browser (both server
 read paths are deliberate allowlists — real server-side half); resume has full JSON output but
 exit 1 conflates refusal/failure; a paused-gate answer never hits side-effect confirm;
@@ -40,16 +46,13 @@ kill on timeout — Windows tree-kills, POSIX leaks grandchildren), **#568** (tr
 UI-launched runs, must respect ADR-0008), **#572** (Windows dev test workflow portability), **#574**
 (pytest isolation fixture overhead), **#575** (code-node bare I/O uses locale encoding on Windows).
 
-**Status drift needing a user call (found 2026-07-11):** `./scripts/tasks` shows **117** and **163**
-as "in progress" — neither has a live worktree or recent commits. Likely stale vocabulary (163 is ✅
-in the CLAUDE.md roadmap), but don't flip blind — confirm with the owner whether 163's harness is
-genuinely iterative-ongoing and whether 117 was ever started.
-
-**Worktrees:** `feat-durable-resume-tokens` verified fully merged → prune candidate (clean, content
-in main). **HELD — needs a user call:** `feat-unified-node-storage` is clean but its branch is
-`docs/task-133-crash-tail-scope` (name ≠ dir) with ONE unmerged docs commit `41281872` ([skip
-review], crash-tail scoping) — do not force-delete blind. ~25 other merged `fix-*`/`feat-*` trees
-remain (broader cleanup still not done).
+**Loose ends CLOSED 2026-07-11 (owner-approved):** #541 verified fixed by #557 and closed; task
+statuses corrected (163 → done, 117 → not started — uncommitted); the full worktree sweep ran —
+all 30 stale trees + branches deleted after per-branch verification (merged-PR headRefOid == tip,
+clean). The long-held `feat-unified-node-storage` mystery resolved: its branch was **merged all
+along** (PR #526, 2026-06-21) — the 07-04 "unmerged commit" label was a squash-merge misread —
+and its content was later superseded by 172's crash-tail tolerance anyway. Only main + the
+in-flight `feat-web-ui-approval-bridge` remain.
 
 **Parallel-lane candidates (re-scanned 2026-07-11; deep-verified 2026-07-02 unless marked):**
 - **#542** trace retention — **NOW UNBLOCKED** (its gate was "design WITH/AFTER 171"). Design must
@@ -58,16 +61,26 @@ remain (broader cleanup still not done).
   with any other trace toucher.
 - **#546** pinned-run resolve race · **#561** TTS clip cache (design, backlog) · **#538** liveness
   backstop (now partially superseded by #566's Windows framing? — check before starting either).
-- **#541** ruff drift — likely resolved by #557 → verify + close (still pending since 07-03).
 - **#544** `llm_*` write-side canonicalization · **#549** post-#539 visibility cleanup · **#528**
   CLI `--output-format` stragglers.
 - **#565** (new 07-07) — probe advertises MCP tool outputs as top-level `${success}` but values
   live under `result.*` — agent-facing correctness bug, small, likely registry/probe surface.
-- **#357** memo-cache drift — issue state UNVERIFIED since 2026-06-23 → check.
+- **#357** memo-cache drift — issue state UNVERIFIED since 2026-06-23 → check. (Its old fix
+  worktree `fix/fix-cache-key-drift` was pruned in the 07-11 sweep — merged as PR #524, the
+  guard; the issue itself may still be open work.)
+
+**Session handoff (2026-07-11) — everything committed; working tree clean.** Two commits:
+`276672a4` (176 spec refresh + ledger, 116/CLAUDE.md reconcile) and the closing docs commit
+(status fixes 163→done/117→not started, this log, the squash-merge sub-trap added to the
+kickoff command's failure mode #1). Neither is pushed. The brief lives only in the launched
+worktree (`scratchpads/` is gitignored — by design).
 
 **Watch list (non-obvious, easy to miss):**
-- **176 pre-flight:** refresh the spec against post-171 main (MCP-streams-now, exit-4, trace 2.7.0,
-  `resume_source.py`, `is_durable_pause`) — 176 was drafted against the pre-171 world.
+- **176 in flight:** the spec refresh + decision lock is DONE (2026-07-11 — do not redo);
+  what remains watchable: the builder must surface any engine/payload need as an escalation
+  (spec rule), the greying cut-line may spawn a follow-up issue, and real-browser verification
+  requires killing stale `pflow ui` servers first (the reuse-if-up probe serves old code —
+  recorded 171 gotcha).
 - **Trace-format seam is hot:** 171 (2.7.0) + #562 + #542 all touch trace/trailer semantics —
   serialize; never fan out.
 - Recurring fact-conflation attractor: `is_trace_locked` (probe, `ui/run_tailer.py`) vs
@@ -81,6 +94,19 @@ remain (broader cleanup still not done).
   format pass + 116's 117-file diff — treat ALL file:line refs as stale; re-verify at use.
 
 ## Log (append-only, newest first)
+
+### 2026-07-11 — 176 launched + all four loose ends closed (same session, continued)
+176 committed (`276672a4`: refreshed spec + ledger + 116/CLAUDE.md reconcile) and launched on
+**fable** in `feat-web-ui-approval-bridge` (brief verified in-tree, base = the spec commit).
+Then the owner cleared the parked items: (1) held worktree — investigation flipped the premise:
+branch `docs/task-133-crash-tail-scope` was MERGED via PR #526 all along (the 07-04 "unmerged"
+label was a commit-id-vs-squash misread — same trap as ever), and main's `trace_io.py` has since
+shipped the truncated-tail tolerance that commit called deferred → deleted with the sweep.
+(2) #541 closed with evidence (local `uv run --frozen ruff` hook = uv.lock 0.15.0). (3) 163 →
+done, 117 → not started. (4) Full sweep: 30 worktrees + branches removed, each gated on
+merged-PR headRefOid == tip; the one dirty tree's dirt was only an untracked brief copy.
+**Left off: 176 building on fable; status flips + this log are uncommitted (ride the next docs
+commit); on 176's merge — verify the two orchestrator catches, reconcile, unblock #546/#568.**
 
 ### 2026-07-11 — Task 176 spec-refresh + decision session (same session as the boot below)
 Ran the 176-start sitting. Three parallel opus audits (UI server / web frontend / resume CLI)
