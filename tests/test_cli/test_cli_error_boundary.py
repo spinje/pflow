@@ -70,11 +70,19 @@ def _run_pflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProc
     )
 
 
+def _run_pflow_in_process(args: list[str], env: dict[str, str]):
+    """Invoke the real Click group without paying for another Python startup."""
+    from pflow.cli.main import cli
+
+    clean_env: dict[str, str | None] = {**env, "PYTEST_CURRENT_TEST": None}
+    return CliRunner().invoke(cli, args, env=clean_env)
+
+
 def _save_broken_workflow(home_dir, name: str) -> None:
     """Write PARSE_ERROR_WORKFLOW as a saved workflow under HOME/.pflow/workflows/."""
     workflow_dir = home_dir / ".pflow" / "workflows" / name
     workflow_dir.mkdir(parents=True, exist_ok=True)
-    (workflow_dir / f"{name}.pflow.md").write_text(PARSE_ERROR_WORKFLOW)
+    (workflow_dir / f"{name}.pflow.md").write_text(PARSE_ERROR_WORKFLOW, encoding="utf-8")
 
 
 @pytest.mark.e2e
@@ -143,15 +151,16 @@ class TestDescribeParseError:
 
         # Also write a copy as a standalone file for the --validate-only path
         standalone = tmp_path / "standalone.pflow.md"
-        standalone.write_text(PARSE_ERROR_WORKFLOW)
+        standalone.write_text(PARSE_ERROR_WORKFLOW, encoding="utf-8")
 
-        describe_result = _run_pflow(["describe", "__boundary_symmetry"], env)
-        validate_result = _run_pflow([str(standalone), "--validate-only"], env)
-        _skip_uv_sandbox_panic(describe_result)
-        _skip_uv_sandbox_panic(validate_result)
+        # Real-process rendering is already pinned by the neighboring describe
+        # and history tests. This symmetry assertion only needs the shared Click
+        # boundary, so avoid two more cold Python processes.
+        describe_result = _run_pflow_in_process(["describe", "__boundary_symmetry"], env)
+        validate_result = _run_pflow_in_process([str(standalone), "--validate-only"], env)
 
-        assert describe_result.returncode == 1
-        assert validate_result.returncode == 1
+        assert describe_result.exit_code == 1
+        assert validate_result.exit_code == 1
 
         # The rendered diagnostic body must match. Both paths use the same
         # MarkdownParseError.to_diagnostics() → format_diagnostic() pipeline.
@@ -161,8 +170,8 @@ class TestDescribeParseError:
             "At: line 23",
             "Add a text paragraph between the heading and the parameters",
         ):
-            assert marker in describe_result.stderr, f"describe missing '{marker}':\n{describe_result.stderr}"
-            assert marker in validate_result.stderr, f"validate missing '{marker}':\n{validate_result.stderr}"
+            assert marker in describe_result.output, f"describe missing '{marker}':\n{describe_result.output}"
+            assert marker in validate_result.output, f"validate missing '{marker}':\n{validate_result.output}"
 
 
 class TestBoundaryNarrowCatch:

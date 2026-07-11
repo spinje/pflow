@@ -516,10 +516,14 @@ def test_concurrent_access(tmp_path):
     cache = MemoizationCache(db_path=db_path)
     errors: list[Exception] = []
     num_threads = 8
-    ops_per_thread = 20
+    # Synchronize the first operation so this remains a genuine contention
+    # test without paying for hundreds of redundant SQLite round-trips.
+    start = threading.Barrier(num_threads)
+    ops_per_thread = 8
 
     def worker(thread_id: int) -> None:
         try:
+            start.wait()
             for i in range(ops_per_thread):
                 key = f"t{thread_id}-{i}"
                 cache.put(key, f"node-{thread_id}", "/wf.pflow.md", "default", {"tid": thread_id, "i": i})

@@ -76,10 +76,10 @@ jobs:
       - name: Check typing
         run: uv run mypy
 
-  # Summary job for branch protection — matrix jobs report as
-  # "tests-and-type-check (3.10)" etc., so the bare name never resolves.
-  # Point the required status check at this job; it also gates the Windows
-  # suite, Windows MCP smoke, and macOS Make compatibility smoke test.
+  # Summary job for branch protection — Linux-version and Windows-shard matrix
+  # jobs have suffixed display names, so their bare names never resolve as
+  # stable required checks. Point branch protection at this job; it gates both
+  # matrices, Windows MCP smoke, and the macOS Make compatibility smoke test.
   tests-and-type-check-done:
     if: always()
     needs: [tests-and-type-check, tests-windows, tests-windows-mcp-smoke, tests-macos-make]
@@ -118,11 +118,25 @@ jobs:
           /usr/bin/make --version
           /usr/bin/make test PYTEST_WORKERS=2 'PYTEST=uv run python -m pytest tests/test_encoding_warning_net.py'
 
-  # Task 116 Windows gate. Single Python version (not a matrix) —
-  # version-specific bugs are rarely Windows-specific, and this job is
-  # already the expensive one (Windows runners run ~2x slower).
+  # Task 116 Windows gate. Keep a single Python version because version-specific
+  # bugs are rarely Windows-specific, but split the suite across two runners to
+  # offset Windows process/filesystem overhead. The shards are exhaustive and
+  # disjoint by construction: one owns core+CLI, the other owns tests/ minus
+  # those two directories, so newly added test areas cannot fall through a
+  # hand-maintained manifest.
   tests-windows:
+    name: tests-windows (${{ matrix.shard }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: core-cli
+            pytest-targets: tests/test_core tests/test_cli
+            run-mypy: false
+          - shard: rest
+            pytest-targets: tests --ignore=tests/test_core --ignore=tests/test_cli
+            run-mypy: true
     # ~8k tests at ~2x runner slowness should land well under this; the cap
     # exists so a hung test or subprocess can't burn a runner for the 6h default.
     timeout-minutes: 60
@@ -163,7 +177,9 @@ jobs:
         env:
           # Keep timing evidence in the job log while benchmarking four workers.
           PYTEST_ADDOPTS: --durations=25
-        run: make SHELL=cmd.exe .SHELLFLAGS=/C test-all-local PYTEST_WORKERS=4
+        run: >-
+          make SHELL=cmd.exe .SHELLFLAGS=/C test-all-local PYTEST_WORKERS=4
+          "PYTEST=uv run python -m pytest ${{ matrix.pytest-targets }}"
 
       # LOAD-BEARING, not incidental: ubuntu mypy treats `sys.platform ==
       # "win32"` branch bodies as statically unreachable and never
@@ -172,7 +188,7 @@ jobs:
       # detection, server creationflags) ever gets. `!cancelled()` so a red
       # test step doesn't mask this signal during green-up iteration.
       - name: Check typing
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.run-mypy }}
         run: uv run mypy
 
   # Keep the network-dependent MCP spawn proof off the Windows test critical
