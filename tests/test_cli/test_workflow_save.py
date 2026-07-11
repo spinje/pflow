@@ -12,23 +12,14 @@ from tests.conftest import set_isolated_home
 from tests.shared.markdown_utils import write_workflow_file
 
 
-@pytest.fixture(scope="module")
-def prepared_subprocess_env(tmp_path_factory, uv_exe):
-    """Module-scoped env to avoid repeated registry init overhead per test."""
+@pytest.fixture
+def prepared_subprocess_env(tmp_path_factory):
+    """Provide an isolated home for the one fresh-process CLI assertion."""
     home = tmp_path_factory.mktemp("home_workflow_save")
     (home / ".pflow").mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
     set_isolated_home(env, home)
-
-    subprocess.run(  # noqa: S603
-        [uv_exe, "run", "pflow", "registry", "list", "--json"],
-        capture_output=True,
-        text=True,
-        shell=False,
-        env=env,
-    )
-
     return env
 
 
@@ -125,22 +116,25 @@ class TestWorkflowSaveCLI:
         assert "non-existent-node" in result.output or "Unknown node type" in result.output
 
     @pytest.mark.e2e
-    def test_no_prompt_when_stdout_is_piped(self, sample_workflow, tmp_path, uv_exe, prepared_subprocess_env):
+    def test_no_prompt_when_stdout_is_piped(self, tmp_path, prepared_subprocess_env):
         """Test that save prompt is not shown when stdout is piped."""
         # Create a workflow file with simpler workflow
         simple_workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo test"}}],
+            "nodes": [
+                {
+                    "id": "value",
+                    "type": "code",
+                    "params": {"code": 'result: str = "test"'},
+                }
+            ],
             "edges": [],
-            "start_node": "echo1",
+            "start_node": "value",
         }
         workflow_file = tmp_path / "workflow.pflow.md"
         write_workflow_file(simple_workflow, workflow_file)
 
-        # Find uv executable
-        _ = uv_exe  # Ensure fixture is requested for skip behavior without using it
-
-        # Run with stdout piped - using a simple echo workflow
+        # Run with stdout piped using an in-process workflow node.
         try:
             # Use prepared env with isolated HOME and initialized registry
             env = prepared_subprocess_env
@@ -149,6 +143,7 @@ class TestWorkflowSaveCLI:
                 [sys.executable, "-m", "pflow.cli", "--output-format", "json", str(workflow_file)],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=10,
                 shell=False,
                 cwd=str(tmp_path),  # Use tmp_path as working directory

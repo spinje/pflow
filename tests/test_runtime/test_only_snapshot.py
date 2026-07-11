@@ -126,7 +126,7 @@ def _write_interned_trace(
 
 @pytest.mark.trace_files
 def test_only_does_not_refire_side_effecting_upstream(tmp_path: Path) -> None:
-    """Full run fires a shell side effect once; --only must NOT re-fire it.
+    """Full run fires a side effect once; --only must NOT re-fire it.
 
     End-to-end through WorkflowRunner (per tests/CLAUDE.md #20): the sentinel
     file count is the proof the upstream node didn't execute, and the execution
@@ -137,13 +137,22 @@ def test_only_does_not_refire_side_effecting_upstream(tmp_path: Path) -> None:
         "nodes": [
             {
                 "id": "fetch",
-                "type": "shell",
-                "params": {"command": f"echo fired >> {sentinel}; printf data"},
+                "type": "code",
+                "params": {
+                    "code": f"""from pathlib import Path
+with Path({str(sentinel)!r}).open("a", encoding="utf-8") as log:
+    log.write("fired\\n")
+result: str = "data"
+"""
+                },
             },
             {
                 "id": "summarize",
-                "type": "shell",
-                "params": {"command": "printf 'summary of ${fetch.stdout}'"},
+                "type": "code",
+                "params": {
+                    "code": 'fetch_result: str\nresult: str = f"summary of {fetch_result}"',
+                    "inputs": {"fetch_result": "${fetch.result}"},
+                },
             },
         ],
         "edges": [{"from": "fetch", "to": "summarize"}],
@@ -155,13 +164,13 @@ def test_only_does_not_refire_side_effecting_upstream(tmp_path: Path) -> None:
     full = WorkflowRunner().run(str(wf), {}, RunnerConfig())
     assert full.success, [d.message for d in full.diagnostics]
     full.trace.save_to_file()
-    assert sentinel.read_text().count("fired") == 1
+    assert sentinel.read_text(encoding="utf-8").count("fired") == 1
 
     # --only summarize: fetch is restored, never re-run.
     result = WorkflowRunner().run(str(wf), {}, RunnerConfig(only_node="summarize"))
     assert result.success, [d.message for d in result.diagnostics]
-    assert sentinel.read_text().count("fired") == 1, "side-effecting upstream re-fired under --only"
-    assert result.shared_after["summarize"]["stdout"] == "summary of data"
+    assert sentinel.read_text(encoding="utf-8").count("fired") == 1, "side-effecting upstream re-fired under --only"
+    assert result.shared_after["summarize"]["result"] == "summary of data"
 
     steps = build_execution_steps({"nodes": [{"id": "fetch"}, {"id": "summarize"}]}, result.shared_after, None)
     by_id = {s["node_id"]: s["status"] for s in steps}
@@ -178,9 +187,16 @@ def test_only_does_not_seed_downstream_nodes(tmp_path: Path) -> None:
     """
     ir = {
         "nodes": [
-            {"id": "first", "type": "shell", "params": {"command": "printf first-v1"}},
-            {"id": "middle", "type": "shell", "params": {"command": "printf 'mid ${first.stdout}'"}},
-            {"id": "last", "type": "shell", "params": {"command": "printf last-v1"}},
+            {"id": "first", "type": "code", "params": {"code": 'result: str = "first-v1"'}},
+            {
+                "id": "middle",
+                "type": "code",
+                "params": {
+                    "code": 'first_result: str\nresult: str = f"mid {first_result}"',
+                    "inputs": {"first_result": "${first.result}"},
+                },
+            },
+            {"id": "last", "type": "code", "params": {"code": 'result: str = "last-v1"'}},
         ],
         "edges": [{"from": "first", "to": "middle"}, {"from": "middle", "to": "last"}],
     }
@@ -193,7 +209,7 @@ def test_only_does_not_seed_downstream_nodes(tmp_path: Path) -> None:
 
     result = WorkflowRunner().run(str(wf), {}, RunnerConfig(only_node="middle"))
     assert result.success, [d.message for d in result.diagnostics]
-    assert result.shared_after["middle"]["stdout"] == "mid first-v1"  # target resolved vs restored upstream
+    assert result.shared_after["middle"]["result"] == "mid first-v1"  # target resolved vs restored upstream
     assert "first" in result.shared_after  # upstream restored
     assert "last" not in result.shared_after, "downstream 'last' must not be restored under --only middle"
     assert result.shared_after["__execution__"]["restored_nodes"] == ["first"]

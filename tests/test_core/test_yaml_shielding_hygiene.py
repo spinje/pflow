@@ -24,9 +24,8 @@ _RAW_LOADERS = frozenset({"safe_load", "load", "full_load"})
 _ALLOWED_ARGS = frozenset({"fm_text"})
 
 
-def _raw_yaml_load_calls(py_file: Path, rel: str) -> list[str]:
+def _raw_yaml_load_calls(tree: ast.AST, rel: str) -> list[str]:
     """Return ``rel:lineno`` for each non-exempt ``yaml.<loader>(...)`` call in the file."""
-    tree = ast.parse(py_file.read_text(encoding="utf-8"))
     hits: list[str] = []
     for node in ast.walk(tree):
         func = getattr(node, "func", None)
@@ -44,31 +43,8 @@ def _raw_yaml_load_calls(py_file: Path, rel: str) -> list[str]:
     return hits
 
 
-def test_author_content_yaml_uses_shielding_helper() -> None:
-    src_root = Path(__file__).resolve().parents[2] / "src" / "pflow"
-    repo_root = src_root.parents[1]
-    assert src_root.is_dir(), f"expected src/pflow/ at {src_root}"
-
-    violations: list[str] = []
-    for py_file in sorted(src_root.rglob("*.py")):
-        rel = py_file.relative_to(repo_root).as_posix()
-        if rel in _ALLOWED_FILES:
-            continue
-        violations.extend(_raw_yaml_load_calls(py_file, rel))
-
-    if violations:
-        pytest.fail(
-            "Raw yaml.safe_load/yaml.load on (possibly) author content found. Author "
-            "content can carry ${...} templates that PyYAML mis-parses (issue #482).\n"
-            "Use pflow.core.yaml_utils.safe_load_preserving_templates instead — or, if "
-            "this parses system metadata only (e.g. frontmatter), add its argument to "
-            "_ALLOWED_ARGS with a reason.\n\n" + "\n".join(violations)
-        )
-
-
-def _aliased_or_from_yaml_imports(py_file: Path, rel: str) -> list[str]:
+def _aliased_or_from_yaml_imports(tree: ast.AST, rel: str) -> list[str]:
     """Return ``rel:lineno`` for yaml imports the call-based guard above can't see."""
-    tree = ast.parse(py_file.read_text(encoding="utf-8"))
     hits: list[str] = []
     for node in ast.walk(tree):
         # `from yaml import safe_load` / `load` / `full_load`
@@ -86,26 +62,41 @@ def _aliased_or_from_yaml_imports(py_file: Path, rel: str) -> list[str]:
     return hits
 
 
-def test_no_aliased_or_from_yaml_imports() -> None:
-    """The call-based guard keys on ``yaml.<loader>(...)`` attribute calls.
+def test_yaml_shielding_hygiene() -> None:
+    """Scan each source AST once for raw loaders and imports that bypass the guard.
 
-    ``from yaml import safe_load`` or ``import yaml as y`` would bypass it — exactly
-    the regression it exists to prevent — so forbid those import forms entirely.
-    Author-content callers must use the shielding helper; the few frontmatter
-    callers use plain ``import yaml``.
+    The checks used to walk and parse the entire source tree independently. Keeping
+    both policies in one test preserves their distinct diagnostics while avoiding a
+    second Windows filesystem scan and AST parse.
     """
     src_root = Path(__file__).resolve().parents[2] / "src" / "pflow"
     repo_root = src_root.parents[1]
+    assert src_root.is_dir(), f"expected src/pflow/ at {src_root}"
 
-    violations: list[str] = []
+    raw_loader_violations: list[str] = []
+    import_violations: list[str] = []
     for py_file in sorted(src_root.rglob("*.py")):
         rel = py_file.relative_to(repo_root).as_posix()
-        violations.extend(_aliased_or_from_yaml_imports(py_file, rel))
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        if rel not in _ALLOWED_FILES:
+            raw_loader_violations.extend(_raw_yaml_load_calls(tree, rel))
+        import_violations.extend(_aliased_or_from_yaml_imports(tree, rel))
 
-    if violations:
-        pytest.fail(
+    messages: list[str] = []
+    if raw_loader_violations:
+        messages.append(
+            "Raw yaml.safe_load/yaml.load on (possibly) author content found. Author "
+            "content can carry ${...} templates that PyYAML mis-parses (issue #482).\n"
+            "Use pflow.core.yaml_utils.safe_load_preserving_templates instead — or, if "
+            "this parses system metadata only (e.g. frontmatter), add its argument to "
+            "_ALLOWED_ARGS with a reason.\n\n" + "\n".join(raw_loader_violations)
+        )
+    if import_violations:
+        messages.append(
             "Aliased or from-imports of yaml found. These bypass the call-based "
             "yaml-shielding guard (which keys on `yaml.<loader>(...)`). Use plain "
             "`import yaml` (frontmatter) or pflow.core.yaml_utils."
-            "safe_load_preserving_templates.\n\n" + "\n".join(violations)
+            "safe_load_preserving_templates.\n\n" + "\n".join(import_violations)
         )
+    if messages:
+        pytest.fail("\n\n".join(messages))

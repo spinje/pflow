@@ -1,6 +1,6 @@
 ---
-description: Create task file from discussion context
-argument-hint: <task-id>
+name: "create-task"
+description: "Create task file from discussion context"
 ---
 
 # Create Task
@@ -9,7 +9,7 @@ Capture the current discussion into a task file that will guide implementation.
 
 ## Input
 
-Task ID: **$ARGUMENTS**
+Task ID: **the user's request**
 
 If this is a number (e.g., "107"), create a task file for **what was just discussed** in this conversation, using that number as the task ID.
 

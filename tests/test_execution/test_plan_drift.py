@@ -37,6 +37,33 @@ def _log_lines(path: Path) -> list[str]:
     return path.read_text(encoding="utf-8").splitlines()
 
 
+def _recording_code_params(
+    log_file: Path,
+    label: str,
+    *,
+    result_expression: str | None = None,
+    log_expression: str | None = None,
+    inputs: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Record node-agnostic planner behavior in-process without launching Bash."""
+    resolved_inputs = inputs or {}
+    declarations = "".join(f"{name}: str\n" for name in resolved_inputs)
+    if result_expression is None:
+        result_expression = repr(label)
+    if log_expression is None:
+        log_expression = repr(f"{label}\n")
+    params: dict[str, Any] = {
+        "code": f"""from pathlib import Path
+{declarations}with Path({str(log_file)!r}).open("a", encoding="utf-8") as log:
+    log.write({log_expression})
+result: str = {result_expression}
+"""
+    }
+    if resolved_inputs:
+        params["inputs"] = resolved_inputs
+    return params
+
+
 def _runner_plan(path: Path, params: dict | None = None):
     return WorkflowRunner().plan(str(path), params or {}, RunnerConfig())
 
@@ -75,8 +102,8 @@ def test_plan_matches_execution_for_fresh_workflow(tmp_path) -> None:
     log_file = tmp_path / "exec.log"
     ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "cache": True, "params": {"command": f"echo a >> {log_file}; printf a"}},
-            {"id": "b", "type": "shell", "cache": True, "params": {"command": f"echo b >> {log_file}; printf b"}},
+            {"id": "a", "type": "code", "cache": True, "params": _recording_code_params(log_file, "a")},
+            {"id": "b", "type": "code", "cache": True, "params": _recording_code_params(log_file, "b")},
         ],
         "edges": [{"from": "a", "to": "b"}],
     }
@@ -95,8 +122,8 @@ def test_plan_matches_execution_after_first_run(tmp_path) -> None:
     log_file = tmp_path / "exec.log"
     ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "cache": True, "params": {"command": f"echo a >> {log_file}; printf a"}},
-            {"id": "b", "type": "shell", "cache": True, "params": {"command": f"echo b >> {log_file}; printf b"}},
+            {"id": "a", "type": "code", "cache": True, "params": _recording_code_params(log_file, "a")},
+            {"id": "b", "type": "code", "cache": True, "params": _recording_code_params(log_file, "b")},
         ],
         "edges": [{"from": "a", "to": "b"}],
     }
@@ -116,8 +143,18 @@ def test_plan_cross_node_template_resolution(tmp_path) -> None:
     """Cached upstream outputs must be visible so downstream cache keys match."""
     ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "cache": True, "params": {"command": "printf cached-value"}},
-            {"id": "b", "type": "shell", "cache": True, "params": {"command": "printf ${a.stdout}"}},
+            {
+                "id": "a",
+                "type": "code",
+                "cache": True,
+                "params": {"code": 'result: str = "cached-value"'},
+            },
+            {
+                "id": "b",
+                "type": "code",
+                "cache": True,
+                "params": {"code": "value: str\nresult: str = value", "inputs": {"value": "${a.result}"}},
+            },
         ],
         "edges": [{"from": "a", "to": "b"}],
     }
@@ -135,36 +172,56 @@ def test_plan_matches_execution_after_config_edit(tmp_path) -> None:
     log_file = tmp_path / "edit.log"
     old_ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "cache": True, "params": {"command": f"echo a >> {log_file}; printf a"}},
+            {"id": "a", "type": "code", "cache": True, "params": _recording_code_params(log_file, "a")},
             {
                 "id": "b",
-                "type": "shell",
+                "type": "code",
                 "cache": True,
-                "params": {"command": f"echo b >> {log_file}; printf '${{a.stdout}}-b'"},
+                "params": _recording_code_params(
+                    log_file,
+                    "b",
+                    result_expression='a + "-b"',
+                    inputs={"a": "${a.result}"},
+                ),
             },
             {
                 "id": "c",
-                "type": "shell",
+                "type": "code",
                 "cache": True,
-                "params": {"command": f"echo c >> {log_file}; printf '${{b.stdout}}-c'"},
+                "params": _recording_code_params(
+                    log_file,
+                    "c",
+                    result_expression='b + "-c"',
+                    inputs={"b": "${b.result}"},
+                ),
             },
         ],
         "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}],
     }
     new_ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "cache": True, "params": {"command": f"echo a >> {log_file}; printf a"}},
+            {"id": "a", "type": "code", "cache": True, "params": _recording_code_params(log_file, "a")},
             {
                 "id": "b",
-                "type": "shell",
+                "type": "code",
                 "cache": True,
-                "params": {"command": f"echo b2 >> {log_file}; printf '${{a.stdout}}-b2'"},
+                "params": _recording_code_params(
+                    log_file,
+                    "b2",
+                    result_expression='a + "-b2"',
+                    inputs={"a": "${a.result}"},
+                ),
             },
             {
                 "id": "c",
-                "type": "shell",
+                "type": "code",
                 "cache": True,
-                "params": {"command": f"echo c >> {log_file}; printf '${{b.stdout}}-c'"},
+                "params": _recording_code_params(
+                    log_file,
+                    "c",
+                    result_expression='b + "-c"',
+                    inputs={"b": "${b.result}"},
+                ),
             },
         ],
         "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}],
@@ -234,19 +291,24 @@ def test_plan_sub_workflow_partial_cache_matches(tmp_path) -> None:
             "nodes": [
                 {
                     "id": "child-a",
-                    "type": "shell",
+                    "type": "code",
                     "cache": True,
-                    "params": {"command": f"echo child-a >> {log_file}; printf child-a"},
+                    "params": _recording_code_params(log_file, "child-a"),
                 },
                 {
                     "id": "child-b",
-                    "type": "shell",
+                    "type": "code",
                     "cache": True,
-                    "params": {"command": f"echo child-b >> {log_file}; printf '${{child-a.stdout}}-child-b'"},
+                    "params": _recording_code_params(
+                        log_file,
+                        "child-b",
+                        result_expression='child_a + "-child-b"',
+                        inputs={"child_a": "${child-a.result}"},
+                    ),
                 },
             ],
             "edges": [{"from": "child-a", "to": "child-b"}],
-            "outputs": {"out": {"source": "${child-b.stdout}", "description": "child output"}},
+            "outputs": {"out": {"source": "${child-b.result}", "description": "child output"}},
         },
         child_path,
     )
@@ -255,9 +317,9 @@ def test_plan_sub_workflow_partial_cache_matches(tmp_path) -> None:
             "nodes": [
                 {
                     "id": "pre",
-                    "type": "shell",
+                    "type": "code",
                     "cache": True,
-                    "params": {"command": f"echo pre >> {log_file}; printf pre"},
+                    "params": _recording_code_params(log_file, "pre"),
                 },
                 {
                     "id": "call-child",
@@ -266,9 +328,14 @@ def test_plan_sub_workflow_partial_cache_matches(tmp_path) -> None:
                 },
                 {
                     "id": "post",
-                    "type": "shell",
+                    "type": "code",
                     "cache": True,
-                    "params": {"command": f"echo post >> {log_file}; printf '${{call-child.out}}-post'"},
+                    "params": _recording_code_params(
+                        log_file,
+                        "post",
+                        result_expression='child_out + "-post"',
+                        inputs={"child_out": "${call-child.out}"},
+                    ),
                 },
             ],
             "edges": [{"from": "pre", "to": "call-child"}, {"from": "call-child", "to": "post"}],
@@ -284,19 +351,24 @@ def test_plan_sub_workflow_partial_cache_matches(tmp_path) -> None:
             "nodes": [
                 {
                     "id": "child-a",
-                    "type": "shell",
+                    "type": "code",
                     "cache": True,
-                    "params": {"command": f"echo child-a >> {log_file}; printf child-a"},
+                    "params": _recording_code_params(log_file, "child-a"),
                 },
                 {
                     "id": "child-b",
-                    "type": "shell",
+                    "type": "code",
                     "cache": True,
-                    "params": {"command": f"echo child-b2 >> {log_file}; printf '${{child-a.stdout}}-child-b2'"},
+                    "params": _recording_code_params(
+                        log_file,
+                        "child-b2",
+                        result_expression='child_a + "-child-b2"',
+                        inputs={"child_a": "${child-a.result}"},
+                    ),
                 },
             ],
             "edges": [{"from": "child-a", "to": "child-b"}],
-            "outputs": {"out": {"source": "${child-b.stdout}", "description": "child output"}},
+            "outputs": {"out": {"source": "${child-b.result}", "description": "child output"}},
         },
         child_path,
     )
@@ -325,9 +397,15 @@ def test_plan_batch_items_cache_matches(tmp_path) -> None:
             },
             {
                 "id": "batch",
-                "type": "shell",
+                "type": "code",
                 "cache": True,
-                "params": {"command": f"echo ${{item}} >> {log_file}; printf '${{item}}'"},
+                "params": _recording_code_params(
+                    log_file,
+                    "",
+                    result_expression="item",
+                    log_expression='item + "\\n"',
+                    inputs={"item": "${item}"},
+                ),
                 "batch": {"items": "${source.result}"},
             },
         ],
@@ -367,13 +445,19 @@ def test_plan_batch_sub_workflow_partial_cache_matches_execution(tmp_path) -> No
             "nodes": [
                 {
                     "id": "echo",
-                    "type": "shell",
+                    "type": "code",
                     "cache": True,
-                    "params": {"command": f"echo ${{value}} >> {log_file}; printf '${{value}}'"},
+                    "params": _recording_code_params(
+                        log_file,
+                        "",
+                        result_expression="value",
+                        log_expression='value + "\\n"',
+                        inputs={"value": "${value}"},
+                    ),
                 }
             ],
             "edges": [],
-            "outputs": {"out": {"source": "${echo.stdout}", "description": "Echoed value"}},
+            "outputs": {"out": {"source": "${echo.result}", "description": "Echoed value"}},
         },
         child_path,
     )
@@ -478,9 +562,9 @@ def test_plan_cache_false_always_executes(tmp_path) -> None:
         "nodes": [
             {
                 "id": "uncached",
-                "type": "shell",
+                "type": "code",
                 "cache": False,
-                "params": {"command": f"echo uncached >> {log_file}; printf uncached"},
+                "params": _recording_code_params(log_file, "uncached"),
             },
         ],
         "edges": [],

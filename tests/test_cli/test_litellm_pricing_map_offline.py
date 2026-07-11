@@ -22,6 +22,7 @@ test fails — exactly the regression to catch.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -71,12 +72,11 @@ The LLM response.
 
 def test_analyze_cache_does_not_attempt_remote_model_cost_map(
     tmp_path: Path,
-    uv_exe: str,
     prepared_subprocess_env: dict[str, str],
 ) -> None:
     """``pflow analyze-cache`` must not log LiteLLM's remote-fetch warning."""
     workflow = tmp_path / "workflow.pflow.md"
-    workflow.write_text(_WORKFLOW_BODY)
+    workflow.write_text(_WORKFLOW_BODY, encoding="utf-8")
 
     env = dict(prepared_subprocess_env)
     # Point LiteLLM's model-cost URL at a guaranteed-unreachable host.
@@ -89,9 +89,9 @@ def test_analyze_cache_does_not_attempt_remote_model_cost_map(
 
     result = subprocess.run(  # noqa: S603 — fixture-controlled args; mirrors other subprocess CLI tests
         [
-            uv_exe,
-            "run",
-            "pflow",
+            sys.executable,
+            "-m",
+            "pflow.cli",
             "analyze-cache",
             str(workflow),
             "--no-trace-autoload",
