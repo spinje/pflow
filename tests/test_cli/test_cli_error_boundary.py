@@ -85,10 +85,10 @@ def _save_broken_workflow(home_dir, name: str) -> None:
     (workflow_dir / f"{name}.pflow.md").write_text(PARSE_ERROR_WORKFLOW, encoding="utf-8")
 
 
-@pytest.mark.e2e
 class TestDescribeParseError:
     """Primary guards for GH #292 — pflow describe must not crash with a traceback."""
 
+    @pytest.mark.e2e
     def test_describe_parse_error_renders_via_diagnostic_pipeline(self, tmp_path, prepared_subprocess_env):
         """pflow describe <workflow-with-parse-error> renders a structured diagnostic, not a traceback."""
         env = dict(prepared_subprocess_env)
@@ -109,6 +109,7 @@ class TestDescribeParseError:
         # Suggestion block surfaced (from MarkdownParseError.suggestion)
         assert "Add a text paragraph" in result.stderr, f"missing suggestion block:\n{result.stderr}"
 
+    @pytest.mark.e2e
     def test_history_also_uses_boundary_for_parse_errors(self, tmp_path, prepared_subprocess_env):
         """Architectural check: boundary is not describe-specific.
 
