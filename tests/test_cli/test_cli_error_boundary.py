@@ -65,6 +65,7 @@ def _run_pflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProc
         [sys.executable, "-m", "pflow.cli", *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=clean_env,
         timeout=60,
     )

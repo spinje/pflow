@@ -193,7 +193,7 @@ def test_stdin_no_hang_integration(tmp_path, uv_exe):
     pflow_dir = tmp_path / ".pflow"
     pflow_dir.mkdir(exist_ok=True)
     registry_data = {"nodes": {"shell": {"module": "pflow.nodes.shell.shell", "class_name": "ShellNode"}}}
-    (pflow_dir / "registry.json").write_text(json.dumps(registry_data))
+    (pflow_dir / "registry.json").write_text(json.dumps(registry_data), encoding="utf-8")
 
     try:
         result = subprocess.run(
@@ -202,6 +202,7 @@ def test_stdin_no_hang_integration(tmp_path, uv_exe):
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,  # No stdin data — the scenario that triggered the original hang
             text=True,
+            encoding="utf-8",
             env=env,
             timeout=5,
         )

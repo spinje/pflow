@@ -538,7 +538,8 @@ class TestRunnerBoundary:
             "### gated-child\n\nDo the child action.\n\n"
             "- type: shell\n"
             "- command: echo child-ran\n"
-            "- approval: required\n"
+            "- approval: required\n",
+            encoding="utf-8",
         )
         parent = {
             "ir_version": "0.1.0",
@@ -646,7 +647,8 @@ class TestSubWorkflowBoundary:
             "### gated-step\n\nDo the child action.\n\n"
             "- type: shell\n"
             f"- command: {gated_command}\n"
-            "- approval: required\n"
+            "- approval: required\n",
+            encoding="utf-8",
         )
         return str(child)
 

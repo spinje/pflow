@@ -264,7 +264,7 @@ class TestValidationBeforeExecution:
 
         # File should be created (execution happened)
         assert output_file.exists(), "Workflow should have executed and created the file"
-        assert output_file.read_text() == "validation passed"
+        assert output_file.read_text(encoding="utf-8") == "validation passed"
 
 
 class TestValidationConsistency:

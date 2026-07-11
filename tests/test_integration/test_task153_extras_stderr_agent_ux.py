@@ -110,14 +110,15 @@ class TestExtrasDiagnosticStderrAgentUX:
         Mutation-verify: if any of the four stderr markers drops out, this
         test fails and the agent-UX regression is caught in CI.
         """
-        (tmp_path / "child.pflow.md").write_text(CHILD_PFLOW_MD)
+        (tmp_path / "child.pflow.md").write_text(CHILD_PFLOW_MD, encoding="utf-8")
         parent = tmp_path / "parent.pflow.md"
-        parent.write_text(PARENT_WITH_TYPO)
+        parent.write_text(PARENT_WITH_TYPO, encoding="utf-8")
 
         completed = subprocess.run(  # noqa: S603
             [sys.executable, "-m", "pflow.cli", str(parent)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=15,
             shell=False,
             cwd=str(tmp_path),

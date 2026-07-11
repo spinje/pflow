@@ -215,7 +215,7 @@ class TestWorkflowExecutorComprehensive:
         Without this, any _PREP_RECOVERABLE exception would satisfy the test.
         """
         workflow_file = tmp_path / "malformed.pflow.md"
-        workflow_file.write_text("# Bad Workflow\n\nJust some text, no steps.\n")
+        workflow_file.write_text("# Bad Workflow\n\nJust some text, no steps.\n", encoding="utf-8")
 
         node = WorkflowExecutor()
         node.set_params({"workflow": str(workflow_file)})

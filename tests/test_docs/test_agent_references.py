@@ -78,13 +78,13 @@ def _source_corpus() -> str:
     """All Python source under src/ and tests/, concatenated for substring checks."""
     parts = []
     for root in (REPO_ROOT / "src", REPO_ROOT / "tests"):
-        parts.extend(p.read_text(errors="ignore") for p in root.rglob("*.py"))
+        parts.extend(p.read_text(encoding="utf-8", errors="ignore") for p in root.rglob("*.py"))
     return "\n".join(parts)
 
 
 def _iter_tokens(pattern: re.Pattern[str]):
     for agent_file in sorted(AGENTS_DIR.glob("*.md")):
-        for token in sorted(set(pattern.findall(agent_file.read_text()))):
+        for token in sorted(set(pattern.findall(agent_file.read_text(encoding="utf-8")))):
             yield agent_file.name, token
 
 

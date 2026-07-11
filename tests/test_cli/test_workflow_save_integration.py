@@ -68,7 +68,7 @@ class TestWorkflowSaveIntegration:
         assert workflow_file.exists()
 
         # Verify file content structure — should have YAML frontmatter
-        content = workflow_file.read_text()
+        content = workflow_file.read_text(encoding="utf-8")
         assert content.startswith("---\n")
 
         # Parse frontmatter
@@ -143,7 +143,7 @@ class TestWorkflowSaveIntegration:
         assert result.exit_code == 0
         assert "Workflow completed" in result.output
         assert output_file.exists()
-        assert output_file.read_text() == "Integration test output"
+        assert output_file.read_text(encoding="utf-8") == "Integration test output"
 
         # Then, test the save functionality separately (still integration testing)
         workflows_dir = tmp_path / "workflows"

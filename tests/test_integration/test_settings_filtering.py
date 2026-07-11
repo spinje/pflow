@@ -62,7 +62,7 @@ def test_denied_nodes_not_in_llm_context(tmp_path):
             },
         },
     }
-    registry_path.write_text(json.dumps(registry_data))
+    registry_path.write_text(json.dumps(registry_data), encoding="utf-8")
 
     # Create settings that deny http
     settings_path = tmp_path / "settings.json"
@@ -70,7 +70,7 @@ def test_denied_nodes_not_in_llm_context(tmp_path):
         "version": "1.0.0",
         "registry": {"nodes": {"allow": ["*"], "deny": ["http", "pflow.nodes.http.*"]}},
     }
-    settings_path.write_text(json.dumps(settings_data))
+    settings_path.write_text(json.dumps(settings_data), encoding="utf-8")
 
     # Wire up registry with custom settings
     sm = SettingsManager(settings_path=settings_path)
@@ -114,7 +114,7 @@ def test_deny_rules_filter_nodes_from_registry(tmp_path):
             "read-file": {"module": "pflow.nodes.file.read_file", "class_name": "ReadFileNode", "type": "core"},
         },
     }
-    registry_path.write_text(json.dumps(registry_data))
+    registry_path.write_text(json.dumps(registry_data), encoding="utf-8")
 
     # Test 1: With restrictive deny rules, nodes are filtered out
     restrictive_settings = {
@@ -124,7 +124,7 @@ def test_deny_rules_filter_nodes_from_registry(tmp_path):
         },
     }
     restrictive_settings_path = tmp_path / "restrictive_settings.json"
-    restrictive_settings_path.write_text(json.dumps(restrictive_settings))
+    restrictive_settings_path.write_text(json.dumps(restrictive_settings), encoding="utf-8")
 
     sm_restrictive = SettingsManager(restrictive_settings_path)
     registry = Registry(registry_path=registry_path)
@@ -144,7 +144,7 @@ def test_deny_rules_filter_nodes_from_registry(tmp_path):
         },
     }
     permissive_settings_path = tmp_path / "permissive_settings.json"
-    permissive_settings_path.write_text(json.dumps(permissive_settings))
+    permissive_settings_path.write_text(json.dumps(permissive_settings), encoding="utf-8")
 
     sm_permissive = SettingsManager(permissive_settings_path)
     registry2 = Registry(registry_path=registry_path)

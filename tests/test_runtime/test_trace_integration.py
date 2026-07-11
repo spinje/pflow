@@ -1405,7 +1405,7 @@ class TestCachedSystemEndToEnd:
 
         report_dir = generate_report(str(trace_path), str(tmp_path / "report"))
         assert report_dir is not None
-        node_md = (report_dir / "01-answer.md").read_text()
+        node_md = (report_dir / "01-answer.md").read_text(encoding="utf-8")
         assert "## Cached System" in node_md
         assert "```json" in node_md
         assert "cache_control" in node_md

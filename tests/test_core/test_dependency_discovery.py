@@ -116,7 +116,7 @@ class TestFileRefInParams:
         """A prompt param pointing to a file is discovered."""
         prompt_dir = tmp_path / "prompts"
         prompt_dir.mkdir()
-        (prompt_dir / "foo.md").write_text("You are a helpful assistant")
+        (prompt_dir / "foo.md").write_text("You are a helpful assistant", encoding="utf-8")
 
         ir = _make_ir([
             {"id": "ask", "type": "llm", "params": {"prompt": "./prompts/foo.md"}},
@@ -135,7 +135,7 @@ class TestFileRefInParams:
         """A command param pointing to a script is discovered."""
         scripts_dir = tmp_path / "scripts"
         scripts_dir.mkdir()
-        (scripts_dir / "run.sh").write_text("#!/bin/bash\necho hi")
+        (scripts_dir / "run.sh").write_text("#!/bin/bash\necho hi", encoding="utf-8")
 
         ir = _make_ir([
             {"id": "run", "type": "shell", "params": {"command": "./scripts/run.sh"}},
@@ -153,7 +153,7 @@ class TestFileRefInParams:
         """A code param pointing to a .py file is discovered."""
         scripts_dir = tmp_path / "scripts"
         scripts_dir.mkdir()
-        (scripts_dir / "process.py").write_text("result = 42")
+        (scripts_dir / "process.py").write_text("result = 42", encoding="utf-8")
 
         ir = _make_ir([
             {"id": "compute", "type": "python", "params": {"code": "./scripts/process.py"}},
@@ -169,7 +169,7 @@ class TestFileRefInParams:
 
     def test_source_param(self, tmp_path: Path) -> None:
         """A source param is also in FILE_RESOLVABLE_PARAMS."""
-        (tmp_path / "template.md").write_text("template content")
+        (tmp_path / "template.md").write_text("template content", encoding="utf-8")
 
         ir = _make_ir([
             {"id": "out", "type": "llm", "params": {"source": "./template.md"}},
@@ -212,7 +212,7 @@ class TestSubWorkflowFileRef:
             "edges": [],
         }
         sub_path = tmp_path / "sub.pflow.md"
-        sub_path.write_text(ir_to_markdown(sub_ir))
+        sub_path.write_text(ir_to_markdown(sub_ir), encoding="utf-8")
 
         ir = _make_ir([
             {"id": "outer", "type": "workflow", "params": {"workflow": "./sub.pflow.md"}},
@@ -258,7 +258,7 @@ class TestRecursiveSubWorkflowDeps:
         # Create the file that sub-workflow references
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        (prompts_dir / "inner.md").write_text("inner prompt content")
+        (prompts_dir / "inner.md").write_text("inner prompt content", encoding="utf-8")
 
         # Create sub-workflow that references a prompt file
         sub_ir = {
@@ -268,7 +268,7 @@ class TestRecursiveSubWorkflowDeps:
             "edges": [],
         }
         sub_path = tmp_path / "sub.pflow.md"
-        sub_path.write_text(ir_to_markdown(sub_ir))
+        sub_path.write_text(ir_to_markdown(sub_ir), encoding="utf-8")
 
         # Create parent workflow that references the sub-workflow
         ir = _make_ir([
@@ -291,7 +291,7 @@ class TestRecursiveSubWorkflowDeps:
     def test_deeply_nested_sub_workflows(self, tmp_path: Path) -> None:
         """Three levels of nesting: parent -> child -> grandchild, all deps collected."""
         # Create grandchild prompt
-        (tmp_path / "deep.md").write_text("deep content")
+        (tmp_path / "deep.md").write_text("deep content", encoding="utf-8")
 
         # Create grandchild workflow referencing deep.md
         grandchild_ir = {
@@ -299,7 +299,7 @@ class TestRecursiveSubWorkflowDeps:
             "edges": [],
         }
         grandchild_path = tmp_path / "grandchild.pflow.md"
-        grandchild_path.write_text(ir_to_markdown(grandchild_ir))
+        grandchild_path.write_text(ir_to_markdown(grandchild_ir), encoding="utf-8")
 
         # Create child workflow referencing grandchild
         child_ir = {
@@ -307,7 +307,7 @@ class TestRecursiveSubWorkflowDeps:
             "edges": [],
         }
         child_path = tmp_path / "child.pflow.md"
-        child_path.write_text(ir_to_markdown(child_ir))
+        child_path.write_text(ir_to_markdown(child_ir), encoding="utf-8")
 
         # Create parent workflow referencing child
         parent_ir = _make_ir([
@@ -340,7 +340,7 @@ class TestBatchConfigFile:
     def test_batch_config_discovered(self, tmp_path: Path) -> None:
         """A batch param with a file reference is discovered."""
         batch_content = "items:\n  - focus: ai\n    prompt: inline prompt\n"
-        (tmp_path / "reviews.yaml").write_text(batch_content)
+        (tmp_path / "reviews.yaml").write_text(batch_content, encoding="utf-8")
 
         ir = _make_ir([
             {"id": "review", "type": "llm", "batch": "./reviews.yaml", "params": {"prompt": "${item.prompt}"}},
@@ -359,11 +359,11 @@ class TestBatchConfigFile:
         """Batch YAML file that itself contains file references in items."""
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        (prompts_dir / "review.md").write_text("review prompt content")
+        (prompts_dir / "review.md").write_text("review prompt content", encoding="utf-8")
 
         # The batch YAML file contains file references in items
         batch_content = "items:\n  - prompt: ./prompts/review.md\n    focus: quality\n"
-        (tmp_path / "batch.yaml").write_text(batch_content)
+        (tmp_path / "batch.yaml").write_text(batch_content, encoding="utf-8")
 
         ir = _make_ir([
             {"id": "review", "type": "llm", "batch": "./batch.yaml", "params": {"prompt": "${item.prompt}"}},
@@ -392,8 +392,8 @@ class TestBatchItemFileRefs:
         """File refs in inline batch items (dict, not string) are discovered."""
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        (prompts_dir / "ai.md").write_text("check for AI tells")
-        (prompts_dir / "cliche.md").write_text("check for cliches")
+        (prompts_dir / "ai.md").write_text("check for AI tells", encoding="utf-8")
+        (prompts_dir / "cliche.md").write_text("check for cliches", encoding="utf-8")
 
         ir = _make_ir([
             {
@@ -438,7 +438,7 @@ class TestBatchItemFileRefs:
 
     def test_non_resolvable_batch_item_keys_ignored(self, tmp_path: Path) -> None:
         """Keys not in FILE_RESOLVABLE_PARAMS are ignored even if value looks like a path."""
-        (tmp_path / "data.txt").write_text("data")
+        (tmp_path / "data.txt").write_text("data", encoding="utf-8")
         ir = _make_ir([
             {
                 "id": "step",
@@ -469,7 +469,7 @@ class TestCycleDetection:
             "edges": [],
         }
         self_path = tmp_path / "self.pflow.md"
-        self_path.write_text(ir_to_markdown(self_ir))
+        self_path.write_text(ir_to_markdown(self_ir), encoding="utf-8")
 
         # The parent IR also references self.pflow.md
         ir = _make_ir([
@@ -492,7 +492,7 @@ class TestCycleDetection:
             "edges": [],
         }
         a_path = tmp_path / "a.pflow.md"
-        a_path.write_text(ir_to_markdown(a_ir))
+        a_path.write_text(ir_to_markdown(a_ir), encoding="utf-8")
 
         # Workflow B references A
         b_ir = {
@@ -500,7 +500,7 @@ class TestCycleDetection:
             "edges": [],
         }
         b_path = tmp_path / "b.pflow.md"
-        b_path.write_text(ir_to_markdown(b_ir))
+        b_path.write_text(ir_to_markdown(b_ir), encoding="utf-8")
 
         # Start from A
         ir = _make_ir([
@@ -526,7 +526,7 @@ class TestCycleDetection:
             "edges": [],
         }
         self_path = tmp_path / "self.pflow.md"
-        self_path.write_text(ir_to_markdown(self_ir))
+        self_path.write_text(ir_to_markdown(self_ir), encoding="utf-8")
 
         ir = _make_ir([
             {"id": "outer", "type": "workflow", "params": {"workflow": "./self.pflow.md"}},
@@ -636,21 +636,21 @@ class TestMixedDependencies:
             "edges": [],
         }
         sub_path = tmp_path / "sub.pflow.md"
-        sub_path.write_text(ir_to_markdown(sub_ir))
+        sub_path.write_text(ir_to_markdown(sub_ir), encoding="utf-8")
 
         # Create prompt file
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        (prompts_dir / "system.md").write_text("system prompt")
+        (prompts_dir / "system.md").write_text("system prompt", encoding="utf-8")
 
         # Create script file
         scripts_dir = tmp_path / "scripts"
         scripts_dir.mkdir()
-        (scripts_dir / "process.sh").write_text("#!/bin/bash\necho done")
+        (scripts_dir / "process.sh").write_text("#!/bin/bash\necho done", encoding="utf-8")
 
         # Create batch config
         batch_content = "items:\n  - focus: quality\n    prompt: inline\n"
-        (tmp_path / "batch.yaml").write_text(batch_content)
+        (tmp_path / "batch.yaml").write_text(batch_content, encoding="utf-8")
 
         ir = _make_ir([
             {"id": "orchestrate", "type": "workflow", "params": {"workflow": "./sub.pflow.md"}},
@@ -743,7 +743,7 @@ class TestEdgeCases:
         prompts_dir = tmp_path / "prompts"
         workflows_dir.mkdir()
         prompts_dir.mkdir()
-        (prompts_dir / "shared.md").write_text("shared prompt")
+        (prompts_dir / "shared.md").write_text("shared prompt", encoding="utf-8")
 
         ir = _make_ir([
             {"id": "ask", "type": "llm", "params": {"prompt": "../prompts/shared.md"}},
@@ -756,8 +756,8 @@ class TestEdgeCases:
 
     def test_multiple_file_refs_in_same_node(self, tmp_path: Path) -> None:
         """A node with multiple file-referenced params has all discovered."""
-        (tmp_path / "prompt.md").write_text("prompt content")
-        (tmp_path / "stdin.txt").write_text("stdin content")
+        (tmp_path / "prompt.md").write_text("prompt content", encoding="utf-8")
+        (tmp_path / "stdin.txt").write_text("stdin content", encoding="utf-8")
 
         ir = _make_ir([
             {
@@ -784,7 +784,7 @@ class TestEdgeCases:
             "edges": [],
         }
         sub_path = tmp_path / "shared.pflow.md"
-        sub_path.write_text(ir_to_markdown(sub_ir))
+        sub_path.write_text(ir_to_markdown(sub_ir), encoding="utf-8")
 
         ir = _make_ir([
             {"id": "a", "type": "workflow", "params": {"workflow": "./shared.pflow.md"}},

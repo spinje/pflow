@@ -524,7 +524,7 @@ def test_home_directory_expansion(monkeypatch, tmp_path: Path):
             "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo 'home test'"}}],
             "edges": [],
         }
-        test_file.write_text(ir_to_markdown(workflow))
+        test_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         # Run with ~ path
         result = runner.invoke(main, ["~/.test_workflow_temp.pflow.md"])

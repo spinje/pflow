@@ -424,9 +424,9 @@ def test_subworkflow_isolation_via_monkeypatch(tmp_path: Any) -> None:
     from pflow.nodes.shell.shell import ShellNode
 
     parent_path = tmp_path / "parent.pflow.md"
-    parent_path.write_text(_PARENT_PFLOW)
+    parent_path.write_text(_PARENT_PFLOW, encoding="utf-8")
     child_path = tmp_path / "child.pflow.md"
-    child_path.write_text(_CHILD_PFLOW)
+    child_path.write_text(_CHILD_PFLOW, encoding="utf-8")
 
     captured: list[tuple[str, Any]] = []
     original_prep = ShellNode.prep

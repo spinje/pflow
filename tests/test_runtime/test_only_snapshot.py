@@ -753,7 +753,7 @@ def test_planner_cached_verdict_matches_engine_serving_cached(tmp_path: Path) ->
     full = WorkflowRunner().run(str(wf), {}, RunnerConfig())
     assert full.success, [d.message for d in full.diagnostics]
     full.trace.save_to_file()
-    assert sentinel.read_text().count("ran") == 1
+    assert sentinel.read_text(encoding="utf-8").count("ran") == 1
 
     # Planner verdict: single entry, target 'b' is a memo hit → cached.
     plan = WorkflowRunner().plan(str(wf), {}, RunnerConfig(only_node="b"))
@@ -763,7 +763,7 @@ def test_planner_cached_verdict_matches_engine_serving_cached(tmp_path: Path) ->
     # Engine behavior matches the verdict: b is served from cache, never re-run.
     result = WorkflowRunner().run(str(wf), {}, RunnerConfig(only_node="b"))
     assert result.success
-    assert sentinel.read_text().count("ran") == 1, "cached --only target must not re-execute"
+    assert sentinel.read_text(encoding="utf-8").count("ran") == 1, "cached --only target must not re-execute"
 
 
 @pytest.mark.trace_files
@@ -821,7 +821,7 @@ def test_planner_execute_verdict_matches_engine_executing(tmp_path: Path) -> Non
     full = WorkflowRunner().run(str(wf), {}, RunnerConfig())
     assert full.success, [d.message for d in full.diagnostics]
     full.trace.save_to_file()
-    before = sentinel.read_text().count("ran")
+    before = sentinel.read_text(encoding="utf-8").count("ran")
 
     # Planner verdict: target would execute.
     plan = WorkflowRunner().plan(str(wf), {}, RunnerConfig(only_node="target"))
@@ -832,7 +832,7 @@ def test_planner_execute_verdict_matches_engine_executing(tmp_path: Path) -> Non
     result = WorkflowRunner().run(str(wf), {}, RunnerConfig(only_node="target"))
     assert result.success
     assert result.shared_after["target"]["stdout"] == "got up"
-    assert sentinel.read_text().count("ran") == before + 1, "uncached --only target must execute"
+    assert sentinel.read_text(encoding="utf-8").count("ran") == before + 1, "uncached --only target must execute"
 
 
 # ---------------------------------------------------------------------------
@@ -945,14 +945,16 @@ def test_only_subworkflow_target_reruns_whole_child(tmp_path: Path) -> None:
     full = WorkflowRunner().run(str(parent_path), {}, RunnerConfig())
     assert full.success, [d.message for d in full.diagnostics]
     full.trace.save_to_file()
-    assert parent_sentinel.read_text().count("ran") == 1
-    assert child_sentinel.read_text().count("ran") == 1
+    assert parent_sentinel.read_text(encoding="utf-8").count("ran") == 1
+    assert child_sentinel.read_text(encoding="utf-8").count("ran") == 1
 
     # --only sub: parent upstream restored, the whole child reruns fresh.
     result = WorkflowRunner().run(str(parent_path), {}, RunnerConfig(only_node="sub"))
     assert result.success, [d.message for d in result.diagnostics]
-    assert parent_sentinel.read_text().count("ran") == 1, "parent upstream must NOT re-fire"
-    assert child_sentinel.read_text().count("ran") == 2, "sub-workflow target must rerun the whole child"
+    assert parent_sentinel.read_text(encoding="utf-8").count("ran") == 1, "parent upstream must NOT re-fire"
+    assert child_sentinel.read_text(encoding="utf-8").count("ran") == 2, (
+        "sub-workflow target must rerun the whole child"
+    )
     # The child ran against the RESTORED parent output.
     assert result.shared_after["sub"]["result"] == "preval"
     restored = result.shared_after["__execution__"]["restored_nodes"]

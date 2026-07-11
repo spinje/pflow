@@ -91,7 +91,7 @@ Stand-in for the git branch-setup shell node.
 
 ```python code
 log: str
-with open(log, "a") as f:
+with open(log, "a", encoding="utf-8") as f:
     f.write("branch-setup\\n")
 result: str = "ok"
 ```
@@ -107,7 +107,7 @@ Stand-in for the plan-hardening agent (read-only here).
 
 ```python code
 log: str
-with open(log, "a") as f:
+with open(log, "a", encoding="utf-8") as f:
     f.write("plan-review-fix\\n")
 result: str = "ok"
 ```
@@ -131,7 +131,7 @@ elif scenario == "cap":
     segments = [{"phases": ["P0"], "sim": "ok"}]
 else:
     segments = [{"phases": ["P0", "P1"], "sim": "ok"}, {"phases": ["P2"], "sim": "ok"}]
-with open(log, "a") as f:
+with open(log, "a", encoding="utf-8") as f:
     f.write(f"breakdown:{len(segments)}segments\\n")
 result: dict = {"segments": segments}
 ```
@@ -171,7 +171,7 @@ index: int
 sim: str
 log: str
 commits = 0 if sim == "fail" else 2
-with open(log, "a") as f:
+with open(log, "a", encoding="utf-8") as f:
     f.write(f"implement:seg{index}:commits{commits}\\n")
 result: int = commits
 ```
@@ -194,7 +194,7 @@ index: int
 scenario: str
 log: str
 ok = not (scenario == "seg-gate-fail" and index == 0)
-with open(log, "a") as f:
+with open(log, "a", encoding="utf-8") as f:
     f.write(f"seg-gate:seg{index}:ok{ok}\\n")
 result: dict = {"ok": ok}
 ```
@@ -254,7 +254,7 @@ is the 1-based round number; the backward edge lives in the loop block, not the 
 round: int
 scenario: str
 log: str
-with open(log, "a") as f:
+with open(log, "a", encoding="utf-8") as f:
     f.write(f"review:round{round}\\n")
 keep = scenario == "cap"
 result: dict = {"round": round, "continue": keep}
@@ -271,7 +271,7 @@ Stand-in simplicity pass (fix-capable; runs after review, before verify).
 
 ```python code
 log: str
-with open(log, "a") as f:
+with open(log, "a", encoding="utf-8") as f:
     f.write("simplify\\n")
 result: str = "ok"
 ```
@@ -287,7 +287,7 @@ Stand-in adversarial verify (last code-touching stage).
 
 ```python code
 log: str
-with open(log, "a") as f:
+with open(log, "a", encoding="utf-8") as f:
     f.write("verify\\n")
 result: str = "ok"
 ```
@@ -307,7 +307,7 @@ whole result after verify. `ok` is false only in the `final-gate-fail` scenario.
 scenario: str
 log: str
 ok = scenario != "final-gate-fail"
-with open(log, "a") as f:
+with open(log, "a", encoding="utf-8") as f:
     f.write(f"final-gate:ok{ok}\\n")
 result: dict = {"ok": ok}
 ```
@@ -344,7 +344,7 @@ Stand-in deterministic push (shell node in the real harness; immune to claude-co
 
 ```python code
 log: str
-with open(log, "a") as f:
+with open(log, "a", encoding="utf-8") as f:
     f.write("push\\n")
 result: str = "ok"
 ```
@@ -359,7 +359,7 @@ Stand-in ship.
 
 ```python code
 log: str
-with open(log, "a") as f:
+with open(log, "a", encoding="utf-8") as f:
     f.write("ship\\n")
 result: str = "shipped"
 ```

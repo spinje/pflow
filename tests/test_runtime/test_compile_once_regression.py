@@ -436,12 +436,13 @@ def test_parallel_batch_workflow_resolves_child_file_refs(tmp_path: Path):
     # Create child workflow in a subdirectory with a sibling script
     child_dir = tmp_path / "child"
     child_dir.mkdir()
-    (child_dir / "greet.sh").write_text('echo "hello from child dir"')
+    (child_dir / "greet.sh").write_text('echo "hello from child dir"', encoding="utf-8")
 
     child_md = child_dir / "child.pflow.md"
     child_md.write_text(
         "# Child\n\nA child workflow.\n\n## Steps\n\n### greet\n\nRun greeting.\n\n"
-        "- type: shell\n- command: ./greet.sh\n"
+        "- type: shell\n- command: ./greet.sh\n",
+        encoding="utf-8",
     )
 
     # Parent workflow: workflow node in a parallel batch

@@ -259,7 +259,7 @@ def test_inputs_routes_to_meta_line_not_trailer() -> None:
 def test_load_trace_file_round_trips_jsonl_from_disk(tmp_path: Path) -> None:
     trace = _nested_trace_with_all_shapes(_large_text())
     path = tmp_path / "workflow-trace-x.json"
-    path.write_text("\n".join(json.dumps(line) for line in flatten_trace_to_lines(trace)) + "\n")
+    path.write_text("\n".join(json.dumps(line) for line in flatten_trace_to_lines(trace)) + "\n", encoding="utf-8")
     assert load_trace_file(path) == trace
 
 
@@ -309,7 +309,7 @@ def test_load_trace_file_rejects_legacy_single_object_format(tmp_path: Path) -> 
     # silently load. (The other two reader paths are covered by the report/explicit skip tests.)
     old = {"format_version": "2.5.0", "workflow_name": "old", "nodes": [{"node_id": "a", "node_output": {"r": "x"}}]}
     path = tmp_path / "workflow-trace-old.json"
-    path.write_text(json.dumps(old, indent=2))
+    path.write_text(json.dumps(old, indent=2), encoding="utf-8")
     with pytest.raises(json.JSONDecodeError):
         load_trace_file(path)
 
@@ -332,7 +332,7 @@ def test_load_trace_file_raises_jsondecodeerror_on_corrupt_jsonl(tmp_path: Path)
     meta = json.dumps({"kind": "meta", "pflow_trace": TRACE_JSONL_MARKER, "execution_id": "r"})
     good = json.dumps({"kind": "run.complete", "final_status": "success"})
     path = tmp_path / "workflow-trace-corrupt.json"
-    path.write_text(f"{meta}\n{{ not valid json\n{good}\n")
+    path.write_text(f"{meta}\n{{ not valid json\n{good}\n", encoding="utf-8")
     with pytest.raises(json.JSONDecodeError):
         load_trace_file(path)
 
@@ -445,7 +445,7 @@ def test_load_trace_file_tolerates_truncated_final_line(tmp_path: Path) -> None:
     good = json.dumps(_event_line("a", eid=0, parent_id=None))
     truncated = '{"kind": "event", "id": 1, "seq": 1, "parent_id": null, "node_i'  # half-written, no newline
     path = tmp_path / "workflow-trace-truncated.json"
-    path.write_text(f"{meta}\n{good}\n{truncated}")
+    path.write_text(f"{meta}\n{good}\n{truncated}", encoding="utf-8")
     trace = load_trace_file(path)
     assert trace["final_status"] == "incomplete"
     assert [n["node_id"] for n in trace["nodes"]] == ["a"], "the well-formed prefix is recovered"
@@ -475,6 +475,6 @@ def test_load_trace_file_rejects_malformed_line_after_run_complete(tmp_path: Pat
     complete = json.dumps({"kind": "run.complete", "final_status": "success"})
     garbage = '{"kind": "event", "id": 1, "seq": 1, "parent_i'  # truncated final line
     path = tmp_path / "workflow-trace-after-complete.json"
-    path.write_text(f"{meta}\n{complete}\n{garbage}")
+    path.write_text(f"{meta}\n{complete}\n{garbage}", encoding="utf-8")
     with pytest.raises(json.JSONDecodeError):
         load_trace_file(path)

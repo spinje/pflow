@@ -156,11 +156,13 @@ def test_cache_prevents_reexecution(tmp_path: Any) -> None:
 
     # First run: node executes, writes to tracking file
     _run_workflow(ir, cache)
-    assert tracking_file.read_text().count("executed") == 1
+    assert tracking_file.read_text(encoding="utf-8").count("executed") == 1
 
     # Second run: node should be cached, NOT re-executed
     shared2 = _run_workflow(ir, cache)
-    assert tracking_file.read_text().count("executed") == 1, "Node was re-executed on second run — cache failed!"
+    assert tracking_file.read_text(encoding="utf-8").count("executed") == 1, (
+        "Node was re-executed on second run — cache failed!"
+    )
 
     # Output should still be available from cache
     assert "tracked" in shared2
@@ -242,14 +244,14 @@ def test_no_cache_flag(tmp_path: Any) -> None:
     # First run: no-cache mode (writes to DB but never reads)
     cache_write_only = MemoizationCache(db_path=db_path, read_enabled=False)
     _run_workflow(ir, cache_write_only)
-    assert tracking_file.read_text().count("run") == 1
+    assert tracking_file.read_text(encoding="utf-8").count("run") == 1
 
     # Second run: normal mode (reads enabled), same DB path
     cache_read_enabled = MemoizationCache(db_path=db_path, read_enabled=True)
     _run_workflow(ir, cache_read_enabled)
 
     # Node should NOT have re-executed (cache hit on second run)
-    assert tracking_file.read_text().count("run") == 1
+    assert tracking_file.read_text(encoding="utf-8").count("run") == 1
 
 
 def test_only_flag_stops_after_target(tmp_path: Any) -> None:
@@ -382,11 +384,11 @@ def test_error_node_not_cached(tmp_path: Any) -> None:
 
     # First run: step-err returns "error"
     _run_workflow(ir, cache)
-    assert tracking_file.read_text().count("fail") == 1
+    assert tracking_file.read_text(encoding="utf-8").count("fail") == 1
 
     # Second run: step-err should re-execute (errors are never cached)
     _run_workflow(ir, cache)
-    assert tracking_file.read_text().count("fail") == 2, (
+    assert tracking_file.read_text(encoding="utf-8").count("fail") == 2, (
         "Error node should re-execute on second run (errors are not cached)"
     )
 
@@ -436,7 +438,7 @@ def test_cache_ttl_expiry(tmp_path: Any) -> None:
 
     # First run: populate cache
     _run_workflow(ir, cache)
-    assert tracking_file.read_text().count("run") == 1
+    assert tracking_file.read_text(encoding="utf-8").count("run") == 1
 
     # Backdate ALL cache entries to beyond TTL (2 hours ago, TTL is 1 hour)
     conn = sqlite3.connect(str(db_path))
@@ -446,7 +448,7 @@ def test_cache_ttl_expiry(tmp_path: Any) -> None:
 
     # Second run: all entries expired -> cache misses -> re-execute
     _run_workflow(ir, cache)
-    assert tracking_file.read_text().count("run") == 2, "Node should re-execute after TTL expiry"
+    assert tracking_file.read_text(encoding="utf-8").count("run") == 2, "Node should re-execute after TTL expiry"
 
 
 # ---------------------------------------------------------------------------

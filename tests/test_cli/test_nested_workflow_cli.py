@@ -132,10 +132,10 @@ class TestNestedWorkflowCLI:
     def test_nested_workflow_e2e(self, tmp_path: Path) -> None:
         """Nested workflow executes child and surfaces its output to parent."""
         child_file = tmp_path / "to-uppercase.pflow.md"
-        child_file.write_text(CHILD_WORKFLOW)
+        child_file.write_text(CHILD_WORKFLOW, encoding="utf-8")
 
         parent_file = tmp_path / "parent.pflow.md"
-        parent_file.write_text(_make_parent_workflow(str(child_file)))
+        parent_file.write_text(_make_parent_workflow(str(child_file)), encoding="utf-8")
 
         result = invoke_cli([str(parent_file), "title=hello"])
 
@@ -172,7 +172,7 @@ class TestNestedWorkflowCLI:
         # workflows/{name}/{name}.pflow.md, so siblings must be in that folder.
         saved_dir = workflows_dir / "test-saved-nested"
         child_file = saved_dir / "child-upper.pflow.md"
-        child_file.write_text(CHILD_WORKFLOW)
+        child_file.write_text(CHILD_WORKFLOW, encoding="utf-8")
 
         # Patch WorkflowManager at all import sites to use our tmp workflows dir
         with (
@@ -194,10 +194,10 @@ class TestNestedWorkflowCLI:
     def test_nested_workflow_validate_only(self, tmp_path: Path) -> None:
         """--validate-only accepts a valid nested workflow without executing it."""
         child_file = tmp_path / "to-uppercase.pflow.md"
-        child_file.write_text(CHILD_WORKFLOW)
+        child_file.write_text(CHILD_WORKFLOW, encoding="utf-8")
 
         parent_file = tmp_path / "parent.pflow.md"
-        parent_file.write_text(_make_parent_workflow(str(child_file)))
+        parent_file.write_text(_make_parent_workflow(str(child_file)), encoding="utf-8")
 
         result = invoke_cli(["--validate-only", str(parent_file)])
 
@@ -210,11 +210,11 @@ class TestNestedWorkflowCLI:
     def test_nested_workflow_missing_input_error(self, tmp_path: Path) -> None:
         """Nested workflow reports error when child is missing required inputs."""
         child_file = tmp_path / "to-uppercase.pflow.md"
-        child_file.write_text(CHILD_WORKFLOW)
+        child_file.write_text(CHILD_WORKFLOW, encoding="utf-8")
 
         # Parent does NOT pass the required 'text' input to child
         parent_file = tmp_path / "parent.pflow.md"
-        parent_file.write_text(_make_parent_workflow(str(child_file), pass_text=False))
+        parent_file.write_text(_make_parent_workflow(str(child_file), pass_text=False), encoding="utf-8")
 
         result = invoke_cli([str(parent_file), "title=hello"])
 
@@ -238,12 +238,14 @@ class TestNestedWorkflowCLI:
         # Broken child: missing step description (parse error)
         broken_child = tmp_path / "broken-child.pflow.md"
         broken_child.write_text(
-            "# Broken\n\nA broken workflow.\n\n## Steps\n\n### process\n- type: llm\n- prompt: hello\n"
+            "# Broken\n\nA broken workflow.\n\n## Steps\n\n### process\n- type: llm\n- prompt: hello\n",
+            encoding="utf-8",
         )
 
         # Parent: upstream LLM node → broken sub-workflow
         parent_file = tmp_path / "parent.pflow.md"
-        parent_file.write_text(f"""\
+        parent_file.write_text(
+            f"""\
 # Parent
 
 A parent workflow with an expensive upstream step.
@@ -273,7 +275,9 @@ Call the broken sub-workflow.
 - workflow: {broken_child}
 - inputs:
     text: ${{expensive-llm.response}}
-""")
+""",
+            encoding="utf-8",
+        )
 
         result = invoke_cli([str(parent_file), "query=test"])
 
@@ -309,11 +313,12 @@ Call the broken sub-workflow.
 
         # Grandchild: the leaf workflow that does actual work
         grandchild = inner_dir / "grandchild.pflow.md"
-        grandchild.write_text(CHILD_WORKFLOW)  # reuse: uppercases ${text}
+        grandchild.write_text(CHILD_WORKFLOW, encoding="utf-8")  # reuse: uppercases ${text}
 
         # Child (middle): calls grandchild with relative path
         child = middle_dir / "child.pflow.md"
-        child.write_text("""\
+        child.write_text(
+            """\
 # Middle Workflow
 
 Passes text through to grandchild.
@@ -344,11 +349,14 @@ Call the grandchild workflow.
 - workflow: ./inner/grandchild.pflow.md
 - inputs:
     text: ${text}
-""")
+""",
+            encoding="utf-8",
+        )
 
         # Parent: calls child with relative path
         parent = root / "parent.pflow.md"
-        parent.write_text("""\
+        parent.write_text(
+            """\
 # Top-Level Workflow
 
 Three-level nesting test.
@@ -378,7 +386,9 @@ Display the result.
 
 - type: shell
 - command: echo ${process.result}
-""")
+""",
+            encoding="utf-8",
+        )
 
         result = invoke_cli([str(parent), "title=deep nesting works"])
 
@@ -400,11 +410,11 @@ Display the result.
         children_dir.mkdir(parents=True)
 
         child_file = children_dir / "child.pflow.md"
-        child_file.write_text(CHILD_WORKFLOW)
+        child_file.write_text(CHILD_WORKFLOW, encoding="utf-8")
 
         # Parent uses relative path to child
         parent_file = parent_dir / "parent.pflow.md"
-        parent_file.write_text(_make_parent_workflow("./children/child.pflow.md"))
+        parent_file.write_text(_make_parent_workflow("./children/child.pflow.md"), encoding="utf-8")
 
         result = invoke_cli([str(parent_file), "title=hello"])
 

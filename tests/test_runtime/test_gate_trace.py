@@ -190,7 +190,8 @@ class TestGateTraceEvents:
             "### sibling\n\nRuns first, recording an event under the host.\n\n"
             "- type: shell\n- command: echo sibling\n\n"
             "### gated-step\n\nThe gate stops here.\n\n"
-            "- type: shell\n- command: echo gated\n- approval: required\n"
+            "- type: shell\n- command: echo gated\n- approval: required\n",
+            encoding="utf-8",
         )
         return {
             "ir_version": "0.1.0",
@@ -261,7 +262,8 @@ class TestGateTraceEvents:
         child = tmp_path / "child.pflow.md"
         child.write_text(
             "# Child\n\nChild with a gated step.\n\n## Steps\n\n### gated-step\n\n"
-            "Do the child action.\n\n- type: shell\n- command: echo child-action\n- approval: required\n"
+            "Do the child action.\n\n- type: shell\n- command: echo child-action\n- approval: required\n",
+            encoding="utf-8",
         )
         ir = {
             "ir_version": "0.1.0",
@@ -287,7 +289,8 @@ class TestGateTraceEvents:
         child = tmp_path / "child.pflow.md"
         child.write_text(
             "# Child\n\nChild with a gated step.\n\n## Steps\n\n### gated-step\n\n"
-            "Do the child action.\n\n- type: shell\n- command: echo child-action\n- approval: required\n"
+            "Do the child action.\n\n- type: shell\n- command: echo child-action\n- approval: required\n",
+            encoding="utf-8",
         )
         ir = {
             "ir_version": "0.1.0",

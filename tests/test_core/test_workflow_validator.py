@@ -319,7 +319,7 @@ Do something.
 - command: echo hello
 """
         child_file = tmp_path / "child.pflow.md"
-        child_file.write_text(child_content)
+        child_file.write_text(child_content, encoding="utf-8")
 
         # Parent workflow references child and uses its output
         workflow_ir = {

@@ -660,13 +660,13 @@ class TestFindPflowSkills:
         non_pflow_dir = project_dir / ".claude" / "skills" / "other-skill"
         non_pflow_dir.mkdir(parents=True)
         non_pflow_file = tmp_path / "other.md"
-        non_pflow_file.write_text("# Other Skill")
+        non_pflow_file.write_text("# Other Skill", encoding="utf-8")
         (non_pflow_dir / "SKILL.md").symlink_to(non_pflow_file)
 
         # Create regular file (not symlink)
         regular_dir = project_dir / ".claude" / "skills" / "regular"
         regular_dir.mkdir(parents=True)
-        (regular_dir / "SKILL.md").write_text("# Regular Skill")
+        (regular_dir / "SKILL.md").write_text("# Regular Skill", encoding="utf-8")
 
         # Find skills
         skills = find_pflow_skills(

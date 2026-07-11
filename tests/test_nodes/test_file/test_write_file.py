@@ -98,7 +98,7 @@ class TestWriteFileNode:
     def test_append_mode(self, tmp_path):
         """Test appending to existing file."""
         target = tmp_path / "append.txt"
-        target.write_text("Initial content\n")
+        target.write_text("Initial content\n", encoding="utf-8")
 
         node = WriteFileNode()
         node.set_params({"append": True, "content": "Appended content", "file_path": str(target)})
@@ -114,12 +114,12 @@ class TestWriteFileNode:
         assert "append" in success_msg.lower()
         assert str(target) in success_msg  # Shows actual file path
 
-        assert target.read_text() == "Initial content\nAppended content"
+        assert target.read_text(encoding="utf-8") == "Initial content\nAppended content"
 
     def test_overwrite_existing(self, tmp_path):
         """Test overwriting existing file."""
         target = tmp_path / "overwrite.txt"
-        target.write_text("Old content")
+        target.write_text("Old content", encoding="utf-8")
 
         node = WriteFileNode()
         node.set_params({"content": "New content", "file_path": str(target)})
@@ -131,7 +131,7 @@ class TestWriteFileNode:
 
         assert action == "default"
 
-        assert target.read_text() == "New content"
+        assert target.read_text(encoding="utf-8") == "New content"
 
     def test_empty_content(self):
         """Test writing empty content."""

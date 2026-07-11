@@ -71,7 +71,7 @@ class TestSaveBundlesFileReferences:
         # Arrange: create prompt file on disk
         prompts_dir = project_dir / "prompts"
         prompts_dir.mkdir()
-        (prompts_dir / "foo.md").write_text("You are a helpful assistant")
+        (prompts_dir / "foo.md").write_text("You are a helpful assistant", encoding="utf-8")
 
         ir = {
             "nodes": [
@@ -94,7 +94,7 @@ class TestSaveBundlesFileReferences:
 
         # Assert: dependency file is bundled preserving relative path
         assert (bundle_dir / "prompts" / "foo.md").exists()
-        assert (bundle_dir / "prompts" / "foo.md").read_text() == "You are a helpful assistant"
+        assert (bundle_dir / "prompts" / "foo.md").read_text(encoding="utf-8") == "You are a helpful assistant"
 
 
 class TestSaveBundlesSubWorkflows:
@@ -114,7 +114,7 @@ class TestSaveBundlesSubWorkflows:
             "edges": [],
         }
         sub_path = project_dir / "sub.pflow.md"
-        sub_path.write_text(ir_to_markdown(sub_ir, title="Sub Workflow"))
+        sub_path.write_text(ir_to_markdown(sub_ir, title="Sub Workflow"), encoding="utf-8")
 
         parent_ir = {
             "nodes": [
@@ -136,7 +136,7 @@ class TestSaveBundlesSubWorkflows:
         assert (bundle_dir / "parent-wf.pflow.md").exists()
         assert (bundle_dir / "sub.pflow.md").exists()
         # Verify the sub-workflow content is intact
-        sub_content = (bundle_dir / "sub.pflow.md").read_text()
+        sub_content = (bundle_dir / "sub.pflow.md").read_text(encoding="utf-8")
         assert "step1" in sub_content
 
 
@@ -147,10 +147,10 @@ class TestSavePreservesRelativeStructure:
         """Files in different subdirs keep their relative paths in the bundle."""
         # Arrange: create files in two different subdirectories
         (project_dir / "prompts").mkdir()
-        (project_dir / "prompts" / "system.md").write_text("System prompt content")
+        (project_dir / "prompts" / "system.md").write_text("System prompt content", encoding="utf-8")
 
         (project_dir / "scripts").mkdir()
-        (project_dir / "scripts" / "helper.py").write_text("print('hello')")
+        (project_dir / "scripts" / "helper.py").write_text("print('hello')", encoding="utf-8")
 
         ir = {
             "nodes": [
@@ -181,8 +181,8 @@ class TestSavePreservesRelativeStructure:
         assert (bundle_dir / "scripts" / "helper.py").exists()
 
         # Verify file contents
-        assert (bundle_dir / "prompts" / "system.md").read_text() == "System prompt content"
-        assert (bundle_dir / "scripts" / "helper.py").read_text() == "print('hello')"
+        assert (bundle_dir / "prompts" / "system.md").read_text(encoding="utf-8") == "System prompt content"
+        assert (bundle_dir / "scripts" / "helper.py").read_text(encoding="utf-8") == "print('hello')"
 
 
 class TestSavedWorkflowLoadsCorrectly:
@@ -192,7 +192,7 @@ class TestSavedWorkflowLoadsCorrectly:
         """After saving with deps, load() returns the full metadata with valid IR."""
         # Arrange
         (project_dir / "prompts").mkdir()
-        (project_dir / "prompts" / "sys.md").write_text("Be concise.")
+        (project_dir / "prompts" / "sys.md").write_text("Be concise.", encoding="utf-8")
 
         ir = {
             "nodes": [
@@ -234,7 +234,7 @@ class TestForceSaveReplacesEntireBundle:
 
         # --- Save v1 with dep A ---
         (project_dir / "prompts").mkdir(exist_ok=True)
-        (project_dir / "prompts" / "v1-prompt.md").write_text("Version 1 prompt")
+        (project_dir / "prompts" / "v1-prompt.md").write_text("Version 1 prompt", encoding="utf-8")
 
         ir_v1 = {
             "nodes": [
@@ -257,7 +257,7 @@ class TestForceSaveReplacesEntireBundle:
 
         # --- Force-save v2 with dep B (no dep A) ---
         (project_dir / "scripts").mkdir(exist_ok=True)
-        (project_dir / "scripts" / "v2-code.py").write_text("print('v2')")
+        (project_dir / "scripts" / "v2-code.py").write_text("print('v2')", encoding="utf-8")
 
         ir_v2 = {
             "nodes": [
@@ -280,10 +280,10 @@ class TestForceSaveReplacesEntireBundle:
 
         # Assert: new dep B exists
         assert (bundle_dir / "scripts" / "v2-code.py").exists()
-        assert (bundle_dir / "scripts" / "v2-code.py").read_text() == "print('v2')"
+        assert (bundle_dir / "scripts" / "v2-code.py").read_text(encoding="utf-8") == "print('v2')"
 
         # Assert: entry point updated
-        entry = (bundle_dir / "force-test.pflow.md").read_text()
+        entry = (bundle_dir / "force-test.pflow.md").read_text(encoding="utf-8")
         assert "run" in entry  # v2 node id
 
 
@@ -407,7 +407,7 @@ class TestFileReferencesResolveFromBundle:
 
         # Arrange: create a project with a prompt file
         (project_dir / "prompts").mkdir()
-        (project_dir / "prompts" / "system.md").write_text("You are a test assistant")
+        (project_dir / "prompts" / "system.md").write_text("You are a test assistant", encoding="utf-8")
 
         ir: dict[str, Any] = {
             "nodes": [
@@ -671,7 +671,8 @@ class TestSubWorkflowParseErrorPropagation:
         sub_path.write_text(
             ir_to_markdown(
                 {"nodes": [{"id": "s", "type": "shell", "params": {"command": "echo"}}], "edges": []},
-            )
+            ),
+            encoding="utf-8",
         )
 
         parent_ir: dict[str, Any] = {

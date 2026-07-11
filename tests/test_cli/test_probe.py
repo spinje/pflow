@@ -59,7 +59,7 @@ def test_probe_help_mentions_metadata_contract(runner: click.testing.CliRunner) 
 
 def test_probe_basic_node_execution_with_temp_file(runner: click.testing.CliRunner, tmp_path: Path) -> None:
     test_file = tmp_path / "test.txt"
-    test_file.write_text("Hello, world!")
+    test_file.write_text("Hello, world!", encoding="utf-8")
 
     from pflow.nodes.file.read_file import ReadFileNode
 
@@ -77,7 +77,7 @@ def test_probe_basic_node_execution_with_temp_file(runner: click.testing.CliRunn
 
 def test_probe_json_output_produces_valid_json(runner: click.testing.CliRunner, tmp_path: Path) -> None:
     test_file = tmp_path / "test.txt"
-    test_file.write_text("test content")
+    test_file.write_text("test content", encoding="utf-8")
 
     from pflow.nodes.file.read_file import ReadFileNode
 

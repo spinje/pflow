@@ -81,7 +81,7 @@ def home(tmp_path, monkeypatch):
 @pytest.fixture
 def gate_wf(tmp_path):
     path = tmp_path / "list_demo.pflow.md"
-    path.write_text(_GATE_WF)
+    path.write_text(_GATE_WF, encoding="utf-8")
     return path
 
 
@@ -177,7 +177,7 @@ def test_json_shape_and_empty_state(home, gate_wf):
 
 def test_failed_run_is_not_listed(home, tmp_path):
     wf = tmp_path / "fail_demo.pflow.md"
-    wf.write_text(_FAIL_WF)
+    wf.write_text(_FAIL_WF, encoding="utf-8")
     failed = _runner().invoke(cli, [str(wf)])
     assert failed.exit_code == 1
     result = _runner().invoke(cli, ["resume", "list"])

@@ -1442,7 +1442,7 @@ Run the inner take-step until the queue drains.
     assert r.shared_after["loop-take"]["remaining"] == 0
     assert r.shared_after["loop-take"]["loop_stopped"] == "condition"
     # Queue fully drained — proves `read` re-executed each iteration.
-    assert [ln for ln in state.read_text().splitlines() if ln.strip()] == []
+    assert [ln for ln in state.read_text(encoding="utf-8").splitlines() if ln.strip()] == []
     assert "__loop_active__" not in r.shared_after  # guard cleared after loop
 
 
@@ -1509,9 +1509,9 @@ Remove one line from the outer queue file; report the remaining count.
 import pathlib
 queue_file: str
 _p = pathlib.Path(queue_file)
-_lines = [ln for ln in _p.read_text().splitlines() if ln.strip()]
+_lines = [ln for ln in _p.read_text(encoding="utf-8").splitlines() if ln.strip()]
 _rest = _lines[1:]
-_p.write_text("\\n".join(_rest) + ("\\n" if _rest else ""))
+_p.write_text("\\n".join(_rest) + ("\\n" if _rest else ""), encoding="utf-8")
 result: dict = {"remaining": len(_rest)}
 ```
 """,
@@ -1550,7 +1550,7 @@ until the outer queue drains.
     assert sa["run-inner"]["loop_stopped"] == "condition"
     # All three queue lines removed → the outer actually looped (not single-passed)
     # and the inner re-ran each outer iteration.
-    assert [ln for ln in state.read_text().splitlines() if ln.strip()] == []
+    assert [ln for ln in state.read_text(encoding="utf-8").splitlines() if ln.strip()] == []
     # Neither loop marker leaks past the depth-2 nest.
     assert "__iteration__" not in sa
     assert "__loop_active__" not in sa

@@ -1412,7 +1412,7 @@ LLM node using a routed-Anthropic model identifier.
 - prompt: "respond ok ${q}"
 """
         workflow_file = tmp_path / "test.pflow.md"
-        workflow_file.write_text(workflow_md)
+        workflow_file.write_text(workflow_md, encoding="utf-8")
 
         runner = WorkflowRunner()
         with patch("pflow.nodes.llm.llm._count_text_tokens", return_value=10_000):

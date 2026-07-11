@@ -420,7 +420,8 @@ def test_sub_workflow_bad_model_surfaces_via_child_provenance(tmp_path: Path, mo
         "Calls llm.\n\n"
         "- type: llm\n"
         "- model: openai/gpt-4o\n"
-        "- prompt: hello\n"
+        "- prompt: hello\n",
+        encoding="utf-8",
     )
 
     parent_ir = {

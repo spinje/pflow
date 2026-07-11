@@ -22,7 +22,7 @@ class TestFileResolverWithParser:
         # Create external prompt file
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        (prompts_dir / "system.md").write_text("You are a helpful assistant.\n\nAnalyze: ${input}")
+        (prompts_dir / "system.md").write_text("You are a helpful assistant.\n\nAnalyze: ${input}", encoding="utf-8")
 
         # Create workflow markdown
         workflow_md = """\
@@ -46,7 +46,7 @@ Analyze the input with LLM.
 - type: llm
 - prompt: ./prompts/system.md
 """
-        (tmp_path / "workflow.pflow.md").write_text(workflow_md)
+        (tmp_path / "workflow.pflow.md").write_text(workflow_md, encoding="utf-8")
 
         # Parse and resolve
         result = parse_markdown(workflow_md)
@@ -65,7 +65,7 @@ Analyze the input with LLM.
         """Parse a workflow with code file ref and resolve it."""
         scripts_dir = tmp_path / "scripts"
         scripts_dir.mkdir()
-        (scripts_dir / "transform.py").write_text('result: str = "hello world"')
+        (scripts_dir / "transform.py").write_text('result: str = "hello world"', encoding="utf-8")
 
         workflow_md = """\
 # Test
@@ -87,7 +87,7 @@ Transform data.
 
     def test_parsed_workflow_with_command_file(self, tmp_path: Path) -> None:
         """Parse a workflow with command file ref and resolve it."""
-        (tmp_path / "run.sh").write_text("echo hello world")
+        (tmp_path / "run.sh").write_text("echo hello world", encoding="utf-8")
 
         workflow_md = """\
 # Test
@@ -109,7 +109,7 @@ Run a script.
 
     def test_ir_schema_validates_source_files(self, tmp_path: Path) -> None:
         """_source_files field passes IR schema validation."""
-        (tmp_path / "p.md").write_text("content")
+        (tmp_path / "p.md").write_text("content", encoding="utf-8")
 
         workflow_md = """\
 # Test
@@ -156,7 +156,7 @@ This is inline prompt content.
 
     def test_template_in_file_survives_resolution(self, tmp_path: Path) -> None:
         """Template variables in external files are preserved for later resolution."""
-        (tmp_path / "p.md").write_text("Hello ${upstream.response}, analyze ${concept.title}")
+        (tmp_path / "p.md").write_text("Hello ${upstream.response}, analyze ${concept.title}", encoding="utf-8")
 
         ir: dict[str, Any] = {
             "nodes": [{"id": "n1", "type": "llm", "params": {"prompt": "./p.md"}}],
@@ -172,8 +172,8 @@ This is inline prompt content.
         """External batch YAML file, then resolve file refs inside its items."""
         prompts = tmp_path / "prompts"
         prompts.mkdir()
-        (prompts / "reviewer-a.md").write_text("Review for quality A")
-        (prompts / "reviewer-b.md").write_text("Review for quality B")
+        (prompts / "reviewer-a.md").write_text("Review for quality A", encoding="utf-8")
+        (prompts / "reviewer-b.md").write_text("Review for quality B", encoding="utf-8")
 
         batch_yaml = """\
 items:
@@ -183,7 +183,7 @@ items:
     prompt: ./prompts/reviewer-b.md
 parallel: true
 """
-        (tmp_path / "reviews.yaml").write_text(batch_yaml)
+        (tmp_path / "reviews.yaml").write_text(batch_yaml, encoding="utf-8")
 
         ir: dict[str, Any] = {
             "nodes": [
@@ -220,7 +220,7 @@ parallel: true
         # Create external script that uses a template variable
         scripts_dir = tmp_path / "scripts"
         scripts_dir.mkdir()
-        (scripts_dir / "run.sh").write_text('echo "hello from file"')
+        (scripts_dir / "run.sh").write_text('echo "hello from file"', encoding="utf-8")
 
         workflow_md = """\
 # Execution Path Test
@@ -235,7 +235,7 @@ Run external script.
 - command: ./scripts/run.sh
 """
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(workflow_md)
+        workflow_file.write_text(workflow_md, encoding="utf-8")
 
         # Compile through the same path the CLI uses
         from pflow.core.file_resolver import get_base_dir, resolve_file_references
@@ -267,7 +267,7 @@ Run external script.
         # External command file with template variable referencing an upstream node
         scripts_dir = tmp_path / "scripts"
         scripts_dir.mkdir()
-        (scripts_dir / "process.sh").write_text('echo "Processing: ${fetch.stdout}"')
+        (scripts_dir / "process.sh").write_text('echo "Processing: ${fetch.stdout}"', encoding="utf-8")
 
         workflow_md = """\
 # Template Detection Test
@@ -292,7 +292,7 @@ Process the fetched data using an external command file.
 - command: ./scripts/process.sh
 """
         workflow_file = tmp_path / "workflow.pflow.md"
-        workflow_file.write_text(workflow_md)
+        workflow_file.write_text(workflow_md, encoding="utf-8")
 
         result = parse_markdown(workflow_md)
         ir = result.ir
@@ -322,7 +322,7 @@ Process the fetched data using an external command file.
         child_dir = tmp_path / "child"
         child_scripts = child_dir / "scripts"
         child_scripts.mkdir(parents=True)
-        (child_scripts / "greet.sh").write_text('echo "Hello ${name}"')
+        (child_scripts / "greet.sh").write_text('echo "Hello ${name}"', encoding="utf-8")
 
         child_md = """\
 # Child Workflow
@@ -346,7 +346,7 @@ Greet by name using external command.
 - command: ./scripts/greet.sh
 """
         child_file = child_dir / "child.pflow.md"
-        child_file.write_text(child_md)
+        child_file.write_text(child_md, encoding="utf-8")
 
         # Compile the child with _pflow_workflow_file set to its own location
         # (simulating what workflow_executor.py does)
@@ -406,7 +406,7 @@ class TestTemplateErrorSourceFileProvenance:
         # Create external prompt with a reference to a nonexistent node
         prompts_dir = tmp_path / "prompts"
         prompts_dir.mkdir()
-        (prompts_dir / "bad.md").write_text("Hello ${nonexistent_node.output}")
+        (prompts_dir / "bad.md").write_text("Hello ${nonexistent_node.output}", encoding="utf-8")
 
         workflow_md = """\
 # Test

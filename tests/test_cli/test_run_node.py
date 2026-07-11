@@ -627,7 +627,7 @@ class TestRunInputsEndpoint:
     def test_happy_path_returns_tokens_without_secrets(self, tmp_path, monkeypatch) -> None:
         debug = _debug(tmp_path, monkeypatch)
         wf_file = tmp_path / "wf.pflow.md"
-        wf_file.write_text("# x")
+        wf_file.write_text("# x", encoding="utf-8")
         resolved = str(wf_file.resolve())
         _write_io_trace(debug, resolved, "20260101-000000-000020", inputs={"name": "World", "api_key": "sk-secret"})
         r = _local(create_app()).get("/api/run-inputs", params={"workflow": str(wf_file), "run": "run-1"})
@@ -637,7 +637,7 @@ class TestRunInputsEndpoint:
     def test_unknown_run_is_404(self, tmp_path, monkeypatch) -> None:
         debug = _debug(tmp_path, monkeypatch)
         wf_file = tmp_path / "wf.pflow.md"
-        wf_file.write_text("# x")
+        wf_file.write_text("# x", encoding="utf-8")
         resolved = str(wf_file.resolve())
         _write_io_trace(debug, resolved, "20260101-000000-000020", inputs={"name": "World"})
         r = _local(create_app()).get("/api/run-inputs", params={"workflow": str(wf_file), "run": "ghost"})
@@ -655,14 +655,14 @@ class TestRunNodeEndpoint:
     def test_missing_ref_is_400(self, tmp_path, monkeypatch) -> None:
         _debug(tmp_path, monkeypatch)
         wf_file = tmp_path / "wf.pflow.md"
-        wf_file.write_text("# x")
+        wf_file.write_text("# x", encoding="utf-8")
         r = _local(create_app()).get("/api/run-node", params={"workflow": str(wf_file)})
         assert r.status_code == 400
 
     def test_malformed_ref_is_400(self, tmp_path, monkeypatch) -> None:
         _debug(tmp_path, monkeypatch)
         wf_file = tmp_path / "wf.pflow.md"
-        wf_file.write_text("# x")
+        wf_file.write_text("# x", encoding="utf-8")
         r = _local(create_app()).get("/api/run-node", params={"workflow": str(wf_file), "ref": "not-json"})
         assert r.status_code == 400
 
@@ -673,7 +673,7 @@ class TestRunNodeEndpoint:
     def test_happy_path_returns_detail(self, tmp_path, monkeypatch) -> None:
         debug = _debug(tmp_path, monkeypatch)
         wf_file = tmp_path / "wf.pflow.md"
-        wf_file.write_text("# x")
+        wf_file.write_text("# x", encoding="utf-8")
         resolved = str(wf_file.resolve())
         _write_trace(debug, resolved, "20260101-000000-000001", [_event("greet", node_output={"stdout": "hi"})])
         ref = json.dumps({"node_id": "greet", "ancestor_path": [], "port": None})
@@ -685,7 +685,7 @@ class TestRunNodeEndpoint:
         """An empty ``&run=`` means "not pinned" (follow the newest run), not "match the run with id ''"."""
         debug = _debug(tmp_path, monkeypatch)
         wf_file = tmp_path / "wf.pflow.md"
-        wf_file.write_text("# x")
+        wf_file.write_text("# x", encoding="utf-8")
         resolved = str(wf_file.resolve())
         _write_trace(debug, resolved, "20260101-000000-000001", [_event("greet", node_output={"stdout": "hi"})])
         ref = json.dumps({"node_id": "greet", "ancestor_path": [], "port": None})
@@ -695,7 +695,7 @@ class TestRunNodeEndpoint:
     def test_no_matching_event_is_404(self, tmp_path, monkeypatch) -> None:
         debug = _debug(tmp_path, monkeypatch)
         wf_file = tmp_path / "wf.pflow.md"
-        wf_file.write_text("# x")
+        wf_file.write_text("# x", encoding="utf-8")
         resolved = str(wf_file.resolve())
         _write_trace(debug, resolved, "20260101-000000-000001", [_event("greet")])
         ref = json.dumps({"node_id": "absent", "ancestor_path": [], "port": None})
@@ -706,7 +706,7 @@ class TestRunNodeEndpoint:
         # End-to-end through the handler: an IO ref (port "in") projects meta.inputs, no event needed.
         debug = _debug(tmp_path, monkeypatch)
         wf_file = tmp_path / "wf.pflow.md"
-        wf_file.write_text("# x")
+        wf_file.write_text("# x", encoding="utf-8")
         resolved = str(wf_file.resolve())
         _write_io_trace(debug, resolved, "20260101-000000-000010", inputs={"name": "World"})
         ref = json.dumps({"node_id": "name", "ancestor_path": [], "port": "in"})

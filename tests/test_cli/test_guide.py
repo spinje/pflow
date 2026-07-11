@@ -347,7 +347,8 @@ def test_mcp_topic_has_no_dynamic_interface() -> None:
 def test_compose_from_workflow_file(tmp_path: Path) -> None:
     wf = tmp_path / "test.pflow.md"
     wf.write_text(
-        "# Test\n\nA test.\n\n## Steps\n\n### fetch\n\nFetch data.\n\n- type: http\n- url: https://example.com\n"
+        "# Test\n\nA test.\n\n## Steps\n\n### fetch\n\nFetch data.\n\n- type: http\n- url: https://example.com\n",
+        encoding="utf-8",
     )
     result = compose_guide([str(wf)])
     assert "HTTP" in result
@@ -359,7 +360,8 @@ def test_compose_from_workflow_detects_multiple_types(tmp_path: Path) -> None:
         "# Multi\n\nA multi-node workflow.\n\n## Steps\n\n"
         "### fetch\n\nFetch.\n\n- type: http\n- url: https://example.com\n\n"
         "### process\n\nProcess.\n\n- type: code\n- inputs:\n    data: ${fetch.response}\n\n"
-        "```python code\ndata: dict\nresult: dict = data\n```\n"
+        "```python code\ndata: dict\nresult: dict = data\n```\n",
+        encoding="utf-8",
     )
     result = compose_guide([str(wf)])
     assert "HTTP" in result
@@ -373,7 +375,8 @@ def test_compose_from_workflow_detects_claude_code(tmp_path: Path) -> None:
         "### fix\n\nFix code.\n\n"
         "- type: claude-code\n"
         "- max_turns: 2\n\n"
-        "```prompt\nFix the failing test.\n```\n"
+        "```prompt\nFix the failing test.\n```\n",
+        encoding="utf-8",
     )
     result = compose_guide([str(wf)])
     assert "# Claude Code Node" in result
@@ -451,7 +454,8 @@ Log the error.
 ```shell command
 echo "failed" >&2
 ```
-"""
+""",
+        encoding="utf-8",
     )
     result = compose_guide([str(wf)])
 
@@ -469,7 +473,8 @@ echo "failed" >&2
 def test_compose_workflow_ref_plus_explicit_topic(tmp_path: Path) -> None:
     wf = tmp_path / "simple.pflow.md"
     wf.write_text(
-        "# Simple\n\nSimple.\n\n## Steps\n\n### fetch\n\nFetch.\n\n- type: http\n- url: https://example.com\n"
+        "# Simple\n\nSimple.\n\n## Steps\n\n### fetch\n\nFetch.\n\n- type: http\n- url: https://example.com\n",
+        encoding="utf-8",
     )
     result = compose_guide([str(wf), "batch"])
     assert "HTTP" in result
@@ -478,7 +483,10 @@ def test_compose_workflow_ref_plus_explicit_topic(tmp_path: Path) -> None:
 
 def test_compose_workflow_ref_deduplicates_with_explicit(tmp_path: Path) -> None:
     wf = tmp_path / "http-wf.pflow.md"
-    wf.write_text("# HTTP WF\n\nHTTP.\n\n## Steps\n\n### fetch\n\nFetch.\n\n- type: http\n- url: https://example.com\n")
+    wf.write_text(
+        "# HTTP WF\n\nHTTP.\n\n## Steps\n\n### fetch\n\nFetch.\n\n- type: http\n- url: https://example.com\n",
+        encoding="utf-8",
+    )
     result = compose_guide(["http", str(wf)])
     # http should only appear once (explicit + auto-detected deduplicated)
     assert result.count("# HTTP Node") == 1
@@ -491,7 +499,7 @@ def test_compose_nonexistent_workflow_raises(tmp_path: Path) -> None:
 
 def test_compose_unparseable_workflow_raises(tmp_path: Path) -> None:
     wf = tmp_path / "broken.pflow.md"
-    wf.write_text("not a valid workflow at all")
+    wf.write_text("not a valid workflow at all", encoding="utf-8")
     with pytest.raises(GuideError, match=r"Failed to parse|No guide topics"):
         compose_guide([str(wf)])
 
@@ -501,7 +509,7 @@ def test_compose_broken_saved_workflow_shows_load_error(tmp_path: Path, isolate_
     not 'Unknown topic'."""
     wf_dir = Path(isolate_pflow_config["workflows_path"]) / "broken-wf"
     wf_dir.mkdir(parents=True)
-    (wf_dir / "broken-wf.pflow.md").write_text("---\nname: broken-wf\n---\nnot valid")
+    (wf_dir / "broken-wf.pflow.md").write_text("---\nname: broken-wf\n---\nnot valid", encoding="utf-8")
 
     with pytest.raises(GuideError, match="failed to load"):
         compose_guide(["broken-wf"])

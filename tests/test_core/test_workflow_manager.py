@@ -295,7 +295,7 @@ class TestWorkflowManager:
         # Directory with wrong filename
         bad_dir = workflow_manager.workflows_dir / "wrong-name"
         bad_dir.mkdir()
-        (bad_dir / "other.pflow.md").write_text("# Wrong")
+        (bad_dir / "other.pflow.md").write_text("# Wrong", encoding="utf-8")
 
         names = workflow_manager.list_names()
 
@@ -305,7 +305,7 @@ class TestWorkflowManager:
         """Test list_names includes workflows that have entry points but fail to parse."""
         corrupt_dir = workflow_manager.workflows_dir / "corrupt"
         corrupt_dir.mkdir()
-        (corrupt_dir / "corrupt.pflow.md").write_text("not valid")
+        (corrupt_dir / "corrupt.pflow.md").write_text("not valid", encoding="utf-8")
 
         names = workflow_manager.list_names()
 
@@ -481,7 +481,9 @@ class TestWorkflowManager:
         corrupted_dir = workflow_manager.workflows_dir / "corrupted"
         corrupted_dir.mkdir()
         corrupted_file = corrupted_dir / "corrupted.pflow.md"
-        corrupted_file.write_text("# Corrupted\n\n## Steps\n\n### node1\n\nthis is not valid markdown workflow")
+        corrupted_file.write_text(
+            "# Corrupted\n\n## Steps\n\n### node1\n\nthis is not valid markdown workflow", encoding="utf-8"
+        )
 
         # list_all should skip it silently (logged at INFO)
         with caplog.at_level(logging.INFO, logger="pflow.core.workflow.manager"):

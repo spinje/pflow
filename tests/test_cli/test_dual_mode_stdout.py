@@ -45,6 +45,7 @@ def _run_pflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProc
         [sys.executable, "-m", "pflow.cli", *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         env=clean_env,
         timeout=60,
     )
@@ -72,7 +73,7 @@ class TestStdoutRedirectLabel:
             ],
         }
         workflow_file = tmp_path / "wf.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = _run_pflow([str(workflow_file)], prepared_subprocess_env)
         _skip_uv_sandbox_panic(result)
@@ -114,7 +115,7 @@ class TestStdoutRedirectLabel:
             ],
         }
         workflow_file = tmp_path / "wf.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = _run_pflow([str(workflow_file)], prepared_subprocess_env)
         _skip_uv_sandbox_panic(result)
@@ -145,7 +146,7 @@ class TestMultiOutputAmbiguity:
             ],
         }
         workflow_file = tmp_path / "wf.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = _run_pflow([str(workflow_file)], prepared_subprocess_env)
         _skip_uv_sandbox_panic(result)
@@ -176,7 +177,7 @@ class TestMultiOutputAmbiguity:
             ],
         }
         workflow_file = tmp_path / "wf.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = _run_pflow(["-p", str(workflow_file)], prepared_subprocess_env)
         _skip_uv_sandbox_panic(result)
@@ -203,7 +204,7 @@ class TestMultiOutputAmbiguity:
             ],
         }
         workflow_file = tmp_path / "wf.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = _run_pflow(["--output-format", "json", str(workflow_file)], prepared_subprocess_env)
         _skip_uv_sandbox_panic(result)
@@ -228,7 +229,7 @@ class TestMultiOutputAmbiguity:
             ],
         }
         workflow_file = tmp_path / "wf.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = _run_pflow(["-o", "alpha", str(workflow_file)], prepared_subprocess_env)
         _skip_uv_sandbox_panic(result)
@@ -257,7 +258,7 @@ class TestMultiOutputAmbiguity:
             ],
         }
         workflow_file = tmp_path / "wf.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = _run_pflow(["-o", "beta", str(workflow_file)], prepared_subprocess_env)
         _skip_uv_sandbox_panic(result)
@@ -296,7 +297,7 @@ class TestStdoutValidator:
             ],
         }
         workflow_file = tmp_path / "wf.pflow.md"
-        workflow_file.write_text(ir_to_markdown(workflow))
+        workflow_file.write_text(ir_to_markdown(workflow), encoding="utf-8")
 
         result = _run_pflow(["--validate-only", str(workflow_file)], prepared_subprocess_env)
         _skip_uv_sandbox_panic(result)

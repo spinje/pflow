@@ -84,7 +84,7 @@ class TestDeniedExit:
         _allow_prompting(monkeypatch, answer=True)
         result = invoke_cli(["--no-trace", str(path)])
         assert result.exit_code == 0
-        assert proof.read_text().strip() == "posting-hello"
+        assert proof.read_text(encoding="utf-8").strip() == "posting-hello"
 
 
 class TestAutoApprove:

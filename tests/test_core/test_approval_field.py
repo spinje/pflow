@@ -105,7 +105,8 @@ class TestSchemaAndValidation:
             "# Child\n\nChild with an invalid batch gate.\n\n## Steps\n\n"
             "### fan\n\nFan out.\n\n- type: shell\n- command: echo ${item}\n"
             "- approval: required\n"
-            "- batch:\n    items: ${items}\n    as: item\n"
+            "- batch:\n    items: ${items}\n    as: item\n",
+            encoding="utf-8",
         )
         parent_ir = _ir({"id": "sub", "type": "workflow", "params": {"workflow": str(child)}})
         diagnostics = WorkflowValidator().validate(parent_ir, workflow_file=tmp_path / "parent.pflow.md")
@@ -136,7 +137,8 @@ class TestCompiler:
     def test_workflow_type_node_may_be_gated(self, tmp_path):
         child = tmp_path / "child.pflow.md"
         child.write_text(
-            "# Child\n\nTrivial child.\n\n## Steps\n\n### s\n\nSay hi.\n\n- type: shell\n- command: echo hi\n"
+            "# Child\n\nTrivial child.\n\n## Steps\n\n### s\n\nSay hi.\n\n- type: shell\n- command: echo hi\n",
+            encoding="utf-8",
         )
         ir = _ir({"id": "sub", "type": "workflow", "params": {"workflow": str(child)}, "approval": "required"})
         compiled = compile_workflow(ir, Registry())

@@ -134,7 +134,7 @@ class TestUnifiedErrorJsonShape:
     def test_parse_error(self, tmp_path: Path) -> None:
         """A malformed .pflow.md file (no ## Steps) produces parse_error category."""
         bad_file = tmp_path / "bad.pflow.md"
-        bad_file.write_text("# My Workflow\n\nSome description but no steps section.\n")
+        bad_file.write_text("# My Workflow\n\nSome description but no steps section.\n", encoding="utf-8")
 
         runner = CliRunner(mix_stderr=False)
         result = runner.invoke(main, ["--output-format", "json", str(bad_file)])

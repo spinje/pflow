@@ -445,5 +445,5 @@ def test_tilde_path_with_directory_creation(tmp_path, monkeypatch):
         assert stories_dir.is_dir(), f"Directory not created at {stories_dir}"
 
         # Verify content
-        content = expected_path.read_text()
+        content = expected_path.read_text(encoding="utf-8")
         assert content == "Once upon a time, there was a clever cat..."

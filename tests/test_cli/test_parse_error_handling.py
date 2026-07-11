@@ -156,7 +156,7 @@ A test node.
     def test_permission_error_shows_helpful_message(self, tmp_path):
         """Test permission error shows helpful message."""
         wf = tmp_path / "wf.pflow.md"
-        wf.write_text("# Test\n\n## Steps\n\n### a\n\nDesc.\n\n- type: shell\n- command: echo test\n")
+        wf.write_text("# Test\n\n## Steps\n\n### a\n\nDesc.\n\n- type: shell\n- command: echo test\n", encoding="utf-8")
 
         from unittest.mock import patch
 
@@ -173,7 +173,7 @@ A test node.
     def test_unicode_decode_error_shows_helpful_message(self, tmp_path):
         """Test unicode decode error shows helpful message."""
         wf = tmp_path / "wf.pflow.md"
-        wf.write_text("placeholder")
+        wf.write_text("placeholder", encoding="utf-8")
 
         from unittest.mock import patch
 

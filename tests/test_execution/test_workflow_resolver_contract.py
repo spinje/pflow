@@ -60,7 +60,7 @@ def test_resolve_workflow_returns_fully_file_resolved_ir(tmp_path: Path) -> None
     # Build a minimal workflow with an external prompt file reference.
     prompt_file = tmp_path / "creative.prompt.md"
     prompt_content = "Write a creative response to: ${user_input}\n\nBe specific."
-    prompt_file.write_text(prompt_content)
+    prompt_file.write_text(prompt_content, encoding="utf-8")
 
     workflow_path = tmp_path / "test.pflow.md"
     workflow_path.write_text(
@@ -85,7 +85,8 @@ Call the LLM with the external prompt file.
 
 - type: llm
 - prompt: ./creative.prompt.md
-"""
+""",
+        encoding="utf-8",
     )
 
     resolved = resolve_workflow(str(workflow_path))
@@ -182,7 +183,8 @@ Calls an LLM with a prompt file that doesn't exist on disk.
 
 - type: llm
 - prompt: ./missing.prompt.md
-"""
+""",
+        encoding="utf-8",
     )
 
     with pytest.raises(CompilationError, match=r"file_resolution|missing"):

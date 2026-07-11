@@ -100,7 +100,7 @@ def temp_registry(temp_home):
         },
     }
 
-    registry_path.write_text(json.dumps(registry_data, indent=2))
+    registry_path.write_text(json.dumps(registry_data, indent=2), encoding="utf-8")
 
     # Return the registry path
     yield registry_path
