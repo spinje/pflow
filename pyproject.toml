@@ -144,28 +144,20 @@ markers = [
 ]
 # Note: We don't set addopts with -n here to allow flexibility
 # Use 'make test' for parallel or 'make test-debug' for sequential
-# Task 116 (Windows compat): ruff PLW1514 catches unspecified-encoding at
-# open()/read_text()/write_text() call sites when the receiver's Path type is
-# statically inferable, but it has two real blind spots this filter covers:
-# (1) os.fdopen, which PLW1514 never flags at all; (2) any call on a variable
-# derived from an untyped parameter (e.g. `tmp_path / "x"` inside a pytest
-# fixture with no `-> Path` annotation) — ruff can't prove the receiver is a
-# Path, so it silently skips hundreds of call sites of exactly this shape
-# across the test suite (verified: ruff flags `path: Path` but not a bare
-# `tmp_path` fixture param). Scoped to `pflow.*` — not a blanket
-# `error::EncodingWarning` — because Python's warning attribution follows the
-# DEFINING module of the frame that calls open()/write_text()/fdopen(), not
-# the caller: an unscoped filter promotes every third-party library's own
-# missing-encoding warnings (verified: litellm's own
-# containers/endpoint_factory.py) into hard test failures having nothing to
-# do with pflow, and would also swallow the tmp_path blind spot above across
-# the whole test suite rather than catching it where it matters — a
-# regression inside pflow's own source. Only fires when the interpreter runs
-# with PYTHONWARNDEFAULTENCODING=1 (exported by Makefile test targets and tox)
-# or -X warn_default_encoding — the filter alone is inert without it. The
-# environment variable is required for parallel runs so xdist workers inherit
-# the setting.
-filterwarnings = ["error::EncodingWarning:pflow.*"]
+# PEP 597 net (Task 116): any text-mode open()/read_text()/write_text()/fdopen
+# without encoding= is a hard error — in src, tests, and code-node snippets
+# alike. ruff PLW1514 catches most sites statically but has blind spots
+# (os.fdopen, paths derived from untyped fixture params like a bare tmp_path);
+# this filter is the runtime backstop. It only fires when the interpreter runs
+# with PYTHONWARNDEFAULTENCODING=1, exported by the Makefile test targets as an
+# env var so pytest-xdist workers inherit it. litellm ships its own
+# encoding-less opens (warning attribution follows the DEFINING module of the
+# frame that calls open(), so they're cleanly separable) — ignored below.
+# Canary: tests/test_encoding_warning_net.py fails loudly if the net dies.
+filterwarnings = [
+    "error::EncodingWarning",
+    "ignore::EncodingWarning:litellm.*",
+]
 
 [tool.ruff]
 # target-version is inferred from requires-python (>=3.10) — do not pin it separately.

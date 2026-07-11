@@ -63,6 +63,10 @@ switch to `cmd.exe` or PowerShell.
 7. **The `EncodingWarning` net is scoped to `pflow.*`.** A blanket
    `error::EncodingWarning` detonates on test fixtures and third-party libraries; the goal is to
    catch pflow source regressions, especially `os.fdopen`, which `PLW1514` misses.
+   > **Superseded 2026-07-11:** the net was widened to a blanket `error::EncodingWarning` (plus a
+   > narrow `ignore::EncodingWarning:litellm.*`) after every test call site — the "detonation"
+   > residue this item describes — was given an explicit `encoding="utf-8"`. Do not narrow it back;
+   > the canary in `tests/test_encoding_warning_net.py` now asserts blanket coverage.
 8. **`PLW1514` only works because ruff preview mode is explicit.** Keep
    `preview = true` and `explicit-preview-rules = true`; otherwise the selected rule has no effect.
 9. **Do not certify skill symlinks on Windows.** The service is scheduled for rebuild without
@@ -234,7 +238,8 @@ switch to `cmd.exe` or PowerShell.
 - `tests/test_core/test_settings.py::test_validate_permissions_noop_on_windows` - mutation-proven
   guard against false Windows chmod warnings.
 - `tests/test_encoding_warning_net.py` - warning filter is live for pflow source and scoped away
-  from non-pflow modules.
+  from non-pflow modules. (Superseded 2026-07-11: the canary now asserts blanket coverage of test
+  code too, with only `litellm.*` ignored — see invariant 7 above.)
 - `tests/conftest.py` helper consumers - any new subprocess env builder should route through
   `set_isolated_home`.
 
