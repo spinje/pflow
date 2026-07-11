@@ -100,7 +100,7 @@ def _gate_pausable(request: Any, config: NodeConfig, node: Any, action: Any) -> 
     Approvals always resume — the entry is the gated node itself, which never ran
     (the gate fires at step 7.5, before ``node.start``). Escalations resume at the
     node's SUCCESSOR, so they are pausable only when that successor is resolvable.
-    Each clause mirrors a refusal arm in the CLI's ``_resolve_between_nodes_entry``
+    Each clause mirrors a refusal arm in ``resume_preflight._resolve_between_nodes_entry``
     (cli/commands/resume.py) KIND-for-kind, so the producer never emits a token the
     resume path bounces. The CLI-side refusals stay as belt-and-braces — the
     workflow can be edited between pause and resume (hash gate + ``--force``).

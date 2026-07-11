@@ -26,6 +26,7 @@ from pflow.ui.run_tailer import (
     discover_live_trace,
     is_trace_locked,
     read_run_status,
+    read_run_trailer,
     scan_traces,
 )
 
@@ -44,6 +45,7 @@ def _write_trace(
     execution_id: str = "x",
     content_hash: str | None = None,
     inputs: dict | None = None,
+    trailer_extra: dict | None = None,
 ) -> None:
     # Synthetic, but the CONSUMED keys mirror the producer (meta ← workflow_trace.py `_meta_fields`,
     # run.complete.final_status ← `_aggregates`, node.start/event join keys ← `_emit_node_start`). The join
@@ -83,7 +85,12 @@ def _write_trace(
             "port": None,
             "status": "success",
         })
-        lines.append({"kind": "run.complete", "final_status": final_status, "nodes_executed": 1})
+        lines.append({
+            "kind": "run.complete",
+            "final_status": final_status,
+            "nodes_executed": 1,
+            **(trailer_extra or {}),
+        })
     path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
 
 
@@ -445,6 +452,29 @@ def test_run_complete_banner_drops_the_full_payload_fields():
     assert "json_output" not in snap_run and "warnings" not in snap_run
 
 
+def test_run_complete_banner_carries_paused_node_id_but_not_gate_request():
+    """Task 176: `paused_node_id` (a small string) rides the run-complete banner — BOTH the live broadcast
+    and the late-subscriber snapshot() (they share `self._run`) — so the canvas can light the ⏸ node. The
+    bulky `gate_request` stays OFF the wire (the allowlist's whole purpose; the panel fetches /api/gate)."""
+    t = RunTailer("k", lambda _key, _msg: None)
+    messages = t._consume(
+        _bytes({
+            "kind": "run.complete",
+            "final_status": "paused",
+            "nodes_executed": 1,
+            "paused_node_id": "deploy",
+            "gate_request": {"node_id": "deploy", "kind": "action_approval", "preview": {"big": "x" * 1000}},
+        })
+    )
+    banner = next(m for m in messages if m["type"] == "run-complete")
+    assert banner["final_status"] == "paused"
+    assert banner["paused_node_id"] == "deploy"
+    assert "gate_request" not in banner
+    snap_run = t.snapshot()["run"]
+    assert snap_run["paused_node_id"] == "deploy"
+    assert "gate_request" not in snap_run
+
+
 def test_scan_traces_skips_a_non_utf8_trace(tmp_path):
     """PR #543 (C5): a corrupt / non-UTF-8 file matching the trace glob must be SKIPPED, never crash the
     scan — `_read_meta`'s text read raises UnicodeDecodeError (⊄ OSError), which would otherwise propagate
@@ -477,6 +507,93 @@ def test_read_run_status_handles_a_trailer_larger_than_the_tail_window(tmp_path)
     path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
     assert path.stat().st_size > 65536  # the trailer line alone exceeds the tail window
     assert read_run_status(path) == (True, "degraded")
+
+
+def test_read_run_trailer_returns_full_trailer_dict(tmp_path):
+    """Task 176: `read_run_trailer` is the dict-returning reader the gate endpoint builds on — it must
+    surface the FULL trailer (paused_node_id + gate_request included), not just the status projection.
+    A live (no run.complete) trace and an unreadable path both return None."""
+    wf = "/wf.pflow.md"
+    paused = tmp_path / "workflow-trace-aaa-wf-20260101-000000-000001.json"
+    live = tmp_path / "workflow-trace-aaa-wf-20260101-000000-000002.json"
+    gate_request = {"node_id": "deploy", "node_type": "shell", "kind": "action_approval", "preview": {"cmd": "x"}}
+    _write_trace(
+        paused,
+        wf,
+        complete=True,
+        final_status="paused",
+        trailer_extra={"paused_node_id": "deploy", "gate_request": gate_request},
+    )
+    _write_trace(live, wf, complete=False)
+    trailer = read_run_trailer(paused)
+    assert trailer is not None
+    assert trailer["final_status"] == "paused"
+    assert trailer["paused_node_id"] == "deploy"
+    assert trailer["gate_request"] == gate_request
+    assert read_run_trailer(live) is None
+    assert read_run_trailer(tmp_path / "missing.json") is None
+
+
+def test_read_run_trailer_oversized_paused_trailer_is_read_fully(tmp_path):
+    """Task 176: a PAUSED trailer carries the full gate_request and can exceed the 64 KB tail window
+    (Task 171's recorded gotcha). The one-shot full re-read must survive every reader change — deleting
+    that branch fails this test AND the read_run_status oversized pin above."""
+    path = tmp_path / "workflow-trace-aaa-wf-20260101-000000-000001.json"
+    gate_request = {
+        "node_id": "deploy",
+        "node_type": "shell",
+        "kind": "action_approval",
+        "preview": {"payload": "x" * 100_000},  # the preview alone exceeds the tail window
+    }
+    _write_trace(
+        path,
+        "/wf.pflow.md",
+        complete=True,
+        final_status="paused",
+        trailer_extra={"paused_node_id": "deploy", "gate_request": gate_request},
+    )
+    assert path.stat().st_size > 65536
+    trailer = read_run_trailer(path)
+    assert trailer is not None
+    assert trailer["paused_node_id"] == "deploy"
+    assert trailer["gate_request"]["preview"]["payload"] == "x" * 100_000
+
+
+def test_scan_traces_carries_paused_node_id(tmp_path):
+    """Task 176: the scanner surfaces `paused_node_id` (a small string) as a candidate fact so the light
+    wires (`/api/runs` + the run-complete banner) can carry it; a non-paused run reads None."""
+    import pflow.ui.run_tailer as rt
+
+    rt._SCAN_CACHE.clear()
+    rt._DIR_LIST_CACHE.clear()
+    wf = str(tmp_path / "wf.pflow.md")
+    debug = tmp_path / "debug"
+    debug.mkdir()
+    paused = _tp(debug, wf, "20260101-000000-000001")
+    finished = _tp(debug, wf, "20260101-000000-000002")
+    _write_trace(
+        paused,
+        wf,
+        complete=True,
+        final_status="paused",
+        execution_id="paused-run",
+        trailer_extra={
+            "paused_node_id": "deploy",
+            "gate_request": {"node_id": "deploy", "node_type": "shell", "kind": "action_approval", "preview": {}},
+        },
+    )
+    _write_trace(finished, wf, complete=True, execution_id="finished-run")
+    by_id = {c["meta"]["execution_id"]: c for c in scan_traces(wf, debug_dir=debug)}
+    assert by_id["paused-run"]["paused_node_id"] == "deploy"
+    assert by_id["paused-run"]["final_status"] == "paused"
+    assert by_id["finished-run"]["paused_node_id"] is None
+    # The SECOND scan serves from _SCAN_CACHE (unchanged mtime/size) — the facts must be identical.
+    # The cache tuple is six POSITIONAL slots; a transposed slot in _file_facts' hit path would pass
+    # every fresh-scan test while corrupting every poll after the first (fresh vs cached divergence).
+    cached = {c["meta"]["execution_id"]: c for c in scan_traces(wf, debug_dir=debug)}
+    assert cached["paused-run"]["paused_node_id"] == "deploy"
+    assert cached["paused-run"]["final_status"] == "paused"
+    assert cached["finished-run"]["paused_node_id"] is None
 
 
 def test_scoped_scan_prunes_only_its_own_vanished_cache(tmp_path):

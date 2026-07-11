@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -12,10 +13,13 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 from urllib.parse import urlencode
 
+import pytest
+from click.testing import CliRunner
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.testclient import TestClient
 
+from pflow.cli.main import cli
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.ui.server import (
     _ACTIVITY_MAX,
@@ -944,6 +948,441 @@ class TestRunEndpoint:
         popen.assert_not_called()
 
 
+def _write_paused_trace(
+    debug: Path,
+    name: str,
+    wf_path: str,
+    *,
+    execution_id: str,
+    final_status: str = "paused",
+    gate_request: dict | None = None,
+    paused_node_id: str | None = "deploy",
+) -> None:
+    """A synthetic trace whose CONSUMED keys mirror the producer (meta ← `_meta_fields`,
+    run.complete + flat pause keys ← `finalize`'s paused arm, Task 171). Projection-test-grade
+    (mirrors tests/test_cli/test_ui.py `_write_trace`); the P2 answer-FLOW tests use real
+    producer traces instead (tests/CLAUDE.md pitfall #19)."""
+    meta = {
+        "kind": "meta",
+        "pflow_trace": "jsonl/1",
+        "workflow_path": wf_path,
+        "workflow_name": "WF",
+        "execution_id": execution_id,
+    }
+    trailer: dict = {"kind": "run.complete", "final_status": final_status, "nodes_executed": 1}
+    if final_status == "paused":
+        if paused_node_id is not None:
+            trailer["paused_node_id"] = paused_node_id
+        if gate_request is not None:
+            trailer["gate_request"] = gate_request
+    lines = [meta, trailer]
+    (debug / name).write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+
+
+class TestGateEndpoint:
+    """``GET /api/gate`` — the on-demand gate payload read (Task 176). Read-only; the bulky
+    ``gate_request`` is served here precisely so it never rides the SSE wire or ``/api/runs``."""
+
+    @staticmethod
+    def _debug_dir(tmp_path: Path, monkeypatch) -> Path:
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        debug = tmp_path / ".pflow" / "debug"
+        debug.mkdir(parents=True)
+        return debug
+
+    @pytest.mark.trace_files
+    def test_real_paused_run_serves_the_masked_payload_and_rides_the_runs_listing(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """★ The 200 arm against the REAL producer (pitfall #19 — a synthetic trailer here would
+        stay green if the producer's pause-record shape ever drifted): pause an actual gated run
+        through the CLI, then read the WHOLE server read path off its trace. Pins three seams at
+        once: (1) `paused_node_id`/`gate_request` really are flat trailer keys the reader finds;
+        (2) `/api/runs` carries `paused_node_id` (the light wire) but never `gate_request`;
+        (3) `/api/gate` serves the payload MASKED — the on-disk trailer is unmasked, so a skipped
+        `masked_gate_dict` leaks the real secret and fails the absent-from-body assertion."""
+        self._debug_dir(tmp_path, monkeypatch)
+        wf = tmp_path / "paused_demo.pflow.md"
+        wf.write_text(_PAUSED_GATE_WF, encoding="utf-8")
+        run = CliRunner(mix_stderr=False).invoke(cli, [str(wf)])
+        assert run.exit_code == 4, run.stderr
+        token = _TOKEN_RE.search(run.stdout).group(1)
+
+        entry = next(r for r in _client().get("/api/runs").json() if r["run_id"] == token)
+        assert entry["final_status"] == "paused"
+        assert entry["paused_node_id"] == "gated"
+        assert "gate_request" not in entry
+
+        response = _client().get("/api/gate", params={"run": token})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["paused_node_id"] == "gated"
+        assert body["gate_kind"] == "action_approval"
+        assert "gated action" in body["gate_request"]["preview"]["command"]
+        assert body["gate_request"]["preview"]["env"]["API_KEY"] == "<REDACTED>"
+        assert "sk-super-secret" not in response.text, "the raw secret never reaches the browser"
+
+    def test_unknown_run_id_is_404(self, tmp_path: Path, monkeypatch) -> None:
+        self._debug_dir(tmp_path, monkeypatch)
+        response = _client().get("/api/gate", params={"run": "no-such-run"})
+        assert response.status_code == 404
+        assert "no-such-run" in response.json()["error"]
+
+    def test_non_paused_run_is_404(self, tmp_path: Path, monkeypatch) -> None:
+        debug = self._debug_dir(tmp_path, monkeypatch)
+        _write_paused_trace(
+            debug,
+            "workflow-trace-aaa-wf-20260101-000000-000001.json",
+            "/wf.pflow.md",
+            execution_id="done-run",
+            final_status="success",
+        )
+        response = _client().get("/api/gate", params={"run": "done-run"})
+        assert response.status_code == 404
+        assert "not paused" in response.json()["error"]
+
+    def test_paused_trailer_without_gate_request_is_404_not_500(self, tmp_path: Path, monkeypatch) -> None:
+        """Edge ledger #2: a corrupt/hand-edited paused trailer (no gate_request) → the not-paused 404,
+        never a 500 — mirroring the resume loader's malformed-pause refusal."""
+        debug = self._debug_dir(tmp_path, monkeypatch)
+        _write_paused_trace(
+            debug,
+            "workflow-trace-aaa-wf-20260101-000000-000001.json",
+            "/wf.pflow.md",
+            execution_id="corrupt-run",
+            gate_request=None,
+        )
+        response = _client().get("/api/gate", params={"run": "corrupt-run"})
+        assert response.status_code == 404
+
+    def test_missing_run_param_is_400(self, tmp_path: Path, monkeypatch) -> None:
+        self._debug_dir(tmp_path, monkeypatch)
+        assert _client().get("/api/gate").status_code == 400
+        assert _client().get("/api/gate", params={"run": ""}).status_code == 400
+
+    def test_oversized_gate_request_is_still_served(self, tmp_path: Path, monkeypatch) -> None:
+        """A paused trailer larger than the reader's 64 KB tail window (Task 171 gotcha) is still served
+        in full — the endpoint rides read_run_trailer's one-shot full re-read."""
+        debug = self._debug_dir(tmp_path, monkeypatch)
+        big_value = "x" * 100_000
+        _write_paused_trace(
+            debug,
+            "workflow-trace-aaa-wf-20260101-000000-000001.json",
+            "/wf.pflow.md",
+            execution_id="big-paused",
+            gate_request={
+                "node_id": "deploy",
+                "node_type": "shell",
+                "kind": "action_approval",
+                "preview": {"payload": big_value},
+            },
+        )
+        response = _client().get("/api/gate", params={"run": "big-paused"})
+        assert response.status_code == 200
+        assert response.json()["gate_request"]["preview"]["payload"] == big_value
+
+
+# ── POST /api/resume (Task 176) ───────────────────────────────────────────────
+
+# A real gated workflow (mirrors test_paused_cli.py) — pausing it via the actual CLI produces the
+# REAL producer trace shape the answer-flow tests must run against (tests/CLAUDE.md pitfall #19;
+# synthetic trailers are for projection tests only).
+_PAUSED_GATE_WF = """# Paused Demo
+
+A workflow whose second step needs a human approval.
+
+## Steps
+
+### g1
+
+Upstream value.
+
+- type: shell
+- next: gated
+
+```shell command
+echo "g1-value"
+```
+
+### gated
+
+Requires a human approval decision before running.
+
+- type: shell
+- env: { API_KEY: sk-super-secret }
+- approval: required
+
+```shell command
+echo "gated action"
+```
+"""
+
+# A run that FAILS at a side-effecting (shell) step — the failed-run Resume arm's pre-flight fodder.
+_FAILING_WF = """# Failing Demo
+
+A workflow whose only step fails.
+
+## Steps
+
+### boom
+
+Always fails.
+
+- type: shell
+
+```shell command
+exit 7
+```
+"""
+
+_TOKEN_RE = re.compile(r"Resume token: (\S+) \(exit 4\)")
+
+
+@pytest.mark.trace_files
+class TestResumeEndpoint:
+    """``POST /api/resume`` — the observe-and-spawn answer bridge (Task 176). ``subprocess.Popen``
+    is patched around every POST (no real spawn); the REAL pre-flight (``preflight_resume`` + the
+    child's compile) runs underneath, against REAL traces produced by pausing/failing actual CLI
+    runs. The no-silent-no-op pins each assert ``popen.assert_not_called()`` — a refused answer
+    must 4xx BEFORE the spawn, never exit-1 invisibly inside a DEVNULL'd child."""
+
+    @staticmethod
+    def _home(tmp_path: Path, monkeypatch) -> Path:
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".pflow" / "debug").mkdir(parents=True)
+        return tmp_path
+
+    @staticmethod
+    def _pause(wf: Path) -> str:
+        """Run ``wf`` through the real CLI to a durable pause; return the resume token."""
+        result = CliRunner(mix_stderr=False).invoke(cli, [str(wf)])
+        assert result.exit_code == 4, result.stderr
+        match = _TOKEN_RE.search(result.stdout)
+        assert match, f"expected a token line; stdout:\n{result.stdout}"
+        return match.group(1)
+
+    @staticmethod
+    def _paused_wf(tmp_path: Path) -> Path:
+        path = tmp_path / "paused_demo.pflow.md"
+        path.write_text(_PAUSED_GATE_WF, encoding="utf-8")
+        return path
+
+    def test_approve_yes_spawns_the_detached_resume_argv(self, tmp_path: Path, monkeypatch) -> None:
+        self._home(tmp_path, monkeypatch)
+        token = self._pause(self._paused_wf(tmp_path))
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": token, "approve": "yes"})
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["status"] == "spawned"
+        run_id = body["run_id"]
+        assert isinstance(run_id, str) and run_id
+        popen.assert_called_once()
+        argv = popen.call_args.args[0]
+        assert argv == [
+            sys.executable,
+            "-m",
+            "pflow.cli",
+            "resume",
+            token,
+            "--output-format",
+            "json",
+            "--approve",
+            "yes",
+        ]
+        kwargs = popen.call_args.kwargs
+        assert kwargs["stdin"] == kwargs["stdout"] == kwargs["stderr"] == subprocess.DEVNULL
+        if sys.platform == "win32":
+            assert kwargs["creationflags"] == subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        else:
+            assert kwargs["start_new_session"] is True
+        # Forced onto the child so the browser pins the exact resumed attempt (Task 175 pattern).
+        assert kwargs["env"]["PFLOW_EXECUTION_ID"] == run_id
+
+    def test_approve_no_maps_to_its_flag(self, tmp_path: Path, monkeypatch) -> None:
+        self._home(tmp_path, monkeypatch)
+        token = self._pause(self._paused_wf(tmp_path))
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": token, "approve": "no"})
+        assert response.status_code == 200, response.text
+        argv = popen.call_args.args[0]
+        assert argv[-2:] == ["--approve", "no"]
+
+    def test_choose_on_a_real_escalation_maps_to_its_flag(self, tmp_path: Path, monkeypatch) -> None:
+        """An escalation pause answered with `choose` → `--choose <text>` (the label text — the
+        numeric mapping is a loader-side terminal convenience; edge ledger #9)."""
+        from pflow.registry import Registry
+        from tests.test_runtime.test_gate_pause import EscalatingNode
+
+        self._home(tmp_path, monkeypatch)
+        # Registry injection (the test_paused_cli.py pattern — works only inside pytest, where
+        # isolate_pflow_config redirects Registry to tmp paths).
+        registry = Registry()
+        nodes = registry.load()
+        nodes["escalating-node"] = {
+            "module": "tests.test_runtime.test_gate_pause",
+            "class_name": "EscalatingNode",
+            "docstring": EscalatingNode.__doc__ or "",
+            "file_path": "tests/test_runtime/test_gate_pause.py",
+            "type": "core",
+            "interface": {
+                "description": "Test node that raises a decision escalation.",
+                "params": [{"key": "question", "type": "str", "description": "The escalation question"}],
+                "inputs": [],
+                "outputs": [{"key": "result", "type": "dict", "description": "Carries the escalation marker"}],
+                "actions": ["default"],
+            },
+        }
+        registry.save(nodes)
+        wf = tmp_path / "esc_demo.pflow.md"
+        wf.write_text(
+            "# Escalation Demo\n\nAn escalating step, then a consumer.\n\n## Steps\n\n"
+            "### esc\n\nRaises a decision escalation.\n\n"
+            "- type: escalating-node\n- question: pick a or b\n- next: after\n\n"
+            "### after\n\nReads the decision.\n\n- type: shell\n\n"
+            '```shell command\necho "picked ${esc.result.escalation.decision.chosen}"\n```\n',
+            encoding="utf-8",
+        )
+        token = self._pause(wf)
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": token, "choose": "b"})
+        assert response.status_code == 200, response.text
+        argv = popen.call_args.args[0]
+        assert argv[-2:] == ["--choose", "b"]
+
+    def test_force_true_appends_the_flag_absent_otherwise(self, tmp_path: Path, monkeypatch) -> None:
+        self._home(tmp_path, monkeypatch)
+        wf = self._paused_wf(tmp_path)
+        token = self._pause(wf)
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            plain = _client().post("/api/resume", json={"run": token, "approve": "yes"})
+            forced = _client().post("/api/resume", json={"run": token, "approve": "yes", "force": True})
+        assert plain.status_code == forced.status_code == 200
+        plain_argv, forced_argv = (call.args[0] for call in popen.call_args_list)
+        assert "--force" not in plain_argv, "the server NEVER adds --force itself"
+        assert forced_argv[-1] == "--force"
+
+    def test_superseded_token_is_409_and_does_not_spawn(self, tmp_path: Path, monkeypatch) -> None:
+        self._home(tmp_path, monkeypatch)
+        token = self._pause(self._paused_wf(tmp_path))
+        # Consume the token through the real CLI (deny → a real denied attempt trace, exit 3).
+        denied = CliRunner(mix_stderr=False).invoke(cli, ["resume", token, "--approve", "no"])
+        assert denied.exit_code == 3, denied.stderr
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": token, "approve": "yes"})
+        assert response.status_code == 409
+        body = response.json()
+        assert body["refusal"] == "superseded"
+        assert isinstance(body["newer_execution_id"], str) and body["newer_execution_id"]
+        assert body["errors"]
+        popen.assert_not_called()
+
+    def test_side_effecting_failed_entry_is_409_with_node_facts(self, tmp_path: Path, monkeypatch) -> None:
+        """Bare resume of a failed run whose entry K is side-effecting (shell) → the non-TTY refusal,
+        carrying K's id + REGISTRY type so the browser dialog is buildable from this body alone."""
+        self._home(tmp_path, monkeypatch)
+        wf = tmp_path / "failing.pflow.md"
+        wf.write_text(_FAILING_WF, encoding="utf-8")
+        failed = CliRunner(mix_stderr=False).invoke(cli, [str(wf)])
+        assert failed.exit_code == 1, failed.stderr
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": str(wf)})
+        assert response.status_code == 409
+        body = response.json()
+        assert body["refusal"] == "side_effect_confirmation"
+        assert body["node_id"] == "boom"
+        assert body["node_type"] == "shell"
+        popen.assert_not_called()
+
+    def test_stale_workflow_is_409_and_does_not_spawn(self, tmp_path: Path, monkeypatch) -> None:
+        self._home(tmp_path, monkeypatch)
+        wf = self._paused_wf(tmp_path)
+        token = self._pause(wf)
+        wf.write_text(wf.read_text(encoding="utf-8") + "\n<!-- edited since the pause -->\n", encoding="utf-8")
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": token, "approve": "yes"})
+        assert response.status_code == 409
+        body = response.json()
+        assert body["refusal"] == "stale_workflow"
+        assert body["hash_known"] is True
+        popen.assert_not_called()
+
+    def test_unanswered_paused_is_409_answer_required_with_the_masked_gate(self, tmp_path: Path, monkeypatch) -> None:
+        self._home(tmp_path, monkeypatch)
+        token = self._pause(self._paused_wf(tmp_path))
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": token})
+        assert response.status_code == 409
+        body = response.json()
+        assert body["refusal"] == "answer_required"
+        gate = body["errors"][0]["context"]["gate"]  # rides the diagnostic, already masked
+        assert gate["kind"] == "action_approval"
+        assert gate["preview"]["env"]["API_KEY"] == "<REDACTED>"
+        assert "sk-super-secret" not in response.text
+        popen.assert_not_called()
+
+    def test_both_answer_flags_is_400_and_does_not_spawn(self, tmp_path: Path, monkeypatch) -> None:
+        self._home(tmp_path, monkeypatch)
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": "x", "approve": "yes", "choose": "b"})
+        assert response.status_code == 400
+        assert "mutually exclusive" in response.json()["error"]
+        popen.assert_not_called()
+
+    def test_shape_errors_are_400_before_any_io(self, tmp_path: Path, monkeypatch) -> None:
+        self._home(tmp_path, monkeypatch)
+        bad_bodies = [
+            {},  # missing run
+            {"run": ""},  # empty run
+            {"run": "x", "approve": "YES"},  # server-stricter: lowercase only
+            {"run": "x", "choose": "   "},  # whitespace choose
+            {"run": "x", "force": "yes"},  # non-boolean force
+        ]
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            for body in bad_bodies:
+                assert _client().post("/api/resume", json=body).status_code == 400, body
+        popen.assert_not_called()
+
+    def test_unknown_run_id_is_404_and_does_not_spawn(self, tmp_path: Path, monkeypatch) -> None:
+        self._home(tmp_path, monkeypatch)
+        ghost = "00000000-0000-4000-8000-000000000000"  # uuid-shaped, matches nothing
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": ghost})
+        assert response.status_code == 404
+        assert response.json()["refusal"] == "missing"
+        popen.assert_not_called()
+
+    def test_non_loopback_host_is_403_and_does_not_spawn(self, tmp_path: Path, monkeypatch) -> None:
+        self._home(tmp_path, monkeypatch)
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": "x", "approve": "yes"}, headers={"host": "evil.com"})
+        assert response.status_code == 403
+        popen.assert_not_called()
+
+
+def test_refusal_literal_map_covers_every_resume_source_error() -> None:
+    """The `refusal` discriminator is the frontend's typed contract (plan §P2-3 — the panel
+    switches on it, never string-parses). A future ResumeSourceError subclass that is missing from
+    `_RESUME_REFUSALS` would 409 with NO literal — the panel silently degrades to the generic
+    inline-errors arm with no failing test. This introspection net makes that gap loud: adding a
+    refusal family forces a deliberate decision about its HTTP literal."""
+    import pflow.core.exceptions as exceptions_module
+    from pflow.ui.server import _RESUME_REFUSALS
+
+    subclasses = {
+        obj
+        for obj in vars(exceptions_module).values()
+        if isinstance(obj, type)
+        and issubclass(obj, exceptions_module.ResumeSourceError)
+        and obj is not exceptions_module.ResumeSourceError
+    }
+    assert set(_RESUME_REFUSALS) == subclasses, (
+        "every ResumeSourceError subclass needs a `refusal` literal in server._RESUME_REFUSALS "
+        "(or a deliberate, documented exclusion)"
+    )
+
+
 class TestHostGuard:
     """The ``_LoopbackOnly`` middleware — the DNS-rebinding guard on EVERY route (Task 175), reads and
     writes. A non-loopback Host is 403; loopback variants pass. (Read-endpoint coverage is pinned by
@@ -1014,6 +1453,7 @@ class TestHostGuard:
             ("/api/source", {"workflow": workflow}),
             ("/api/catalog", {}),
             ("/api/audio/some-id", {}),
+            ("/api/gate", {"run": "some-run"}),
         ):
             assert _client().get(path, params=params, headers=evil).status_code == 403, path
             assert _client().get(path, params=params).status_code != 403, path

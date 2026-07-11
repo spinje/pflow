@@ -85,23 +85,50 @@ def _read_meta(path: Path) -> dict[str, Any] | None:
     return line
 
 
-def _scan_tail_for_terminal(tail: bytes) -> tuple[bool, str | None] | None:
-    """Inspect the LAST non-empty line of a byte tail: ``(True, status)`` if it is a ``run.complete``
-    trailer, ``(False, None)`` if it parsed but is NOT the trailer (run not finished), or ``None`` if it
-    FAILED to parse — leaving the caller to disambiguate a genuine mid-flush from a window that cut a
-    fully-flushed but oversized trailer."""
+def _scan_tail_for_terminal(tail: bytes) -> tuple[dict[str, Any] | None, bool]:
+    """Inspect the LAST non-empty line of a byte tail: ``(trailer_dict, parse_ok)``.
+
+    ``(dict, True)`` when it is the ``run.complete`` trailer; ``(None, True)`` when it parsed but is
+    NOT the trailer (run not finished) or the tail is empty; ``(None, False)`` when it FAILED to
+    parse — the caller disambiguates a genuine mid-flush from a window that cut a fully-flushed but
+    oversized trailer. Mirrors ``runtime/resume_source._scan_tail_for_trailer`` exactly (the accepted
+    ``runtime/ ↛ ui/`` twin — do not consolidate across that boundary)."""
     for raw in reversed(tail.split(b"\n")):
         if not raw.strip():
             continue
         try:
             line = json.loads(raw)
         except ValueError:
-            return None  # the last line didn't parse — caller disambiguates mid-flush vs window-truncation
+            return None, False  # the last line didn't parse — caller disambiguates mid-flush vs truncation
         if isinstance(line, dict) and line.get("kind") == "run.complete":
-            status = line.get("final_status")
-            return (True, status if isinstance(status, str) else None)
-        return (False, None)  # a complete-but-non-trailer last line → not finished
-    return (False, None)  # empty tail
+            return line, True
+        return None, True  # a complete-but-non-trailer last line → not finished
+    return None, True  # empty tail
+
+
+def read_run_trailer(path: Path) -> dict[str, Any] | None:
+    """Parsed ``run.complete`` trailer dict of a finalized trace, or ``None`` (incomplete/unreadable).
+
+    Reads only a bounded 64 KB tail so a multi-MB trace isn't loaded to answer "is this run live?".
+    A truncated/partial final line (a run mid-flush) doesn't parse → ``None`` (live), the safe
+    direction. Oversized-safe: a PAUSED trailer carries the full ``gate_request`` and can exceed the
+    64 KB tail window (Task 171) — when the last line fails to parse BUT the file exceeds the window
+    AND ends with a newline (its last line IS fully flushed), re-read the whole file ONCE to read the
+    oversized trailer intact. A genuine mid-flush has no trailing newline, so it stays ``None`` with
+    no full re-read on the 4 Hz poll (PR #543 review)."""
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(max(0, size - 65536))
+            tail = handle.read()
+            trailer, parse_ok = _scan_tail_for_terminal(tail)
+            if not parse_ok and size > 65536 and tail.endswith(b"\n"):
+                handle.seek(0)
+                trailer, _ = _scan_tail_for_terminal(handle.read())
+    except OSError:
+        return None
+    return trailer
 
 
 def read_run_status(path: Path) -> tuple[bool, str | None]:
@@ -110,29 +137,14 @@ def read_run_status(path: Path) -> tuple[bool, str | None]:
     ``complete`` is True iff the LAST non-empty line is a ``run.complete`` trailer (the run FINISHED);
     ``final_status`` is that trailer's ``final_status`` (``success``/``degraded``/``failed``/``denied``/
     ``paused`` — the producer's vocabulary; the last two via the gate_outcome channel, Tasks 125/171),
-    or ``None`` when the run is not complete (still live, or crashed). Reads only a
-    bounded 64 KB tail so a multi-MB trace isn't loaded to answer "is this run live?". A truncated/partial
-    final line (a run mid-flush) doesn't parse → ``(False, None)`` (live), the safe direction. Lets
-    ``/api/runs`` report a finished run's status WITHOUT a full ``load_trace_file`` parse.
-
-    A ``run.complete`` trailer LARGER than the window (a rare many-small-fields trailer — interning keeps the
-    normal one tiny) gets cut mid-line by the tail and would misread as live. So when the last line fails to
-    parse BUT the file ends with a newline (its last line IS fully flushed) and we truncated the read, re-read
-    the whole file ONCE to read the oversized trailer intact. A genuine mid-flush has no trailing newline, so
-    it stays "live" with no full re-read on the 4 Hz poll (PR #543 review)."""
-    try:
-        with open(path, "rb") as handle:
-            handle.seek(0, 2)
-            size = handle.tell()
-            handle.seek(max(0, size - 65536))
-            tail = handle.read()
-            result = _scan_tail_for_terminal(tail)
-            if result is None and size > 65536 and tail.endswith(b"\n"):
-                handle.seek(0)
-                result = _scan_tail_for_terminal(handle.read())
-    except OSError:
+    or ``None`` when the run is not complete (still live, or crashed). Derived from
+    ``read_run_trailer`` (one tail read, oversized-safe); lets ``/api/runs`` report a finished run's
+    status WITHOUT a full ``load_trace_file`` parse."""
+    trailer = read_run_trailer(path)
+    if trailer is None:
         return (False, None)
-    return result if result is not None else (False, None)
+    status = trailer.get("final_status")
+    return (True, status if isinstance(status, str) else None)
 
 
 def is_trace_locked(path: Path) -> bool | None:
@@ -172,13 +184,16 @@ def is_trace_locked(path: Path) -> bool | None:
 
 class TraceCandidate(TypedDict):
     """One raw trace-dir candidate from ``scan_traces`` — the typed contract shared by ``discover_live_trace``
-    (live overlay) and ``/api/runs`` (history). ``meta`` is the head line; ``complete``/``final_status`` the
-    cheap-tail terminal state; ``mtime`` for liveness/recency. NO policy applied — callers filter."""
+    (live overlay) and ``/api/runs`` (history). ``meta`` is the head line; ``complete``/``final_status``/
+    ``paused_node_id`` the cheap-tail terminal state (``paused_node_id`` from a PAUSED trailer, Task 176 —
+    the small string only; the bulky ``gate_request`` is on-demand via ``/api/gate``, never a scan fact);
+    ``mtime`` for liveness/recency. NO policy applied — callers filter."""
 
     path: Path
     meta: dict[str, Any]
     complete: bool
     final_status: str | None
+    paused_node_id: str | None
     mtime: float
 
 
@@ -193,7 +208,7 @@ class TraceCandidate(TypedDict):
 # scan_traces runs in the Starlette threadpool (/api/runs) AND via asyncio.to_thread (the tailer).
 # Callers MUST treat a returned candidate's `meta` dict as READ-ONLY — it is shared by reference across
 # cache hits, so mutating it would corrupt other callers' results (today none mutate; keep it that way).
-_SCAN_CACHE: dict[Path, tuple[float, int, dict[str, Any] | None, bool, str | None]] = {}
+_SCAN_CACHE: dict[Path, tuple[float, int, dict[str, Any] | None, bool, str | None, str | None]] = {}
 _SCAN_CACHE_LOCK = threading.Lock()
 
 # The DIRECTORY LISTING cache (distinct from the per-file content cache above): which trace files EXIST
@@ -239,19 +254,27 @@ def _stat_sorted_listing(directory: Path, pattern: str) -> list[tuple[Path, floa
     return stated
 
 
-def _file_facts(path: Path, mtime: float, size: int) -> tuple[dict[str, Any] | None, bool, str | None]:
-    """The (meta, complete, final_status) for one trace, served from _SCAN_CACHE on an unchanged
-    (mtime, size) or read fresh — caching a None-meta NEGATIVE verdict too so an old-format file isn't
-    re-opened every poll. Callers must treat the returned `meta` as read-only (it's the cached object)."""
+def _file_facts(path: Path, mtime: float, size: int) -> tuple[dict[str, Any] | None, bool, str | None, str | None]:
+    """The (meta, complete, final_status, paused_node_id) for one trace, served from _SCAN_CACHE on an
+    unchanged (mtime, size) or read fresh — caching a None-meta NEGATIVE verdict too so an old-format file
+    isn't re-opened every poll. One ``read_run_trailer`` derives all three tail facts (never read the tail
+    twice). Only ``paused_node_id`` is cached off a paused trailer — NOT the bulky ``gate_request`` (kept
+    off the scan/cache/wire; ``/api/gate`` re-reads it on demand). Callers must treat the returned `meta`
+    as read-only (it's the cached object)."""
     with _SCAN_CACHE_LOCK:
         hit = _SCAN_CACHE.get(path)
     if hit is not None and hit[0] == mtime and hit[1] == size:
-        return hit[2], hit[3], hit[4]
+        return hit[2], hit[3], hit[4], hit[5]
     meta = _read_meta(path)  # I/O OUTSIDE the lock
-    complete, final_status = read_run_status(path) if meta is not None else (False, None)
+    trailer = read_run_trailer(path) if meta is not None else None
+    complete = trailer is not None
+    raw_status = trailer.get("final_status") if trailer is not None else None
+    final_status = raw_status if isinstance(raw_status, str) else None
+    raw_paused = trailer.get("paused_node_id") if trailer is not None else None
+    paused_node_id = raw_paused if isinstance(raw_paused, str) else None
     with _SCAN_CACHE_LOCK:
-        _SCAN_CACHE[path] = (mtime, size, meta, complete, final_status)
-    return meta, complete, final_status
+        _SCAN_CACHE[path] = (mtime, size, meta, complete, final_status, paused_node_id)
+    return meta, complete, final_status, paused_node_id
 
 
 def scan_traces(workflow_key: str | None = None, debug_dir: Path | None = None) -> list[TraceCandidate]:
@@ -287,11 +310,18 @@ def scan_traces(workflow_key: str | None = None, debug_dir: Path | None = None) 
     seen: set[Path] = set()
     for path, mtime, size in stated:
         seen.add(path)
-        meta, complete, final_status = _file_facts(path, mtime, size)
+        meta, complete, final_status, paused_node_id = _file_facts(path, mtime, size)
         # meta is None for an unreadable / pre-172 single-object trace (its negative verdict is cached too).
         if meta is None or (workflow_key is not None and not _same_path(meta.get("workflow_path"), workflow_key)):
             continue
-        out.append({"path": path, "meta": meta, "complete": complete, "final_status": final_status, "mtime": mtime})
+        out.append({
+            "path": path,
+            "meta": meta,
+            "complete": complete,
+            "final_status": final_status,
+            "paused_node_id": paused_node_id,
+            "mtime": mtime,
+        })
     # Reclaim cache entries for files that vanished from disk — but ONLY among the files THIS scan actually
     # globbed (`pattern`). A bare (dashboard) scan globs the whole dir so it prunes dir-wide; a workflow-SCOPED
     # scan globs only this workflow's hash-prefixed files, so it prunes only THIS workflow's vanished traces
@@ -607,7 +637,9 @@ class RunTailer:
 
 # The run-complete banner's allowlist — the small summary fields the frontend banner reads (PR #543 review).
 # Deliberately EXCLUDES `json_output` / `warnings` (the full payloads `_aggregates()` puts on the trailer)
-# from the live wire + snapshot, mirroring `_run_event`'s node-wire allowlist.
+# AND `gate_request` (Task 176: bulky — the panel fetches it on demand via `/api/gate`) from the live wire +
+# snapshot, mirroring `_run_event`'s node-wire allowlist. `paused_node_id` (a small string) rides both the
+# live `run-complete` broadcast and the late-subscriber `run-snapshot` so the canvas can light the ⏸ node.
 _RUN_COMPLETE_FIELDS = (
     "final_status",
     "nodes_executed",
@@ -615,6 +647,7 @@ _RUN_COMPLETE_FIELDS = (
     "failed_node_ids",
     "duration_ms",
     "execution_id",
+    "paused_node_id",
 )
 
 

@@ -8,7 +8,7 @@ guard would still not block, because ``CliRunner`` never provides a live stdin t
 
 The hang is only observable against a real process whose stdin is an OPEN, idle, non-TTY
 pipe — the exact shape an agent produces when it spawns ``pflow`` with a stdin pipe it holds
-open but never writes to. ``resume._confirm_or_refuse_side_effect`` calls ``click.confirm``
+open but never writes to. ``resume._prompt_or_raise_side_effect`` calls ``click.confirm``
 only when ``can_prompt`` (``stdin_tty and stderr_tty``) is true; if a future change drops or
 inverts that guard, ``click.confirm`` blocks on the idle pipe until the timeout. This test
 catches that regression as a timeout — the catastrophic-and-silent failure mode for agents.
@@ -111,7 +111,7 @@ def test_side_effecting_resume_non_tty_refuses_without_hanging(tmp_path, uv_exe,
     except subprocess.TimeoutExpired:
         pytest.fail(
             "resume HUNG on a non-interactive side-effecting step — "
-            "the can_prompt guard in _confirm_or_refuse_side_effect is broken"
+            "the can_prompt guard in _prompt_or_raise_side_effect is broken"
         )
     finally:
         os.close(read_fd)

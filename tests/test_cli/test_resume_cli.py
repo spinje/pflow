@@ -296,9 +296,9 @@ def test_stale_hash_force_override_runs(home, shell_wf):
 
 def test_stale_unverifiable_message_when_hash_absent(tmp_path):
     """A source predating hash tracking (content_hash=None) says so, never claims an edit."""
-    from pflow.cli.commands.resume import _check_content_hash
     from pflow.core.exceptions import ResumeStaleWorkflowError
     from pflow.execution.result import ResolvedWorkflow
+    from pflow.execution.resume_preflight import _check_content_hash
     from pflow.runtime.resume_source import ResumeSource
 
     resolved = ResolvedWorkflow(
@@ -584,7 +584,7 @@ def _between_source(last_completed: str) -> Any:
 
 
 def test_between_nodes_single_default_successor_is_entry():
-    from pflow.cli.commands.resume import _resolve_between_nodes_entry
+    from pflow.execution.resume_preflight import _resolve_between_nodes_entry
 
     ir = {
         "nodes": [
@@ -598,8 +598,8 @@ def test_between_nodes_single_default_successor_is_entry():
 
 
 def test_between_nodes_dynamic_code_router_refused():
-    from pflow.cli.commands.resume import _resolve_between_nodes_entry
     from pflow.core.exceptions import ResumeNotResumableError
+    from pflow.execution.resume_preflight import _resolve_between_nodes_entry
 
     ir = {
         "nodes": [
@@ -620,8 +620,8 @@ def test_between_nodes_loop_node_refused():
     # a shell node CANNOT loop — no bool output). It is NOT a `code` node, so the dynamic-
     # router arm does not catch it — the loop arm is what refuses it. (A `code` loop node is
     # refused by the dynamic-router arm instead — test_between_nodes_dynamic_code_router_refused.)
-    from pflow.cli.commands.resume import _resolve_between_nodes_entry
     from pflow.core.exceptions import ResumeNotResumableError
+    from pflow.execution.resume_preflight import _resolve_between_nodes_entry
 
     ir = {
         "nodes": [
@@ -640,8 +640,8 @@ def test_between_nodes_loop_node_refused():
 
 
 def test_between_nodes_terminal_node_refused():
-    from pflow.cli.commands.resume import _resolve_between_nodes_entry
     from pflow.core.exceptions import ResumeNotResumableError
+    from pflow.execution.resume_preflight import _resolve_between_nodes_entry
 
     ir = {"nodes": [{"id": "only", "type": "shell", "params": {"command": "echo x"}}], "edges": []}
     with pytest.raises(ResumeNotResumableError, match="ambiguous"):
@@ -649,8 +649,8 @@ def test_between_nodes_terminal_node_refused():
 
 
 def test_between_nodes_missing_last_completed_refused():
-    from pflow.cli.commands.resume import _resolve_between_nodes_entry
     from pflow.core.exceptions import ResumeNotResumableError
+    from pflow.execution.resume_preflight import _resolve_between_nodes_entry
 
     ir = {"nodes": [{"id": "other", "type": "shell", "params": {"command": "echo x"}}], "edges": []}
     with pytest.raises(ResumeNotResumableError, match="no longer exists"):
@@ -755,3 +755,31 @@ def test_is_side_effecting_speaks_registry_vocabulary(node_type, expected):
     from pflow.runtime.compilation import is_side_effecting
 
     assert is_side_effecting(node_type) is expected
+
+
+# --- Resumed-attempt pinning (Task 176 spec-correction #1) --------------------
+
+
+def test_resume_honors_pflow_execution_id_env(home, shell_wf, monkeypatch):
+    """★ The regression net for the Web-UI approval bridge (Task 176): `PFLOW_EXECUTION_ID`
+    already flows through the shared `execute_json_workflow` → `RunnerConfig.execution_id` on
+    the RESUME path too (resume dispatches through the same pipeline as run) — the server mints
+    the id, forces it onto the spawned `pflow resume`, and the browser pins the exact attempt.
+    Nothing guarded this before; the bridge depends on it. Also pins the pop: the env var must
+    not leak to nodes that re-shell `pflow`."""
+    import json as _json
+    import os
+
+    exec_id = _run_to_failure(shell_wf)
+    forced = "11111111-2222-4333-8444-555555555555"
+    monkeypatch.setenv("PFLOW_EXECUTION_ID", forced)
+    result = _runner().invoke(cli, ["resume", exec_id, "mode=ok", "--force"])
+    assert result.exit_code == 0, result.stderr
+    assert "PFLOW_EXECUTION_ID" not in os.environ, "RunnerConfig pops the env var (no child inheritance)"
+    metas = []
+    for trace in (home / ".pflow" / "debug").glob("workflow-trace-*.json"):
+        with open(trace, encoding="utf-8") as handle:
+            metas.append(_json.loads(handle.readline()))
+    by_id = {meta["execution_id"]: meta for meta in metas}
+    assert forced in by_id, f"the resumed attempt's trace must carry the forced id; saw {sorted(by_id)}"
+    assert by_id[forced].get("resumed_from") == exec_id  # and it is the ATTEMPT, not the source

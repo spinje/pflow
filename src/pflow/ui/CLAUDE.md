@@ -99,7 +99,7 @@ fixing save).
 
 ### `GET /api/runs[?workflow=<name|path>]`
 → `200` `[{run_id, workflow_name, workflow_path, start_time, complete, final_status, live,
-only_node, trace_file, git_root, resumed_from}]` — runs scanned from `~/.pflow/debug`, newest-first (Task 173 D6 run
+only_node, trace_file, git_root, resumed_from, paused_node_id}]` — runs scanned from `~/.pflow/debug`, newest-first (Task 173 D6 run
 navigation). Bare = every run; `?workflow=X` = that workflow's history (matched on the recorded
 `meta.workflow_path`). RAW facts (the UI composes the badge): `complete` = has a `run.complete`
 trailer; `final_status` = that trailer's outcome (`success`/`degraded`/`failed`/`denied`/`paused` — the last two via the gate_outcome channel, Tasks 125/171) or `null` while
@@ -109,7 +109,11 @@ no-`fcntl` FS falls back to "incomplete = live"); `only_node` LABELS `--only` ru
 here, unlike the live overlay which excludes them); `git_root` = the run's enclosing git repo (cached;
 buckets ad-hoc runs by project in the catalog) or `null`; `resumed_from` = attempt-chain lineage
 (Task 171 — the source run's `execution_id` from the trace meta when this run resumed a prior
-attempt, else `null`; the RunSelector renders the `⤷ resumed from` jump marker off it). Inline/stdin/MCP runs carry `workflow_path =
+attempt, else `null`; the RunSelector renders the `⤷ resumed from` jump marker off it);
+`paused_node_id` = the paused frontier node from a PAUSED trailer (Task 176 — a small string; the
+bulky `gate_request` deliberately never rides this listing — fetch it via `/api/gate`), else `null`.
+The same key rides the SSE `run-complete` banner + `run-snapshot` (the `_RUN_COMPLETE_FIELDS`
+allowlist in `run_tailer.py`). Inline/stdin/MCP runs carry `workflow_path =
 "ir-hash:<md5>"` (a content fingerprint, not a file): they appear in the bare listing and a
 `?workflow=<file>` query can't match them. `404` on an unresolvable `?workflow=`; `200 []` for zero
 runs (a hard scan failure also degrades to `[]` — the scanner is shared non-throwing with the live
@@ -157,6 +161,44 @@ instead of a silently-dead run. Runtime node failures surface via the overlay, n
 handler is `server.run`; the pre-flight converts the silent *pre-trace-failure class* (a run that dies
 before writing its `meta` line) into a clean `400`.
 
+### `POST /api/resume`
+→ `200` `{"status": "spawned", "run_id": "<id>"}` — answers a paused gate (or resumes a
+failed/interrupted run) by spawning a **detached** `pflow resume` (Task 176). ONE endpoint
+mirroring the CLI verb (spec ledger #4). Body: `{"run": str, "approve"?: "yes"|"no",
+"choose"?: str, "force"?: bool}` — `run` is an execution id (the resume token) or a workflow
+name/path (its newest resumable run); `approve`/`choose` are mutually exclusive and map 1:1 to
+the CLI flags; the server mints the attempt's `execution_id` (forced via `PFLOW_EXECUTION_ID`,
+the `/api/run` pattern) and the frontend PINS the overlay to it. Shares `_spawn_detached_cli`
+with `/api/run` (the ONE spawn seam, incl. the Task-116 win32 detach branch).
+
+**No silent no-ops (the task's hard rule):** the spawn is DEVNULL'd + detached, so every refusal
+a spawned non-TTY resume could hit is caught by an IN-PROCESS pre-flight FIRST —
+`preflight_resume` (`execution/resume_preflight.py`: the CLI's exact refusal gates: load ladder →
+stale-hash → between-nodes entry → side-effect verdict) plus the exact compile the child will do
+(mirroring `/api/run`'s `_preflight`; closes the pre-trace-failure vanish on force-resume of an
+edited-broken workflow). Status arms: `400` shape errors (before any I/O) and non-Resume
+`PflowError` pre-flight failures; `404` `ResumeSourceMissingError`; `409` every other
+`ResumeSourceError` refusal. Refusal bodies carry `{"errors": [<Diagnostic.to_dict()>...],
+"refusal": <literal>}` — the machine-readable discriminator (`superseded` / `still_running` /
+`stale_workflow` / `side_effect_confirmation` / `answer_required` / `fidelity` / `not_resumable`
+/ `nothing_to_resume` / `gate_stopped` / `missing`) so the panel never string-parses — plus
+kind-specific extras: `newer_execution_id` (superseded), `node_id`+`node_type`
+(side_effect_confirmation), `hash_known` (stale_workflow). `answer_required`'s masked gate rides
+`errors[0].context["gate"]` (via `ResumeAnswerRequiredError.to_diagnostics`). The server NEVER
+adds `--force` itself — it appears only when the client sent `force: true` after an explicit ack
+dialog. Two deliberate server-stricter asymmetries (`approve` lowercase-only; empty `choose` →
+400) are documented on `_parse_resume_body`.
+
+**ADR-0007 exposure:** mutating (a second sanctioned spawn). Worst cross-origin case is blocked
+by `_LoopbackOnly` + the JSON-POST preflight; a same-machine caller could already run
+`pflow resume` directly — the ADR-0009 trust boundary ("whoever can run the CLI locally") is
+unchanged.
+
+**TOCTOU (tolerated, edge ledger #1):** two viewers answering one gate concurrently can both pass
+pre-flight and both spawn; the loser's CLI refuses on the loader's superseded check (the ONE
+consumption policy — no double-fire), and the loser's browser pins an id that never materializes
+→ the existing `run-not-found` state. Local single-user posture, same as #546.
+
 ### `GET /api/run-inputs?workflow=<name|path>&run=<id>`
 → `200` `{ "<name>": "<token-string>" }` — a past run's recorded inputs as **form-ready token strings**,
 for the Run panel's re-run prefill (Task 175 Phase 5). Reads the run's `meta.inputs` (the Phase-1 keystone),
@@ -167,6 +209,21 @@ scalars→str) so the tokens drop straight into the form's channel-A controls. `
 unresolvable workflow / no matching run; a run whose trace predates `meta.inputs` returns `{}` (graceful — the
 picker shows it with nothing to prefill). A read-only GET, same exposure class as `/api/run-node` (the reader
 is `run_node.read_run_inputs`; sync handler, threadpooled, touches no hub state).
+
+### `GET /api/gate?run=<execution_id>`
+→ `200` `{"paused_node_id": "<node>", "gate_kind": "action_approval"|"decision_escalation",
+"gate_request": <masked GateRequest dict>}` — a paused run's gate payload for the browser gate panel
+(Task 176). The `gate_request` is served through `masked_gate_dict` (`core/gate.py` — THE dict-form
+masking policy): masking is display-surface policy and the browser is a display surface (ADR-0009);
+the on-disk trailer stays unmasked. Served **on demand** precisely so the bulky payload never rides
+the SSE wire or `/api/runs` (their allowlists exist to keep it off — PR #543; only the small
+`paused_node_id` string rides the light wires). Oversized-safe: rides `read_run_trailer`'s one-shot
+full re-read, so a `gate_request` larger than the 64 KB tail window still serves whole (Task 171
+gotcha). `400` missing/empty `run`; `404` when no run has that id OR the run is not paused at a
+gate — a corrupt paused trailer (missing `gate_request`/`paused_node_id`, the same conjuncts the
+resume loader requires) lands in the not-paused `404`, never a `500`. A read-only GET of trace
+content, same exposure class as `/api/run-node` (sync handler, threadpooled, no hub state; the
+`_LoopbackOnly` middleware covers it like every route). The handler is `server.gate`.
 
 ### Live interaction channel
 
@@ -281,7 +338,7 @@ gap — **DNS rebinding** (an attacker domain re-pointed at `127.0.0.1`, so the 
 sends same-origin requests it can also READ) — is closed by the **`_LoopbackOnly`
 middleware**, a `Host`-header loopback check on **EVERY route** (reads AND writes): a
 non-loopback `Host` → `403` for `/api/source` / `/api/graph` / `/api/run-node` / … as
-well as the mutating POSTs (`command`/`interaction`/`visibility`/`/api/run`). Being
+well as the mutating POSTs (`command`/`interaction`/`visibility`/`/api/run`/`/api/resume`). Being
 middleware, not a per-handler call, it covers every future endpoint by default — there is
 **no** "route it through `_json_body`" invariant to remember. `/api/run` (Task 175) spawns
 a real `pflow run` behind this same posture: resolvable name/path only (never inline

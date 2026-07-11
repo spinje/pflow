@@ -4,7 +4,7 @@ The pause is a PROMISE: every ``paused`` stamp emits a token the resume path mus
 accept. These tests pin both halves of that promise at the producer:
 
 - ``_gate_pausable`` refusals (loop / code-node / terminal escalations stay
-  ``failed`` — the CLI's ``_resolve_between_nodes_entry`` would bounce their
+  ``failed`` — ``resume_preflight._resolve_between_nodes_entry`` would bounce their
   token, so none is ever issued);
 - the nesting guard (a child-workflow gate never pauses the run, even when its
   node id COLLIDES with a top-level id — the reason the arm uses an explicit
