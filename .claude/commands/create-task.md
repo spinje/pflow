@@ -231,5 +231,5 @@ We're building an MVP with zero users:
 - Breaking changes are fine
 - Favor simple, direct solutions
 
-Don't over-engineer. Describe what was discussed, not an idealized version. 
+Don't over-engineer. Describe what was discussed, not an idealized version.
 And remember this task spec is the what and why. The how and implementation details lives in the implementation plan.
