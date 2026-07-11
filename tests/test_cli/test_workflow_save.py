@@ -12,7 +12,7 @@ from tests.conftest import set_isolated_home
 from tests.shared.markdown_utils import write_workflow_file
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def prepared_subprocess_env(tmp_path_factory):
     """Provide an isolated home for the one fresh-process CLI assertion."""
     home = tmp_path_factory.mktemp("home_workflow_save")

@@ -26,6 +26,8 @@ def gated_workflow(tmp_path):
     """Two-step workflow: plain step, then a gated step with a side-effect proof file."""
     proof = tmp_path / "proof.txt"
     path = tmp_path / "gated.pflow.md"
+    # Keep the guarded step as shell: denial rendering intentionally asserts
+    # the resolved `gate.preview.command` that only a shell action provides.
     path.write_text(
         "# Gated Demo\n\nDemo.\n\n## Steps\n\n"
         "### make-value\n\nProduce a value.\n\n"

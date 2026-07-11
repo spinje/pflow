@@ -45,11 +45,13 @@ def _recording_code_params(
     log_expression: str | None = None,
     inputs: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Build an in-process node that records execution without launching Bash."""
+    """Record node-agnostic planner behavior in-process without launching Bash."""
     resolved_inputs = inputs or {}
     declarations = "".join(f"{name}: str\n" for name in resolved_inputs)
-    result_expression = result_expression or repr(label)
-    log_expression = log_expression or repr(f"{label}\n")
+    if result_expression is None:
+        result_expression = repr(label)
+    if log_expression is None:
+        log_expression = repr(f"{label}\n")
     params: dict[str, Any] = {
         "code": f"""from pathlib import Path
 {declarations}with Path({str(log_file)!r}).open("a", encoding="utf-8") as log:
