@@ -175,8 +175,12 @@ with `/api/run` (the ONE spawn seam, incl. the Task-116 win32 detach branch).
 a spawned non-TTY resume could hit is caught by an IN-PROCESS pre-flight FIRST —
 `preflight_resume` (`execution/resume_preflight.py`: the CLI's exact refusal gates: load ladder →
 stale-hash → between-nodes entry → side-effect verdict) plus the exact compile the child will do
-(mirroring `/api/run`'s `_preflight`; closes the pre-trace-failure vanish on force-resume of an
-edited-broken workflow). Status arms: `400` shape errors (before any I/O) and non-Resume
+(mirroring `/api/run`'s `_preflight`; closes the COMPILE-level pre-trace-failure vanish on
+force-resume of an edited-broken workflow — known residual, deep-review 2026-07-12: the child also
+runs the full `WorkflowValidator` pre-meta, so a `--force` resume of a workflow edited to carry a
+validator-only ERROR still dies silently; unreachable without `force` thanks to the content-hash
+gate, and shared with `/api/run`'s compile-only `_preflight` by the same Task-175 decision).
+Status arms: `400` shape errors (before any I/O) and non-Resume
 `PflowError` pre-flight failures; `404` `ResumeSourceMissingError`; `409` every other
 `ResumeSourceError` refusal. Refusal bodies carry `{"errors": [<Diagnostic.to_dict()>...],
 "refusal": <literal>}` — the machine-readable discriminator (`superseded` / `still_running` /
@@ -187,7 +191,9 @@ kind-specific extras: `newer_execution_id` (superseded), `node_id`+`node_type`
 `errors[0].context["gate"]` (via `ResumeAnswerRequiredError.to_diagnostics`). The server NEVER
 adds `--force` itself — it appears only when the client sent `force: true` after an explicit ack
 dialog. Two deliberate server-stricter asymmetries (`approve` lowercase-only; empty `choose` →
-400) are documented on `_parse_resume_body`.
+400) are documented on `_parse_resume_body`, which also 400s a `=`-bearing `run` target — argv
+parity, not an asymmetry: the spawned child's `_split_target_and_params` reads every `=`-bearing
+token as a workflow input, so such a target would exit 2 into DEVNULL (deep-review 2026-07-12).
 
 **ADR-0007 exposure:** mutating (a second sanctioned spawn). Worst cross-origin case is blocked
 by `_LoopbackOnly` + the JSON-POST preflight; a same-machine caller could already run
@@ -221,7 +227,9 @@ the SSE wire or `/api/runs` (their allowlists exist to keep it off — PR #543; 
 full re-read, so a `gate_request` larger than the 64 KB tail window still serves whole (Task 171
 gotcha). `400` missing/empty `run`; `404` when no run has that id OR the run is not paused at a
 gate — a corrupt paused trailer (missing `gate_request`/`paused_node_id`, the same conjuncts the
-resume loader requires) lands in the not-paused `404`, never a `500`. A read-only GET of trace
+resume loader requires, plus a missing/non-string `gate_request.kind` — one conjunct stricter than
+the loader, so the 200 body's `gate_kind` literal is never a null lie; deep-review 2026-07-12)
+lands in the not-paused `404`, never a `500`. A read-only GET of trace
 content, same exposure class as `/api/run-node` (sync handler, threadpooled, no hub state; the
 `_LoopbackOnly` middleware covers it like every route). The handler is `server.gate`.
 

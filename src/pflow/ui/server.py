@@ -1197,6 +1197,20 @@ def _parse_resume_body(body: dict[str, object]) -> tuple[str, str | None, str | 
             {"error": "Field 'run' (an execution id, or a workflow name/path) is required."},
             status_code=400,
         )
+    # Argv parity guard (deep-review 2026-07-12): the spawned child re-parses its argv, and the CLI's
+    # `_split_target_and_params` treats every `=`-bearing token as a workflow input — a `=`-bearing
+    # TARGET (only a file path can carry one) leaves the child with no positional at all, a
+    # UsageError exit 2 straight into DEVNULL. The child unconditionally refuses such a target, so
+    # refusing it loudly here IS parity, not an asymmetry.
+    if "=" in run_target:
+        return _json(
+            {
+                "error": "Field 'run' must not contain '=' — the spawned `pflow resume` reads "
+                "key=value tokens as workflow inputs, so such a target cannot be passed through. "
+                "Use the run's execution id instead."
+            },
+            status_code=400,
+        )
     raw_approve = body.get("approve")
     if raw_approve is not None and raw_approve not in ("yes", "no"):
         return _json({"error": 'Field \'approve\' must be "yes" or "no".'}, status_code=400)
@@ -1229,7 +1243,11 @@ async def resume(request: Request) -> Response:
     (the CLI's exact refusal gates, `execution/resume_preflight.py`) plus the very compile the child
     will run (mirroring ``/api/run``'s ``_preflight``: without it, a force-resume of an edited-broken
     workflow dies BEFORE writing its meta line and the pinned id never materializes — a misleading
-    `run-not-found` instead of a clean 400). A side-effecting entry's verdict is RAISED here — the
+    `run-not-found` instead of a clean 400). Known residual (deep-review 2026-07-12, shared with
+    ``/api/run``'s compile-only ``_preflight`` by the same Task-175 decision): the child also runs the
+    full ``WorkflowValidator`` pre-meta, so a ``--force`` resume of a workflow edited to carry a
+    validator-only ERROR (one ``compile_workflow`` doesn't raise) still dies silently; without
+    ``force`` the content-hash gate makes this unreachable. A side-effecting entry's verdict is RAISED here — the
     non-TTY spawn would refuse, so we do; the client retries with ``force: true`` only after an
     explicit ack dialog (the server NEVER adds ``--force`` itself). Shape rules + the two deliberate
     server-stricter asymmetries: see ``_parse_resume_body``.
@@ -1469,8 +1487,9 @@ def gate(request: Request) -> Response:
     A read-only GET of trace content, same exposure class as ``/api/run-node`` (sync handler —
     threadpooled, touches no hub state). ``400`` on a missing/empty ``run`` param; ``404`` when no
     run has that id OR the run is not paused at a gate (a corrupt paused trailer — missing
-    ``gate_request``/``paused_node_id``, the same conjuncts the resume loader requires — lands in
-    the not-paused 404 too, never a 500; edge ledger #2)."""
+    ``gate_request``/``paused_node_id``, the same conjuncts the resume loader requires, plus a
+    missing ``gate_request.kind``, one conjunct stricter so the 200 body's ``gate_kind`` literal
+    is never a null lie — lands in the not-paused 404 too, never a 500; edge ledger #2)."""
     run_id = request.query_params.get("run")
     if not run_id:
         return _json(
@@ -1490,11 +1509,15 @@ def gate(request: Request) -> Response:
         or trailer.get("final_status") != "paused"
         or not isinstance(gate_request, dict)
         or not isinstance(paused_node_id, str)
+        # `kind` is a required GateRequest field (every real producer writes it); a hand-corrupted
+        # trailer without it must land in this 404, not a 200 whose `gate_kind` is null — the
+        # response contract types it as one of the two gate-kind literals (deep-review 2026-07-12).
+        or not isinstance(gate_request.get("kind"), str)
     ):
         return _json({"error": f"Run {run_id!r} is not paused at a gate."}, status_code=404)
     return _json({
         "paused_node_id": paused_node_id,
-        "gate_kind": gate_request.get("kind"),
+        "gate_kind": gate_request["kind"],
         "gate_request": masked_gate_dict(gate_request),
     })
 

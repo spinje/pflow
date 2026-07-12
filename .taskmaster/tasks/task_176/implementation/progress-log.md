@@ -239,3 +239,114 @@ cannot pin "nobody adds a gate elsewhere"); a real-subprocess `/api/resume` e2e 
 vector minus the interpreter prefix is what the CLI battery already invokes via CliRunner).
 
 All files re-verified: 137 tests across the three touched files + `make check` fully green.
+
+## 2026-07-12 — Session start: Phases 3-5 (user directive: complete the task end to end)
+
+Scope: **Phases 3, 4, 5** (0-2 committed as `b9a47ac7`). Fresh baseline captured before any edit:
+
+- `make test`: **8775 passed** (23.45s). Note: prior session closed at 8774 — one-test delta on an
+  unchanged tree; treated as environment-conditional collection, not a code fact. This session
+  diffs against 8775.
+- `make check`: fully green.
+- `cd web && npx vitest run`: **731 passed** (51 files). `npx tsc --noEmit`: clean.
+
+Plan re-verification for the Phase-3 surface (all **Verified** first-hand today, file:line as read):
+`types.ts` NodeStatus :30 / RunComplete :63-75 / RunInfo :83-99 (stale `final_status` comment :62
+confirmed present — plan correction #6 stands); `client.ts` ApiError :9-20, `runWorkflow` :126-140
+(Content-Type header + run_id validation pattern); `GraphView.tsx` `runComplete` handler :906-909,
+`runSnapshot` :880-897, `selectRun` :294-315, `sayAnchorIdFor` :86-94, run callout + `RunProgress`
+mount :1115-1139; `focus.ts` `refKey` :17-20, `applyStatus` :33-72 (identity-stable patch model for
+P4); `StatusBadge.tsx` `GLYPH: Record<NodeStatus, ...>` :53 (tsc forces the new arm), `runStatusLabel`
+:26-44; `RunProgress.tsx` `stepColor`/`stepMeta` :51-77 (a `paused` NodeStatus flows into
+`ProgressStep.status` automatically — arms needed in both switches); `NodeCallout.tsx` props incl.
+`frameOnMount`; `index.css` status vars :31-34, `.status-badge.status-*` :647-671, `.node.dimmed`
+:940-944 / `.node.hover-mark` :954-958 (cssOrder.test.ts pins the pair); the four `RunInfo`
+factories needing `paused_node_id` (RunSelector.test.tsx, CatalogView.test.tsx `run()`,
+RunPanel.test.tsx `aRun()`, GraphView.test.tsx inline literal :218-230). `core/gate.py`
+`GateRequest` :34-55 — options are dicts with `label` via `option.get("label") or "option N"`
+(falsy-fallback, mirrored in the TS labeling). Server contract blocks in `ui/CLAUDE.md` for
+`GET /api/gate` + `POST /api/resume` read and matched against the handler code. **No deltas** —
+the plan holds.
+
+**§P2 checkpoint deep-review** (left NOT-started by the prior session) launched now, before any
+Phase-3 edit, per plan ordering: 5 agents — silent-failures, impact-completeness,
+validation-consistency, test-fidelity, concurrency-safety — on the committed `979f44e6..b9a47ac7`
+diff. `review-simplicity` + `review-agent-ux` deliberately deferred to the Phase-5 full-branch
+review (they evaluate the integrated whole; agent-ux earns its slot once the frontend consumes the
+refusal vocabulary — braindump note honored).
+
+**Session re-scoped by the user mid-review**: complete the checkpoint review + confirmed BE fixes,
+then STOP — Phases 3-5 (frontend) go to a fresh session so BE and FE never share one context
+window. The Phase-3 prep verification above stands and transfers.
+
+### §P2 checkpoint deep-review — outcome (2026-07-12)
+
+Zero Criticals. Concurrency, test-fidelity: clean (both wrote out their negative results — cache
+locking / TOCTOU / to_thread discipline simulated; every mutation pin verified to genuinely fire).
+Every finding below verified first-hand against code before acting (file:line evidence read
+directly, not trusted from the reviewer).
+
+**Confirmed + FIXED this session:**
+1. **`=`-bearing resume target = silent child death** (validation-consistency, Warning —
+   VERIFIED: `_split_target_and_params` resume.py:43 drops every `=`-bearing token from
+   positionals → zero positionals → `UsageError` exit 2 into DEVNULL; the pinned id never
+   materializes). Fix: `_parse_resume_body` 400s a `=`-bearing `run` before any I/O — EXACT
+   parity, not an asymmetry (the child unconditionally refuses such a target). Pin:
+   `test_equals_bearing_target_is_400_and_does_not_spawn` (+ `popen.assert_not_called()`).
+   Documented on the guard comment + `ui/CLAUDE.md`.
+2. **`/api/gate` could 200 with `gate_kind: null`** (silent-failures, Suggestion — a
+   hand-corrupted paused trailer whose `gate_request` lacks `kind`; the response contract types
+   `gate_kind` as one of the two literals, so a null is a contract lie to the typed frontend).
+   Fix: `isinstance(gate_request.get("kind"), str)` joined the 404 conjuncts (edge-ledger-#2
+   stance; one conjunct stricter than the loader, reason documented). Pin:
+   `test_paused_trailer_without_gate_kind_is_404_not_a_null_kind_200`. Docstring + `ui/CLAUDE.md`
+   updated.
+3. **Stale `(cli/commands/resume.py)` parenthetical** in `engine.py::_gate_pausable` docstring
+   (impact-completeness, Suggestion) → repointed to `execution/resume_preflight.py`.
+
+**Confirmed, deliberately NOT fixed here (documented instead):**
+4. **Validator-only pre-trace deaths on `--force` resume** (validation-consistency, Warning —
+   VERIFIED: `runner._validate` raises `WorkflowValidationError` at step 3, BEFORE the meta
+   flush; the server pre-flight runs `preflight_resume` + compile only). Reachable ONLY via
+   `force: true` on a workflow edited to carry a validator-only ERROR that `compile_workflow`
+   doesn't raise — without `force` the content-hash gate closes it. Crucially this class is
+   SHARED with the shipped Task-175 `/api/run` `_preflight` (also compile-only, same decision),
+   and closing it means replicating runner-internal ordering (`_fill_declared_defaults` before
+   validate) in both endpoints — its own reviewed change, an owner call, not a checkpoint patch.
+   Actions taken: the overclaiming "closes the pre-trace-failure vanish" wording narrowed to
+   "COMPILE-level" in the handler docstring + `ui/CLAUDE.md`, residual named explicitly in both.
+   **Follow-up recommendation: one issue covering `/api/run` + `/api/resume` — "run
+   `WorkflowValidator` in the spawn pre-flights (or decide the residual is acceptable)".**
+
+**Disputed / won't-fix:**
+5. Non-uuid unknown target → 400 with no `refusal` literal (silent-failures, Suggestion): the
+   plan's mapping is explicit ("any other PflowError → 400", `/api/run` parity), already a
+   documented residual (prior session's addendum #2), and the frontend fallback arm covers it.
+
+### Session close (2026-07-12) — checkpoint done, stopping before Phase 3 (user directive)
+
+Final verification vs. this session's baseline: `make test` **8777 passed** (8775 + the two new
+pins, zero regressions); `make check` fully green; the touched server test file 89/89. `web/`
+untouched — the 731-vitest/clean-tsc baseline still stands. **Both new pins mutation-verified**
+(edit + snapshot-restore): deleting the `kind` conjunct fails the kindless-404 pin; disabling the
+`=` guard fails the argv-parity pin.
+
+Diff this session (uncommitted, for review): `ui/server.py` (the two guards + docstring
+residual/conjunct notes), `tests/test_cli/test_ui_interaction_server.py` (two pins),
+`runtime/engine/engine.py` (one docstring path), `ui/CLAUDE.md` (contract blocks updated), this
+log.
+
+Process lesson (cost ~5 min, worth recording): mutation-verifying with `git checkout --` on a file
+carrying UNCOMMITTED fixes reverts the fixes with the mutation — snapshot the working-tree file to
+the scratchpad and restore from that instead. The lost server.py edits were re-applied and
+re-verified.
+
+**For the next (frontend) session — Phases 3-5, fresh context:**
+- The §P2 checkpoint gate is CLEARED; the HTTP contract gained one client-visible rule: a
+  `=`-bearing `run` target now 400s at `/api/resume` (typed frontend always sends execution ids —
+  no client change needed, just contract awareness).
+- The Phase-3 prep verification in this session's opening entry (file:line map of every frontend
+  seam, factory list, `GateRequest.options` labeling rule) is current as of this HEAD — trust it,
+  spot-check only what the frontend touches.
+- Follow-up to file at close (or hand the owner): validator-only pre-trace deaths on `--force`
+  resume / any `/api/run` launch — one issue covering both spawn pre-flights (item 4 above).

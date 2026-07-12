@@ -1055,6 +1055,22 @@ class TestGateEndpoint:
         response = _client().get("/api/gate", params={"run": "corrupt-run"})
         assert response.status_code == 404
 
+    def test_paused_trailer_without_gate_kind_is_404_not_a_null_kind_200(self, tmp_path: Path, monkeypatch) -> None:
+        """`kind` is a required GateRequest field — a hand-corrupted trailer without it must land in
+        the not-paused 404 (edge ledger #2's corruption stance), never a 200 whose `gate_kind` is
+        null: the response contract types it as one of the two gate-kind literals and the typed
+        frontend kind-switches on it (deep-review 2026-07-12)."""
+        debug = self._debug_dir(tmp_path, monkeypatch)
+        _write_paused_trace(
+            debug,
+            "workflow-trace-aaa-wf-20260101-000000-000001.json",
+            "/wf.pflow.md",
+            execution_id="kindless-run",
+            gate_request={"node_id": "deploy", "node_type": "shell", "preview": {"command": "rm -rf"}},
+        )
+        response = _client().get("/api/gate", params={"run": "kindless-run"})
+        assert response.status_code == 404
+
     def test_missing_run_param_is_400(self, tmp_path: Path, monkeypatch) -> None:
         self._debug_dir(tmp_path, monkeypatch)
         assert _client().get("/api/gate").status_code == 400
@@ -1342,6 +1358,19 @@ class TestResumeEndpoint:
         with patch("pflow.ui.server.subprocess.Popen") as popen:
             for body in bad_bodies:
                 assert _client().post("/api/resume", json=body).status_code == 400, body
+        popen.assert_not_called()
+
+    def test_equals_bearing_target_is_400_and_does_not_spawn(self, tmp_path: Path, monkeypatch) -> None:
+        """Argv parity (deep-review 2026-07-12): the spawned child's `_split_target_and_params`
+        reads every `=`-bearing token as a workflow input, so a `=`-bearing TARGET (only a file
+        path can carry one) leaves the child with zero positionals — UsageError exit 2 straight
+        into DEVNULL, the silent no-op class the pre-flight exists to eliminate. The server must
+        refuse it loudly BEFORE the pre-flight can pass on a resolvable path."""
+        self._home(tmp_path, monkeypatch)
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": "./runs/foo=bar.pflow.md"})
+        assert response.status_code == 400
+        assert "must not contain '='" in response.json()["error"]
         popen.assert_not_called()
 
     def test_unknown_run_id_is_404_and_does_not_spawn(self, tmp_path: Path, monkeypatch) -> None:
