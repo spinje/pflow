@@ -8,7 +8,7 @@
 // otherwise un-mark the one thing this panel exists to point at). No spinner, no
 // Suspense — plain state + effect, like the rest of the app.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { toJsxRuntime } from "hast-util-to-jsx-runtime";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
@@ -178,6 +178,22 @@ function ValueModal({
   modalBody?: JSX.Element;
   onClose: () => void;
 }): JSX.Element {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  // Focus the dialog and lock the page scroll on OPEN; restore both on close.
+  // Mount-only ([] deps) — the inline `onClose` gets a fresh identity every
+  // render, so merging this into the Esc effect below would re-steal focus each
+  // render and capture the close button itself as the restore target.
+  useEffect(() => {
+    const returnFocus = document.activeElement as HTMLElement | null;
+    const bodyOverflow = document.body.style.overflow;
+    closeRef.current?.focus();
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = bodyOverflow;
+      returnFocus?.focus?.();
+    };
+  }, []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === "Escape") onClose();
@@ -198,7 +214,7 @@ function ValueModal({
       <div className="value-modal" role="dialog" aria-modal="true" aria-label={label}>
         <header className="value-modal-head">
           <span className="value-modal-title">{label}</span>
-          <button className="value-modal-close" aria-label="Close" onClick={onClose}>
+          <button ref={closeRef} className="value-modal-close" aria-label="Close" onClick={onClose}>
             ✕
           </button>
         </header>

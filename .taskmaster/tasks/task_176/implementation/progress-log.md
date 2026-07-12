@@ -682,3 +682,62 @@ State after session: vitest 796 (+20 pins incl. mutation-caught SourcePane mount
 clean, all pushed. Demo assets: `scratchpads/io-output-check/` (gitignored) holds the io-demo
 fixture + click-click/click-scroll browser harnesses used throughout; a `pflow ui` server may
 still be running on :8765.
+
+## 2026-07-12 — Review response: 3 PR-comment reviews on `9a8dc0df`/`197b0827` (feat(ui))
+
+Three CI/bot code reviews landed on the readability-follow-up commits (PR #579 comments
+`4951249333`, `4951322132`, `4951322969`). Evaluated each finding against code first-hand
+(2 searchers + direct reads); consolidated to 6 distinct findings (heavy overlap). One real
+regression (2 reviewers raised it identically), two cheap cleanups, one a11y polish (all 3
+reviewers), two no-action notes. All fixes frontend-only, each mutation-verified (edit + revert,
+no git).
+
+**Fixed:**
+1. **Stale `sourceJumpTarget` on Rail-toggle reopen** (the one Warning, review-confirmed +
+   verified). `SourcePane` is conditionally mounted, and `9a8dc0df` reseeded `prevJump` to null
+   so the mount-jump fires on every remount. `sourceJumpTarget` (GraphView) is only ever SET
+   (`openSourceAt`), never cleared — so: click a source link → select another node → close pane
+   → reopen via the Rail toggle re-fired the STALE target, landing on the old link's line. Fix:
+   `changeSourceOpen` clears the target on close (`if (!open) setSourceJumpTarget(null)`); the
+   `!open` guard leaves `openSourceAt`'s just-set target intact. Regression pin in
+   `GraphView.test.tsx` ("reopening…falls back to the newly-selected node") — the ONLY place it
+   fails on revert (a SourcePane-level test can't, props are inputs); **mutation-verified**
+   (removing the guard → the reopened pane marks the stale line 3, waitFor(line 7) times out).
+2. **Empty dict `{}` → blank per-field modal** (Suggestion). `isPlainDict({})` is true and
+   `code` is `"{}"` (non-empty, so CodeBlock's `code===""` guard misses it) → `ValueDoc` over
+   zero entries rendered a blank document. Fix (refined from the reviewer's — gate the doc-view,
+   not the button): `modalBody` gated on `Object.keys(value).length > 0`, so `{}` expands to plain
+   `{}` via the CodeBlock fallback. Pin + **mutation-verified**.
+3. **string-vs-JSON rule duplicated** (Suggestion; one reviewer over-counted to 3 — the CodeBlock
+   modal fallback is a pass-through, not a re-derivation). Real count 2, both in `RunValue.tsx`.
+   Folded into a `fieldCode(v) → {code, lang}` helper shared by `RunValue` + `ValueDoc`. Covered
+   by the existing dict/array pins (green unmodified).
+4. **Modal a11y** (Suggestion, all 3 reviewers). Cheap slice taken: focus moves to × on open
+   (Esc works without a prior click), restores to the ⛶ trigger on close, page scroll locked
+   behind the overlay — mount-only effect (`[]`), because the inline `onClose` gets a fresh
+   identity each render (merging would re-steal focus + capture the × as the restore target). Full
+   focus-trap deliberately deferred (more code, marginal on a read-only viewer). Pin +
+   **mutation-verified**.
+
+**No action (notes, review-acknowledged as such):** per-box `window` Escape listeners (one modal
+open at a time — harmless); the `.code-box` wrapper DOM change (browser-verified in the prior
+session; no parent relies on a direct-child `<pre>`).
+
+Docs: `components/CLAUDE.md` (modal focus/scroll + empty-dict + `fieldCode` single-source; the
+`sourceJumpTarget` close-clear coupling). Batteries: `tsc --noEmit` clean, vitest **799** (796 →
++3 pins). No `src/pflow` (Python) edits — `make test`/`make check` unaffected.
+
+**Real-browser verification** (stale server killed + `make ui-build` first, per the recorded
+gotcha; a throwaway chrome-devtools driver workflow drove the multi-step sequences the one-click
+harness can't, then deleted). On `conditional-branching` (advanced, source pane):
+- **Fix [1]** — select `fetch-data` → click its header source LINK (pane jumps to line 8) → Hide
+  source via the Rail toggle → select `classify` → Show source: the reopened pane marks
+  **line 18** (classify), NOT the stale link target line 8. `{lineAfterLink:"8",
+  lineAfterReopen:"18", pass:true}`. Screenshot confirms line 18 highlighted in the pane.
+- **Fix [4]** — open a param value modal: `activeElement` = the × ("Close"), `body.overflow` =
+  "hidden"; close → overflow restored to "" and focus returned to the ⛶ trigger.
+  `{triggerFocused:true, activeLabelWhileOpen:"Close", overflowWhileOpen:"hidden",
+  overflowAfterClose:"", focusRestored:true, pass:true}`.
+- Fixes [2] (empty-dict) and [3] (`fieldCode` fold) not browser-driven — [2] needs a real run
+  emitting `{}`, [3] is behavior-preserving; both jsdom-pinned + mutation-verified. Canvas +
+  panels render with no visual regression from the CodeBlock/RunValue/GraphView edits.

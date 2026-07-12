@@ -373,7 +373,6 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     if (inputCard) return inputCard.id;
     return topLevelSteps(graph)[0]?.id ?? null; // else the first executable step (same predicate as runSteps)
   }, [graph]);
-  const changeSourceOpen = useCallback((open: boolean) => { setSourceOpen(open); syncUrl({ source: open }); }, [syncUrl]);
   // A panel source-link click: open the pane (if closed) and bump a counter so
   // SourcePane re-scrolls even when it's already open (the "jump to source"
   // gesture). An explicit ref (the IoPanel's per-PORT links — io selections set
@@ -381,6 +380,14 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // node's own source, the original ReadPanel gesture.
   const [sourceJump, setSourceJump] = useState(0);
   const [sourceJumpTarget, setSourceJumpTarget] = useState<SourceRef | null>(null);
+  // Clear the jump target on CLOSE: SourcePane is conditionally mounted, so it
+  // remounts on every reopen with `prevJump` reseeded to null → the mount-jump
+  // fires even without a fresh `openSourceAt`. Without this, a bare Rail-toggle
+  // reopen would re-assert a STALE `sourceJumpTarget` (only ever set, in
+  // `openSourceAt`) and land on the old link's line instead of the
+  // currently-selected node. The `!open` guard leaves `openSourceAt`'s just-set
+  // target intact (it opens).
+  const changeSourceOpen = useCallback((open: boolean) => { if (!open) setSourceJumpTarget(null); setSourceOpen(open); syncUrl({ source: open }); }, [syncUrl]);
   const openSourceAt = useCallback(
     (ref: SourceRef | null = null) => {
       setSourceJumpTarget(ref?.file ? ref : null);

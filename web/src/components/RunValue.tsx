@@ -13,15 +13,24 @@
 import { CodeBlock } from "./CodeBlock";
 
 export function RunValue({ value, label }: { value: unknown; label?: string }): JSX.Element {
-  const isString = typeof value === "string";
+  const { code, lang } = fieldCode(value);
   return (
     <CodeBlock
-      code={isString ? value : JSON.stringify(value, null, 2)}
-      lang={isString ? "text" : "json"}
+      code={code}
+      lang={lang}
       expandLabel={label}
-      modalBody={isPlainDict(value) ? <ValueDoc value={value} /> : undefined}
+      // An EMPTY dict expands to a plain `{}` (the CodeBlock fallback), never a
+      // blank document — `ValueDoc` over no entries renders nothing.
+      modalBody={isPlainDict(value) && Object.keys(value).length > 0 ? <ValueDoc value={value} /> : undefined}
     />
   );
+}
+
+// The SINGLE derivation of "how a run value stringifies": a string is real text,
+// anything else pretty JSON. Used by both the compact box and each ValueDoc field
+// so the rule this file exists to single-source never drifts back into copies.
+function fieldCode(value: unknown): { code: string; lang: "text" | "json" } {
+  return typeof value === "string" ? { code: value, lang: "text" } : { code: JSON.stringify(value, null, 2), lang: "json" };
 }
 
 function isPlainDict(value: unknown): value is Record<string, unknown> {
@@ -33,16 +42,15 @@ function isPlainDict(value: unknown): value is Record<string, unknown> {
 function ValueDoc({ value }: { value: Record<string, unknown> }): JSX.Element {
   return (
     <>
-      {Object.entries(value).map(([name, field]) => (
-        <div className="value-doc-field" key={name}>
-          <span className="value-doc-name">{name}</span>
-          <CodeBlock
-            code={typeof field === "string" ? field : JSON.stringify(field, null, 2)}
-            lang={typeof field === "string" ? "text" : "json"}
-            expandLabel={null}
-          />
-        </div>
-      ))}
+      {Object.entries(value).map(([name, field]) => {
+        const { code, lang } = fieldCode(field);
+        return (
+          <div className="value-doc-field" key={name}>
+            <span className="value-doc-name">{name}</span>
+            <CodeBlock code={code} lang={lang} expandLabel={null} />
+          </div>
+        );
+      })}
     </>
   );
 }

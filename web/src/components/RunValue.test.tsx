@@ -69,6 +69,16 @@ describe("RunValue expand", () => {
     expect(body.textContent).toContain('"file": "a.py"');
   });
 
+  it("an EMPTY dict expands to plain {} — never a blank per-field document", () => {
+    // isPlainDict({}) is true and code is "{}" (so the code==="" guard misses it):
+    // the doc-view is gated on non-empty, so the modal shows the shape, not blank.
+    render(<RunValue value={{}} label="Inputs" />);
+    fireEvent.click(screen.getByLabelText("Expand Inputs"));
+    const body = document.querySelector(".value-modal-body")!;
+    expect(body.querySelector(".value-doc-field")).toBeNull();
+    expect(body.textContent).toContain("{}");
+  });
+
   it("Escape, the backdrop, and the close button each close the modal", () => {
     render(<RunValue value="v" label="x" />);
     const open = (): void => {
@@ -90,5 +100,21 @@ describe("RunValue expand", () => {
     // …the × does.
     fireEvent.click(screen.getByLabelText("Close"));
     expect(document.querySelector(".value-modal")).toBeNull();
+  });
+
+  it("opening moves focus to Close and locks page scroll; closing restores both", () => {
+    render(<RunValue value="v" label="x" />);
+    const trigger = screen.getByLabelText("Expand x");
+    trigger.focus();
+    fireEvent.click(trigger);
+    // Focus lands in the dialog (Esc works without a prior click) and the page
+    // behind the overlay can't scroll.
+    expect(document.activeElement).toBe(screen.getByLabelText("Close"));
+    expect(document.body.style.overflow).toBe("hidden");
+    fireEvent.click(screen.getByLabelText("Close"));
+    expect(document.querySelector(".value-modal")).toBeNull();
+    // Both restored: scroll unlocked, focus returned to the ⛶ trigger.
+    expect(document.body.style.overflow).toBe("");
+    expect(document.activeElement).toBe(trigger);
   });
 });

@@ -373,6 +373,45 @@ describe("GraphView mount", () => {
     }
   });
 
+  it("reopening the source pane after a link jump falls back to the newly-selected node, not the stale target", async () => {
+    // Regression (review): a source-link jump target (sourceJumpTarget) persisted
+    // across a pane close/reopen. SourcePane is conditionally mounted, so a Rail
+    // toggle reopen REMOUNTS it with prevJump reseeded to null — the mount-jump
+    // then re-fires from the STALE target and lands on the old link's line instead
+    // of the currently-selected node. changeSourceOpen clears the target on close.
+    const alpha = { ...GRAPH.nodes[0]!, id: "na", ref: { node_id: "alpha", ancestor_path: [], port: null }, purpose: "alpha step", source: { file: "/wf.pflow.md", line: 3 } };
+    const bravo = { ...GRAPH.nodes[0]!, id: "nb", ref: { node_id: "bravo", ancestor_path: [], port: null }, purpose: "bravo step", source: { file: "/wf.pflow.md", line: 7 } };
+    vi.mocked(fetchGraph).mockResolvedValue({ nodes: [alpha, bravo], edges: [], groups: [] });
+    vi.mocked(fetchSource).mockResolvedValue({
+      root: "/wf.pflow.md",
+      files: { "/wf.pflow.md": "# Demo\n\n### alpha\n\nAlpha.\n\n### bravo\n\nBravo.\n" },
+    });
+    window.history.replaceState({}, "", "/");
+    try {
+      const { container } = render(<GraphView workflow="demo" onBack={() => {}} />);
+      await waitFor(() => expect(screen.getByText("alpha step")).toBeTruthy());
+
+      // Select alpha, then OPEN the pane via its header source LINK (sets jumpTarget = alpha:3).
+      fireEvent.click(screen.getAllByText("alpha step").find((el) => el.className.includes("node-name"))!);
+      await waitFor(() => expect(container.querySelector(".read-panel-source-btn")).toBeTruthy());
+      fireEvent.click(container.querySelector(".read-panel-source-btn")!);
+      await waitFor(() => expect(container.querySelector('.src-line-active[data-line="3"]')).toBeTruthy());
+
+      // Close via the Rail toggle, select bravo (pane closed), reopen via the toggle.
+      fireEvent.click(screen.getByRole("button", { name: "Hide source" }));
+      await waitFor(() => expect(container.querySelector(".source-pane")).toBeNull());
+      fireEvent.click(screen.getAllByText("bravo step").find((el) => el.className.includes("node-name"))!);
+      fireEvent.click(screen.getByRole("button", { name: "Show source" }));
+      await waitFor(() => expect(container.querySelector(".source-pane")).toBeTruthy());
+
+      // The reopened pane marks bravo's line (7), NEVER the stale alpha target (3).
+      await waitFor(() => expect(container.querySelector('.src-line-active[data-line="7"]')).toBeTruthy());
+      expect(container.querySelector('.src-line-active[data-line="3"]')).toBeNull();
+    } finally {
+      window.history.replaceState({}, "", "/");
+    }
+  });
+
   it("the source pane's clamp RESERVES the other pane's width — both panes + a usable canvas fit the viewport", async () => {
     // The clamp-reservation wiring (the kind-prop lesson): clampPanelWidth is
     // unit-pinned in panelWidth.test.ts, but a GraphView call site passing

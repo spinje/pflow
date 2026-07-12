@@ -144,17 +144,25 @@ field + source line; an input with no data-flow edge shows no "used by" — quie
 share `PanelHeader` (a large node avatar + name-as-navigate button). An IoPanel port's TWO
 links: the source `file:line` opens the source pane at the PORT's own line (`onOpenSource(ref)`
 → GraphView's `sourceJumpTarget` — io selections set no selectedNode, so the jump carries an
-explicit ref), and the dot-prefixed field (`.stdout`) SELECTS the producer (both `onNavigate`
+explicit ref). `sourceJumpTarget` is a one-shot the pane re-fires on every MOUNT (SourcePane is
+conditionally rendered — `prevJump` reseeds to null), so `changeSourceOpen` MUST clear it on
+close or a bare Rail-toggle reopen lands on the stale target instead of the current selection.
+The dot-prefixed field (`.stdout`) SELECTS the producer (both `onNavigate`
 args — opens its ReadPanel, the recorded output's home; deliberately more than the chip beside
 it). EVERY value box carries the ⛶ expand — it lives in `CodeBlock` itself (params, code,
 prompts, batch items, errors, run values — one seam): a portaled full-screen modal
 (`.value-modal-overlay`, in the scoped chrome-token list) with the value un-capped — Esc /
-backdrop / × close; the panel box itself stays scroll-capped at 320px. `expandLabel` titles
+backdrop / × close; the panel box itself stays scroll-capped at 320px. On open it moves focus
+to the × (so Esc works without a prior click) and locks page scroll behind the overlay,
+restoring both on close (mount-only effect — the inline `onClose` gets a fresh identity each
+render, so re-running it would re-steal focus). `expandLabel` titles
 the modal (default "value"); `expandLabel={null}` disables it (the modal's own inner
 CodeBlock — the recursion guard); an empty value renders no button. The modal is a READING
 surface: a caller still holding the structured value can replace its content via `modalBody`
 — `RunValue` uses it to expand a DICT run value as a per-field document (labeled blocks,
-strings as REAL text — not JSON `\n` escapes; top-level only, arrays stay JSON). Deliberately
+strings as REAL text — not JSON `\n` escapes; top-level only, arrays stay JSON; an EMPTY dict
+expands to plain `{}`, never a blank document). The string-vs-JSON derivation is single-sourced
+in `RunValue`'s `fieldCode` helper, shared by the compact box and each doc field. Deliberately
 RunValue-only: authored params must render exactly as authored (a literal `\n` in a code
 param is content), and the compact box stays JSON (it answers "what shape", the modal "what
 does it say"). `EdgePanel` reads a
