@@ -23,4 +23,6 @@ Repo conventions that carry ADR weight — don't re-litigate or contradict them 
 
 ## Execution handoff for an agreed design
 
-Two real paths (the user picks): **(a)** capture as a task — `/create-task-spec <id>` writes the spec under `.taskmaster/tasks/task_N/`, then `/start-work` produces the implementation plan and dispatches inline briefs to `code-implementer`/`test-writer-fixer`, logging to `implementation/progress-log.md` and closing with `task-review.md`; or **(b)** plan directly in-session (scratchpads under `scratchpads/`). The `plan-breakdown` skill splits large plans across agents. (`/refactor` no longer exists — it was replaced by this skill.)
+When you and the user are fully aligned ask to capture the design as a task spec (the what and why) — use `/create-task <id>` skill to understand how.
+
+Then ask the user if they also want to write the implementation plan (the how). If yes, use the `/create-plan` skill to author the plan.

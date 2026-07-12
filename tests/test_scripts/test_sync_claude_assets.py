@@ -129,6 +129,22 @@ def test_write_translates_claude_only_command_syntax(tmp_path: Path) -> None:
     assert "demo\n<task_id>" in rendered
 
 
+def test_sweeps_generated_skill_dir_with_no_claude_source(tmp_path: Path) -> None:
+    root = make_root(tmp_path)
+    sync_claude_assets.synchronize(root, write=True)
+    orphan = root / ".agents/skills/orphan-skill/SKILL.md"
+    write_file(orphan, "---\nname: orphan-skill\ndescription: Orphaned\n---\nstale mirror\n")
+
+    check = sync_claude_assets.synchronize(root, write=False)
+    assert check.changed == []
+    assert check.errors == ["Generated skill has no Claude source: " + str(orphan.parent)]
+
+    result = sync_claude_assets.synchronize(root, write=True)
+    assert result.errors == []
+    assert orphan in result.changed
+    assert not orphan.parent.exists()
+
+
 def test_rejects_skill_command_name_collision(tmp_path: Path) -> None:
     root = make_root(tmp_path)
     write_file(
