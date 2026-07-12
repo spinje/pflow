@@ -20,9 +20,9 @@ See `pflow mcp describe <tool> --help` for how to interpret tool details.
 MCP nodes expose one canonical output namespace: `result`.
 
 Use `${node.result}` for the full tool payload and `${node.result.field}` for
-nested fields. Do not use `${node.field}` for MCP tool fields; validation only
-knows the declared `result` output because MCP servers do not publish stable
-output schemas.
+nested fields. Do not use `${node.field}` for MCP tool fields. Validation keeps
+`result` open-ended because server schemas may be missing or incomplete; probe
+inspects the actual response to show the concrete paths.
 
 **Every MCP server is completely different. Even the SAME operation:**
 

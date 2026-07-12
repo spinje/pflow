@@ -294,6 +294,34 @@ class TestRegistryNodeRetrieval:
             assert result["llm"] == test_data["llm"]
             assert result["read-file"] == test_data["read-file"]
 
+    def test_load_normalizes_stale_mcp_outputs_to_result_namespace(self):
+        """Existing registries repair MCP metadata before any consumer sees it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = Registry(Path(tmpdir) / "test.json")
+            stale_interface = {
+                "outputs": [
+                    {"key": "success", "type": "bool"},
+                    {"key": "images", "type": "list"},
+                ]
+            }
+            registry.save({
+                "mcp-current-tool": {
+                    "type": "mcp",
+                    "file_path": "virtual://mcp",
+                    "interface": stale_interface.copy(),
+                },
+                "mcp-legacy-tool": {
+                    "file_path": "virtual://mcp",
+                    "interface": stale_interface.copy(),
+                },
+            })
+
+            nodes = registry.load(include_filtered=True)
+            expected = [{"key": "result", "type": "any", "description": "Tool execution result"}]
+
+            assert nodes["mcp-current-tool"]["interface"]["outputs"] == expected
+            assert nodes["mcp-legacy-tool"]["interface"]["outputs"] == expected
+
     def test_output_types_by_kind_ships_declared_types_and_drops_any(self):
         """The kind->field->type read-model: declared docstring types verbatim;
         ``any`` entries dropped (a type that says nothing is not a fact worth

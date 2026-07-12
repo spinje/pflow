@@ -239,20 +239,11 @@ class MCPRegistrar:
             "description": "Timeout in seconds for tool execution (default: 30)",
         })
 
-        # Create outputs if available
-        outputs = []
-        if "outputSchema" in tool:
-            outputs = self.discovery.convert_to_pflow_params(tool["outputSchema"])
-
-        # If no specific outputs, use generic result
-        if not outputs:
-            outputs = [
-                {
-                    "key": "result",  # Changed from "name" to "key" to match pflow convention
-                    "type": "any",
-                    "description": "Tool execution result",
-                }
-            ]
+        # MCPNode stores every successful tool response under one canonical
+        # ``result`` output. Keep it open-ended even when outputSchema exists:
+        # server schemas may be absent or shallow, while probe can inspect the
+        # actual response and advertise every path that really resolves.
+        outputs = [{"key": "result", "type": "any", "description": "Tool execution result"}]
 
         # Create registry entry pointing to MCPNode
         entry = {

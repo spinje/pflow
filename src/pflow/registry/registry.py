@@ -113,6 +113,7 @@ class Registry:
 
             # Try to load from file
             nodes = self._load_from_file()
+            self._normalize_mcp_output_namespaces(nodes)
 
             # Check if core nodes need refresh (version change)
             if self._core_nodes_outdated(nodes):
@@ -136,6 +137,24 @@ class Registry:
                 return filtered_nodes
 
             return nodes
+
+    @staticmethod
+    def _normalize_mcp_output_namespaces(nodes: dict[str, dict[str, Any]]) -> None:
+        """Normalize cached MCP entries to the runtime's canonical output.
+
+        Older registries copied outputSchema properties into top-level outputs,
+        even though MCPNode has always stored successful payloads under
+        ``result``. Normalize on read so probe, validation, and describe repair
+        existing installations without requiring a network resync.
+        """
+        canonical_output = {"key": "result", "type": "any", "description": "Tool execution result"}
+        for node_name, node_data in nodes.items():
+            is_mcp_entry = node_data.get("type") == "mcp" or (
+                node_name.startswith("mcp-") and node_data.get("file_path") == "virtual://mcp"
+            )
+            interface = node_data.get("interface")
+            if is_mcp_entry and isinstance(interface, dict):
+                interface["outputs"] = [canonical_output.copy()]
 
     def _load_from_file(self) -> dict[str, dict[str, Any]]:
         """Load registry from JSON file without auto-discovery.
