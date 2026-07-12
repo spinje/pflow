@@ -1,4 +1,4 @@
-# CURRENT-STATE.md (last verified: 2026-07-12)
+# CURRENT-STATE.md (last verified: 2026-07-13)
 
 _Living state header — the ONE mandatory session-start read (~80-line budget; state + pointers
 only). Updated when the RESUME PICTURE changes. How-it-got-here: latest `sessions/session-NN.md`.
@@ -9,44 +9,43 @@ Every claim here is a pointer to verify, not a fact._
 - **Orchestration restructured 2026-07-11/12** (DECISIONS #1–#11): agent-hierarchy system
   adopted (ORCHESTRATION.md canonical; planner/task-orchestrator/implementer agent defs live;
   command rewritten; close ritual + rolling braindump in the boot stack; this file + `sessions/`
-  replace `orchestrator-progress-log.md`, converted to `sessions/session-01.md`). Committed to
-  `main` 2026-07-12 (docs commit). **`main` is unpushed** (this commit + `eeba1e8e` +
-  `276672a4`) — pushes are user-gated.
-- The hierarchy has NOT yet run a lane-A/B build — the first launch shakes it down; watch the
-  worktree-workflow flags (`open_cli=false open_cursor=false`) and packet quality. **Shakedown
-  candidate: #565 (lane B).**
+  replace `orchestrator-progress-log.md`, converted to `sessions/session-01.md`). Codex routing
+  now follows the user's explicit constraint: dynamic child launches inherit the runtime model
+  and reasoning effort; no override parameters (DECISIONS #3).
+- The hierarchy has now run three Codex lane-B builds end to end (#565/#581/#585), including
+  worktrees with `open_cli=false open_cursor=false`. Fetched `origin/main` is `2ee5fefc`.
+  Proven: nested search/review agents, handbacks, PR/CI loops, `[skip review]`, and teardown.
+  Local `main` includes verified `origin/main` `2ee5fefc`; the close docs are authorized for
+  push. A pre-existing task-planner model edit remains uncommitted because it contradicts the
+  settled Fable planner policy; user direction is required.
 
 ## In flight
 
-- **Task 176 (Web-UI Approval Bridge)** — **lane C (manual)**, launched pre-restructure
-  2026-07-11 on **fable** in worktree `feat-web-ui-approval-bridge` (branch
-  `feat/web-ui-approval-bridge`, base `276672a4` = the refreshed-spec commit; brief verified
-  in-tree at `scratchpads/task-176-web-approval-bridge/BRIEF.md`). Spec refresh + 3-item decision
-  ledger LOCKED same day (escalation-answering IN · greying IN-phased-last · `resolved_via:"ui"`
-  OUT — do not re-litigate). **On merge, verify personally**: the pre-flight no-silent-no-op rule
-  and the resume `PFLOW_EXECUTION_ID` mirror hook (both orchestrator catches, not spec
-  inheritance); check whether the greying cut-line was exercised (→ follow-up issue); reconcile
-  roadmap (176 closes the resume/HITL arc); then #546/#568 unblock (serialized behind 176).
+- ~~**#565 (MCP probe output paths)**~~ — MERGED via PR #583 as `bd6f520a`; all merged-result gates
+  green after #581, worktree/branch safely pruned.
+- ~~**#581 (flaky Windows caplog tests)**~~ — MERGED via PR #584 as `08b319ca`; issue-specific Windows
+  gate passed, authorized unrelated-flake rerun passed, worktree/branch safely pruned.
+- ~~**#585 (Windows MCP config replace WinError 5)**~~ — MERGED via PR #586 as `2ee5fefc`; all
+  Windows gates green, worktree/branch safely pruned. Verified cause: Windows replacement can
+  transiently reject despite existing process-wide `RLock`; fix narrowly retries WinError 5/32.
 
 ## Current arc
 
-Resume/HITL: 125 ✅ → 164 ✅ → 174 ✅ → 171 ✅ → **176 in flight**. Read `task_171/task-review.md`
-before any resume/gate/trace work — 171's beyond-spec deltas: MCP streams traces; exit 4 = paused;
-trace format 2.7.0 (`final_status:"paused"` + `gate_request` on the trailer); loader extracted to
-`runtime/resume_source.py`; `ExecutionResult.is_durable_pause` is the single durability home.
+Resume/HITL: 125 ✅ → 164 ✅ → 174 ✅ → 171 ✅ → 176 ✅ (#579). Read
+`task_171/task-review.md` and `task_176/task-review.md` before resume/gate/trace work.
 
-## Parallel-lane candidates (re-scanned 2026-07-11)
+## Parallel-lane candidates (re-scanned 2026-07-13)
 
 - **#542** trace retention — UNBLOCKED (gate was 171). Paused traces are live obligations, never
   prunable; `resume list` depends on trailer scan. Trace seam → serialize.
 - **#562** resumable inline workflows — 171 follow-on; touches trace format → serialize.
-- **#565** MCP probe advertises top-level `${success}` but values live under `result.*` — small,
-  agent-facing correctness bug; likely lane B.
-- **#546** pinned-run resolve race (behind 176) · **#568** track/cancel detached UI runs (behind
-  176; respect ADR-0008) · **#561** TTS clip cache (backlog) · **#538** liveness backstop (check
+- ~~**#565**~~ shipped via #583; remove from future picks.
+- **#546** pinned-run resolve race · **#568** track/cancel detached UI runs (respect ADR-0008) ·
+  **#561** TTS clip cache (backlog) · **#538** liveness backstop (check
   overlap with #566 first) · **#544** `llm_*` canonicalization · **#549** post-#539 visibility ·
   **#528** `--output-format` stragglers · **#566/#567/#572/#574/#575** Windows/test-infra tail.
 - **#357** memo-cache drift — issue state UNVERIFIED since 2026-06-23; check before acting.
+- ~~**#581**~~ shipped via #584. ~~**#585**~~ shipped via #586.
 
 ## Watch list (non-obvious, easy to miss)
 
@@ -61,4 +60,4 @@ trace format 2.7.0 (`final_status:"paused"` + `gate_request` on the trailer); lo
   serves old code).
 - Spec file:line refs last bulk-refreshed 2026-07-02; repo has since absorbed #557's format pass
   + 116's 117-file diff — treat ALL file:line refs as stale; re-verify at use.
-- Worktrees: only `main` + `feat-web-ui-approval-bridge` exist (full sweep 2026-07-11).
+- Worktrees: only `main` (verified after #565/#581/#585 teardown).

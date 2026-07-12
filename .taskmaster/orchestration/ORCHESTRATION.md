@@ -11,8 +11,8 @@ testing directives, decision ownership, and the epistemic rules all live there.
 | Role | Model | Definition | Job |
 |------|-------|-----------|-----|
 | **Main orchestrator** | user's session | `/start-orchestration` command | Cross-task view: pick lane + work, verify spec freshness (fix staleness itself — spec accuracy is its job; implementation detail is not), provision the worktree, launch planners/task-orchestrators with a context packet, handle handbacks/escalations, talk to the user, **merge the PR and reconcile**, keep `CURRENT-STATE.md` + its session file + the ledgers current. **Never writes plans, never reads plans, never runs deep-review — trust the agents' gates** |
-| **Task planner** | **Fable, always** (frontmatter + explicit param) | `.claude/agents/task-planner.md` | Investigate ONE task (via searchers) IN the task's worktree + write `implementation/implementation-plan.md`, **self-review it** (plan-mode `/deep-review` — mandatory when the plan touches the engine or the trace format, its judgment otherwise), commit it on the feature branch, then STOP. May offer to implement small tasks itself (see Model routing) |
-| **Task orchestrator** | Opus default; Fable via explicit param with a one-line justification | `.claude/agents/task-orchestrator.md` | One task end to end in the same worktree: (plan +) delegate phases → per-phase self-checks → when FULLY happy: code-mode `/deep-review` + apply fixes → `/create-task-review` → `/create-pr` → minimal handback |
+| **Task planner** | **Fable intent, always** (Claude enforces; Codex inherits runtime route) | `.claude/agents/task-planner.md` | Investigate ONE task (via searchers) IN the task's worktree + write `implementation/implementation-plan.md`, **self-review it** (plan-mode `/deep-review` — mandatory when the plan touches the engine or the trace format, its judgment otherwise), commit it on the feature branch, then STOP. May offer to implement small tasks itself (see Model routing) |
+| **Task orchestrator** | Opus intent by default; Fable opt-in where the runner exposes routing | `.claude/agents/task-orchestrator.md` | One task end to end in the same worktree: (plan +) delegate phases → per-phase self-checks → when FULLY happy: code-mode `/deep-review` + apply fixes → `/create-task-review` → `/create-pr` → minimal handback |
 | **Phase implementer** | per launch (routing table) | `.claude/agents/task-phase-implementer.md` | Implement exactly the assigned phase(s); tests as it goes; substance to the progress-log; minimal handback; stop on ambiguity |
 | **Searcher** | pinned (opus) | `pflow-codebase-searcher` | Read-only investigation, cited findings. Never the generic `Explore` or `general-purpose` |
 | **Review battery** | per lens | `.claude/agents/review-*.md` via the `/deep-review` skill | The pflow specialists (selection rubric in the skill + `REVIEW-PROTOCOL.md`). Plan gate + completion gate (see Review policy) |
@@ -145,7 +145,9 @@ merged PR and point the packet there instead; almost all recent tasks have revie
    orchestrator commits as phases complete (deliberate staging, never blanket `-A`;
    scratchpads/briefs are gitignored and stay out). Never to `main`. Task docs merge to `main`
    WITH the code, via the PR. Pre-commit hooks enforce repo conventions (including the task-Status
-   vocabulary) — never bypass with `--no-verify`.
+   vocabulary) — never bypass with `--no-verify`. **PR review marker (DECISIONS #12):** the first
+   commit on each PR branch uses a normal message; EVERY later commit on that branch (follow-up,
+   review fix, CI fix, or merge-base update) includes the exact marker `[skip review]`.
 5. **PR:** the task orchestrator runs `/create-pr` (which pushes the feature branch —
    process-authorized) and hands back minimal. **Merge authority is the main orchestrator's**
    (DECISIONS #4): squash-merge (the repo convention) after CI green.
@@ -183,9 +185,10 @@ them**, not in up-front documents.
 |------|---------|------|
 | **Sonnet** | Mechanical phases: scaffolding from an exact spec, config wiring, repetitive table-driven tests. Also grep-shaped searcher lookups | Phase text must contain ZERO ambiguity. A Sonnet phase requiring judgment is a planning bug — fix the plan, not the routing |
 | **Opus** | **The default for everything with real judgment**: task orchestrators, most implementer phases, searchers (pinned) | Plans state decisions; bounded judgment may be left to the implementer |
-| **Fable** | **Task planners — always.** **ALL web-UI implementation phases — always** (user ruling 2026-07-11, DECISIONS #8): every phase that writes UI (`web/` → `src/pflow/ui`) routes to a Fable `task-phase-implementer` — never implemented inline by the task orchestrator, never a lower tier — and is built with **deliberate design/UX care**: the plan states the phase's use case + look/feel intent, and visual quality/UX are acceptance criteria verified by driving the UI. Otherwise opt-in via the explicit `model` param with a one-line justification: hard architecture, subtle seam design (engine, trace, resume/gate semantics), gnarly debugging. Lane C's terminal builder is the historical Fable home and stays one | Never an ambient default for non-UI implementation |
+| **Fable** | **Task planners — always.** **ALL web-UI implementation phases — always** (user ruling 2026-07-11, DECISIONS #8): every phase that writes UI (`web/` → `src/pflow/ui`) routes to a Fable `task-phase-implementer` — never implemented inline by the task orchestrator, never a lower tier — and is built with **deliberate design/UX care**: the plan states the phase's use case + look/feel intent, and visual quality/UX are acceptance criteria verified by driving the UI. Otherwise opt-in where runner routing exists, with a one-line justification: hard architecture, subtle seam design (engine, trace, resume/gate semantics), gnarly debugging. Codex records this as intent but inherits the runtime route. Lane C's terminal builder is the historical Fable home and stays one | Never an ambient default for non-UI implementation |
 
-Runner model names are an execution detail; plans continue to use the tier names above:
+Runner model names are an execution detail; plans continue to use the tier names above. The
+Codex names below apply to generated static agent configuration, not dynamic-launch overrides:
 
 | Contract tier | Claude launch model | Codex launch model |
 |---------------|---------------------|--------------------|
@@ -194,14 +197,15 @@ Runner model names are an execution detail; plans continue to use the tier names
 | Fable | `fable` | `gpt-5.6-sol` |
 
 Claude agent `effort` maps directly to the same Codex reasoning level: `low` → `low`, `medium` →
-`medium`, `high` → `high`. Generated agent TOML uses `model_reasoning_effort`; dynamic launches
-use the `reasoning_effort` parameter. When the contract does not pin effort, omit the launch
-override and inherit the runner default. `scripts/sync_claude_assets.py` applies the same model
-and effort mapping to generated `.codex/agents/*.toml`; an unknown source value is a generation
-error.
+`medium`, `high` → `high`. Generated agent TOML uses `model_reasoning_effort`.
+`scripts/sync_claude_assets.py` applies the same model and effort mapping to generated
+`.codex/agents/*.toml`; an unknown source value is a generation error.
 
-- **Pass the explicit `model` param on EVERY launch** — agent frontmatter is cached per session;
-  the param is the live lever. Use the runner-specific model name from the table above.
+- **Claude dynamic launches:** pass the explicit `model` param on EVERY launch — agent
+  frontmatter is cached per session; the param is the live lever.
+- **Codex dynamic launches:** NEVER pass model or reasoning-effort overrides; the API does not
+  expose them. Children inherit the runtime route. Keep the plan's tier label as intent and make
+  the inability to enforce it visible; never claim a tier was selected.
 - **Lane B**: Opus floor, never lower; Fable for complex/hard-debugging issues only with the
   user's per-launch approval (DECISIONS #9).
 - **Planner-implements exception:** when a planner finds the implementation small, it may offer in
@@ -232,6 +236,8 @@ implementer pays a real context-rebuild tax. The plan's agent assignment default
 - **Fresh launch** only for a stated reason: tier change, parallel disjoint work, a huge/degrading
   window, or fresh eyes (which are the review battery's job, not an implementer's).
 - Synthesis/doc phases belong to whoever already holds the content.
+- Main-orchestrator waits on running children default to 15 minutes (DECISIONS #13); child
+  completion and user messages still interrupt immediately.
 
 ## Review policy (the pflow battery, two gates)
 
@@ -325,7 +331,8 @@ Subagents cannot talk to the user — the main orchestrator is the channel.
   `.claude/skills/improve-codebase-architecture/LANGUAGE.md`.
 - One paragraph from the main orchestrator: current repo state, what neighboring merges just
   changed, collision/serialization notes, anything the spec doesn't know yet.
-- The reminder to pass the explicit `model` param on every sub-launch.
+- The runner reminder: Claude passes the explicit `model`; Codex omits model/reasoning overrides
+  and inherits the runtime route.
 
 ## Write discipline (all logs)
 

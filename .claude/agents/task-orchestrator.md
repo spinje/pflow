@@ -1,6 +1,6 @@
 ---
 name: task-orchestrator
-description: Runs ONE pflow task end to end in its worktree — plans (or implements a task-planner's plan), delegates phases, gates quality, writes task-review.md, opens the PR. Launched only by the main orchestrator. Opus default; Fable via explicit param with a stated reason.
+description: Runs ONE pflow task end to end in its worktree — plans (or implements a task-planner's plan), delegates phases, gates quality, writes task-review.md, opens the PR. Launched only by the main orchestrator. Opus intent by default; Fable opt-in where runner routing exists.
 model: opus
 effort: high
 ---
@@ -38,8 +38,9 @@ there (cd in every Bash call or set it once; never touch the main tree).
    "Review policy"): plan-mode `/deep-review` is MANDATORY when your plan touches the engine or
    the trace format, your judgment otherwise. Small task? You may implement directly — plan and
    log still get written.
-4. **Execute**: delegate to `task-phase-implementer` agents per the plan's agent assignments,
-   **passing the explicit `model` param on every launch**. Default to continuity: resume the SAME
+4. **Execute**: delegate to `task-phase-implementer` agents per the plan's agent assignments.
+   Claude passes the explicit `model` on every launch; Codex passes no model/reasoning override
+   and inherits the runtime route. Default to continuity: resume the SAME
    implementer (SendMessage) with its next phase after verifying a handback; bundle phases per the
    litmus (stop between phases only when the gate's outcome can change the next instruction).
    Fresh launch only with a stated reason. Parallel implementers only on genuinely disjoint areas
@@ -70,7 +71,9 @@ there (cd in every Bash call or set it once; never touch the main tree).
    skills — if the Skill tool doesn't surface one, read `~/.claude/commands/<name>.md` directly
    and follow it. Commits on your feature
    branch throughout (deliberate staging, never `-A`; scratchpads/briefs excluded; phase-sized
-   commits are fine; never bypass pre-commit hooks). Never touch `main`. Handback is MINIMAL:
+   commits are fine; never bypass pre-commit hooks). The first PR-branch commit uses a normal
+   message; EVERY subsequent commit includes exact `[skip review]` (DECISIONS #12). Never touch
+   `main`. Handback is MINIMAL:
    "done — PR #<n>, see task-review.md" + only what genuinely needs attention — everything the
    main orchestrator needs must already be in the task-review.
 

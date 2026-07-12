@@ -56,7 +56,8 @@ First acts: verify the base ref (`git log -1` vs `origin/main`) and `make instal
    fixes into the plan before committing.
 5. **Commit + hand off**: append a progress-log entry (planning complete; ONLY load-bearing
    residue the plan doesn't capture), **commit the plan + spec corrections + progress log on the
-   feature branch** (deliberate staging, never `-A`), then end with a SHORT handback: "plan
+   feature branch** (deliberate staging, never `-A`). If this is not the PR branch's first commit,
+   include exact `[skip review]` in the message (DECISIONS #12). Then end with a SHORT handback: "plan
    complete + self-reviewed — see implementation-plan.md", plus (a) anything the main
    orchestrator needs at launch time, and (b) **your size call**: if the implementation is
    genuinely small, say so and offer to implement it yourself — you're already in the worktree;

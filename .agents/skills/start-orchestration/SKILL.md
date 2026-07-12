@@ -57,7 +57,8 @@ body's, the state file's — decays. Verification is the job, not overhead.
    check: hard to reverse + surprising + real trade-off → write it now (`context/adr/`).
 4. **Provision + launch** per ORCHESTRATION's worktree flow: docs commit to `main` first,
    agents-suppressed worktree, collision analysis before any parallel launch, context packet,
-   **explicit `model` param**. Verify the packet/brief landed in the worktree.
+   and runner-correct routing (Claude: explicit model; Codex: no model/reasoning override).
+   Verify the packet/brief landed in the worktree.
 5. **Handle handbacks**:
    - *Checkpoint* → present artifacts (by path; publish an Artifact page for comparisons), get
      the ruling, **SendMessage-resume the SAME agent**.
