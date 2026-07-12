@@ -26,11 +26,19 @@ shape as you work.
   validate is held (the last valid version stays up, with an error banner) until you fix it.
 - The canvas also shows runs **as they run**: run the workflow via the CLI (your bash tool)
   while the user has it open, and each node lights up live with its state — **running**,
-  **success** (green ✓), **cached**, **failed** (red), or **stopped** (the run died) — plus an
-  overall **Run success / failed / degraded** banner. So you and the user share one live
-  picture: if a run fails, the user is already seeing the red node + banner — reference it
-  directly rather than re-narrating. The user can also pick a **past run** to replay, or click
-  a node to read that run's real resolved inputs, output, and cost.
+  **success** (green ✓), **cached**, **failed** (red), **stopped** (the run died), or
+  **paused** (amber ⏸ — waiting at an approval gate) — plus an overall **Run success /
+  failed / degraded / paused** banner. So you and the user share one live picture: if a run
+  fails, the user is already seeing the red node + banner — reference it directly rather than
+  re-narrating. The user can also pick a **past run** to replay, or click a node to read that
+  run's real resolved inputs, output, and cost.
+- **The user can answer a paused gate right on the canvas.** A run paused at an approval gate
+  shows an answer panel anchored at the ⏸ step: Approve/Deny for an approval (with the step's
+  resolved values in front of them), or the question, options, and a free-text field for an
+  escalation. Their click continues the run, and the canvas follows the new attempt live. A
+  **failed** run shows a Resume button the same way. So when your run pauses (exit 4 with a
+  resume token), opening it for your human — `pflow ui <workflow> --run <token>` (see below) —
+  is usually the best way to get the decision; the `resume` topic covers the CLI alternative.
 - With no workflow argument, it opens the catalog of saved workflows.
 - Flags: `--port N` (default 8765), `--no-open` (don't open a browser), `--no-auto-update`
   (freeze — stop live-updating).

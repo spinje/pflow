@@ -43,9 +43,20 @@ pflow my-workflow --auto-approve=notify-slack
 
 The flag is per-step and repeatable — there is deliberately no approve-everything form. Each pre-approval is recorded in the trace (`resolved_via: flag`), so you can always audit which gates a human answered live versus approved in advance.
 
-## Non-interactive runs
+## Non-interactive runs pause — and you answer later
 
-A run with no terminal (piped, launched from the web UI, or via the MCP server) cannot prompt. A gate reached without pre-approval fails immediately and loudly — never hangs — with instructions that tell an operating AI agent to ask its human before continuing. A warning also fires at run start when the workflow has unapproved top-level gates.
+A run with no terminal (piped, launched from the web UI, or via the MCP server) cannot prompt. A gate reached without pre-approval **pauses the run durably** instead of failing — never hangs — and prints a resume token:
+
+```text
+Paused at 'notify-slack'. Resume token: 7a9e4afb-2095-447e-8043-0660438104f9 (exit 4)
+```
+
+Nothing re-runs when you answer: the completed steps are kept, and the decision can come hours or days later, through either surface:
+
+- **In the browser**: `pflow ui <workflow> --run <token>` opens the paused run on the visual canvas. The paused step carries a ⏸ badge with an answer panel showing the step's resolved values — click **Approve** or **Deny** (for an escalation: pick an option or type an answer) and watch the run continue in place.
+- **From the terminal**: `pflow resume <token> --approve yes|no` (escalations: `--choose "<answer>"`). `pflow resume list` shows every pending pause.
+
+A deny still exits `3` with `final_status: "denied"` — a human verdict, not an error. Each answered pause produces a new attempt linked to the original run, so the decision trail stays auditable. A warning also fires at run start when the workflow has unapproved top-level gates.
 
 Use `--dry-run` to discover gates before running: gated steps are tagged `[…, approval]` and summarized in a `⏸` footer.
 

@@ -39,6 +39,14 @@ pflow resume <execution-id> --choose "per-env"   # escalation: an answer, or an 
 pflow resume list                                # pending unanswered pauses (token, workflow, step, gate, age)
 ```
 
+**Or let your human answer in the browser** — usually the better channel when a person is
+deciding: `pflow ui <workflow> --run <execution-id>` opens the paused run on the visual canvas,
+where the paused step carries a ⏸ badge and an answer panel (Approve/Deny for an approval; the
+question, options, and a free-text field for an escalation). Their click delivers the same
+answer as the commands above, and the canvas follows the continued run live. They see the
+resolved preview in context instead of a relayed terminal snippet. A **failed** run opened the
+same way shows a Resume button (same confirmation rules as below).
+
 Behavior worth knowing:
 
 - **Nothing re-runs.** Upstream steps are restored from the paused trace. An approved gate's step runs for the first time (approval gates fire *before* the step, so there is no side-effect re-fire risk and no confirmation prompt). An answered escalation continues at the **next** step with the decision folded into the completed step's result (`${step.result.escalation.decision.chosen}`) — the agent step is never re-paid.
