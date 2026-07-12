@@ -528,3 +528,49 @@ Key learnings for the next agent:
   until you read the conjuncts.
 - `/api/run`'s pre-flight requires an input that has a default but no `required: false` — the
   RunPanel form prefills it so browser launches work; a bare curl must pass it explicitly.
+
+## 2026-07-12 — Post-close review round (PR #579 open): 2 targeted sonnet agents + fixes
+
+User-directed third review round on the un-reviewed axes: `review-impact-completeness` on the
+full branch (its first look at the frontend half) + a security review (first of the task), with
+the driver making an independent pass under those two lenses + simplicity. Security: zero
+criticals/warnings; every masking exit re-verified (incl. the `answer_required` message TEXT —
+masked at construction via `format_gate_lines`). Impact: everything Verified Complete except ONE
+confirmed Warning. Both driver-verified first-hand before acting.
+
+**Fixed (each mutation-verified):**
+1. **Escalation-pause status clobber** (impact-completeness, Warning — the round's one real
+   finding): `pausedEntry` unconditionally replaced the frontier node's `runStatus` entry with a
+   bare `{status:"paused"}`. Correct for approvals (the gated step never ran); for ESCALATIONS the
+   frontier IS the already-completed escalating step (`last_completed_node_id == paused_node_id`)
+   — the overwrite dropped its metrics + event id, so the badge hover lost duration/cost and
+   `TERMINAL_RUN_STATUSES` (a pre-existing consumer) closed the "This run" section during the
+   exact window a human decides the escalation (and permanently on the source run's replay).
+   Fix: `pausedEntry` → `pausedKey`; both call sites MERGE (`{...prev.get(key), status:"paused"}`);
+   `showRunDetail` gains a paused-WITH-id arm (an approval pause has no id → stays closed by
+   construction). Pins: "an ESCALATION pause merges …" (fails under BOTH the clobber mutation and
+   the arm removal) + "an APPROVAL pause … keeps 'This run' closed" (fails if the id conjunct is
+   dropped — over-open guard; `fetchRunNode` asserted un-called). vitest 62→ (GraphView 60/60),
+   tsc clean.
+2. **Dash-prefixed resume target guard** (security review, Note — confirmed-unreachable, hardened
+   anyway): a `run` target matching a KNOWN `pflow resume` option name is consumed as that FLAG
+   by the child (`ignore_unknown_options` only passes through UNRECOGNIZED dash tokens — verified
+   empirically with the command's exact context_settings) → zero positionals, exit 2 into DEVNULL.
+   Unreachable via real targets (uuid ids; workflow names forbid leading hyphens) but the guard
+   makes the no-silent-no-op rule structural. Fix: argv parity guard #2 in `_parse_resume_body`
+   (400 before any I/O). Pin: `test_dash_prefixed_target_is_400_and_does_not_spawn` — mutation-
+   verified (guard disabled → fails); server test file 90/90.
+
+**Take-or-leave, deliberately NOT taken:** `resumeRun` re-implements `parseErrorBody`'s
+plural→singular→generic fallback inline (the single-read rule) — a shared `errorsFromPayload`
+would fold ~6 lines; churn outweighs gain (driver simplicity pass + owner).
+
+Docs: `ui/CLAUDE.md` (/api/resume guard list), `web/src/views/CLAUDE.md` (merge synthesis + the
+paused-with-id arm), `task-review.md` (the invariant now states MERGE, never replace).
+
+**Addendum (same day):** triaged the PR's `claude-review` CI comment (posted at PR creation) —
+its verified section matches this round's findings; its argv-safety note is superseded by the
+dash-guard above; its `=`-path suggestion is already documented-acceptable. One micro-item
+adopted: `useResumeAnswer.submit` now clears `superseded` too (was terminal-by-invariant only —
+`refusal` prioritizes superseded over confirm, so a stuck value would mask later refusals if a
+retry affordance is ever added). vitest 778 green, tsc clean.

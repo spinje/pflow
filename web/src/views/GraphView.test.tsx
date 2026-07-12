@@ -1579,4 +1579,51 @@ describe("GraphView — approval bridge (Task 176)", () => {
     expect(await screen.findByRole("button", { name: "Approve" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "↻ Resume" })).toBeNull();
   });
+
+  it("an ESCALATION pause merges over the completed escalating step — ⏸ badge, but 'This run' still opens", async () => {
+    // The escalation frontier IS the already-completed escalating step (last_completed == paused,
+    // resume_source.py). The ⏸ synthesis must MERGE over its real success entry, not clobber it:
+    // the completion's event id keys the "This run" section, and a bare {status:"paused"} silently
+    // hid the step's recorded output during the exact window a human decides the escalation
+    // (post-close review finding, 2026-07-12). Reverting the merge OR the paused-with-id
+    // showRunDetail arm fails this test.
+    vi.mocked(fetchRunNode).mockResolvedValue({
+      node_type: "claude-code",
+      status: "success",
+      duration_ms: 2100,
+      cost_usd: null,
+      tokens: null,
+      error: null,
+      input: { prompt: "decide" },
+      output: { result: { escalation: { question: "Which fix?" } } },
+    });
+    const run = await mountLive();
+    // The escalating step completed (a real success event with an id) BEFORE the pause trailer.
+    act(() =>
+      run.runSnapshot(
+        [{ id: 1, ref: { node_id: "greet", ancestor_path: [], port: null }, status: "success", duration_ms: 2100 }],
+        pausedBanner,
+        false,
+        false,
+      ),
+    );
+    // The frontier badge still reads paused (the spec'd ⏸ cue the gate panel anchors at) …
+    await waitFor(() => expect(screen.getByLabelText("run status: paused")).toBeTruthy());
+    // … and selecting the step still opens its recorded completion (the merged entry kept the id).
+    fireEvent.click(screen.getAllByText("say hi").find((el) => el.className.includes("node-name"))!);
+    await waitFor(() => expect(screen.getByText("Output")).toBeTruthy());
+  });
+
+  it("an APPROVAL pause (the gated step never ran) keeps 'This run' closed", async () => {
+    // The inverse guard for the paused-with-id arm: an approval pause synthesizes a bare paused
+    // entry (no completion, no event id) — the detail section must NOT open on a step with no
+    // recorded run data.
+    const run = await mountLive();
+    act(() => run.runComplete(pausedBanner));
+    await waitFor(() => expect(screen.getByLabelText("run status: paused")).toBeTruthy());
+    fireEvent.click(screen.getAllByText("say hi").find((el) => el.className.includes("node-name"))!);
+    await waitFor(() => expect(screen.getByText("Params")).toBeTruthy());
+    expect(screen.queryByText("Output")).toBeNull();
+    expect(fetchRunNode).not.toHaveBeenCalled();
+  });
 });

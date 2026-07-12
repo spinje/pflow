@@ -46,6 +46,11 @@ export function useResumeAnswer(run: string, onPinRun: (runId: string) => void):
     setSubmitting(true);
     setErrors([]);
     setConfirm(null);
+    // Superseded is terminal today (its only affordance is pinNewer — no re-submit path), but a
+    // fresh submit clears it anyway so the machine stays self-consistent if a retry affordance is
+    // ever added: `refusal` prioritizes superseded over confirm, so a stuck value would mask every
+    // later refusal (PR #579 review note).
+    setSuperseded(null);
     resumeRun({ run, ...answer, ...(force ? { force: true } : {}) })
       .then((newRunId) => onPinRun(newRunId)) // pin the new attempt — the banner clears, the surface unmounts
       .catch((err: unknown) => {

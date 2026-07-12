@@ -1373,6 +1373,21 @@ class TestResumeEndpoint:
         assert "must not contain '='" in response.json()["error"]
         popen.assert_not_called()
 
+    def test_dash_prefixed_target_is_400_and_does_not_spawn(self, tmp_path: Path, monkeypatch) -> None:
+        """Argv parity #2 (post-close security review, 2026-07-12): a '-'-prefixed target that
+        matches a KNOWN `pflow resume` option name is consumed as that FLAG by the child
+        (`ignore_unknown_options` passes through only UNRECOGNIZED dash tokens) — zero
+        positionals, UsageError exit 2 into DEVNULL. Unreachable via real targets today (uuid
+        ids; workflow names forbid a leading hyphen), but the guard makes the no-silent-no-op
+        rule structural rather than resting on those upstream constraints."""
+        self._home(tmp_path, monkeypatch)
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            for target in ("--force", "-x", "--dry-run"):
+                response = _client().post("/api/resume", json={"run": target})
+                assert response.status_code == 400, target
+                assert "must not start with '-'" in response.json()["error"]
+        popen.assert_not_called()
+
     def test_unknown_run_id_is_404_and_does_not_spawn(self, tmp_path: Path, monkeypatch) -> None:
         self._home(tmp_path, monkeypatch)
         ghost = "00000000-0000-4000-8000-000000000000"  # uuid-shaped, matches nothing

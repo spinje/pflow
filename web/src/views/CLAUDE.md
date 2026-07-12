@@ -47,7 +47,12 @@ The load-bearing structural facts (everything else is in the inline comments):
   clicking the ⏸ node (an effect on "selection landed on the paused frontier", which resolves a
   gated container through its HOST via `selectedNode`). The ⏸ badge itself is synthesized into
   `runStatus` from BOTH `runComplete` and `runSnapshot` (the late-subscriber path) — never from a
-  per-node event. `ResumeControl` mounts in the run callout for `failed` banners / stopped runs
+  per-node event, and always as a MERGE over any existing entry: an ESCALATION's frontier is the
+  already-completed escalating step, whose real success entry carries the metrics + event id
+  (post-close review finding — a bare `{status}` clobbered them). That kept id is also why
+  `showRunDetail` opens for a paused-WITH-id node (the escalating step's recorded output, readable
+  while the human decides); an approval pause has no id (the gated step never ran) and stays
+  closed. `ResumeControl` mounts in the run callout for `failed` banners / stopped runs
   ONLY (paused belongs to the gate panel). Both components pin outcomes through `selectRun` — the
   single pin path.
 

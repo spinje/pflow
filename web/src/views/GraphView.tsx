@@ -69,11 +69,14 @@ const eventState = (e: RunEvent): NodeRunState => ({ status: e.status, durationM
 // Task 176: the ⏸ frontier badge is CLIENT-synthesized from the banner's `paused_node_id` — `paused`
 // never arrives as a per-node RunEvent (events.ts RUN_STATUSES stays untouched, the 171 rule). The
 // paused node is top-level by the 171 producer conjuncts (nested/batch gates never pause durably),
-// so the join ref is always `{node_id, ancestor_path: [], port: null}`.
-const pausedEntry = (run: RunComplete | null): [string, NodeRunState] | null =>
-  run?.paused_node_id
-    ? [refKey({ node_id: run.paused_node_id, ancestor_path: [], port: null }), { status: "paused" }]
-    : null;
+// so the join ref is always `{node_id, ancestor_path: [], port: null}`. Both call sites MERGE the
+// paused status over any existing entry instead of replacing it: an ESCALATION's frontier is the
+// already-COMPLETED escalating step (`last_completed_node_id == paused_node_id`), whose real success
+// event carries the metrics + event id the badge hover and the "This run" section key on — a bare
+// `{status}` clobbered them (post-close review finding). An approval's frontier never ran (the gate
+// fires before node.start), so there is nothing to merge and its entry is the bare paused status.
+const pausedKey = (run: RunComplete | null): string | null =>
+  run?.paused_node_id ? refKey({ node_id: run.paused_node_id, ancestor_path: [], port: null }) : null;
 
 // The detail panel's "This run" section opens ONLY for a node with a recorded COMPLETION in the current run.
 // `running` (the badge/chip cover it), `stopped` (only a node.start on disk — nothing to project), and
@@ -949,8 +952,8 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               stopped && e.status === "running" ? { status: "stopped" } : eventState(e),
             ]),
           );
-          const paused = pausedEntry(run);
-          if (paused) next.set(paused[0], paused[1]);
+          const paused = pausedKey(run);
+          if (paused) next.set(paused, { ...next.get(paused), status: "paused" });
           return next;
         });
         setRunBanner(run);
@@ -967,8 +970,8 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
         setRunStopped(false);
         setRunBanner(run);
         // Task 176: a paused trailer lights the ⏸ badge on the frontier node (map-copy, like runStopped).
-        const paused = pausedEntry(run);
-        if (paused) setRunStatus((prev) => new Map(prev).set(paused[0], paused[1]));
+        const paused = pausedKey(run);
+        if (paused) setRunStatus((prev) => new Map(prev).set(paused, { ...prev.get(paused), status: "paused" }));
       },
       runReset: () => {
         setRunMissing(false);
@@ -1354,7 +1357,14 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               onClose={() => setSelectedId(null)}
               workflow={workflow}
               runId={runId}
-              showRunDetail={TERMINAL_RUN_STATUSES.has(selectedRunState?.status ?? "")}
+              showRunDetail={
+                TERMINAL_RUN_STATUSES.has(selectedRunState?.status ?? "") ||
+                // Task 176: an ESCALATION pause sits on the already-completed escalating step — its
+                // merged entry keeps the completion's event id, and that recorded output is exactly
+                // what a human deciding the escalation wants to read. An approval pause carries no
+                // id (the gated step never ran), so it stays closed by construction.
+                (selectedRunState?.status === "paused" && selectedRunState.id != null)
+              }
               runEventId={selectedRunState?.id ?? null}
             />
           )}

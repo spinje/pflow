@@ -1211,6 +1211,22 @@ def _parse_resume_body(body: dict[str, object]) -> tuple[str, str | None, str | 
             },
             status_code=400,
         )
+    # Argv parity guard #2 (post-close security review, 2026-07-12): a '-'-prefixed target that
+    # matches a KNOWN `pflow resume` option name (`--force`, `--dry-run`, …) is consumed as that
+    # FLAG by the child's parser — click's `ignore_unknown_options` passes through only
+    # UNRECOGNIZED dash tokens (verified empirically) — leaving zero positionals, a UsageError
+    # exit 2 straight into DEVNULL that the in-process pre-flight cannot predict (it never
+    # re-parses the target through click). No real target starts with '-' (execution ids are
+    # uuids; `validate_workflow_name` forbids a leading hyphen), so refusing loudly keeps the
+    # no-silent-no-op rule structural instead of resting on those upstream constraints.
+    if run_target.startswith("-"):
+        return _json(
+            {
+                "error": "Field 'run' must not start with '-' — the spawned `pflow resume` would "
+                "read such a target as a flag. Use the run's execution id instead."
+            },
+            status_code=400,
+        )
     raw_approve = body.get("approve")
     if raw_approve is not None and raw_approve not in ("yes", "no"):
         return _json({"error": 'Field \'approve\' must be "yes" or "no".'}, status_code=400)

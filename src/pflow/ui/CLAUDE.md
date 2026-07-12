@@ -193,7 +193,10 @@ adds `--force` itself — it appears only when the client sent `force: true` aft
 dialog. Two deliberate server-stricter asymmetries (`approve` lowercase-only; empty `choose` →
 400) are documented on `_parse_resume_body`, which also 400s a `=`-bearing `run` target — argv
 parity, not an asymmetry: the spawned child's `_split_target_and_params` reads every `=`-bearing
-token as a workflow input, so such a target would exit 2 into DEVNULL (deep-review 2026-07-12).
+token as a workflow input, so such a target would exit 2 into DEVNULL (deep-review 2026-07-12) —
+and a `-`-prefixed `run` target (argv parity #2, post-close security review 2026-07-12: a target
+matching a KNOWN option name is consumed as that FLAG by the child; unreachable via real targets,
+but the guard keeps the no-silent-no-op rule structural).
 
 **ADR-0007 exposure:** mutating (a second sanctioned spawn). Worst cross-origin case is blocked
 by `_LoopbackOnly` + the JSON-POST preflight; a same-machine caller could already run

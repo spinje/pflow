@@ -39,7 +39,11 @@ greying on terminal replays.
   `masked_gate_dict` — skipping it leaks real secrets (the on-disk trailer is unmasked).
 - **`paused` never arrives as a per-node RunEvent.** `events.ts` `RUN_STATUSES` stays untouched;
   the badge is synthesized from the banner in BOTH `runComplete` and `runSnapshot`. The join ref
-  is always `{node_id, [], null}` (171 producer conjuncts guarantee top-level).
+  is always `{node_id, [], null}` (171 producer conjuncts guarantee top-level). The synthesis
+  MERGES over any existing entry (post-close review, 2026-07-12): an ESCALATION's frontier is the
+  already-completed escalating step — a bare `{status}` clobbered its metrics + event id, hiding
+  the "This run" section during the exact window a human decides the escalation. The kept id also
+  drives `showRunDetail`'s paused-with-id arm; both mutation-pinned in `GraphView.test.tsx`.
 - **Escalation answers send the option LABEL, never the number** (`option_labels` falsy-fallback
   mirrored in `GateCallout.optionLabel`). Numbers are a terminal-only convenience.
 - **Trailer keys are FLAT, never `META_KEYS`**, and every reader change must survive the
