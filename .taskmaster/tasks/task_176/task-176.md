@@ -20,7 +20,14 @@ region greying** on pinned terminal replays.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-07-12
+
+> All phases (0–5) implemented on `feat/web-ui-approval-bridge`, deep-reviewed and
+> browser-verified. See `implementation/progress-log.md` + `task-review.md`.
 
 ## Decision ledger
 
@@ -42,6 +49,40 @@ not started
    resume creates a separate attempt trace linked by `resumed_from`. Reversible: adding `"ui"`
    later is additive; wait for the first real consumer (an actual audit view) and then decide
    whether self-reported provenance is even the right mechanism. Do NOT re-derive this in-task.
+4. **One `POST /api/resume` — DECIDED (owner, 2026-07-11, plan session).** A single endpoint
+   mirroring the CLI verb — body `{run, approve?, choose?, force?}` — instead of this spec's
+   sketch of a separate `POST /api/approve` + resume trigger. One pre-flight, one spawn path;
+   the CLI's own flag-exclusivity rules map 1:1. ADR-0009's "`POST /api/approve`" example
+   carries an amendment note. Contract details: `implementation/implementation-plan.md` §P2-3.
+5. **Gate panel = NodeCallout anchored at the ⏸ node — DECIDED (owner, 2026-07-11, plan
+   session).** The kind-switched controls live in a `NodeCallout` at the paused frontier node
+   (auto-shown, dismissible, reopened by clicking the ⏸ node — two entry points, deliberately
+   no third); the failed-run Resume button is a separate `ResumeControl` under `RunProgress` in
+   the existing run callout. Chosen over a RunPanel-style side panel for reuse and to stay out
+   of the right-panel budget.
+
+## Corrections from the 2026-07-11 plan session (verified against worktree `276672a4`)
+
+> The implementation plan (`implementation/implementation-plan.md`, deep-reviewed 2026-07-11)
+> supersedes this spec where they disagree. Three claims below were verified FALSE or stale;
+> the affected sections carry inline `[CORRECTED]` markers.
+
+1. **`PFLOW_EXECUTION_ID` already works for `resume` — no CLI change.** This spec claimed
+   "resume ignores it today". Verified false: `_dispatch_resume` (resume.py:420) dispatches
+   through the shared `execute_json_workflow`, whose `RunnerConfig` pops the env var
+   (run.py:301), and `runner.py:193` threads `config.execution_id` into the collector on every
+   path. Deliverable is a **pin test only** (plan §P2-T4).
+2. **ADR-0013 does not govern the spawn helper** — it is scoped to the shell *node's* POSIX-sh
+   dialect. The Windows contract for new subprocess code is the existing `/api/run` detach
+   branch (server.py:1098-1101) + the blocking `tests-windows` CI job.
+3. **Actual non-UI code touched** (replacing "the one CLI change" scope sentence): a
+   behavior-preserving extraction of the four click-free refusal gates from `resume.py` into
+   `execution/resume_preflight.py` (the 171 "extract the rule when the second consumer appears"
+   pattern — the server pre-flight is that second consumer), one line in `core/exceptions.py`
+   (`ResumeStaleWorkflowError` gains `self.hash_known`), and a compile step in the server's
+   pre-flight wrapper (mirroring `/api/run`'s, closing the pre-trace-failure vanish on
+   force-resume of an edited-broken workflow). None are engine or trace-format changes — the
+   escalate clause is not triggered.
 
 ## Priority
 
@@ -102,7 +143,8 @@ Any approval surface = **read the gate → render `GateRequest` → deliver the 
    already hosts `RunProgress` and the say bubbles) and/or a boolean-gated panel like `RunPanel`
    (deliberately *outside* the `selectedId` three-panel selection model — copy that precedent to
    avoid racing it).
-2. `POST /api/approve` (and the resume trigger) → server spawns `pflow resume ...` detached.
+2. `POST /api/approve` (and the resume trigger) `[ledger #4: shipped as ONE POST /api/resume]`
+   → server spawns `pflow resume ...` detached.
    Second sanctioned spawn, structurally identical to `/api/run`. **Extract the spawn helper** —
    `/api/run`'s spawn is inline (`server.py:1102-1109`) and this task makes three consumers
    (run / approve / resume): a real seam by the project's own rule. The helper MUST carry the
@@ -119,12 +161,12 @@ Any approval surface = **read the gate → render `GateRequest` → deliver the 
   Mirror `/api/run`'s pre-flight pattern: validate **in-process** (via `load_resume_source` /
   the refusal family) and return 4xx with diagnostics BEFORE spawning; only a validated answer
   spawns. (Task-175 rule: "spawn failures surface, never a silent no-op.")
-- **Pin the resumed attempt.** `PFLOW_EXECUTION_ID` is honored only by the `run` command
-  (`cli/commands/run.py:301`) — `resume` ignores it today. Add the same env hook to the resume
-  path (mirroring run.py's consume-and-pop) so the server can mint the new attempt's id and the
-  browser pins it immediately, exactly like `/api/run` launches. Without it the browser must
-  scan for `resumed_from` — racy and slower. (Small CLI change; verify placement against
-  `_dispatch_resume` → `execute_json_workflow`.)
+- **Pin the resumed attempt.** `[CORRECTED 2026-07-11 — see Corrections #1]` The env hook
+  already exists on the resume path: `_dispatch_resume` flows through the shared
+  `execute_json_workflow`, which pops `PFLOW_EXECUTION_ID` into `RunnerConfig.execution_id`
+  (`cli/commands/run.py:301`). The server mints the new attempt's id and the browser pins it
+  immediately, exactly like `/api/run` launches. The only deliverable is a regression pin test
+  (nothing guards this today and the bridge depends on it).
 
 ## The resume surface, as a machine caller sees it (verified 2026-07-11)
 
@@ -196,8 +238,11 @@ value (ledger #3, OUT).
   pattern + constraints for the first external bridge live in `task-171.md` "Consumers &
   synergies" (`on_pause` hook is additive-later; bridges own their authn).
 - Engine or trace-format changes. The wire work is UI-server projection only (allowlists +
-  endpoint); the one CLI change (resume `PFLOW_EXECUTION_ID`) mirrors an existing pattern. If the
-  bridge needs more than that, the 125/171 contracts failed — escalate rather than patch around.
+  endpoint). `[CORRECTED 2026-07-11 — see Corrections #1/#3]` The "one CLI change" is gone (the
+  env hook already works — pin test only); the non-UI touches are the `resume_preflight`
+  extraction, one `exceptions.py` line, and the server-side compile — none engine/trace-format.
+  If the bridge needs more than that, the 125/171 contracts failed — escalate rather than patch
+  around.
 - Process cancel / PID tracking (#568's scope). Note: a durably paused run has NO live process
   (it exited 4) — deny is a trace operation, not a kill.
 
@@ -207,7 +252,9 @@ value (ledger #3, OUT).
   short-circuits before the lock check. **The bridge is immune to the Windows "unknown lock =
   live" weakness (#566).** Favorable and load-bearing — don't re-open it.
 - The spawn helper carries the win32 detach branch (above). Windows CI (`tests-windows`) is a
-  blocking gate — any new subprocess/encoding/path code must clear it; ADR-0013 governs.
+  blocking gate — any new subprocess/encoding/path code must clear it.
+  `[CORRECTED 2026-07-11 — see Corrections #2]` ADR-0013 does NOT govern this (it is the shell
+  node's dialect contract); the binding precedent is the `/api/run` detach branch itself.
 
 ## Collisions & sequencing (verified 2026-07-11)
 

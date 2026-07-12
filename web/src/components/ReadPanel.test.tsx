@@ -43,7 +43,8 @@ describe("ReadPanel — source link", () => {
     const link = screen.getByText("prompt-caching-multi-chunk.pflow.md:77");
     expect(link.tagName).toBe("BUTTON");
     link.click();
-    expect(onOpenSource).toHaveBeenCalledTimes(1);
+    // Carries the NODE's own ref explicitly (the SourcePane jumpTarget path).
+    expect(onOpenSource).toHaveBeenCalledWith({ file: "/w/prompt-caching-multi-chunk.pflow.md", line: 77 });
   });
 
   it("renders the source line as plain text when onOpenSource is absent", () => {

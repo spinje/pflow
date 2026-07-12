@@ -28,6 +28,13 @@ src/pflow/execution/
 │                            #   format_gate_lines/format_resume_answer_command — the ONE render shape
 │                            #   across prompt, pause output, and ResumeAnswerRequiredError; deny=
 │                            #   on build_gate_resolver is `--approve no`'s delivery.
+├── resume_preflight.py      # Task 176: the click-free resume pre-flight — preflight_resume() runs the
+│                            #   CLI's four refusal gates (load ladder → stale-hash → between-nodes entry
+│                            #   → side-effect VERDICT, constructed not raised) in CLI order. Extracted
+│                            #   from cli/commands/resume.py when the second consumer appeared (the UI
+│                            #   server's POST /api/resume must refuse in-process BEFORE its DEVNULL'd
+│                            #   detached spawn). Deliberately does NOT inject settings env vars and does
+│                            #   NOT compile (each caller owns those — see module docstring).
 ├── plan.py                  # Dry-run planner — graph walker with explicit `Transition` state machine
 └── formatters/              # Shared output formatters (return strings/dicts, NEVER print)
     ├── error_formatter.py

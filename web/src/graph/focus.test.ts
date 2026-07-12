@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { applyFocus, expandTargets, rowTouches, SELECTED_EDGE_Z } from "./focus";
+import { applyFocus, applyReplayDim, expandTargets, refKey, rowTouches, SELECTED_EDGE_Z } from "./focus";
 import { buildFlow, type FlowEdge, type FlowNode } from "./flow";
 import { LOOP_ROW, NODE_IN, NODE_OUT, outputHandle, paramHandle, portHandle, portTargetHandle } from "./handles";
 import { COMPACT, DETAILED, edge, group, node } from "./testFixtures";
@@ -289,5 +289,103 @@ describe("rowTouches — the row-hover touch set (reads FLOW edges, not the cont
   it("a self-edge's LINE lights but its far end never rings; a handle with no edges marks nothing", () => {
     expect([...rowTouches(flowEdges, "n1", [LOOP_ROW])]).toEqual(["e4"]);
     expect(rowTouches(flowEdges, "n1", [paramHandle("ghost")]).size).toBe(0);
+  });
+});
+
+describe("applyReplayDim — un-run region greying on pinned terminal replays (Task 176)", () => {
+  // a → b → c; the replay ran a and b, never c (an untaken tail).
+  const graph: RFGraph = {
+    nodes: [node("a"), node("b"), node("c")],
+    edges: [edge("e_ab", "a", "b", "sequential"), edge("e_bc", "b", "c", "sequential")],
+    groups: [],
+  };
+  const ranAB = new Map([
+    [refKey({ node_id: "a", ancestor_path: [], port: null }), { status: "success" as const }],
+    [refKey({ node_id: "b", ancestor_path: [], port: null }), { status: "success" as const }],
+  ]);
+
+  it("inactive is an identity pass-through — a live run pays nothing", () => {
+    const built = buildFlow(graph, DETAILED);
+    const out = applyReplayDim(built.nodes, built.edges, ranAB, false);
+    expect(out.nodes).toBe(built.nodes);
+    expect(out.edges).toBe(built.edges);
+  });
+
+  it("flags exactly the status-less nodes, and dims an edge when EITHER endpoint is un-run", () => {
+    const built = buildFlow(graph, DETAILED);
+    const out = applyReplayDim(built.nodes, built.edges, ranAB, true);
+    const flag = (id: string): boolean => (out.nodes.find((n) => n.id === id)!.data as { unrun?: boolean }).unrun ?? false;
+    expect(flag("a")).toBe(false);
+    expect(flag("b")).toBe(false);
+    expect(flag("c")).toBe(true);
+    expect(out.edges.find((e) => e.id === "e_ab")!.className ?? "").not.toContain("edge-unrun");
+    expect(out.edges.find((e) => e.id === "e_bc")!.className).toContain("edge-unrun");
+  });
+
+  it("is identity-stable: untouched nodes/edges keep their objects (memo'd components skip re-render)", () => {
+    const built = buildFlow(graph, DETAILED);
+    const out = applyReplayDim(built.nodes, built.edges, ranAB, true);
+    const same = (id: string): boolean => out.nodes.find((n) => n.id === id) === built.nodes.find((n) => n.id === id);
+    expect(same("a")).toBe(true); // ran → no patch → same object
+    expect(same("c")).toBe(false); // flagged → new identity
+    expect(out.edges.find((e) => e.id === "e_ab")).toBe(built.edges.find((e) => e.id === "e_ab"));
+    // Idempotent: re-processing its own output changes nothing (same objects throughout).
+    const again = applyReplayDim(out.nodes, out.edges, ranAB, true);
+    expect(again.nodes.every((n, i) => n === out.nodes[i])).toBe(true);
+    expect(again.edges.every((e, i) => e === out.edges[i])).toBe(true);
+  });
+
+  it("appends edge-unrun BESIDE applyFocus's classes, never clobbering them", () => {
+    const built = buildFlow(graph, DETAILED);
+    const focused = applyFocus(built.nodes, built.edges, "a"); // dims e_bc (not incident to a)
+    const out = applyReplayDim(focused.nodes, focused.edges, ranAB, true);
+    const bc = out.edges.find((e) => e.id === "e_bc")!;
+    expect(bc.className).toContain("edge-dimmed"); // focus's class survives
+    expect(bc.className).toContain("edge-unrun");
+  });
+
+  it("an un-run sub-workflow HOST: the collapsed card is flagged; the expanded region is not (children carry the dim), but its edges still dim", () => {
+    const nested: RFGraph = {
+      nodes: [
+        node("pre"),
+        node("host", { kind: "workflow", is_group_host: true }),
+        node("inner", { parent: "g0", ref: { node_id: "inner", ancestor_path: [{ node_id: "host", batch_index: null }], port: null } }),
+      ],
+      edges: [edge("e_in", "pre", "host", "sequential")],
+      groups: [group("g0", { host: "host", members: ["inner"] })],
+    };
+    const ranPre = new Map([[refKey({ node_id: "pre", ancestor_path: [], port: null }), { status: "success" as const }]]);
+
+    // Collapsed: the group renders as a card — it wears the flag.
+    const collapsed = buildFlow(nested, { ...DETAILED, collapsed: new Set(["g0"]) });
+    const outC = applyReplayDim(collapsed.nodes, collapsed.edges, ranPre, true);
+    const g = outC.nodes.find((n) => n.id === "g0")!;
+    expect((g.data as { unrun?: boolean }).unrun).toBe(true);
+
+    // Expanded: the region carries NO flag (a region opacity would compound with its dimmed
+    // children), but the edge INTO it still dims — the region is in the un-run set.
+    const expanded = buildFlow(nested, DETAILED);
+    const outE = applyReplayDim(expanded.nodes, expanded.edges, ranPre, true);
+    const region = outE.nodes.find((n) => n.id === "g0")!;
+    expect((region.data as { unrun?: boolean }).unrun ?? false).toBe(false);
+    expect((outE.nodes.find((n) => n.id === "inner")!.data as { unrun?: boolean }).unrun).toBe(true);
+    expect(outE.edges.find((e) => e.id === "e_in")!.className).toContain("edge-unrun");
+  });
+
+  it("io cards / end sinks are not run subjects — never flagged", () => {
+    const withIo: RFGraph = {
+      nodes: [
+        node("p_in", { kind: "input", ref: { node_id: "x", ancestor_path: [], port: "in" }, io: { data_type: null, required: true, default: null }, parent: "g_in" }),
+        node("a"),
+      ],
+      edges: [],
+      groups: [group("g_in", { kind: "input_wrapper", members: ["p_in"] })],
+    };
+    const built = buildFlow(withIo, DETAILED);
+    const out = applyReplayDim(built.nodes, built.edges, new Map(), true);
+    // Every non-leaf node object is untouched (no flag, same identity).
+    for (const n of out.nodes) {
+      if (n.type !== "node") expect(n).toBe(built.nodes.find((b) => b.id === n.id));
+    }
   });
 });

@@ -892,6 +892,7 @@ class TestRunsEndpoint:
         only_node: str | None = None,
         execution_id: str = "x",
         resumed_from: str | None = None,
+        trailer_extra: dict | None = None,
     ) -> None:
         # Synthetic, but the CONSUMED keys mirror the producer: meta ← workflow_trace.py `_meta_fields`,
         # run.complete.final_status ← `_aggregates`. If the producer renames those, this stays green while
@@ -922,7 +923,12 @@ class TestRunsEndpoint:
                 "port": None,
                 "status": "success",
             })
-            lines.append({"kind": "run.complete", "final_status": final_status, "nodes_executed": 1})
+            lines.append({
+                "kind": "run.complete",
+                "final_status": final_status,
+                "nodes_executed": 1,
+                **(trailer_extra or {}),
+            })
         (debug / name).write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
 
     @pytest.mark.skipif(sys.platform == "win32", reason="exact liveness needs fcntl (Unix)")
@@ -1041,6 +1047,38 @@ class TestRunsEndpoint:
         assert by_id["attempt-2"]["resumed_from"] == "source-run"
         assert by_id["source-run"]["resumed_from"] is None  # no lineage key on the meta → None
         assert by_id["source-run"]["final_status"] == "paused"  # the raw fact the UI composes the mark from
+
+    def test_run_entry_projects_paused_node_id(self, tmp_path, monkeypatch) -> None:
+        """Task 176: `/api/runs` carries the paused frontier node (`paused_node_id`, a small string) so
+        the selector/canvas can mark it — and does NOT carry the bulky `gate_request` (that payload is
+        on-demand via `/api/gate`, keeping the listing light). A non-paused run reports None."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        debug = tmp_path / ".pflow" / "debug"
+        debug.mkdir(parents=True)
+        wf = str(tmp_path / "wf.pflow.md")
+        self._write_trace(
+            debug,
+            "workflow-trace-aaa-wf-20260101-000000-000001.json",
+            wf,
+            complete=True,
+            final_status="paused",
+            execution_id="paused-run",
+            trailer_extra={
+                "paused_node_id": "deploy",
+                "gate_request": {"node_id": "deploy", "node_type": "shell", "kind": "action_approval", "preview": {}},
+            },
+        )
+        self._write_trace(
+            debug,
+            "workflow-trace-aaa-wf-20260101-000000-000002.json",
+            wf,
+            complete=True,
+            execution_id="plain-run",
+        )
+        by_id = {r["run_id"]: r for r in _local(create_app()).get("/api/runs").json()}
+        assert by_id["paused-run"]["paused_node_id"] == "deploy"
+        assert by_id["plain-run"]["paused_node_id"] is None
+        assert "gate_request" not in by_id["paused-run"], "the bulky payload never rides the runs listing"
 
     def test_run_entry_buckets_runs_by_git_root(self, tmp_path, monkeypatch) -> None:
         """`git_root` lets the catalog bucket ad-hoc runs by repo (Task 173 D6): a run under a `.git`-bearing

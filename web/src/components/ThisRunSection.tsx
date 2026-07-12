@@ -98,7 +98,7 @@ function RunDetailBody({ detail }: { detail: RunNodeDetail }): JSX.Element {
       {detail.error && (
         <section className="read-panel-params">
           <h3>Error</h3>
-          <CodeBlock code={detail.error} lang="text" />
+          <CodeBlock code={detail.error} lang="text" expandLabel="error" />
         </section>
       )}
 
@@ -128,7 +128,7 @@ function RunField({ name, value }: { name: string; value: unknown }): JSX.Elemen
       <div className="read-param-head">
         <span className="read-param-name">{name}</span>
       </div>
-      <RunValue value={value} />
+      <RunValue value={value} label={name} />
     </div>
   );
 }
@@ -144,5 +144,5 @@ function RunOutput({ output }: { output: Record<string, unknown> | string }): JS
       </>
     );
   }
-  return <RunValue value={output} />;
+  return <RunValue value={output} label="output" />;
 }

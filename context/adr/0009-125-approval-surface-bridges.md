@@ -13,6 +13,13 @@ human's answer — `pflow resume <execution-id> --approve yes|no`. Every approva
 `GateRequest` → run `pflow resume`. The first bridge is the web UI (Task 176: `POST /api/approve`
 spawns the CLI, mirroring `/api/run` under ADR-0008's observe-never-host rule).
 
+> **Amendment (2026-07-11, Task 176 plan session):** the web bridge shipped the answer surface as
+> ONE `POST /api/resume` mirroring the CLI verb — `{run, approve?, choose?, force?}` — rather than
+> a separate `/api/approve`; approval delivery is the `approve` body field. The decision (one
+> pre-flight, one spawn path, flag exclusivity mapped 1:1 from the CLI) is ledger #4 in
+> `task-176.md`. The pattern this ADR fixes — payload is the seam, answers only via
+> `pflow resume` — is unchanged.
+
 ## Considered options
 
 - **In-engine surface abstraction (`ApprovalSurface` ABC / plugin registry)** — rejected. One

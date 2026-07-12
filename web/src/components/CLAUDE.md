@@ -14,8 +14,9 @@ components in `edges/`.
 (`gradient`), `DataEdge` (`data`), `LoopEdge` (`loop`). Plus `BranchPorts`, `PortRows`,
 `ChipRail`, `StatusBadge` (under `nodes/`), `EdgeHalo`/`arrow.ts` (under `edges/`).
 `StatusBadge` is the corner run-status overlay (Task 173): the ONE per-node live-status
-surface (running/success/cached/failed/stopped), keyed off `LeafData/GroupData.status`
-(set by `applyStatus`) — pending = absent = no badge. It replaced the status border ring
+surface (running/success/cached/failed/stopped/unrecorded/paused), keyed off
+`LeafData/GroupData.status` (set by `applyStatus`; `paused` is synthesized by GraphView from
+the banner's `paused_node_id`, Task 176) — pending = absent = no badge. It replaced the status border ring
 and the ChipRail's old status slot; three node surfaces now coexist — corner StatusBadge
 (live run-status), ChipRail chips (static behavior modifiers + the count button), inline
 `.badge` pills (static structural markers). **Panels:** `ReadPanel`,
@@ -29,6 +30,17 @@ point message that precedes a say already owns the camera. Say bubbles are PERSI
 per-target — a Map in GraphView, status model in `web/CLAUDE.md`'s overlay seam; each shows
 the caption plus at most one button, unlock (`blocked`) or ↻ Replay (`done`) — the same
 start-this-clip gesture; `expired` and caption-only boxes render no button).
+**Approval bridge (Task 176):** `GateCallout` (the kind-switched gate panel content — approval
+preview + Approve/Deny; escalation options are SELECTABLE cards + a free-text field with ONE
+Answer button submitting whichever is active — selecting clears the text, typing clears the
+selection (owner decision 2026-07-12: an answer consumes the gate token irreversibly, so
+options never fire on click); answers POST `/api/resume` via
+`resumeRun`, refusals are panel states keyed on `ApiError.body.refusal`, never string-parsed)
+rides a `NodeCallout` GraphView anchors at the ⏸ frontier node; `ResumeControl` (the
+failed/interrupted-run Resume arm, same refusal vocabulary + the ack-then-`force` dialogs)
+renders inside the run callout below `RunProgress`. Both send `force: true` ONLY after an
+explicit user ack — never on the first POST. Escalation answers send the option LABEL
+(falsy `option N` fallback mirroring `core/gate.py::option_labels`), never the number.
 
 ## The leaf node — one component, two densities (`WorkflowNode`)
 
@@ -129,7 +141,31 @@ full detail: params/prompts/code, source `file:line`, loop/batch/io config, + th
 `CachedPrefixBlock` and `BatchItems` listings) and `IoPanel` (the workflow's interface — per
 input: type/required/default/description + consumer chips; per output: producer chip + read
 field + source line; an input with no data-flow edge shows no "used by" — quiet ≠ unconsumed)
-share `PanelHeader` (a large node avatar + name-as-navigate button). `EdgePanel` reads a
+share `PanelHeader` (a large node avatar + name-as-navigate button). An IoPanel port's TWO
+links: the source `file:line` opens the source pane at the PORT's own line (`onOpenSource(ref)`
+→ GraphView's `sourceJumpTarget` — io selections set no selectedNode, so the jump carries an
+explicit ref). `sourceJumpTarget` is a one-shot the pane re-fires on every MOUNT (SourcePane is
+conditionally rendered — `prevJump` reseeds to null), so `changeSourceOpen` MUST clear it on
+close or a bare Rail-toggle reopen lands on the stale target instead of the current selection.
+The dot-prefixed field (`.stdout`) SELECTS the producer (both `onNavigate`
+args — opens its ReadPanel, the recorded output's home; deliberately more than the chip beside
+it). EVERY value box carries the ⛶ expand — it lives in `CodeBlock` itself (params, code,
+prompts, batch items, errors, run values — one seam): a portaled full-screen modal
+(`.value-modal-overlay`, in the scoped chrome-token list) with the value un-capped — Esc /
+backdrop / × close; the panel box itself stays scroll-capped at 320px. On open it moves focus
+to the × (so Esc works without a prior click) and locks page scroll behind the overlay,
+restoring both on close (mount-only effect — the inline `onClose` gets a fresh identity each
+render, so re-running it would re-steal focus). `expandLabel` titles
+the modal (default "value"); `expandLabel={null}` disables it (the modal's own inner
+CodeBlock — the recursion guard); an empty value renders no button. The modal is a READING
+surface: a caller still holding the structured value can replace its content via `modalBody`
+— `RunValue` uses it to expand a DICT run value as a per-field document (labeled blocks,
+strings as REAL text — not JSON `\n` escapes; top-level only, arrays stay JSON; an EMPTY dict
+expands to plain `{}`, never a blank document). The string-vs-JSON derivation is single-sourced
+in `RunValue`'s `fieldCode` helper, shared by the compact box and each doc field. Deliberately
+RunValue-only: authored params must render exactly as authored (a literal `\n` in a code
+param is content), and the compact box stays JSON (it answers "what shape", the modal "what
+does it say"). `EdgePanel` reads a
 contract edge by id: five variants (data / branch+decision-end / error / static-end /
 sequential) — the data variant has a CACHE arm (`input_name === "prompt_cache"`: "cached
 context", never a param binding). RF native selection stays inert — components ignore the

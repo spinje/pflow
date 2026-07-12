@@ -20,9 +20,16 @@ Endpoints:
 - ``POST /api/run`` — spawn a detached ``pflow run`` for a resolved workflow +
   inputs (Task 175). The server stays a pure observer; the spawned run writes its
   own streaming trace that the tailer/overlay pick up. No in-process execution.
+- ``POST /api/resume`` — answer a paused gate / resume a failed run by spawning
+  a detached ``pflow resume`` (Task 176). In-process pre-flight (the CLI's exact
+  refusal gates + the child's compile) refuses with 4xx BEFORE spawning — a
+  DEVNULL'd detached refusal would otherwise be a silent no-op.
 - ``GET /api/run-inputs?workflow=<name|path>&run=<id>`` — a past run's recorded
   inputs as form-ready token strings, for the Run panel's re-run prefill (Task 175).
   ``meta.inputs`` with sensitive-named keys omitted (server-side redaction).
+- ``GET /api/gate?run=<execution_id>`` — a paused run's gate payload for the gate
+  panel (Task 176), secret-masked. On-demand: the bulky ``gate_request`` never
+  rides the SSE wire or the runs listing.
 - ``GET /api/activity`` — read a newest-first snapshot of recent interactions.
 - ``/`` (+ assets) — the built frontend bundle, when present. Absent in a
   source checkout (the bundle is gitignored, built by ``make ui-build``); the
@@ -71,7 +78,21 @@ from starlette.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from pflow.core.diagnostic import exception_to_diagnostics
-from pflow.core.exceptions import PflowError
+from pflow.core.exceptions import (
+    PflowError,
+    ResumeAnswerRequiredError,
+    ResumeFidelityError,
+    ResumeGateStoppedError,
+    ResumeNothingToResumeError,
+    ResumeNotResumableError,
+    ResumeSideEffectConfirmationError,
+    ResumeSourceError,
+    ResumeSourceMissingError,
+    ResumeStaleWorkflowError,
+    ResumeStillRunningError,
+    ResumeSupersededError,
+)
+from pflow.core.gate import masked_gate_dict
 from pflow.core.tts import wav_duration
 from pflow.core.workflow.graph import render_react_flow
 from pflow.core.workflow.manager import WorkflowManager
@@ -82,7 +103,7 @@ from pflow.execution.graph_service import (
 from pflow.execution.workflow_resolver import resolve_workflow
 from pflow.registry import Registry
 from pflow.ui.run_node import read_run_inputs, run_node_detail
-from pflow.ui.run_tailer import RunTailer, TraceCandidate, is_trace_locked, scan_traces
+from pflow.ui.run_tailer import RunTailer, TraceCandidate, is_trace_locked, read_run_trailer, scan_traces
 from pflow.ui.targets import resolve_target
 
 logger = logging.getLogger(__name__)
@@ -1076,38 +1097,227 @@ async def run(request: Request) -> Response:
     # follow-newest (which reverts to an older still-live run when this one finishes). The child's CLI pops
     # the env var into RunnerConfig.execution_id (so a node that re-shells `pflow` can't inherit + collide).
     run_id = str(uuid.uuid4())
+    _spawn_detached_cli(["run", key, "--output-format", "json", *tokens], execution_id=run_id)
+    return _json({"status": "spawned", "run_id": run_id})
 
-    # Spawn DETACHED via subprocess.Popen — NOT asyncio.create_subprocess_exec (load-bearing): asyncio's
-    # subprocess transport finalizer calls _proc.kill() on a still-running child, so closing `pflow ui`
-    # would SIGKILL an in-flight run — the exact coupling ADR-0008 forbids. Popen returns immediately
-    # after fork/exec and we retain NO handle: the child reparents to init, finished prior children are
-    # reaped by subprocess._cleanup() on the next spawn. `--output-format json` makes the run record its
-    # `json_output` result (for Phase 4 output inspection); stdout is DEVNULL'd (nobody reads it). The
-    # child inherits the server's CWD + re-injects settings.env at startup, so it resolves exactly like a
-    # hand-typed `pflow run` from the shell that launched `pflow ui`. We invoke `-m pflow.cli` (NOT
-    # `-m pflow`): `pflow` is a package with no `__main__.py`, so `python -m pflow` errors; `pflow.cli` is
-    # the package's documented module entry (`cli/__main__.py` → `cli_main`, same target as the `pflow`
-    # console script) and runs against the server's own interpreter.
-    # Task 116: `start_new_session=True` (POSIX setsid) is silently ignored on win32, so the ADR-0008
-    # detachment requirement (run survives server exit) would otherwise not hold there — the win32
-    # equivalent is DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP. An `if`/`else` statement (not a ternary)
-    # is load-bearing for mypy: it treats `if sys.platform == "win32":` blocks as unreachable on a
-    # non-Windows run and skips type-checking the body — a ternary expression doesn't get that treatment,
-    # so `subprocess.DETACHED_PROCESS` (Windows-only in typeshed) would fail ubuntu CI's mypy step.
+
+def _spawn_detached_cli(cli_args: list[str], *, execution_id: str) -> None:
+    """Detached pflow CLI spawn (ADR-0008: launch, never host) — the ONE spawn seam (Tasks 175/176).
+
+    DEVNULL everything; the outcome surfaces only through the trace the child writes. ``execution_id``
+    is forced via ``PFLOW_EXECUTION_ID`` (popped into ``RunnerConfig.execution_id`` by the child) so
+    the browser can pin the exact run.
+
+    Spawn DETACHED via subprocess.Popen — NOT asyncio.create_subprocess_exec (load-bearing): asyncio's
+    subprocess transport finalizer calls _proc.kill() on a still-running child, so closing `pflow ui`
+    would SIGKILL an in-flight run — the exact coupling ADR-0008 forbids. Popen returns immediately
+    after fork/exec and we retain NO handle: the child reparents to init, finished prior children are
+    reaped by subprocess._cleanup() on the next spawn. `--output-format json` (callers pass it) makes
+    the run record its `json_output` result; stdout is DEVNULL'd (nobody reads it). The child inherits
+    the server's CWD + re-injects settings.env at startup, so it resolves exactly like a hand-typed
+    `pflow` command from the shell that launched `pflow ui`. We invoke `-m pflow.cli` (NOT `-m pflow`):
+    `pflow` is a package with no `__main__.py`, so `python -m pflow` errors; `pflow.cli` is the
+    package's documented module entry (`cli/__main__.py` → `cli_main`, same target as the `pflow`
+    console script) and runs against the server's own interpreter.
+
+    Task 116: `start_new_session=True` (POSIX setsid) is silently ignored on win32, so the ADR-0008
+    detachment requirement (run survives server exit) would otherwise not hold there — the win32
+    equivalent is DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP. An `if`/`else` statement (not a ternary)
+    is load-bearing for mypy: it treats `if sys.platform == "win32":` blocks as unreachable on a
+    non-Windows run and skips type-checking the body — a ternary expression doesn't get that treatment,
+    so `subprocess.DETACHED_PROCESS` (Windows-only in typeshed) would fail ubuntu CI's mypy step."""
     detach_kwargs: dict[str, Any]
     if sys.platform == "win32":
         detach_kwargs = {"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP}
     else:
         detach_kwargs = {"start_new_session": True}
-    subprocess.Popen(  # noqa: S603 — argv list, no shell; tokens are injection-safe (one element each)
-        [sys.executable, "-m", "pflow.cli", "run", key, "--output-format", "json", *tokens],
+    subprocess.Popen(  # noqa: S603 — argv list, no shell; args are injection-safe (one element each)
+        [sys.executable, "-m", "pflow.cli", *cli_args],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        env={**os.environ, "PFLOW_EXECUTION_ID": run_id},
+        env={**os.environ, "PFLOW_EXECUTION_ID": execution_id},
         **detach_kwargs,
     )
+
+
+# The machine-readable refusal discriminator for `/api/resume` 4xx bodies — exact-type lookup, one
+# literal per refusal family, so the gate panel switches on `refusal` instead of string-parsing
+# diagnostics. A non-Resume PflowError (e.g. a pre-flight CompilationError) carries no `refusal` key.
+_RESUME_REFUSALS: dict[type[PflowError], str] = {
+    ResumeSourceMissingError: "missing",
+    ResumeSupersededError: "superseded",
+    ResumeStillRunningError: "still_running",
+    ResumeStaleWorkflowError: "stale_workflow",
+    ResumeSideEffectConfirmationError: "side_effect_confirmation",
+    ResumeAnswerRequiredError: "answer_required",
+    ResumeFidelityError: "fidelity",
+    ResumeNotResumableError: "not_resumable",
+    ResumeNothingToResumeError: "nothing_to_resume",
+    ResumeGateStoppedError: "gate_stopped",
+}
+
+
+def _resume_refusal_response(exc: PflowError) -> Response:
+    """Map a pre-flight refusal to its 4xx: 404 missing source · 409 every other ResumeSourceError
+    (the resume is well-formed but refused) · 400 any other PflowError (parity with `/api/run`'s
+    pre-flight arm). Diagnostics plus the `refusal` discriminator, plus kind-specific extras the
+    panel acts on (`newer_execution_id` / `node_id`+`node_type` / `hash_known`)."""
+    if isinstance(exc, ResumeSourceMissingError):
+        status = 404
+    elif isinstance(exc, ResumeSourceError):
+        status = 409
+    else:
+        status = 400
+    body: dict[str, Any] = {"errors": [d.to_dict() for d in exception_to_diagnostics(exc)]}
+    refusal = _RESUME_REFUSALS.get(type(exc))
+    if refusal is not None:
+        body["refusal"] = refusal
+    if isinstance(exc, ResumeSupersededError):
+        body["newer_execution_id"] = exc.newer_execution_id
+    if isinstance(exc, ResumeSideEffectConfirmationError):
+        body["node_id"] = exc.node_id
+        body["node_type"] = exc.node_type
+    if isinstance(exc, ResumeStaleWorkflowError):
+        body["hash_known"] = exc.hash_known
+    return _json(body, status_code=status)
+
+
+def _parse_resume_body(body: dict[str, object]) -> tuple[str, str | None, str | None, bool] | Response:
+    """Shape-validate a `/api/resume` body → ``(run, approve, choose, force)`` or a 400 Response.
+
+    All 400s fire BEFORE any I/O. Two intentional server-stricter asymmetries vs. the CLI (not
+    drift): ``approve`` accepts lowercase only (the CLI's click.Choice is case-insensitive — the
+    typed frontend never sends otherwise; a raw caller gets a 400, still a loud refusal), and an
+    empty/whitespace ``choose`` 400s here (the CLI routes it to the loader's ``missing_answer``
+    refusal — both refuse, only the status differs)."""
+    run_target = _string_field(body, "run")
+    if run_target is None:
+        return _json(
+            {"error": "Field 'run' (an execution id, or a workflow name/path) is required."},
+            status_code=400,
+        )
+    # Argv parity guard (deep-review 2026-07-12): the spawned child re-parses its argv, and the CLI's
+    # `_split_target_and_params` treats every `=`-bearing token as a workflow input — a `=`-bearing
+    # TARGET (only a file path can carry one) leaves the child with no positional at all, a
+    # UsageError exit 2 straight into DEVNULL. The child unconditionally refuses such a target, so
+    # refusing it loudly here IS parity, not an asymmetry.
+    if "=" in run_target:
+        return _json(
+            {
+                "error": "Field 'run' must not contain '=' — the spawned `pflow resume` reads "
+                "key=value tokens as workflow inputs, so such a target cannot be passed through. "
+                "Use the run's execution id instead."
+            },
+            status_code=400,
+        )
+    # Argv parity guard #2 (post-close security review, 2026-07-12): a '-'-prefixed target that
+    # matches a KNOWN `pflow resume` option name (`--force`, `--dry-run`, …) is consumed as that
+    # FLAG by the child's parser — click's `ignore_unknown_options` passes through only
+    # UNRECOGNIZED dash tokens (verified empirically) — leaving zero positionals, a UsageError
+    # exit 2 straight into DEVNULL that the in-process pre-flight cannot predict (it never
+    # re-parses the target through click). No real target starts with '-' (execution ids are
+    # uuids; `validate_workflow_name` forbids a leading hyphen), so refusing loudly keeps the
+    # no-silent-no-op rule structural instead of resting on those upstream constraints.
+    if run_target.startswith("-"):
+        return _json(
+            {
+                "error": "Field 'run' must not start with '-' — the spawned `pflow resume` would "
+                "read such a target as a flag. Use the run's execution id instead."
+            },
+            status_code=400,
+        )
+    raw_approve = body.get("approve")
+    if raw_approve is not None and raw_approve not in ("yes", "no"):
+        return _json({"error": 'Field \'approve\' must be "yes" or "no".'}, status_code=400)
+    approve: str | None = raw_approve if isinstance(raw_approve, str) else None
+    raw_choose = body.get("choose")
+    if raw_choose is not None and (not isinstance(raw_choose, str) or not raw_choose.strip()):
+        return _json({"error": "Field 'choose' must be a non-empty string."}, status_code=400)
+    choose: str | None = raw_choose if isinstance(raw_choose, str) else None
+    if approve is not None and choose is not None:
+        return _json(
+            {"error": "Fields 'approve' and 'choose' are mutually exclusive — one flag per gate kind."},
+            status_code=400,
+        )
+    force = body.get("force", False)
+    if not isinstance(force, bool):
+        return _json({"error": "Field 'force' must be a boolean."}, status_code=400)
+    return run_target, approve, choose, force
+
+
+async def resume(request: Request) -> Response:
+    """Answer a paused gate — or resume a failed/interrupted run — by spawning `pflow resume` (Task 176).
+
+    Body: ``{"run": str, "approve"?: "yes"|"no", "choose"?: str, "force"?: bool}`` — one endpoint
+    mirroring the CLI verb (ledger #4). The server stays a pure observer (ADR-0008): after an
+    IN-PROCESS pre-flight it spawns the normal CLI detached and the browser pins the minted run id,
+    exactly like ``/api/run``.
+
+    **No silent no-ops** (the task's hard rule): the spawn is detached with every stream DEVNULL'd, so
+    every refusal a spawned non-TTY resume could hit MUST be caught here first — ``preflight_resume``
+    (the CLI's exact refusal gates, `execution/resume_preflight.py`) plus the very compile the child
+    will run (mirroring ``/api/run``'s ``_preflight``: without it, a force-resume of an edited-broken
+    workflow dies BEFORE writing its meta line and the pinned id never materializes — a misleading
+    `run-not-found` instead of a clean 400). Known residual (deep-review 2026-07-12, shared with
+    ``/api/run``'s compile-only ``_preflight`` by the same Task-175 decision): the child also runs the
+    full ``WorkflowValidator`` pre-meta, so a ``--force`` resume of a workflow edited to carry a
+    validator-only ERROR (one ``compile_workflow`` doesn't raise) still dies silently; without
+    ``force`` the content-hash gate makes this unreachable. A side-effecting entry's verdict is RAISED here — the
+    non-TTY spawn would refuse, so we do; the client retries with ``force: true`` only after an
+    explicit ack dialog (the server NEVER adds ``--force`` itself). Shape rules + the two deliberate
+    server-stricter asymmetries: see ``_parse_resume_body``.
+
+    TOCTOU (edge ledger #1): two viewers answering concurrently can both pass pre-flight and both
+    spawn; the loser's CLI refuses on the loader's superseded check (the ONE consumption policy — no
+    double-fire) and its browser pins an id that never materializes → the existing `run-not-found`
+    state. Tolerated (local single-user; same posture as #546)."""
+    body = await _json_body(request)
+    if isinstance(body, Response):
+        return body
+    parsed = _parse_resume_body(body)
+    if isinstance(parsed, Response):
+        return parsed
+    run_target, approve, choose, force = parsed
+
+    # The CLI's exact answer shapes (resume.py::_build_gate_answer) — the loader validates kind-match.
+    gate_answer: dict[str, Any] | None = None
+    if approve is not None:
+        gate_answer = {"approve": approve == "yes"}
+    elif choose is not None:
+        gate_answer = {"chosen": choose, "notes": None}
+
+    def _resume_preflight() -> None:
+        from pflow.execution.resume_preflight import preflight_resume
+        from pflow.runtime import compile_workflow
+
+        pf = preflight_resume(run_target, gate_answer=gate_answer, force=force)
+        if pf.side_effect_refusal is not None:
+            raise pf.side_effect_refusal  # a non-TTY spawn would refuse — so we do
+        # The exact compile the spawned child will do (CompilationError → the 400 arm).
+        compile_workflow(pf.resolved.ir, Registry(), initial_params=dict(pf.source.inputs or {}))
+
+    try:
+        await asyncio.to_thread(_resume_preflight)  # blocking trace read + compile — off the hub loop
+    except PflowError as exc:
+        return _resume_refusal_response(exc)
+
+    run_id = str(uuid.uuid4())
+    _spawn_detached_cli(_resume_cli_args(run_target, approve, choose, force), execution_id=run_id)
     return _json({"status": "spawned", "run_id": run_id})
+
+
+def _resume_cli_args(run_target: str, approve: str | None, choose: str | None, force: bool) -> list[str]:
+    """The exact `pflow resume` argv the validated answer maps to — `--force` appears ONLY when the
+    client sent `force: true` after an explicit ack dialog; the server never adds it itself."""
+    args = ["resume", run_target, "--output-format", "json"]
+    if approve is not None:
+        args += ["--approve", approve]
+    if choose is not None:
+        args += ["--choose", choose]
+    if force:
+        args.append("--force")
+    return args
 
 
 async def activity(request: Request) -> Response:
@@ -1195,6 +1405,9 @@ def _run_entry(candidate: TraceCandidate) -> dict[str, Any]:
         # Task 171: attempt-chain lineage — the source run's execution_id when this run resumed a prior
         # attempt (meta line, 2.6.0+), else None. The selector renders the chain marker from it.
         "resumed_from": meta.get("resumed_from"),
+        # Task 176: the paused frontier node (a PAUSED trailer's small string; the bulky gate_request
+        # stays off this wire — `/api/gate` serves it on demand), else None.
+        "paused_node_id": candidate["paused_node_id"],
     }
 
 
@@ -1278,6 +1491,53 @@ def run_inputs(request: Request) -> Response:
     return _json(tokens)
 
 
+def gate(request: Request) -> Response:
+    """A paused run's gate payload for the browser gate panel (Task 176).
+
+    ``GET /api/gate?run=<execution_id>`` → ``{paused_node_id, gate_kind, gate_request}`` with the
+    ``gate_request`` secret-masked via ``masked_gate_dict`` — masking is display-surface policy and
+    the browser is a display surface (ADR-0009); the on-disk trailer stays unmasked. The bulky
+    payload is served ON DEMAND here precisely so it never rides the SSE wire or the ``/api/runs``
+    listing (their allowlists exist to keep it off — PR #543).
+
+    A read-only GET of trace content, same exposure class as ``/api/run-node`` (sync handler —
+    threadpooled, touches no hub state). ``400`` on a missing/empty ``run`` param; ``404`` when no
+    run has that id OR the run is not paused at a gate (a corrupt paused trailer — missing
+    ``gate_request``/``paused_node_id``, the same conjuncts the resume loader requires, plus a
+    missing ``gate_request.kind``, one conjunct stricter so the 200 body's ``gate_kind`` literal
+    is never a null lie — lands in the not-paused 404 too, never a 500; edge ledger #2)."""
+    run_id = request.query_params.get("run")
+    if not run_id:
+        return _json(
+            {"errors": [{"message": "Missing required 'run' query parameter."}]},
+            status_code=400,
+        )
+    candidate = next((c for c in scan_traces() if c["meta"].get("execution_id") == run_id), None)
+    if candidate is None:
+        return _json({"error": f"No run {run_id!r} was found."}, status_code=404)
+    # Re-read the trailer fresh (not the scan-cache fact): this is the one consumer of the bulky
+    # gate_request, which is deliberately never cached or carried on a wire.
+    trailer = read_run_trailer(candidate["path"])
+    gate_request = trailer.get("gate_request") if trailer is not None else None
+    paused_node_id = trailer.get("paused_node_id") if trailer is not None else None
+    if (
+        trailer is None
+        or trailer.get("final_status") != "paused"
+        or not isinstance(gate_request, dict)
+        or not isinstance(paused_node_id, str)
+        # `kind` is a required GateRequest field (every real producer writes it); a hand-corrupted
+        # trailer without it must land in this 404, not a 200 whose `gate_kind` is null — the
+        # response contract types it as one of the two gate-kind literals (deep-review 2026-07-12).
+        or not isinstance(gate_request.get("kind"), str)
+    ):
+        return _json({"error": f"Run {run_id!r} is not paused at a gate."}, status_code=404)
+    return _json({
+        "paused_node_id": paused_node_id,
+        "gate_kind": gate_request["kind"],
+        "gate_request": masked_gate_dict(gate_request),
+    })
+
+
 class _BundleFiles(StaticFiles):
     """StaticFiles that makes ``index.html`` revalidate on every load.
 
@@ -1327,6 +1587,7 @@ def create_app() -> Starlette:
         Route("/api/runs", runs),
         Route("/api/run-node", run_node),
         Route("/api/run-inputs", run_inputs),
+        Route("/api/gate", gate),
         Route("/api/health", health),
         Route("/api/command", command, methods=["POST"]),
         Route("/api/say", say, methods=["POST"]),
@@ -1335,6 +1596,7 @@ def create_app() -> Starlette:
         Route("/api/interaction", interaction, methods=["POST"]),
         Route("/api/visibility", visibility, methods=["POST"]),
         Route("/api/run", run, methods=["POST"]),
+        Route("/api/resume", resume, methods=["POST"]),
         Route("/api/activity", activity),
     ]
     if (_STATIC_DIR / "index.html").exists():
@@ -1355,7 +1617,10 @@ def create_app() -> Starlette:
     # covered by default — no "must route through `_json_body`" invariant to forget.
     # `/api/run` (Task 175) spawns a detached `pflow run` behind this same posture:
     # a resolvable name/path only (never inline content), the normal CLI spawned, no
-    # in-process execution.
+    # in-process execution. `/api/resume` (Task 176) is the second sanctioned spawn,
+    # same posture — its worst cross-origin case is answering a gate the same-machine
+    # caller could already answer via `pflow resume` directly (the ADR-0009 trust
+    # boundary is unchanged); `/api/gate` joins the `/api/run-node` read-exposure class.
     # `/api/say` (Task 174) is mutating but its worst cross-origin case is storing/playing benign
     # local bytes — synthesis is CLI-side, so the server makes NO outbound call — and it is bounded
     # by `_AUDIO_MAX_BYTES` x `_AUDIO_STORE_MAX`. `/api/audio/<id>` joins the `/api/source` read-exposure

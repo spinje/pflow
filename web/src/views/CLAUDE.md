@@ -40,6 +40,21 @@ The load-bearing structural facts (everything else is in the inline comments):
 - **The interaction context is created here** (`focusPort` / `toggleGroup` / `hoverNode` /
   `hoverRow`) and provided to the node tree via `components/interaction.ts`, keeping node `data`
   callback-free. `focusPort` no-ops on a nested port with no line in view (the into-nowhere click).
+- **The gate panel (Task 176) lives OUTSIDE the `selectedId` model**, like the Run panel: a
+  `gateDismissed` boolean (reset in `selectRun`), shown when the banner is `paused` with a
+  resolvable ⏸-node anchor (re-resolved every render via `sayAnchorIdFor` — never cached) and an
+  answerable run id (`runId ?? runBanner.execution_id`). Two entry points only: auto-show +
+  clicking the ⏸ node (an effect on "selection landed on the paused frontier", which resolves a
+  gated container through its HOST via `selectedNode`). The ⏸ badge itself is synthesized into
+  `runStatus` from BOTH `runComplete` and `runSnapshot` (the late-subscriber path) — never from a
+  per-node event, and always as a MERGE over any existing entry: an ESCALATION's frontier is the
+  already-completed escalating step, whose real success entry carries the metrics + event id
+  (post-close review finding — a bare `{status}` clobbered them). That kept id is also why
+  `showRunDetail` opens for a paused-WITH-id node (the escalating step's recorded output, readable
+  while the human decides); an approval pause has no id (the gated step never ran) and stays
+  closed. `ResumeControl` mounts in the run callout for `failed` banners / stopped runs
+  ONLY (paused belongs to the gate panel). Both components pin outcomes through `selectRun` — the
+  single pin path.
 
 `GraphView.test.tsx` (jsdom) exercises click→selection→panel and the one-shots, but NOT edges
 (jsdom renders no edge DOM); the edge-click three-way dispatch is pure-tested in

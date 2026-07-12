@@ -44,7 +44,7 @@ function ItemField({ name, value, kind }: { name: string; value: unknown; kind: 
         {open ? "▾" : "▸"} {name && <span className="batch-field-name">{name}</span>}{" "}
         <span className="batch-field-size">{isObject ? "{…}" : sizeLabel(text)}</span>
       </button>
-      {open && <CodeBlock code={text} lang={paramLanguage(kind, name, value)} />}
+      {open && <CodeBlock code={text} lang={paramLanguage(kind, name, value)} expandLabel={name || "item"} />}
     </div>
   );
 }

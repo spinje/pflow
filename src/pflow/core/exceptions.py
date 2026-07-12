@@ -1363,6 +1363,7 @@ class ResumeStaleWorkflowError(ResumeSourceError):
         execution_id: str | None = None,
         trace_path: str | None = None,
     ):
+        self.hash_known = hash_known
         if hash_known:
             message = (
                 "The workflow was edited since the original run, so the restored upstream outputs "

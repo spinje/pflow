@@ -5,7 +5,7 @@
 // markRefs/codeChildren stay real — they're the pure logic under test here.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import type { Element, Root, Text } from "hast";
 
 import { highlight } from "../utils/highlight";
@@ -114,5 +114,29 @@ describe("CodeBlock", () => {
     const { container } = render(<CodeBlock code={"Use ${a.b}"} lang="markdown" />);
     await waitFor(() => expect(container.querySelector("pre.shiki-host")).toBeTruthy());
     expect([...container.querySelectorAll("span.src-ref")].map((s) => s.textContent)).toEqual(["${a.b}"]);
+  });
+
+  it("every value box carries the ⛶ expand by default — generic 'value' title when unnamed", () => {
+    vi.mocked(highlight).mockReturnValue(new Promise(() => {}));
+    const { container } = render(<CodeBlock code="v" lang={null} />);
+    expect(container.querySelector(".value-expand")!.getAttribute("aria-label")).toBe("Expand value");
+  });
+
+  it("expandLabel={null} disables the expand (the modal's inner render must not recurse)", () => {
+    const { container } = render(<CodeBlock code="v" lang={null} expandLabel={null} />);
+    expect(container.querySelector(".value-expand")).toBeNull();
+  });
+
+  it("an EMPTY value gets no expand — a full-screen read of nothing is noise", () => {
+    const { container } = render(<CodeBlock code="" lang={null} />);
+    expect(container.querySelector(".value-expand")).toBeNull();
+  });
+
+  it("the modal renders the same content un-recursed: exactly ONE expand button while open", () => {
+    vi.mocked(highlight).mockReturnValue(new Promise(() => {}));
+    const { container } = render(<CodeBlock code="x = 1" lang={null} expandLabel="code" />);
+    fireEvent.click(container.querySelector(".value-expand")!);
+    expect(document.querySelectorAll(".value-expand")).toHaveLength(1);
+    expect(document.querySelector(".value-modal")!.textContent).toContain("x = 1");
   });
 });

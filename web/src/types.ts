@@ -26,8 +26,10 @@ export interface RFRef {
 // without finishing (crash/kill) — the server's `run-stopped` flips it (the producer never emits it).
 // "unrecorded" is also consumer-derived (Task 173 replay): in a STALE, completed replay, a current-graph
 // node the pinned run has NO state for (renamed/new since, or an untaken branch in that version) — "no
-// recorded state for this version", distinct from pending. Neither rides the wire.
-export type NodeStatus = "running" | "success" | "cached" | "failed" | "stopped" | "unrecorded";
+// recorded state for this version", distinct from pending. "paused" is consumer-derived too (Task 176):
+// synthesized from `RunComplete.paused_node_id` for the durably-paused frontier node (a gate awaiting a
+// human's answer) — it never arrives as a per-node RunEvent. None of the three ride the per-node wire.
+export type NodeStatus = "running" | "success" | "cached" | "failed" | "stopped" | "unrecorded" | "paused";
 
 // The cheap run metrics carried alongside a node's status (already on the wire — RunEvent below) for the
 // badge's hover detail. `null`/absent when not applicable (a running node has no duration yet; a non-LLM
@@ -59,7 +61,7 @@ export interface RunEvent {
 }
 
 // The run.complete trailer, surfaced as the run banner. `final_status` is the run outcome
-// (`success` | `degraded` | `failed`) — distinct from any single node's status.
+// (`success` | `degraded` | `failed` | `denied` | `paused`) — distinct from any single node's status.
 export interface RunComplete {
   final_status?: string;
   // The run.complete wire is an allowlist (run_tailer._RUN_COMPLETE_FIELDS); json_output / warnings are
@@ -72,6 +74,10 @@ export interface RunComplete {
   // callout header), both added to the allowlist. Present on the run-complete banner / a replayed snapshot.
   duration_ms?: number;
   execution_id?: string;
+  // Task 176: the durably-paused frontier node (a gate awaiting an answer) when `final_status` is
+  // "paused", else null/absent. The small join key only — the bulky `gate_request` payload is
+  // deliberately NOT on this wire; fetch it on demand via GET /api/gate (fetchGate).
+  paused_node_id?: string | null;
 }
 
 // One run from GET /api/runs (Task 173 D6) — the catalog running-indicator + the run selector read this.
@@ -96,6 +102,36 @@ export interface RunInfo {
   // Task 171: attempt-chain lineage — the source run's execution_id when this run resumed a prior
   // attempt (trace meta, format 2.6.0+), else null. Drives the selector's "⤷ resumed from" marker.
   resumed_from: string | null;
+  // Task 176: the paused frontier node when this run's trailer is a durable gate pause, else null.
+  // Same projection rule as the run banner's field (the light wires carry the join key only).
+  paused_node_id: string | null;
+}
+
+// --- Web-UI approval bridge (Task 176) ----------------------------------------------------------
+// Mirror of core/gate.py::GateRequest as served by GET /api/gate — the ONE human-decision payload
+// (ADR-0009: the payload is the seam). Self-contained by contract: the panel renders from this alone.
+// `preview` arrives secret-MASKED (masked_gate_dict — the server applies THE display-surface policy);
+// escalation fields are all optional — render leniently, exactly like the TTY prompt.
+export interface GateRequest {
+  node_id: string;
+  node_type: string;
+  kind: "action_approval" | "decision_escalation";
+  // Approval: the node's resolved params — what is ABOUT to happen (masked).
+  preview: Record<string, unknown>;
+  // Escalation: the decision the agent raised. Options are open dicts; the display label is
+  // `option.label` with the falsy `option N` fallback (mirror core/gate.py::option_labels — THE
+  // numbering rule), and answers send the LABEL text, never the number (the loader's numeric
+  // mapping is a terminal convenience).
+  question: string | null;
+  options: Array<Record<string, unknown>>;
+  recommendation: string | null;
+}
+
+// GET /api/gate's 200 body: a paused run's gate, keyed by its frontier node.
+export interface GateInfo {
+  paused_node_id: string;
+  gate_kind: GateRequest["kind"];
+  gate_request: GateRequest;
 }
 
 // The detail panel's "This run" section reads this from GET /api/run-node (Task 173 D6) — ONE node's

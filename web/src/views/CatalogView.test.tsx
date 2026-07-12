@@ -33,6 +33,7 @@ function run(over: Partial<RunInfo> = {}): RunInfo {
     trace_file: "t.json",
     git_root: null,
     resumed_from: null,
+    paused_node_id: null,
     ...over,
   };
 }
