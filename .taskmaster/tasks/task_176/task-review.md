@@ -3,9 +3,8 @@
 ## Metadata
 Implemented 2026-07-11/12 on `feat/web-ui-approval-bridge`. Server half committed (`b9a47ac7`
 feature + `0bc6bf1c` checkpoint fixes); frontend half + docs in the branch's later commits. Not
-merged at time of writing. Journey: `implementation/progress-log.md` (two sessions + two
-deep-review passes). Verified end-to-end in a real browser with real producers, including one
-live human approval.
+merged at time of writing. Journey: `implementation/progress-log.md`. Verified end-to-end in a
+real browser with real producers, including one live human approval.
 
 ## Read First — the load-bearing block
 
@@ -24,7 +23,7 @@ greying on terminal replays.
 - `src/pflow/ui/server.py::resume` + `_resume_refusal_response` + `_spawn_detached_cli`.
 - `web/src/components/resumeAnswer.tsx::useResumeAnswer` — the ONE frontend refusal machine
   (GateCallout + ResumeControl are content-only on top of it).
-- `web/src/views/GraphView.tsx` — `pausedEntry` (badge synthesis), the gate-panel wiring
+- `web/src/views/GraphView.tsx` — `pausedKey` (badge synthesis), the gate-panel wiring
   (`gateDismissed`, `gateAnchorId`), and `web/src/graph/focus.ts::applyReplayDim`.
 
 **Invariants that must NOT break:**
