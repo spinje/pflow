@@ -26,6 +26,11 @@ CLAUDE_AGENT_EFFORT_TO_CODEX = {
     "high": "high",
 }
 
+# Skills that live under .agents/skills but are hand-authored for Codex only — they have no
+# Claude source by design, so the orphan sweep must NOT treat them as stale mirrors. Consumers:
+# AGENTS.md and examples/real-workflows/git-worktree-task-creator/workflow.pflow.md.
+CODEX_ONLY_SKILLS = frozenset({"pflow-sandbox-testing"})
+
 
 @dataclass
 class SyncResult:
@@ -176,11 +181,15 @@ def sweep_orphan_skills(skills_target: Path, expected_names: set[str], write: bo
 
     ``synchronize_skill`` only prunes files *within* a still-present source; a fully deleted
     source is never visited, so its mirror would otherwise linger silently.
+
+    Hand-authored Codex-only skills (``CODEX_ONLY_SKILLS``) also have no Claude source but are NOT
+    stale — they are preserved. Only whole dirs are considered; a stray top-level *file* under
+    ``skills_target`` is left untouched (it is not a generated skill and has no source to match).
     """
     if not skills_target.exists():
         return
     for target_dir in sorted(path for path in skills_target.iterdir() if path.is_dir()):
-        if target_dir.name in expected_names:
+        if target_dir.name in expected_names or target_dir.name in CODEX_ONLY_SKILLS:
             continue
         if not write:
             result.errors.append(f"Generated skill has no Claude source: {target_dir}")
