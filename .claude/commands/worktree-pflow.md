@@ -1,5 +1,5 @@
 ---
-description: Create a git worktree
+description: Create a git worktree for a user driven agent.
 argument-hint: [description of task]
 ---
 Create a git worktree for pflow development.

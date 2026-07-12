@@ -129,6 +129,42 @@ def test_write_translates_claude_only_command_syntax(tmp_path: Path) -> None:
     assert "demo\n<task_id>" in rendered
 
 
+def test_sweeps_generated_skill_dir_with_no_claude_source(tmp_path: Path) -> None:
+    root = make_root(tmp_path)
+    sync_claude_assets.synchronize(root, write=True)
+    orphan_dir = root / ".agents/skills/orphan-skill"
+    orphan = orphan_dir / "SKILL.md"
+    nested = orphan_dir / "refs/note.md"  # exercises the reverse-sorted rmdir (deepest-first) branch
+    write_file(orphan, "---\nname: orphan-skill\ndescription: Orphaned\n---\nstale mirror\n")
+    write_file(nested, "stale ref\n")
+
+    check = sync_claude_assets.synchronize(root, write=False)
+    assert check.changed == []
+    assert check.errors == ["Generated skill has no Claude source: " + str(orphan_dir)]
+
+    result = sync_claude_assets.synchronize(root, write=True)
+    assert result.errors == []
+    assert orphan in result.changed
+    assert nested in result.changed
+    assert not orphan_dir.exists()
+
+
+def test_sweep_preserves_hand_authored_codex_only_skill(tmp_path: Path) -> None:
+    root = make_root(tmp_path)
+    sync_claude_assets.synchronize(root, write=True)
+    # A Codex-only skill has no Claude source by design; it must survive the sweep.
+    codex_only = next(iter(sync_claude_assets.CODEX_ONLY_SKILLS))
+    kept = root / ".agents/skills" / codex_only / "SKILL.md"
+    write_file(kept, "---\nname: " + codex_only + "\ndescription: Codex-only\n---\nhand authored\n")
+
+    check = sync_claude_assets.synchronize(root, write=False)
+    assert check.errors == []
+
+    result = sync_claude_assets.synchronize(root, write=True)
+    assert result.errors == []
+    assert kept.exists()
+
+
 def test_rejects_skill_command_name_collision(tmp_path: Path) -> None:
     root = make_root(tmp_path)
     write_file(

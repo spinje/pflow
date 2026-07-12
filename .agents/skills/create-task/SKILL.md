@@ -80,6 +80,10 @@ Specific, testable things the implementation must satisfy. Group by area when th
 Not "what we're building" (that's Solution) or "how we'll test it" (that's Verification) —
 this is "what properties must hold."
 
+No vague terms ("gracefully", "appropriate", "optimal", "handle errors appropriately") — state
+the concrete, falsifiable property. Each requirement should have a matching Verification scenario
+that would fail if the requirement broke.
+
 ## Implementation Notes
 
 Technical details, integration points, edge cases discussed.

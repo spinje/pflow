@@ -1,6 +1,6 @@
 ---
 name: "start-work"
-description: "Read before starting to work on a new task or issue."
+description: "This command is for human / machine invocation only. Do not use unless explicitly asked by the user."
 ---
 
 The user has initiated a session that explores a predfined task or issue against the existing domain model, sharpens terminology, and updates documentation (CONTEXT.md, ADRs) inline as decisions crystallise. This takes the form of a discussion and code base exploration  BEFORE the implementation of a task or issue. The end result is a plan for the implementation that is perfectly aligned with the user's intent, the existing domain model and the codebase.

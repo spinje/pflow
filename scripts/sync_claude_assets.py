@@ -26,6 +26,11 @@ CLAUDE_AGENT_EFFORT_TO_CODEX = {
     "high": "high",
 }
 
+# Skills that live under .agents/skills but are hand-authored for Codex only — they have no
+# Claude source by design, so the orphan sweep must NOT treat them as stale mirrors. Consumers:
+# AGENTS.md and examples/real-workflows/git-worktree-task-creator/workflow.pflow.md.
+CODEX_ONLY_SKILLS = frozenset({"pflow-sandbox-testing"})
+
 
 @dataclass
 class SyncResult:
@@ -171,6 +176,32 @@ def synchronize_skill(source_dir: Path, target_dir: Path, write: bool, result: S
                 directory.rmdir()
 
 
+def sweep_orphan_skills(skills_target: Path, expected_names: set[str], write: bool, result: SyncResult) -> None:
+    """Remove generated skill dirs whose Claude source (skill dir or command) no longer exists.
+
+    ``synchronize_skill`` only prunes files *within* a still-present source; a fully deleted
+    source is never visited, so its mirror would otherwise linger silently.
+
+    Hand-authored Codex-only skills (``CODEX_ONLY_SKILLS``) also have no Claude source but are NOT
+    stale — they are preserved. Only whole dirs are considered; a stray top-level *file* under
+    ``skills_target`` is left untouched (it is not a generated skill and has no source to match).
+    """
+    if not skills_target.exists():
+        return
+    for target_dir in sorted(path for path in skills_target.iterdir() if path.is_dir()):
+        if target_dir.name in expected_names or target_dir.name in CODEX_ONLY_SKILLS:
+            continue
+        if not write:
+            result.errors.append(f"Generated skill has no Claude source: {target_dir}")
+            continue
+        for path in sorted((p for p in target_dir.rglob("*") if p.is_file()), reverse=True):
+            path.unlink()
+            result.changed.append(path)
+        for directory in sorted((p for p in target_dir.rglob("*") if p.is_dir()), reverse=True):
+            directory.rmdir()
+        target_dir.rmdir()
+
+
 def synchronize(root: Path, write: bool) -> SyncResult:
     result = SyncResult()
 
@@ -204,6 +235,9 @@ def synchronize(root: Path, write: bool) -> SyncResult:
     for source in commands:
         target = root / ".agents/skills" / source.stem / "SKILL.md"
         ensure_content(target, render_command_skill(source), write, result)
+
+    expected_names = {source_dir.name for source_dir in skill_dirs} | {source.stem for source in commands}
+    sweep_orphan_skills(root / ".agents/skills", expected_names, write, result)
 
     return result
 

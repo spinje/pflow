@@ -1,5 +1,5 @@
 ---
-description: Read before starting to work on a new task or issue.
+description: This command is for human / machine invocation only. Do not use unless explicitly asked by the user.
 argument-hint: [task id or github issue number]
 ---
 

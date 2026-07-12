@@ -85,7 +85,7 @@ Side effects happen inline as decisions crystallize:
 - **Sharpening a fuzzy term during the conversation?** Update `context/CONTEXT.md` right there.
 - **User rejects the candidate with a load-bearing reason?** Offer an ADR, framed as: _"Want me to record this as an ADR so future architecture reviews don't re-suggest it?"_ Only offer when the reason would actually be needed by a future explorer to avoid re-suggesting the same thing — skip ephemeral reasons ("not worth it right now") and self-evident ones. Use the format in [ADR-FORMAT.md](context/adr/ADR-FORMAT.md).
 - **Want to explore alternative interfaces for the deepened module?** See [INTERFACE-DESIGN.md](INTERFACE-DESIGN.md).
-- **Design agreed and ready for execution?** Ask the user which path: capture it as a task (`/create-task-spec` → spec in `.taskmaster/tasks/task_N/`, picked up later via `/start-work`) or plan the implementation directly in-session (the `plan-breakdown` skill splits large plans across agents). Never start automatically — the user decides when the design is complete and all unknowns are resolved.
+- **Design agreed and ready for execution?** Hand off per [PFLOW.md](PFLOW.md) § Execution handoff: capture the design as a task spec (`/create-task`), then optionally author the implementation plan (`/create-plan`). Never start automatically — the user decides when the design is complete and all unknowns are resolved.
 
 ## Context directory
 

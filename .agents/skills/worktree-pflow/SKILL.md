@@ -1,6 +1,6 @@
 ---
 name: "worktree-pflow"
-description: "Create a git worktree"
+description: "Create a git worktree for a user driven agent."
 ---
 Create a git worktree for pflow development.
 
