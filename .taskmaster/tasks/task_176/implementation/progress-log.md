@@ -350,3 +350,181 @@ re-verified.
   spot-check only what the frontend touches.
 - Follow-up to file at close (or hand the owner): validator-only pre-trace deaths on `--force`
   resume / any `/api/run` launch — one issue covering both spawn pre-flights (item 4 above).
+
+## 2026-07-12 — Session (continued): Phases 3-5
+
+Baseline for THIS session (fresh, captured before any edit, tree at `0bc6bf1c`): `make test`
+**8777 passed**, `make check` green, vitest **731 passed** (51 files), `tsc --noEmit` clean.
+
+### Phase 3 complete (frontend)
+
+Built per plan §P3, all four sections:
+
+- **P3-1 types+client**: `NodeStatus` += `"paused"` (comment extended: consumer-derived, third of
+  its kind); `RunComplete.paused_node_id?` (+allowlist note); `RunInfo.paused_node_id` (required,
+  the `resumed_from` convention); stale `final_status` comment fixed (plan correction #6); new
+  `GateRequest`/`GateInfo` mirroring `core/gate.py` (options typed `Array<Record<string,unknown>>`
+  — the braindump's "verify the real option shape" resolved: `build_escalation_request` admits any
+  dict, `label` is convention with the falsy `option N` fallback; `description` rendered leniently
+  when present). `ApiError` gained `readonly body?` (third ctor param); `fetchGate` (with an
+  `isGateInfo` shape guard, house pattern); `resumeRun` with the SINGLE-READ rule (one
+  `response.json().catch(()=>null)` derives both `errors` and `body`).
+- **P3-2 ⏸ badge**: `pausedEntry` helper beside `eventState`; synthesis in BOTH `runComplete`
+  (map-copy, the `runStopped` shape) and `runSnapshot` (set into the freshly built map);
+  `StatusBadge` paused glyph (two bars) + label "Paused — awaiting an answer at this gate";
+  `RunProgress` `stepColor`/`stepMeta` paused arms; `--status-paused` (same amber as stopped,
+  reason documented in-css) + `.status-badge.status-paused`.
+- **P3-3 GateCallout**: content component fetched via `fetchGate` on mount, kind-switched;
+  approval = eyebrow (`node_type · node_id`) + masked preview rows (mono field boxes, per-row
+  scroll) + Deny/Approve; escalation = question + one-click option buttons (LABEL sent, never the
+  number; falsy `option N` fallback; `description` and a "recommended" mark rendered when
+  present) + free-text row (client blocks empty/whitespace). Refusal states: superseded → "View
+  newer attempt" (onPinRun), stale → ack + force retry of the SAME payload (hash_known wording
+  split), else inline `role=alert` diagnostics. GraphView wiring: `gateDismissed` (reset in
+  `selectRun`), gate run id = `runId ?? runBanner.execution_id` (unpinned follow-newest pause
+  works), anchor via the existing `sayAnchorIdFor` (re-resolved every render, never cached),
+  null-anchor guard, `NodeCallout` shell with ⏸ icon + node-id subtitle, mounted beside the run
+  callout inside `<ReactFlow>`. Entry point two = an effect on "selection landed on the paused
+  frontier" (via `selectedNode`, so a gated container resolves through its HOST).
+- **P3-4 ResumeControl**: rendered inside the run callout directly below `RunProgress`, exactly
+  the plan's show-when (`runId && (failed banner || (no banner && stopped))`); first click POSTs
+  `{run}` (never force); `side_effect_confirmation` → inline confirm naming node id + registry
+  type → "Resume anyway" retries `force:true`; stale → same ack pattern; superseded → newer
+  attempt; everything else → inline diagnostics, no retry affordance. Keyed by run id so a pin
+  switch resets its state.
+
+Tests (all green; vitest **765** = baseline 731 + 34): client (fetchGate ×3, resumeRun ×5 incl. a
+single-read pin whose mock body throws on a second `json()` — the exact bug class the plan named);
+GateCallout ×12 (approval submit shapes, escalation label/fallback/free-text/recommended-mark,
+superseded/stale/hash_known/inline-error arms, double-click disable); ResumeControl ×6;
+RunProgress paused arms ×2; GraphView bridge ×7 (badge from run-complete AND run-snapshot,
+auto-show + not-for-failed, dismiss + ⏸-click reopen, Approve→pin URL flip, Resume for failed
+pinned + never-for-paused); 4 `RunInfo` factories += `paused_node_id: null`.
+**Mutation-verified** (edit + inverse edit, no git): deleting the `runSnapshot` synthesis → the
+snapshot test failed ALONE (56/57), exactly the plan's pin.
+
+Deviations from plan (reasons, not handwaving):
+1. **`runBadgeStatus` paused arm returns `"paused"`, not the plan-era `"stopped"`.** The plan's
+   §P3-2 predates its own new badge arm: 171 mapped a paused banner to the amber "stopped" square
+   because NO paused NodeStatus existed ("the closest badge"). With the ⏸ arm shipped, keeping the
+   square would show a "process died" glyph for a healthy waiting run right next to the frontier
+   node's ⏸ badge. Same amber; the one pinned test updated (its intent — "never the green success
+   fallthrough" — is preserved and still asserted).
+2. **StatusBadge label** is "Paused — awaiting an answer at this gate" (plan sketch: "paused —
+   awaiting answer") — every other `runStatusLabel` arm is capitalized-verb + em-dash detail;
+   matched the house voice. Tests assert via `aria-label` ("run status: paused"), unaffected.
+3. **Buttons added beyond the plan's sketch**: a Cancel on the two ack dialogs (a confirm without
+   a decline is a UX hole), a "recommended" mark on the matching escalation option (renders the
+   payload's `recommendation` without repeating it as text). Presentation-only.
+
+### Phase 4 complete (un-run greying — no cut-line needed, done well inside the session)
+
+- `focus.ts::applyReplayDim(nodes, edges, status, active)` — the third pure restyle: join rule
+  mirrors `applyStatus` exactly (leaves by own ref; hosts by the PRIMARY group's host ref); an
+  edge dims when either endpoint is un-run; identity-stable + idempotent; `active=false` is an
+  identity pass-through (live runs pay zero). One judgment call the plan left open, resolved by
+  the applyFocus precedent: an EXPANDED un-run region contributes to the edge set but carries NO
+  class — its children dim individually and a region opacity would compound with theirs
+  (`applyFocus`'s groups-never-dim-unless-collapsed rule, mirrored).
+- `LeafData`/`GroupData` gained `unrun?: boolean`; `WorkflowNode`/`GroupNode` render the class
+  (collapsed group card is a `.node`, so `.node.unrun` covers it; regions never flagged).
+- `useWorkflowGraph`: `replayDim` option; the pass runs AFTER applyFocus (it appends beside
+  focus's edge classes). **Plan-gap found and closed**: the hook's `edgesUnchanged` skip (the
+  Task-173 edge-blank fix) keyed only on `(laid, focus)` — a terminal replay's snapshot arriving
+  on an unchanged pair would skip `setEdges` and the un-run edge dim would silently never paint.
+  Added a third conjunct (`paintedDimRef`: the status map identity when active, null when not) —
+  the live-run skip is preserved byte-for-byte (null === null).
+- GraphView passes `replayDim: runId !== null && runBanner !== null` (pinned terminal only —
+  paused/denied count as terminal; a pinned live run has no banner until its trailer).
+- CSS: `.node.unrun, .react-flow__edge.edge-unrun { opacity: .45 }` placed BEFORE `.node.dimmed`
+  (focus-dim 0.18 wins) and before `.hover-mark` (hover un-dims); BOTH orderings pinned in
+  `cssOrder.test.ts` (2 new tests). 6 new node-env tests in `focus.test.ts` (pass-through,
+  flag+edge rule, identity/idempotence, focus-class composition, collapsed-vs-expanded host,
+  io/end never flagged).
+
+Post-P4 verification: `tsc --noEmit` clean; vitest **773 passed** (baseline 731 → +42).
+Docs: `components/CLAUDE.md` (StatusBadge status list + the approval-bridge entry),
+`graph/CLAUDE.md` (applyReplayDim in the focus section), `views/CLAUDE.md` (gate-panel state
+model + entry points + the ResumeControl gating).
+
+### Phase 5 complete — full-branch deep review, fixes, real-browser verification, batteries
+
+**Deep review** (5 agents on `git diff 979f44e6` incl. working tree: simplicity + agent-ux — the
+two deliberately deferred from the §P2 checkpoint — plus silent-failures, test-fidelity,
+feature-interactions on the frontend). Zero Criticals. Every finding verified first-hand before
+acting:
+
+Confirmed + FIXED (each with a test, the state one mutation-verified):
+1. **`gateDismissed` never reset on `run-reset`** (silent-failures, Warning — the one real state
+   bug): on follow-newest, `runId` never changes, so `selectRun`'s reset can't fire — one ✕ would
+   silently mute every LATER run's gate auto-show (recoverable only via the ⏸-node click). Fix:
+   `setGateDismissed(false)` in the `runReset` handler. Pin: "a dismissal never mutes a LATER
+   run's gate" — **mutation-verified** (removing the line fails exactly that test).
+2. **Singular `{"error": ...}` bodies collapsed to the generic HTTP line** (test-fidelity,
+   Warning): `/api/gate`'s 404s (and every shape-400 house-wide) use the singular shape;
+   `parseErrorBody` only read the plural array, so the panel showed "Server returned HTTP 404."
+   instead of "Run 'X' is not paused at a gate." — and the new `fetchGate` 404 test had
+   fabricated a plural body to pass. Fix at the ONE parse seam: `parseErrorBody` + `resumeRun`'s
+   single-read arm now surface a singular `error` string; the 404 test now uses the REAL wire
+   shape and asserts the message survives; +1 resumeRun singular-400 test.
+3. **The two panels duplicated the refusal machine and dropped `suggestions`** (simplicity +
+   agent-ux converging): extracted `components/resumeAnswer.tsx` — `useResumeAnswer` (state +
+   the refusal dispatch: superseded / stale / side-effect / inline), `RefusalNotice` (the two
+   action panels, context-worded), `GateErrors` (inline diagnostics NOW RENDERING each entry's
+   `suggestions` — the RunForm rule; new ResumeControl test pins it). GateCallout/ResumeControl
+   hold only their kind-specific content; ALL 18 existing component tests passed unmodified
+   through the fold (behavior-preserving).
+4. **hash_known=false wording** gained the WHY ("this run predates workflow-hash tracking"),
+   matching the CLI's message (agent-ux Suggestion).
+
+Disputed / won't-fix (documented): `_parse_resume_body`'s singular-400 shape is the house
+convention across every endpoint (not drift — and now surfaced correctly client-side anyway);
+the deep-link double-`frameOnMount` (run callout + gate callout) resolves by JSX order — the
+gate frames last and wins, confirmed the desired landing in the browser pass.
+
+**Real-browser verification** (stale server killed first, `make ui-build`, fresh `pflow ui`;
+screenshot-pflow-web-ui skill; three demo workflows in `/tmp/pflow-176-demo/`, the escalation
+via a REAL `claude-code` step — a `code` node cannot durably pause, `_gate_pausable` excludes
+dynamic routers; the demo authoring itself re-verified that conjunct):
+- UI-launched approval run → paused; `paused_node_id` on `/api/runs`; `/api/gate` serves the
+  masked payload; ⏸ badge on the frontier; GateCallout auto-shown with preview + Deny/Approve;
+  un-run tail dimmed. Click Approve → browser pinned the NEW attempt instantly (URL flipped),
+  run success, `resumed_from` chain, restored step reads the grey cached ✓.
+- Deliberate refusal: Approve on the already-answered source run → superseded panel
+  ("View newer attempt") — the no-silent-no-op rule proven in the browser.
+- Deny → denied attempt pinned, amber "Run denied", never-ran steps greyed.
+- Escalation (real claude-code producer) → question + option buttons (descriptions + the
+  RECOMMENDED mark) + free-text row render; option click → new attempt success and the chosen
+  LABEL folded into `result.escalation.decision.chosen` (verified via `/api/run-node`).
+  Free-text answer verified END-TO-END on a second escalation run via the exact POST the
+  panel's Answer button sends (the skill can click but not type — the typed path is
+  unit-pinned in GateCallout.test.tsx; deviation noted, coverage equivalent).
+- Failed run (side-effecting shell entry) → ResumeControl under the spine; ↻ Resume → inline
+  dialog naming `deploy (shell)` — the REGISTRY type — with Cancel/Resume anyway and NO spawn;
+  the ack's `force:true` POST spawns (wire-verified; the ack click itself is unit-pinned).
+  Idempotent-llm-entry no-dialog: not browser-driven (needs a failed llm-entry run) — covered
+  by the P2 verdict-matrix test (llm → None) + endpoint pins.
+- `403` on non-loopback Host for BOTH `/api/gate` and `/api/resume` (middleware verified, not
+  re-implemented).
+- Greying composition: TD + advanced + `focus=` — un-run nodes at 0.45, focus-dim (0.18) wins
+  on non-incident un-run nodes, edges into the un-run region dimmed; beautiful/LR covered by the
+  earlier shots. Two-callout overlap (braindump worry): fine — different anchors side-by-side;
+  for a no-input workflow whose FIRST step is the gate both anchor the same node and STACK
+  (gate on top — the say-bubble precedent, dismissing reveals the run callout; accepted).
+
+**Final batteries** (vs this session's baseline): `make test` **8777** (unchanged — zero
+`src/pflow` edits this session; the checkpoint fixes were already committed), `make check`
+green, vitest **776** (731 → +45), `tsc --noEmit` clean. Task-159 baseline skipped per plan
+(nothing trace-adjacent moved). Windows: rides the blocking `tests-windows` CI job (the spawn
+helper was P2, already committed).
+
+Key learnings for the next agent:
+- `GateRequest.node_type` carries the Python CLASS name (`ShellNode`) — payload parity with the
+  TTY prompt, so the gate eyebrow shows it too; the side-effect refusal carries the REGISTRY
+  type (`shell`) via `_node_registry_type`. Two vocabularies, both correct per their contracts —
+  don't "fix" one into the other without an owner decision.
+- The escalation demo MUST be a `claude-code` step: `_gate_pausable` refuses code-node
+  escalations (dynamic router), and the error path (exit 1, not pause) looks like a bridge bug
+  until you read the conjuncts.
+- `/api/run`'s pre-flight requires an input that has a default but no `required: false` — the
+  RunPanel form prefills it so browser launches work; a bare curl must pass it explicitly.

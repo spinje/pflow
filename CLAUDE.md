@@ -239,11 +239,9 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - ✅ Task 174: Agent Voice Narration — "Point & Say"
 - ✅ Task 171: Durable Resume Tokens & Non-TTY Gates
 - ✅ Task 116: Windows Compatibility
+- ✅ Task 176: Web-UI Approval Bridge
 
 ### Planned Features (in order of priority)
-
-**Next?** (in build order)
-- Task 176: Web-UI Approval Bridge
 
 **v0.14.0**
 - Task 142: Explore Function-Based Code Node Syntax

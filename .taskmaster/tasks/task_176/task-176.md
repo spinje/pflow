@@ -20,7 +20,14 @@ region greying** on pinned terminal replays.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-07-12
+
+> All phases (0–5) implemented on `feat/web-ui-approval-bridge`, deep-reviewed and
+> browser-verified. See `implementation/progress-log.md` + `task-review.md`.
 
 ## Decision ledger
 
