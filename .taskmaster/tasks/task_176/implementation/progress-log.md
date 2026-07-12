@@ -637,3 +637,48 @@ harmless (durable pause, no live process).
 
 **Open at close:** rebase onto main once the `task-N.md` docs-test fix lands there (the only
 red CI, inherited); the take-or-leave `errorsFromPayload` fold remains deliberately not taken.
+
+## 2026-07-12 — Panel readability follow-ups (post-close live-use session, feat(ui))
+
+Using the shipped bridge end-to-end (IO outputs question → real runs in the browser) surfaced
+three side-panel comprehension gaps. Fixed on this branch as `feat(ui)` — not task-176 scope,
+but its verification surfaces; each browser-verified with the screenshot skill (stale server
+killed + `make ui-build` first, per the recorded gotcha).
+
+**`9a8dc0df` — panel source/output links + expandable value boxes.** (1) Every value box
+(params, code, prompts, batch items, errors, run values) carries a ⛶ expand → portaled
+full-screen modal (Esc/backdrop/×); the affordance lives in `CodeBlock` itself — first placed
+in `RunValue`, owner immediately asked "why not params?" and it moved DOWN to the one seam all
+boxes share (`expandLabel` titles; `null` = the modal's recursion guard; empty value → no
+button). Position user-tuned twice (right: 14→18→21px, off the box scrollbar). (2) Every
+source `file:line` is a LINK to its OWN line — node header, per-param (ReadPanel + EdgePanel
+Receives), per-port (IoPanel) — via a new `SourcePane.jumpTarget` (io selections set no
+selectedNode to fall back on). Real bug caught by browser verification, then pinned: on a
+closed→open jump the pane mounts with `prevJump` seeded to the already-bumped counter → the
+first jump no-ops and the io-heading sync wins (landed on `## Outputs` line 72 instead of the
+port's :78). Fix: seed `prevJump` null so the jump effect also runs on mount. (3) An IoPanel
+output's field path (`.stdout`) SELECTS the producer (both `onNavigate` args — opens its
+ReadPanel where the recorded output lives; deliberately more than the chip beside it, which
+navigates without opening; unresolvable → plain text, the Chip rule).
+
+**`197b0827` — dict run values expand to a per-field document.** Owner: escaped `\n` JSON is
+unreadable — "this is for being able to read the data easily". Decision from the discussion:
+the modal is a READING surface (compact box = shape); a text-level `\n`→newline replace was
+REJECTED (invalid-JSON-that-looks-like-JSON, `\\n` vs `\n` ambiguity) — instead the modal
+renders the ORIGINAL values: dict → labeled block per top-level key, strings as real text,
+non-strings pretty JSON. Mechanism: `modalBody` slot on CodeBlock's modal that only `RunValue`
+fills — authored params keep rendering exactly as authored BY CONSTRUCTION (a literal `\n` in
+a code param is content). Top-level only; arrays stay JSON (wait-for-a-real-case).
+
+**Deliberate remainder → issue #580** (inline/recursive unwrap of nested run values): the
+inline "This run"/port boxes stay generic JSON below the first level — Task 173's recorded
+simplicity decision, now partially relieved by the modal doc-view. #580 carries the full code
+map, design questions (inline density/collapse, recursion depth, arrays), non-goals (authored
+params; no text-level replaces), and the pickup trigger (only if inline JSON still hurts after
+living with the modal). PR #579 body gained a "Post-close follow-ups" section anchoring all of
+this.
+
+State after session: vitest 796 (+20 pins incl. mutation-caught SourcePane mount-jump), tsc
+clean, all pushed. Demo assets: `scratchpads/io-output-check/` (gitignored) holds the io-demo
+fixture + click-click/click-scroll browser harnesses used throughout; a `pflow ui` server may
+still be running on :8765.
