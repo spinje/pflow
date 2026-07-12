@@ -153,14 +153,20 @@ class TestMCPRegistrarCritical:
             assert "outputs" in interface
             assert len(interface["outputs"]) > 0
 
-            # Outputs MUST use "key" not "name"
-            for output in interface["outputs"]:
-                assert "key" in output  # NOT "name"
-                assert "type" in output
+            # MCP runtime stores every successful response under ``result``.
+            # Probe discovers the concrete fields from the actual response.
+            assert interface["outputs"] == [
+                {
+                    "key": "result",
+                    "type": "any",
+                    "description": "Tool execution result",
+                }
+            ]
 
             # Check MCP metadata preserved
             assert interface["mcp_metadata"]["server"] == "github"
             assert interface["mcp_metadata"]["tool"] == "create-issue"
+            assert interface["mcp_metadata"]["output_schema"] == tool_def["outputSchema"]
 
     def test_sync_server_updates_registry(self):
         """Test that syncing a server updates the registry correctly.
