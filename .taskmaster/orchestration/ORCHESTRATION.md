@@ -185,8 +185,23 @@ them**, not in up-front documents.
 | **Opus** | **The default for everything with real judgment**: task orchestrators, most implementer phases, searchers (pinned) | Plans state decisions; bounded judgment may be left to the implementer |
 | **Fable** | **Task planners — always.** **ALL web-UI implementation phases — always** (user ruling 2026-07-11, DECISIONS #8): every phase that writes UI (`web/` → `src/pflow/ui`) routes to a Fable `task-phase-implementer` — never implemented inline by the task orchestrator, never a lower tier — and is built with **deliberate design/UX care**: the plan states the phase's use case + look/feel intent, and visual quality/UX are acceptance criteria verified by driving the UI. Otherwise opt-in via the explicit `model` param with a one-line justification: hard architecture, subtle seam design (engine, trace, resume/gate semantics), gnarly debugging. Lane C's terminal builder is the historical Fable home and stays one | Never an ambient default for non-UI implementation |
 
+Runner model names are an execution detail; plans continue to use the tier names above:
+
+| Contract tier | Claude launch model | Codex launch model |
+|---------------|---------------------|--------------------|
+| Sonnet | `sonnet` | `gpt-5.6-terra` |
+| Opus | `opus` | `gpt-5.6-sol` |
+| Fable | `fable` | `gpt-5.6-sol` |
+
+Claude agent `effort` maps directly to the same Codex reasoning level: `low` → `low`, `medium` →
+`medium`, `high` → `high`. Generated agent TOML uses `model_reasoning_effort`; dynamic launches
+use the `reasoning_effort` parameter. When the contract does not pin effort, omit the launch
+override and inherit the runner default. `scripts/sync_claude_assets.py` applies the same model
+and effort mapping to generated `.codex/agents/*.toml`; an unknown source value is a generation
+error.
+
 - **Pass the explicit `model` param on EVERY launch** — agent frontmatter is cached per session;
-  the param is the live lever.
+  the param is the live lever. Use the runner-specific model name from the table above.
 - **Lane B**: Opus floor, never lower; Fable for complex/hard-debugging issues only with the
   user's per-launch approval (DECISIONS #9).
 - **Planner-implements exception:** when a planner finds the implementation small, it may offer in

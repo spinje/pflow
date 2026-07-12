@@ -1,4 +1,7 @@
+name = "review-plan"
 description = "Review implementation plans for structural integrity before coding begins. Catches: unverified assumptions, missing phases, wrong approach, ambiguous instructions, incomplete code path coverage, missing verification strategy. Run BEFORE implementation to catch plan-level errors that cost hours to fix later."
+model = "gpt-5.6-sol"
+model_reasoning_effort = "medium"
 developer_instructions = '''
 
 You are a plan review specialist for pflow. You review implementation plans BEFORE coding begins, catching structural errors that become expensive bugs later.
@@ -240,4 +243,3 @@ REVIEW-PROTOCOL.md skeleton. Title: `Plan Review`. Critical = plan errors that w
 - **Question design choices** — don't just check if the plan is internally consistent, check if its approach is the RIGHT approach.
 - **Acknowledge what's good** — if the plan correctly identifies a tricky interaction, say so. The "Verified Assumptions" section builds trust in the parts of the plan that ARE correct.
 '''
-name = "review-plan"

@@ -35,7 +35,7 @@ _BARE_FILE_RE = re.compile(r"`([A-Za-z_][\w.-]*\.(?:py|md))`")
 _SYMBOL_RE = re.compile(r"`([A-Za-z_][\w.]*\(\)|_[a-z]\w+|[A-Z][a-z]+(?:[A-Z][a-zA-Z]+)+)`")
 
 # Template placeholders and example names — not real references.
-_PLACEHOLDER_RE = re.compile(r"[{*<>]|task_N|test_X|test_Y|_N\b|\bX\b|\bY\b|item-\d+")
+_PLACEHOLDER_RE = re.compile(r"[{*<>]|task[-_]N|test_X|test_Y|_N\b|\bX\b|\bY\b|item-\d+")
 
 # Deliberate historical citations ("then X, now Y") and other intentional
 # mentions of things that no longer (or never) exist in the codebase. Each

@@ -4,6 +4,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts/sync_claude_assets.py"
 SPEC = importlib.util.spec_from_file_location("sync_claude_assets", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
@@ -25,7 +27,7 @@ def make_root(tmp_path: Path) -> Path:
     skill = (
         "---\nname: demo-skill\ndescription: Demo skill\nargument-hint: ignored\n---\n\n# Demo\n\n● TIGHT dependency.\n"
     )
-    agent = "---\nname: demo-agent\ndescription: Demo agent\nmodel: ignored\n---\n\nDo the work. 🔍\n"
+    agent = "---\nname: demo-agent\ndescription: Demo agent\nmodel: opus\neffort: high\n---\n\nDo the work. 🔍\n"
     command = (
         "---\ndescription: Demo command\nargument-hint: ignored\n---\n\nDo the command.\n\nPreserve “smart quotes”.\n"
     )
@@ -52,12 +54,44 @@ def test_write_generates_codex_assets(tmp_path: Path) -> None:
         '---\nname: "demo-command"\ndescription: "Demo command"\n---\n'
     )
     agent = read_file(root / ".codex/agents/demo-agent.toml")
+    assert agent.startswith('name = "demo-agent"\n')
     assert 'description = "Demo agent"' in agent
+    assert 'model = "gpt-5.6-sol"' in agent
+    assert 'model_reasoning_effort = "high"' in agent
     assert "developer_instructions = '''" in agent
-    assert 'name = "demo-agent"' in agent
     assert "Do the work. 🔍" in agent
     assert "● TIGHT dependency." in read_file(root / ".agents/skills/demo-skill/SKILL.md")
     assert "Preserve “smart quotes”." in read_file(root / ".agents/skills/demo-command/SKILL.md")
+
+
+def test_render_agent_maps_models_and_preserves_unpinned_settings(tmp_path: Path) -> None:
+    source = tmp_path / "agent.md"
+    cases = (
+        ("fable", "medium", 'model = "gpt-5.6-sol"', 'model_reasoning_effort = "medium"'),
+        ("sonnet", "low", 'model = "gpt-5.6-terra"', 'model_reasoning_effort = "low"'),
+    )
+    for model, effort, expected_model, expected_effort in cases:
+        write_file(
+            source,
+            f"---\nname: demo\ndescription: Demo\nmodel: {model}\neffort: {effort}\n---\nInstructions.\n",
+        )
+        rendered = sync_claude_assets.render_agent(source)
+        assert expected_model in rendered
+        assert expected_effort in rendered
+
+    write_file(source, "---\nname: demo\ndescription: Demo\n---\nInstructions.\n")
+    rendered = sync_claude_assets.render_agent(source)
+    assert "model =" not in rendered
+    assert "model_reasoning_effort =" not in rendered
+
+
+@pytest.mark.parametrize(("key", "value"), (("model", "unknown"), ("effort", "extreme")))
+def test_render_agent_rejects_unmapped_routing_metadata(tmp_path: Path, key: str, value: str) -> None:
+    source = tmp_path / "agent.md"
+    write_file(source, f"---\nname: demo\ndescription: Demo\n{key}: {value}\n---\nInstructions.\n")
+
+    with pytest.raises(ValueError, match=rf"unsupported agent {key} {value!r}"):
+        sync_claude_assets.render_agent(source)
 
 
 def test_check_reports_generated_asset_drift(tmp_path: Path) -> None:

@@ -15,6 +15,16 @@ TRIPLE_LITERAL_QUOTE = "'''"
 CLAUDE_COMMAND_INPUT = "$ARGUMENTS"
 CLAUDE_COMMAND_AGENT = re.compile(r"@agent-([A-Za-z0-9_-]+)")
 CLAUDE_COMMAND_AUTORUN = re.compile(r"^!`(?P<command>[^`]+)`$", re.MULTILINE)
+CLAUDE_AGENT_MODEL_TO_CODEX = {
+    "fable": "gpt-5.6-sol",
+    "opus": "gpt-5.6-sol",
+    "sonnet": "gpt-5.6-terra",
+}
+CLAUDE_AGENT_EFFORT_TO_CODEX = {
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+}
 
 
 @dataclass
@@ -30,15 +40,41 @@ def split_frontmatter(content: str, source: Path) -> tuple[str, str]:
     return match.group("metadata"), content[match.end() :]
 
 
-def metadata_value(metadata: str, key: str, source: Path) -> str:
+def optional_metadata_value(metadata: str, key: str) -> str | None:
     prefix = f"{key}:"
     for line in metadata.splitlines():
         if line.startswith(prefix):
             value = line[len(prefix) :].strip()
             if len(value) >= 2 and value[0] == value[-1] == '"':
-                return json.loads(value)
+                decoded = json.loads(value)
+                if not isinstance(decoded, str):
+                    raise ValueError(f"frontmatter {key!r} must decode to a string")
+                return decoded
             return value
+    return None
+
+
+def metadata_value(metadata: str, key: str, source: Path) -> str:
+    value = optional_metadata_value(metadata, key)
+    if value is not None:
+        return value
     raise ValueError(f"{source}: frontmatter is missing {key!r}")
+
+
+def mapped_agent_metadata(
+    metadata: str,
+    key: str,
+    mapping: dict[str, str],
+    source: Path,
+) -> str | None:
+    value = optional_metadata_value(metadata, key)
+    if value is None:
+        return None
+    try:
+        return mapping[value]
+    except KeyError as error:
+        supported = ", ".join(sorted(mapping))
+        raise ValueError(f"{source}: unsupported agent {key} {value!r}; expected one of: {supported}") from error
 
 
 def render_skill(source: Path, name: str | None = None) -> str:
@@ -82,12 +118,18 @@ def render_agent(source: Path) -> str:
         raise ValueError(f"{source}: instructions contain {TRIPLE_LITERAL_QUOTE!r}")
     name = metadata_value(metadata, "name", source)
     description = metadata_value(metadata, "description", source)
-    return (
-        f"description = {json.dumps(description)}\n"
-        f"developer_instructions = {TRIPLE_LITERAL_QUOTE}\n"
-        f"{body}{TRIPLE_LITERAL_QUOTE}\n"
-        f"name = {json.dumps(name)}\n"
-    )
+    model = mapped_agent_metadata(metadata, "model", CLAUDE_AGENT_MODEL_TO_CODEX, source)
+    effort = mapped_agent_metadata(metadata, "effort", CLAUDE_AGENT_EFFORT_TO_CODEX, source)
+    lines = [f"name = {json.dumps(name)}", f"description = {json.dumps(description)}"]
+    if model is not None:
+        lines.append(f"model = {json.dumps(model)}")
+    if effort is not None:
+        lines.append(f"model_reasoning_effort = {json.dumps(effort)}")
+    lines.extend((
+        f"developer_instructions = {TRIPLE_LITERAL_QUOTE}",
+        f"{body}{TRIPLE_LITERAL_QUOTE}",
+    ))
+    return "\n".join(lines) + "\n"
 
 
 def ensure_content(target: Path, expected: str, write: bool, result: SyncResult) -> None:
