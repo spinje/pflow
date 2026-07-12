@@ -89,25 +89,3 @@
   collision-watch contact.
 - Next: relaunch a v1 replacement into the existing clean worktree with an isolated complete
   packet.
-
-## [2026-07-12] main orchestrator — #565 Codex v1 replacement launched
-
-- Corrected: user clarified the runtime restart continues session 3; removed the mistakenly
-  created session 4 and folded its recovery record here. Session 2 had already been read in full.
-- Did: launched `/root/issue_565_v1` into the existing clean worktree with `fork_turns: none`,
-  explicit `task-orchestrator` role, `gpt-5.6-sol`, high reasoning, and a complete isolated
-  issue-mode packet including the sandbox-testing requirement.
-- Next: shepherd its handbacks; verify the PR/CI/merge claim at completion, then teardown with the
-  squash-safe head-OID check and reconcile.
-
-## [2026-07-12] main orchestrator — Codex v1 shakedown stopped
-
-- Failure: `/root/issue_565_v1` immediately reproduced the encrypted-function-output decode error
-  before a usable handback. Local inspection again proves the worktree clean at `342aac49`, with
-  no implementation diff or commit.
-- Ruling: stopped under the already-recorded one-replacement limit; no further identical launch.
-  This is a Codex runtime/tooling incompatibility, not evidence about #565 or the orchestration
-  packet. The isolated role/model launch itself was accepted successfully; execution could not
-  survive its first tool-output boundary.
-- Next: user/runtime owner chooses whether to retry after a Codex fix or authorize a materially
-  different execution route. #565 remains open and locally lossless.

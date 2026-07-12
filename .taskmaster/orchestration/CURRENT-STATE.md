@@ -21,14 +21,12 @@ Every claim here is a pointer to verify, not a fact._
 
 ## In flight
 
-- **#565 (MCP probe output paths)** — PARKED on Codex runtime failure. The Codex v1 replacement
-  `/root/issue_565_v1` (`task-orchestrator`, `gpt-5.6-sol`, high, isolated context) reproduced
-  the same immediate encrypted-function-output decode failure as the v2 agent. Per session 3's
-  one-replacement limit, do not retry this shakedown unchanged. Worktree
-  `/Users/andfal/projects/pflow-worktrees/fix-mcp-probe-output-paths` and branch
-  `fix/mcp-probe-output-paths` remain clean at base `342aac49`; no implementation was attempted
-  or lost. Resolution requires a Codex runtime/tooling change or a user-approved different
-  execution route.
+- No live Codex subagents. **#565 (MCP probe output paths)** is parked after the session restart:
+  `/root/issue_565` failed twice on encrypted tool-output decoding; its replacement
+  `/root/issue_565_recovery` did not survive the v2→v1 restart and has no resumable live handle.
+  Its worktree `/Users/andfal/projects/pflow-worktrees/fix-mcp-probe-output-paths` and branch
+  `fix/mcp-probe-output-paths` are clean at base `342aac49`; no implementation was lost. Remote
+  freshness and #565's open state are now verified; next action is the Codex v1 relaunch.
 
 ## Current arc
 
