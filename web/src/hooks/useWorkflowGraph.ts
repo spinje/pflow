@@ -16,7 +16,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { type OnEdgesChange, type OnNodesChange, useEdgesState, useNodesState, useReactFlow } from "@xyflow/react";
 
 import { ApiError, fetchGraph } from "../api/client";
-import { applyFocus, applyStatus, buildFlow, type BuildOptions, expandTargets, type FlowEdge, type FlowNode, ioOwners } from "../graph/flow";
+import { applyFocus, applyReplayDim, applyStatus, buildFlow, type BuildOptions, expandTargets, type FlowEdge, type FlowNode, ioOwners } from "../graph/flow";
 import { layoutGraph } from "../graph/layout";
 import { assignBackRails, assignDataRails, assignLoopRails } from "../graph/portSides";
 import type { ApiErrorEntry, NodeRunState, RFGraph } from "../types";
@@ -35,6 +35,9 @@ export interface WorkflowGraphView extends Omit<BuildOptions, "expanded"> {
   // Task 173 replay: in a STALE, completed replay, mark joinable nodes the run has no state for as
   // "unrecorded" (a dashed "no data for this version" badge) instead of leaving them blank.
   markUnmatched?: boolean;
+  // Task 176 un-run greying: on a PINNED TERMINAL replay, grey the nodes/edges the run never
+  // executed (applyReplayDim). Never a live run — the caller gates on `pinned && banner present`.
+  replayDim?: boolean;
 }
 
 export interface WorkflowGraphResult {
@@ -108,6 +111,7 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView, relo
   const { density, direction, collapsed, focus, selected, workflowName } = view;
   const runStatus = view.runStatus ?? EMPTY_STATUS;
   const markUnmatched = view.markUnmatched ?? false;
+  const replayDim = view.replayDim ?? false;
 
   const [graph, setGraph] = useState<RFGraph | null>(null);
   const [errors, setErrors] = useState<ApiErrorEntry[] | null>(null);
@@ -325,6 +329,9 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView, relo
   // The focus the edges were last painted for — together with `paintedRef` (the laid snapshot) it tells a
   // status-only re-decoration (skip setEdges) from a focus/layout change (must re-paint edges).
   const paintedFocusRef = useRef<string | null>(null);
+  // Task 176: the replay-dim edge inputs last painted (the status map when active, null when not) —
+  // the third conjunct of the edges-unchanged skip; see the note at the skip below.
+  const paintedDimRef = useRef<ReadonlyMap<string, NodeRunState> | null>(null);
   useEffect(() => {
     if (laid === null || laid.key !== layoutKey) return;
     if (animRef.current !== null) {
@@ -335,17 +342,30 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView, relo
     // Task 173: overlay live run status AFTER focus — a pure restyle (no re-layout). A status-only
     // change keeps the same `laid`, so isNewLayout stays false and this snaps instantly (no animation).
     decorated.nodes = applyStatus(decorated.nodes, runStatus, markUnmatched);
+    // Task 176: un-run greying on a pinned terminal replay — the third pure restyle. Runs LAST so
+    // it sees applyFocus's edge classNames (it appends `edge-unrun` beside them); inactive
+    // (replayDim false — every live run) it is an identity pass-through.
+    const replayDimmed = applyReplayDim(decorated.nodes, decorated.edges, runStatus, replayDim);
+    decorated.nodes = replayDimmed.nodes;
+    decorated.edges = replayDimmed.edges;
     const prevLaid = paintedRef.current;
     const isNewLayout = prevLaid !== laid;
-    // Edges depend ONLY on (laid, focus) — applyStatus restyles NODES, never edges. So a status-only
-    // re-decoration (same laid + same focus, every live runStatus tick) produces structurally identical
-    // edges; re-setting them there forced React Flow to re-render ALL edges each tick, which raced the
-    // node re-measure and transiently blanked every edge while a run streamed (user-caught, esp. with a
-    // focus/expansion active). Skip setEdges then — RF still re-paths edges from the updated node
-    // positions in the store, so nothing goes stale.
-    const edgesUnchanged = prevLaid === laid && paintedFocusRef.current === focus;
+    // Edges depend ONLY on (laid, focus, and — when replay-dimming — the status map) — applyStatus
+    // restyles NODES, never edges. So a status-only re-decoration (same laid + same focus, every live
+    // runStatus tick) produces structurally identical edges; re-setting them there forced React Flow
+    // to re-render ALL edges each tick, which raced the node re-measure and transiently blanked every
+    // edge while a run streamed (user-caught, esp. with a focus/expansion active). Skip setEdges then
+    // — RF still re-paths edges from the updated node positions in the store, so nothing goes stale.
+    // Task 176: with replayDim active, edge classes ALSO depend on the status map — a terminal
+    // replay's snapshot arriving on an unchanged (laid, focus) must still repaint edges or the
+    // un-run dim silently never lands (the map's identity is the cheap discriminator; a terminal
+    // replay never ticks, so this stays rare). Inactive → null, preserving the live-run skip exactly.
+    const dimEdgesKey = replayDim ? runStatus : null;
+    const edgesUnchanged =
+      prevLaid === laid && paintedFocusRef.current === focus && paintedDimRef.current === dimEdgesKey;
     paintedRef.current = laid;
     paintedFocusRef.current = focus;
+    paintedDimRef.current = dimEdgesKey;
     const from = isNewLayout ? pendingFromRef.current : null;
     const pan = isNewLayout ? pendingPanRef.current : null;
     pendingFromRef.current = null;
@@ -417,7 +437,7 @@ export function useWorkflowGraph(workflow: string, view: WorkflowGraphView, relo
         if (pan) setViewport({ zoom: vp0.zoom, x: vp0.x - pan.dx * vp0.zoom, y: vp0.y - pan.dy * vp0.zoom });
       }
     };
-  }, [laid, layoutKey, focus, runStatus, markUnmatched, setNodes, setEdges, getViewport, setViewport]);
+  }, [laid, layoutKey, focus, runStatus, markUnmatched, replayDim, setNodes, setEdges, getViewport, setViewport]);
 
   const status: GraphStatus = errors
     ? "error"

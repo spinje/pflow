@@ -2,28 +2,41 @@
 // future live-run overlay (Task 168 deferred increment) adds an events
 // subscription HERE — the components never learn where data comes from.
 
-import type { ApiErrorBody, CatalogItem, RFGraph, RFRef, RunInfo, RunNodeDetail, SourceFiles } from "../types";
+import type { ApiErrorBody, CatalogItem, GateInfo, RFGraph, RFRef, RunInfo, RunNodeDetail, SourceFiles } from "../types";
 
 /** A structured /api failure (400 missing param / 422 validation). Carries the
  *  server's diagnostics so the UI can render them instead of a blank canvas. */
 export class ApiError extends Error {
   readonly status: number;
   readonly errors: ApiErrorBody["errors"];
+  // The RAW parsed refusal body (Task 176): /api/resume 4xxs carry a machine-readable
+  // `refusal` discriminator + kind-specific extras (`newer_execution_id`, `node_id`/
+  // `node_type`, `hash_known`) BESIDE `errors` — reachable here so the panels never
+  // string-parse a diagnostic. Undefined for endpoints that only send `errors`.
+  readonly body?: Record<string, unknown>;
 
-  constructor(status: number, errors: ApiErrorBody["errors"]) {
+  constructor(status: number, errors: ApiErrorBody["errors"], body?: Record<string, unknown>) {
     const first = errors[0];
     super(first?.message ?? first?.title ?? `Request failed (${status})`);
     this.name = "ApiError";
     this.status = status;
     this.errors = errors;
+    this.body = body;
   }
 }
 
 async function parseErrorBody(response: Response): Promise<ApiErrorBody["errors"]> {
   try {
-    const body = (await response.json()) as ApiErrorBody;
+    const body = (await response.json()) as ApiErrorBody & { error?: unknown };
     if (Array.isArray(body?.errors) && body.errors.length > 0) {
       return body.errors;
+    }
+    // The server's OTHER error shape: shape-validation 4xxs send a singular {"error": "<text>"}
+    // (house convention across /api/gate 404s, /api/command, the JSON-POST preflight …). Surface
+    // the text instead of collapsing it to the generic HTTP line — the panels render these inline
+    // (Task 176 review finding: /api/gate's "not paused" message was being dropped).
+    if (typeof body?.error === "string" && body.error) {
+      return [{ message: body.error }];
     }
   } catch {
     // Non-JSON body (e.g. a 500 HTML page) — fall through to a generic entry.
@@ -135,6 +148,74 @@ export async function runWorkflow(workflow: string, inputs: Record<string, strin
   const body = (await response.json()) as { run_id?: unknown };
   if (typeof body.run_id !== "string") {
     throw new ApiError(response.status, [{ message: "The server did not return a run id for the launch." }]);
+  }
+  return body.run_id;
+}
+
+function isGateInfo(value: unknown): value is GateInfo {
+  if (!value || typeof value !== "object") return false;
+  const g = value as Record<string, unknown>;
+  if (typeof g.paused_node_id !== "string") return false;
+  if (g.gate_kind !== "action_approval" && g.gate_kind !== "decision_escalation") return false;
+  const req = g.gate_request as Record<string, unknown> | null | undefined;
+  // The essentials only — escalation fields are optional by contract (render leniently).
+  return !!req && typeof req === "object" && typeof req.node_id === "string" && typeof req.kind === "string";
+}
+
+/** A paused run's gate payload (Task 176): GET /api/gate, on demand when the gate panel
+ *  opens — the bulky `gate_request` deliberately never rides the SSE wire or /api/runs
+ *  (only the small `paused_node_id` does). The `preview` arrives secret-masked server-side.
+ *  Throws ApiError on 400 (missing param) / 404 (unknown run, or not paused at a gate —
+ *  e.g. answered elsewhere between the banner and this fetch); the caller renders the
+ *  diagnostics inline (DR-6), never blanks the canvas. */
+export async function fetchGate(run: string): Promise<GateInfo> {
+  const response = await fetch(`/api/gate?run=${encodeURIComponent(run)}`);
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseErrorBody(response));
+  }
+  const body = (await response.json()) as unknown;
+  if (!isGateInfo(body)) {
+    throw new ApiError(response.status, [{ message: "The server returned an unexpected gate shape." }]);
+  }
+  return body;
+}
+
+/** Answer a paused gate — or resume a failed/interrupted run — by spawning a detached
+ *  `pflow resume` (Task 176): POST /api/resume, ONE endpoint mirroring the CLI verb.
+ *  `approve`/`choose` are mutually exclusive; `force` is sent ONLY after an explicit ack
+ *  dialog (stale-workflow / side-effect confirmation — the server never adds it itself).
+ *  Resolves with the spawned attempt's run_id (server-minted, like runWorkflow) so the
+ *  caller PINS the overlay to the exact new attempt. A refusal throws ApiError with the
+ *  machine-readable `refusal` discriminator + extras on `.body` — the response body is
+ *  read ONCE (a second .json() on a consumed body throws, silently collapsing every
+ *  refusal to the generic inline-errors arm). The application/json header is load-bearing
+ *  for the server's no-CORS posture. */
+export async function resumeRun(req: {
+  run: string;
+  approve?: "yes" | "no";
+  choose?: string;
+  force?: boolean;
+}): Promise<string> {
+  const response = await fetch("/api/resume", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+  if (!response.ok) {
+    // SINGLE READ: derive both `errors` and the raw `body` from one parse. Shape-validation
+    // 400s use the singular {"error": ...} house shape — surface it like parseErrorBody does.
+    const parsed = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+    const errors =
+      parsed && Array.isArray(parsed.errors) && parsed.errors.length > 0
+        ? (parsed.errors as ApiErrorBody["errors"])
+        : parsed && typeof parsed.error === "string" && parsed.error
+          ? [{ message: parsed.error }]
+          : [{ message: `Server returned HTTP ${response.status}.` }];
+    throw new ApiError(response.status, errors, parsed ?? undefined);
+  }
+  const body = (await response.json()) as { run_id?: unknown };
+  if (typeof body.run_id !== "string") {
+    throw new ApiError(response.status, [{ message: "The server did not return a run id for the resume." }]);
   }
   return body.run_id;
 }

@@ -109,6 +109,10 @@ export type LeafData = {
   status?: NodeStatus;
   // The status badge's hover metrics (duration/cost) for THIS run, set alongside `status` by applyStatus.
   runDetail?: RunDetail;
+  // Un-run region greying (Task 176): on a pinned TERMINAL replay this node has no recorded state
+  // — "never ran". Rendered as class `.node.unrun` (a lighter dim than focus's; focus-dim wins).
+  // Set by applyReplayDim; undefined/false everywhere else, so a live canvas is untouched.
+  unrun?: boolean;
   // Transient, set by applyFocus (LR only): outcome → condition for a branch whose
   // TARGET is the focus — the reveal lands on THIS (source) node's BranchPorts row,
   // the condition's LR home (an edge pill at the target entry overlapped the
@@ -176,6 +180,9 @@ export type GroupData = {
   status?: NodeStatus;
   // The host badge's hover metrics (duration/cost), set alongside `status` by applyStatus.
   runDetail?: RunDetail;
+  // Un-run region greying (Task 176), COLLAPSED card only — an expanded region's children dim
+  // individually (a region opacity would compound with theirs). Set by applyReplayDim.
+  unrun?: boolean;
 };
 
 export type EndData = {

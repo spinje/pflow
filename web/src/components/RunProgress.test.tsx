@@ -139,18 +139,31 @@ describe("RunProgress", () => {
     expect(outcome?.className).toContain("run-denied");
   });
 
-  it("renders a PAUSED run amber — never the green success fallthrough (Task 171)", () => {
+  it("renders a PAUSED run with the amber ⏸ badge — never the green success fallthrough (Task 171/176)", () => {
     // A durable gate pause: the run trails final_status "paused" (waiting on a human's answer).
     // Without the explicit arm, runBadgeStatus falls through to the green success ✓ — the exact
-    // regression a UI-launched gated run (stdin=DEVNULL → non-TTY → pause) would hit.
+    // regression a UI-launched gated run (stdin=DEVNULL → non-TTY → pause) would hit. Since Task
+    // 176 the badge is the real `paused` arm (same amber, ⏸ bars matching the frontier node's
+    // badge) — 171 shipped it as the closest-available "stopped" square.
     render(
       <RunProgress steps={[step("a", { status: "success" })]} banner={{ final_status: "paused", nodes_executed: 1 }} />,
     );
     const badge = document.querySelector(".run-progress-outcome .status-badge");
-    expect(badge?.className).toContain("status-stopped");
+    expect(badge?.className).toContain("status-paused");
     expect(badge?.className).not.toContain("status-success");
     const outcome = screen.getByText(/Run paused · 1 nodes/).closest(".run-progress-outcome");
     expect(outcome?.className).toContain("run-paused");
+  });
+
+  it("a PAUSED step tile reads amber with 'paused' meta (the ⏸ frontier row, Task 176)", () => {
+    // The synthesized per-node `paused` status flows into ProgressStep.status like any other —
+    // both switches need the arm or the frontier row silently reads as pending grey.
+    render(<RunProgress steps={[step("gate", { status: "paused" }), step("after")]} banner={null} />);
+    const row = document.querySelector(".run-spine-step.status-paused");
+    expect(row).toBeTruthy();
+    expect(row!.textContent).toContain("paused");
+    const tile = row!.querySelector(".run-spine-tile");
+    expect(tile!.getAttribute("style")).toContain("var(--status-paused)"); // amber, not the pending grey
   });
 
   it("resolves a no-banner terminal run via `outcome` instead of spinning a fake 'Running…'", () => {

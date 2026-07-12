@@ -42,9 +42,11 @@ import {
 import type { InteractionTarget, NodeRunState, PointTarget, RFEdge, RFGraph, RFNode, RFRef, RunComplete, RunEvent, SourceFiles } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
+import { GateCallout } from "../components/GateCallout";
 import { HoverMarksProvider, InteractionProvider, NO_HOVER } from "../components/interaction";
 import { IoPanel } from "../components/IoPanel";
 import { NodeCallout } from "../components/NodeCallout";
+import { ResumeControl } from "../components/ResumeControl";
 import { nodeTypes } from "../components/nodes";
 import { PanelResizer } from "../components/PanelResizer";
 import { RunProgress } from "../components/RunProgress";
@@ -63,6 +65,15 @@ interface GraphViewProps {
 // A run-event → the overlay's per-node state: status + the cheap hover metrics (already on the wire). Status
 // drives the badge; duration/cost ride its hover detail.
 const eventState = (e: RunEvent): NodeRunState => ({ status: e.status, durationMs: e.duration_ms, costUsd: e.cost_usd, id: e.id });
+
+// Task 176: the ⏸ frontier badge is CLIENT-synthesized from the banner's `paused_node_id` — `paused`
+// never arrives as a per-node RunEvent (events.ts RUN_STATUSES stays untouched, the 171 rule). The
+// paused node is top-level by the 171 producer conjuncts (nested/batch gates never pause durably),
+// so the join ref is always `{node_id, ancestor_path: [], port: null}`.
+const pausedEntry = (run: RunComplete | null): [string, NodeRunState] | null =>
+  run?.paused_node_id
+    ? [refKey({ node_id: run.paused_node_id, ancestor_path: [], port: null }), { status: "paused" }]
+    : null;
 
 // The detail panel's "This run" section opens ONLY for a node with a recorded COMPLETION in the current run.
 // `running` (the badge/chip cover it), `stopped` (only a node.start on disk — nothing to project), and
@@ -92,6 +103,14 @@ function sayAnchorIdFor(
   const node = flatId ? graph.nodes.find((candidate) => candidate.id === flatId) : undefined;
   return node ? representativeFor(node) : null;
 }
+
+// The ⏸ bars before the gate callout's "Gate" title (Task 176) — the same glyph as the paused
+// node badge, so the panel visibly belongs to the ⏸ node it anchors at.
+const GATE_BARS = (
+  <svg width={11} height={11} viewBox="0 0 11 11" fill="none" aria-hidden>
+    <path d="M3.5 2v7M7.5 2v7" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+  </svg>
+);
 
 // The pflow ">>" chevrons before the run callout's "RUN" title (its leading mark).
 const RUN_CHEVRONS = (
@@ -157,6 +176,10 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
   // Whether THIS page load was a `?run=` deep-link (immutable). The run callout then frames the initial
   // camera on its anchor, so the camera hook skips the competing one-shot whole-graph fit.
   const runDeepLinkRef = useRef(Boolean(new URLSearchParams(window.location.search).get("run")));
+  // Task 176: the gate panel's dismissal. false = auto-show on a paused banner (entry point one);
+  // the ✕ sets it; clicking the ⏸ node clears it (entry point two — deliberately no third). Reset
+  // on every genuine run switch (selectRun) so a newly pinned paused run auto-shows its gate.
+  const [gateDismissed, setGateDismissed] = useState(false);
   // Task 174 follow-up: the agent's say captions — PERSISTENT per-target annotations. One box per
   // anchor, keyed by refKey of the STRUCTURAL ref (never the resolved flat id: flat ids are
   // positional and renumber on an auto-update rebuild, so each box's anchor is re-resolved from
@@ -204,6 +227,11 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       // → mark current nodes the run has no state for as "unrecorded" instead of leaving them blank. Gated on
       // completed so a still-running pinned-stale run never mis-marks a node that's merely pending.
       markUnmatched: runStale && runBanner !== null,
+      // Task 176 un-run greying: pinned TERMINAL replays ONLY — a pinned live run has no banner
+      // until its trailer, and the unpinned live overlay never greys (a live shrinking grey region
+      // would duplicate the badge animation and flicker — owner scoping 2026-07-05). Paused/denied
+      // replays count as terminal: the grey region reads "what never ran".
+      replayDim: runId !== null && runBanner !== null,
     },
     reload,
   );
@@ -305,6 +333,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       setRunMissing(false);
       setRunStopped(false);
       setRunStale(false);
+      setGateDismissed(false); // a fresh run's gate auto-shows (Task 176)
       // Pinning a SPECIFIC past run (from the RunSelector) opens its run callout — the same box a launch
       // hands off to, now showing that run's replayed per-node states (the re-subscribe repopulates
       // runStatus from the pinned run's snapshot). "Live — follow newest" (null) has no specific run to
@@ -654,6 +683,32 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     [graph, ioOwnership],
   );
 
+  // --- Gate panel (Task 176) --------------------------------------------------------------------
+  // The run the gate belongs to: the pinned id, else the paused banner's own execution_id (a
+  // follow-newest viewer sees an unpinned run pause). null → no id to answer against → no panel.
+  const gateRunId = runId ?? runBanner?.execution_id ?? null;
+  // The ⏸ node's callout anchor, re-resolved from the CURRENT graph every render (flat ids renumber
+  // on a live-reload rebuild — the say-bubble rule; never cache it). null when a stale replay's
+  // paused node was renamed/removed in the current file: a null-anchor callout must not render (the
+  // ⏸ badge already no-ops silently on the same miss).
+  const gateAnchorId = useMemo(() => {
+    if (!graph || runBanner?.final_status !== "paused" || !runBanner.paused_node_id) return null;
+    return sayAnchorIdFor(graph, { node_id: runBanner.paused_node_id, ancestor_path: [], port: null }, representativeFor);
+  }, [graph, runBanner, representativeFor]);
+  // Entry point two: clicking the ⏸ node re-opens a dismissed panel. Rides the existing
+  // onNodeClick → setSelectedId wiring (selectedNode resolves a container to its HOST, so a gated
+  // sub-workflow card counts too) — a selection LANDING on the paused frontier clears the
+  // dismissal; dismissing while it stays selected sticks (no dep on gateDismissed, deliberately).
+  const pausedNodeSelected = Boolean(
+    selectedNode &&
+      runBanner?.paused_node_id &&
+      selectedNode.ref.node_id === runBanner.paused_node_id &&
+      selectedNode.ref.ancestor_path.length === 0,
+  );
+  useEffect(() => {
+    if (pausedNodeSelected) setGateDismissed(false);
+  }, [pausedNodeSelected]);
+
   const setSayStatus = useCallback((key: string, status: SayItem["status"]) => {
     setSayCallouts((prev) => {
       const item = prev.get(key);
@@ -885,14 +940,19 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
         setRunStale(stale);
         // A late subscriber to an already-stopped run gets the dangling nodes still reading `running` —
         // flip them to `stopped` here so it doesn't blue-blink forever (silent-failures review).
-        setRunStatus(
-          new Map(
+        // Task 176: a paused replay/late-subscribe also synthesizes the ⏸ frontier badge here — the
+        // snapshot's run trailer is the only place a late subscriber learns `paused_node_id`.
+        setRunStatus(() => {
+          const next = new Map<string, NodeRunState>(
             events.map((e) => [
               refKey(e.ref),
               stopped && e.status === "running" ? { status: "stopped" } : eventState(e),
             ]),
-          ),
-        );
+          );
+          const paused = pausedEntry(run);
+          if (paused) next.set(paused[0], paused[1]);
+          return next;
+        });
         setRunBanner(run);
       },
       runEvents: (events) =>
@@ -906,6 +966,9 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
       runComplete: (run) => {
         setRunStopped(false);
         setRunBanner(run);
+        // Task 176: a paused trailer lights the ⏸ badge on the frontier node (map-copy, like runStopped).
+        const paused = pausedEntry(run);
+        if (paused) setRunStatus((prev) => new Map(prev).set(paused[0], paused[1]));
       },
       runReset: () => {
         setRunMissing(false);
@@ -913,6 +976,10 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
         setRunStale(false);
         setRunStatus(new Map());
         setRunBanner(null);
+        // Task 176: a run boundary re-arms the gate auto-show. On follow-newest, runId never
+        // changes, so selectRun's reset can't cover this — without it, one dismissal would
+        // silently mute every LATER run's gate panel (deep-review finding, 2026-07-12).
+        setGateDismissed(false);
       },
       runNotFound: () => {
         setRunStatus(new Map());
@@ -1135,8 +1202,35 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
                   outcome={runMissing ? "not-found" : runStopped ? "stopped" : null}
                   onSelectStep={(id) => onNavigate(id, id)}
                 />
+                {/* Task 176: the Resume arm — failed (banner) or interrupted (stopped, no banner) pinned
+                    runs only. Paused is the GateCallout's job; success/degraded/denied resume nothing.
+                    Keyed by run so a pin switch resets its confirm/refusal state. */}
+                {runId !== null && (runBanner?.final_status === "failed" || (runBanner === null && runStopped)) && (
+                  <ResumeControl key={runId} run={runId} onPinRun={selectRun} />
+                )}
               </NodeCallout>
             )}
+            {/* Task 176: the gate panel — a NodeCallout anchored at the ⏸ frontier node, auto-shown on a
+                paused banner (dismissible; the ⏸-node click re-opens it — two entry points, no third).
+                frameOnMount frames the camera over the gate. Renders only with a resolvable anchor (a
+                stale replay's renamed node must not float a detached box) and an answerable run id. */}
+            {runBanner?.final_status === "paused" &&
+              runBanner.paused_node_id &&
+              gateRunId !== null &&
+              graph &&
+              !gateDismissed &&
+              gateAnchorId !== null && (
+                <NodeCallout
+                  anchorId={gateAnchorId}
+                  direction={direction}
+                  icon={GATE_BARS}
+                  title="Gate"
+                  subtitle={<span title={runBanner.paused_node_id}>{runBanner.paused_node_id}</span>}
+                  onClose={() => setGateDismissed(true)}
+                >
+                  <GateCallout key={gateRunId} run={gateRunId} onPinRun={selectRun} />
+                </NodeCallout>
+              )}
             {/* Task 174: the agent's say bubbles — caption always, voice when it can. One PERSISTENT
                 box per anchored target; each coexists with the others and with the run callout (say
                 renders after, so it stacks on top when both anchor the same node — accepted; every

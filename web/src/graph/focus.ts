@@ -71,6 +71,60 @@ export function applyStatus(
   });
 }
 
+const UNRUN_EDGE_CLASS = "edge-unrun";
+
+/** Un-run region greying (Task 176): the third restyle pass beside applyFocus/applyStatus — on a
+ *  PINNED TERMINAL replay (`active`; never a live run — owner scoping 2026-07-05), a status-bearing
+ *  node the run has NO recorded state for reads as "never ran": class `.node.unrun` (a lighter dim
+ *  than focus's 0.18 — focus-dim wins when both apply, CSS order), and an edge dims when EITHER
+ *  endpoint is un-run. Pure style pass over the laid-out snapshot, NO re-layout; identity-stable
+ *  like applyStatus (unchanged nodes/edges keep their object, memo'd components skip re-render).
+ *
+ *  Join rule mirrors applyStatus exactly (leaves by own ref, sub-workflow hosts by the primary
+ *  group's host ref); io cards / wrapper groups / end sinks are not run subjects and never dim.
+ *  An EXPANDED un-run region contributes to the edge set but carries NO class itself — its
+ *  children dim individually, and a region opacity would compound with theirs (the applyFocus
+ *  groups-never-dim rule). On a STALE replay this composes with the `unrecorded` hollow badge —
+ *  coherent, both say "didn't run". */
+export function applyReplayDim(
+  nodes: FlowNode[],
+  edges: FlowEdge[],
+  status: ReadonlyMap<string, NodeRunState>,
+  active: boolean,
+): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  // The pipeline feeds this pristine laid+focused snapshots, so inactive is a pure pass-through
+  // (nothing to clear) — and costs nothing on every live-run decoration tick.
+  if (!active) return { nodes, edges };
+  const unrunIds = new Set<string>();
+  const outNodes = nodes.map((n) => {
+    if (n.type === "node") {
+      const unrun = !status.has(refKey(n.data.node.ref));
+      if (unrun) unrunIds.add(n.id);
+      if ((n.data.unrun ?? false) === unrun) return n;
+      return { ...n, data: { ...n.data, unrun } } as FlowNode;
+    }
+    if (n.type === "group" && n.data.hostNode && n.data.showTitle) {
+      const unrun = !status.has(refKey(n.data.hostNode.ref));
+      if (unrun) unrunIds.add(n.id);
+      const flag = unrun && n.data.collapsed; // expanded region: children dim, the region doesn't
+      if ((n.data.unrun ?? false) === flag) return n;
+      return { ...n, data: { ...n.data, unrun: flag } } as FlowNode;
+    }
+    return n;
+  });
+  const outEdges = edges.map((e) => {
+    const unrun = unrunIds.has(e.source) || unrunIds.has(e.target);
+    const classes = (e.className ?? "").split(" ").filter(Boolean);
+    const has = classes.includes(UNRUN_EDGE_CLASS);
+    if (unrun === has) return e;
+    const className = unrun
+      ? [...classes, UNRUN_EDGE_CLASS].join(" ")
+      : classes.filter((c) => c !== UNRUN_EDGE_CLASS).join(" ");
+    return { ...e, className };
+  });
+  return { nodes: outNodes, edges: outEdges };
+}
+
 // One row of the run-progress callout (Task 175): a top-level executable node + its live status.
 // `status` is the overlay status, or "pending" (absence of an event — not started). Carries the role
 // facts (kind/isDecision/isTransform) so RunProgress can color each tile via `nodeColor` — the SAME

@@ -33,6 +33,8 @@ export function runStatusLabel(status: NodeStatus, detail?: RunDetail): string {
       return "Stopped — the run's process exited before this node finished";
     case "unrecorded":
       return "No recorded state — recorded against a different version of the workflow";
+    case "paused":
+      return "Paused — awaiting an answer at this gate";
     case "success":
     case "failed": {
       const parts = [status === "success" ? "Succeeded" : "Failed"];
@@ -79,6 +81,14 @@ const GLYPH: Record<NodeStatus, JSX.Element> = {
   unrecorded: (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M5 12h14" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeDasharray="3.5 3.5" />
+    </svg>
+  ),
+  // paused — the durably-paused gate frontier (Task 176): the run is waiting on a human's answer HERE.
+  // The classic two-bar pause glyph; clicking the node reopens the gate panel.
+  paused: (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M9.4 7.2v9.6" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
+      <path d="M14.6 7.2v9.6" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
     </svg>
   ),
 };

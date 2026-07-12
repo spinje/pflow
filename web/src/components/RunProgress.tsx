@@ -29,10 +29,10 @@ function runBadgeStatus(banner: RunComplete | null, outcome: RunOutcome): NodeSt
     // degraded/stopped (the outcome text carries the word "denied"); the success ✓
     // fallthrough below must never render a human's "no" as green.
     if (banner.final_status === "denied") return "stopped";
-    // Task 171: a durable gate pause — the run is waiting on a human's answer, not done.
-    // Same amber treatment (the outcome text says "paused"); the success ✓ fallthrough
-    // must never render a pending question as green.
-    if (banner.final_status === "paused") return "stopped";
+    // Task 171/176: a durable gate pause — the run is waiting on a human's answer, not done.
+    // The paused badge (same amber, ⏸ bars — matching the frontier node's badge), never the
+    // success ✓ fallthrough; the outcome text says "paused".
+    if (banner.final_status === "paused") return "paused";
     return "success";
   }
   if (outcome === "stopped") return "stopped";
@@ -47,11 +47,13 @@ function runBadgeStatus(banner: RunComplete | null, outcome: RunOutcome): NodeSt
 const PENDING_COLOR = "#5b616b";
 const FAILED_COLOR = "var(--danger)";
 const STOPPED_COLOR = "var(--status-stopped)";
+const PAUSED_COLOR = "var(--status-paused)";
 
 function stepColor(step: ProgressStep): string {
   if (step.status === "pending") return PENDING_COLOR;
   if (step.status === "failed") return FAILED_COLOR;
   if (step.status === "stopped") return STOPPED_COLOR;
+  if (step.status === "paused") return PAUSED_COLOR; // the gate frontier — amber, awaiting an answer
   return nodeColor({ kind: step.kind, is_decision: step.isDecision, is_transform: step.isTransform });
 }
 
@@ -71,6 +73,8 @@ function stepMeta(step: ProgressStep): string {
       return "failed";
     case "stopped":
       return "stopped";
+    case "paused":
+      return "paused";
     default:
       return "pending";
   }

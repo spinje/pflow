@@ -32,6 +32,9 @@
   --status-success: #3fb950;
   --status-cached: #8b949e;
   --status-stopped: #d29922;
+  /* paused (Task 176): the durable gate pause — deliberately the SAME amber as stopped (both mean
+     "attention, not done"); the ⏸ glyph, the badge label and the gate panel carry the distinction. */
+  --status-paused: #d29922;
   --data-edge: #6fbfa8;
   /* The SELECTED data line: the bright member of the same green-teal family (hue
      carries identity, brightness carries state). Provisional — shoot-lab tunes it
@@ -660,6 +663,11 @@ button.active {
 .status-badge.status-stopped {
   background: var(--status-stopped);
 }
+/* `paused` (Task 176): the durably-paused gate frontier — the run is waiting on a human's answer HERE.
+   Amber ⏸ bars; clicking the node reopens the gate panel. */
+.status-badge.status-paused {
+  background: var(--status-paused);
+}
 /* `unrecorded` (Task 173 replay): the pinned run has no state for this node (different version). A muted,
    hollow badge with a grey dashed glyph — deliberately reads as "no data", never as a real run status. */
 .status-badge.status-unrecorded {
@@ -936,6 +944,16 @@ button.active {
   height: 100%;
   box-sizing: border-box;
   font-size: 12px;
+}
+/* Un-run region greying (Task 176): on a pinned TERMINAL replay, nodes/edges the run never
+   executed read at 0.45 — visibly "never ran", still legible (untaken branches stay readable).
+   MUST come BEFORE the focus-dim rule below (equal specificity, order decides: focus's 0.18 wins
+   when both apply) and BEFORE .node.hover-mark (hover un-dims an un-run node like a dimmed one).
+   Both orderings are pinned by cssOrder.test.ts. */
+.node.unrun,
+.react-flow__edge.edge-unrun {
+  opacity: 0.45;
+  transition: opacity 0.15s;
 }
 .node.dimmed,
 .react-flow__edge.edge-dimmed {
@@ -2426,6 +2444,222 @@ button.say-affordance {
     animation: none;
     box-shadow: 0 8px 24px rgb(0 0 0 / 45%), 0 0 0 1px rgb(255 255 255 / 55%);
   }
+}
+
+/* ---------- gate panel + resume control (Task 176) ---------- */
+/* Both live inside .node-callout (the gate in its own ⏸-anchored box, the resume control under
+   RunProgress in the run callout), so the chrome tokens apply. One shared control vocabulary
+   (.gate-btn / .gate-actions / .gate-note / .gate-errors) — the two surfaces speak one language. */
+.gate,
+.resume-control {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* The resume control sits under the run-progress outcome line — a hairline separates the arms. */
+.resume-control {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+/* Small caps context line: `node_type · node_id` — same voice as the callout title. */
+.gate-eyebrow {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.gate-question {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1.4;
+}
+/* The masked action preview: key → value rows on the raised field surface. Long values wrap and
+   scroll inside their row — the row owns the overflow, the callout body never scrolls sideways. */
+.gate-preview {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.gate-preview-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.gate-preview-key {
+  flex: none;
+  max-width: 40%;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.gate-preview-value {
+  flex: 1;
+  margin: 0;
+  padding: 4px 7px;
+  background: var(--bg-field);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 96px;
+  overflow-y: auto;
+}
+.gate-recommendation {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+/* Escalation options: one full-width answer button per option, label + optional description. */
+.gate-options {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gate-option {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 7px 10px;
+  background: var(--bg-field);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.gate-option:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.gate-option:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.gate-option-label {
+  font-weight: 600;
+  line-height: 1.35;
+}
+.gate-option-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+.gate-option-mark {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.gate-recommended {
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+}
+/* Free-text answer: input + Answer, one row. */
+.gate-freeform {
+  display: flex;
+  gap: 6px;
+}
+.gate-freeform-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  background: var(--bg-field);
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  color: var(--text);
+  font-size: 12px;
+}
+.gate-freeform-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+/* The action row: Deny/Approve, Cancel/Resume-anyway, ↻ Resume — right-aligned like a dialog. */
+.gate-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.gate-btn {
+  padding: 6px 14px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-field);
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+.gate-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.gate-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* Approve / the primary action: the accent-filled button (the one affirmative per surface). */
+.gate-approve,
+.gate-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0d0d0d;
+}
+.gate-approve:hover:not(:disabled),
+.gate-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+/* Deny stays quiet (a clean human "no" is a first-class outcome, not a red alarm). */
+.gate-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+/* An ack-required warning (stale workflow / side effects may re-fire) — amber, matching the
+   paused/stopped palette. `code` inside names the node. */
+.gate-warn {
+  color: var(--status-paused);
+}
+.gate-warn code {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+/* Inline refusal/diagnostic text (DR-6): the server's errors, never a blank panel. */
+.gate-errors {
+  margin: 0;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.gate-errors p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.gate-error {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* The Diagnostic's HOW-to-fix, under its message (GateErrors renders suggestions — the RunForm rule). */
+.gate-errors .gate-suggestion {
+  color: var(--text-muted);
 }
 
 /* A MINIATURE of the canvas spine: kind-colored tiles joined by gradient connectors. */

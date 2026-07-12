@@ -17,7 +17,7 @@ import type { RFGraph, RFNode } from "../types";
 // error contract (not a fabricated shape) is what the banner test exercises.
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
-  return { ...actual, fetchGraph: vi.fn(), fetchCatalog: vi.fn(), fetchSource: vi.fn(), fetchRuns: vi.fn(), fetchRunNode: vi.fn(), runWorkflow: vi.fn() };
+  return { ...actual, fetchGraph: vi.fn(), fetchCatalog: vi.fn(), fetchSource: vi.fn(), fetchRuns: vi.fn(), fetchRunNode: vi.fn(), runWorkflow: vi.fn(), fetchGate: vi.fn(), resumeRun: vi.fn() };
 });
 const live = vi.hoisted(() => ({
   handlers: null as import("../api/events").PointHandlers | null,
@@ -74,8 +74,9 @@ vi.mock("@xyflow/react", async (importOriginal) => {
   };
 });
 
-import { ApiError, fetchGraph, fetchRunNode, fetchRuns, fetchSource, runWorkflow } from "../api/client";
+import { ApiError, fetchGate, fetchGraph, fetchRunNode, fetchRuns, fetchSource, resumeRun, runWorkflow } from "../api/client";
 import type { RunHandlers } from "../api/events";
+import type { GateInfo } from "../types";
 import { layoutGraph } from "../graph/layout";
 import { highlight } from "../utils/highlight";
 import { GraphView } from "./GraphView";
@@ -170,6 +171,8 @@ beforeEach(() => {
   vi.mocked(fetchRuns).mockReset();
   vi.mocked(fetchRuns).mockResolvedValue([]); // RunSelector polls this on mount (the live-clock signal)
   vi.mocked(fetchRunNode).mockReset();
+  vi.mocked(fetchGate).mockReset();
+  vi.mocked(resumeRun).mockReset().mockResolvedValue("attempt-2");
   vi.mocked(fetchSource).mockReset();
   vi.mocked(fetchSource).mockResolvedValue({
     root: "/wf.pflow.md",
@@ -227,6 +230,7 @@ describe("GraphView mount", () => {
         trace_file: "/t/r1.json",
         git_root: null,
         resumed_from: null,
+        paused_node_id: null,
       },
     ]);
     window.history.replaceState({}, "", "/?workflow=demo&run=r1"); // runId reads ?run= once at mount
@@ -1445,5 +1449,134 @@ describe("agent say callout (Task 174 + persistent-captions follow-up)", () => {
     expect(screen.queryByText("ghost")).toBeNull();
     expect(screen.queryByText("Agent")).toBeNull();
     expect(FakeAudio.instances).toHaveLength(0);
+  });
+});
+
+describe("GraphView — approval bridge (Task 176)", () => {
+  const PAUSED_GATE: GateInfo = {
+    paused_node_id: "greet",
+    gate_kind: "action_approval",
+    gate_request: {
+      node_id: "greet",
+      node_type: "shell",
+      kind: "action_approval",
+      preview: { command: "echo hi" },
+      question: null,
+      options: [],
+      recommendation: null,
+    },
+  };
+  const pausedBanner = { final_status: "paused", nodes_executed: 1, execution_id: "r1", paused_node_id: "greet" };
+
+  const mountLive = async (): Promise<RunHandlers> => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    vi.mocked(fetchGate).mockResolvedValue(PAUSED_GATE);
+    render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+    await waitFor(() => expect(live.handlers).not.toBeNull());
+    return live.handlers as unknown as RunHandlers;
+  };
+
+  beforeEach(() => window.history.replaceState({}, "", "/"));
+  afterEach(() => window.history.replaceState({}, "", "/"));
+
+  it("synthesizes the ⏸ badge on the frontier node from a run-complete paused banner", async () => {
+    const run = await mountLive();
+    act(() => run.runComplete(pausedBanner));
+    // The badge is CLIENT-synthesized from paused_node_id — no per-node event carried it.
+    await waitFor(() => expect(screen.getByLabelText("run status: paused")).toBeTruthy());
+  });
+
+  it("synthesizes the ⏸ badge from a run-snapshot too (the late-subscriber / pinned-replay path)", async () => {
+    const run = await mountLive();
+    // A late subscriber gets NO run-complete broadcast — only the snapshot carries the trailer.
+    act(() => run.runSnapshot([], pausedBanner, false, false));
+    await waitFor(() => expect(screen.getByLabelText("run status: paused")).toBeTruthy());
+  });
+
+  it("auto-shows the GateCallout at the paused node — and not for a failed run", async () => {
+    const run = await mountLive();
+    act(() => run.runComplete(pausedBanner));
+    // The panel fetched the gate on demand and renders the kind-switched approval controls.
+    await waitFor(() => expect(screen.getByText("Gate")).toBeTruthy());
+    expect(await screen.findByRole("button", { name: "Approve" })).toBeTruthy();
+    expect(fetchGate).toHaveBeenCalledWith("r1"); // the banner's execution_id (unpinned follow-newest)
+
+    // A failed banner never opens it.
+    act(() => run.runReset());
+    act(() => run.runComplete({ final_status: "failed", nodes_executed: 1, execution_id: "r2" }));
+    expect(screen.queryByText("Gate")).toBeNull();
+  });
+
+  it("a dismissal never mutes a LATER run's gate: run-reset re-arms the auto-show (follow-newest)", async () => {
+    // Deep-review finding (2026-07-12): on follow-newest, runId never changes, so selectRun's
+    // gateDismissed reset can't fire — without the runReset re-arm, one ✕ silently suppressed
+    // every subsequent paused run's panel (a durably-blocked run with no answer UI).
+    const run = await mountLive();
+    act(() => run.runComplete(pausedBanner));
+    const approve = await screen.findByRole("button", { name: "Approve" });
+    fireEvent.click(approve.closest(".node-callout")!.querySelector(".node-callout-close")!);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+
+    // A newer run takes the file over (run-reset), then IT pauses — its gate must auto-show.
+    act(() => run.runReset());
+    act(() => run.runComplete({ ...pausedBanner, execution_id: "r2" }));
+    expect(await screen.findByRole("button", { name: "Approve" })).toBeTruthy();
+  });
+
+  it("dismissing the gate panel hides it; clicking the ⏸ node re-opens it (the two entry points)", async () => {
+    const run = await mountLive();
+    act(() => run.runComplete(pausedBanner));
+    const approve = await screen.findByRole("button", { name: "Approve" });
+    // ✕ on the GATE callout (scope via the panel's own content — the run callout shares the shell).
+    const gateBox = approve.closest(".node-callout")!;
+    fireEvent.click(gateBox.querySelector(".node-callout-close")!);
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+
+    // Entry point two: clicking the paused frontier node brings the panel back.
+    fireEvent.click(screen.getAllByText("say hi").find((el) => el.className.includes("node-name"))!);
+    expect(await screen.findByRole("button", { name: "Approve" })).toBeTruthy();
+  });
+
+  it("Approve pins the answered attempt: the overlay switches to the new run id (the single pin path)", async () => {
+    const run = await mountLive();
+    act(() => run.runComplete(pausedBanner));
+    fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(resumeRun).toHaveBeenCalledWith({ run: "r1", approve: "yes" }));
+    // selectRun("attempt-2"): the URL pins, the paused banner clears, the panel unmounts.
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("run")).toBe("attempt-2"));
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByLabelText("run status: paused")).toBeNull();
+  });
+
+  it("shows the Resume control for a pinned FAILED run — never for paused (the GateCallout owns that)", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    vi.mocked(fetchGate).mockResolvedValue(PAUSED_GATE);
+    window.history.replaceState({}, "", "/?workflow=demo&run=r1");
+    render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+    await waitFor(() => expect(live.handlers).not.toBeNull());
+    const run = live.handlers as unknown as RunHandlers;
+
+    // Failed banner on the pinned run → the Resume arm renders in the run callout.
+    act(() => run.runComplete({ final_status: "failed", nodes_executed: 1, execution_id: "r1" }));
+    expect(await screen.findByRole("button", { name: "↻ Resume" })).toBeTruthy();
+
+    // Resume → POST {run} → pin the new attempt.
+    fireEvent.click(screen.getByRole("button", { name: "↻ Resume" }));
+    await waitFor(() => expect(resumeRun).toHaveBeenCalledWith({ run: "r1" }));
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("run")).toBe("attempt-2"));
+  });
+
+  it("a paused pinned run shows the gate panel, not the Resume control", async () => {
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    vi.mocked(fetchGate).mockResolvedValue(PAUSED_GATE);
+    window.history.replaceState({}, "", "/?workflow=demo&run=r1");
+    render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(live.handlers).not.toBeNull());
+    const run = live.handlers as unknown as RunHandlers;
+    act(() => run.runSnapshot([], pausedBanner, false, false));
+    expect(await screen.findByRole("button", { name: "Approve" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "↻ Resume" })).toBeNull();
   });
 });

@@ -189,6 +189,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
     focused,
     status,
     runDetail,
+    unrun,
   } = data;
   const detailed = density === "detailed";
   // Focus-expansion (beautiful only): the card renders its full advanced body in place.
@@ -252,6 +253,7 @@ export const WorkflowNode = memo(function WorkflowNode({ id, data }: NodeProps<W
   const classes = ["node", detailed ? "detailed" : "compact", `kind-${node.kind}`];
   if (expanded) classes.push("expanded"); // focus-expanded beautiful card (shares the body styling)
   if (dimmed) classes.push("dimmed");
+  if (unrun) classes.push("unrun"); // Task 176: never ran in the pinned terminal replay
   if (focused) classes.push("focused");
   if (hovered.has(id)) classes.push("hover-mark"); // a panel chip / row hover marks this node
   if (node.is_terminal) classes.push("terminal");

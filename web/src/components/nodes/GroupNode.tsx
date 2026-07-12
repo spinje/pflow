@@ -102,6 +102,7 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
     focused,
     status,
     runDetail,
+    unrun,
   } = data;
   const targetPos = direction === "LR" ? Position.Left : Position.Top;
   const sourcePos = direction === "LR" ? Position.Right : Position.Bottom;
@@ -177,6 +178,7 @@ export const GroupNode = memo(function GroupNode({ id, data }: NodeProps<GroupNo
   if (collapsed && hostNode?.batch) classes.push("batched");
   if (ioRowsVisible) classes.push("has-io"); // full-width dividers + row areas
   if (dimmed) classes.push("dimmed");
+  if (unrun) classes.push("unrun"); // Task 176: collapsed-card only (applyReplayDim never flags a region)
   if (focused) classes.push("focused");
   // Task 173 run-status renders as the corner StatusBadge (below) — collapsed card AND expanded
   // region. Only the primary group carries `status` (applyStatus), so a host backing >1 group badges once.

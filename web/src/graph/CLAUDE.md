@@ -173,7 +173,13 @@ its data-flow endpoints (and, for a container focus, all its IO ports) expand to
 body; the open panel's subject pins its OWN card. `NO_EXPANSION` is the shared empty-set
 constant — a fresh empty Set per call would change object identity and force a needless
 build+ELK re-run.
-`rowTouches` resolves which canvas subjects a hovered row marks. Every flow edge carries its
+`applyReplayDim` (Task 176) is the third pure restyle beside applyFocus/applyStatus: on a
+pinned TERMINAL replay it greys status-less nodes (`.node.unrun`, 0.45 — focus-dim 0.18 wins by
+CSS order, pinned in cssOrder.test.ts) and edges with an un-run endpoint (`edge-unrun`, appended
+beside applyFocus's classes); join rule mirrors applyStatus (leaves by ref, hosts by primary
+group), expanded regions carry the fact for edges but never the class (children dim — opacity
+would compound), identity-stable + idempotent, and inactive is a pass-through so live runs pay
+nothing. `rowTouches` resolves which canvas subjects a hovered row marks. Every flow edge carries its
 ORIGINAL contract endpoints (`data.from`/`data.to`), so a focus reveals a SINGLE port's lines
 even though the edge re-anchors onto the port's OWNER. *Interacts with:* `hooks/`
 runs the re-layout + camera anchor when expansion changes node sizes; `components/` renders

@@ -14,8 +14,9 @@ components in `edges/`.
 (`gradient`), `DataEdge` (`data`), `LoopEdge` (`loop`). Plus `BranchPorts`, `PortRows`,
 `ChipRail`, `StatusBadge` (under `nodes/`), `EdgeHalo`/`arrow.ts` (under `edges/`).
 `StatusBadge` is the corner run-status overlay (Task 173): the ONE per-node live-status
-surface (running/success/cached/failed/stopped), keyed off `LeafData/GroupData.status`
-(set by `applyStatus`) — pending = absent = no badge. It replaced the status border ring
+surface (running/success/cached/failed/stopped/unrecorded/paused), keyed off
+`LeafData/GroupData.status` (set by `applyStatus`; `paused` is synthesized by GraphView from
+the banner's `paused_node_id`, Task 176) — pending = absent = no badge. It replaced the status border ring
 and the ChipRail's old status slot; three node surfaces now coexist — corner StatusBadge
 (live run-status), ChipRail chips (static behavior modifiers + the count button), inline
 `.badge` pills (static structural markers). **Panels:** `ReadPanel`,
@@ -29,6 +30,14 @@ point message that precedes a say already owns the camera. Say bubbles are PERSI
 per-target — a Map in GraphView, status model in `web/CLAUDE.md`'s overlay seam; each shows
 the caption plus at most one button, unlock (`blocked`) or ↻ Replay (`done`) — the same
 start-this-clip gesture; `expired` and caption-only boxes render no button).
+**Approval bridge (Task 176):** `GateCallout` (the kind-switched gate panel content — approval
+preview + Approve/Deny, escalation options + free text; answers POST `/api/resume` via
+`resumeRun`, refusals are panel states keyed on `ApiError.body.refusal`, never string-parsed)
+rides a `NodeCallout` GraphView anchors at the ⏸ frontier node; `ResumeControl` (the
+failed/interrupted-run Resume arm, same refusal vocabulary + the ack-then-`force` dialogs)
+renders inside the run callout below `RunProgress`. Both send `force: true` ONLY after an
+explicit user ack — never on the first POST. Escalation answers send the option LABEL
+(falsy `option N` fallback mirroring `core/gate.py::option_labels`), never the number.
 
 ## The leaf node — one component, two densities (`WorkflowNode`)
 

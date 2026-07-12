@@ -52,3 +52,32 @@ describe("index.css order-dependent rule pairs", () => {
     ).toBeLessThan(hoverMark);
   });
 });
+
+describe("index.css order-dependent rule pairs — un-run greying (Task 176)", () => {
+  it(".node.unrun comes BEFORE .node.dimmed (focus-dim must win when both apply)", () => {
+    const unrun = css.indexOf(".node.unrun");
+    const dimmed = css.indexOf(".node.dimmed");
+    expect(unrun, "the .node.unrun rule is missing").toBeGreaterThan(-1);
+    expect(dimmed, "the .node.dimmed rule is missing").toBeGreaterThan(-1);
+    expect(
+      unrun,
+      ".node.unrun must be defined BEFORE .node.dimmed: equal specificity (0,2,0), so " +
+        "source order decides — defined later, an un-run node inside a focus-dim region " +
+        "silently reads 0.45 instead of the focus-dim 0.18, and the focused neighborhood " +
+        "stops standing out on terminal replays. See the in-css comment above .node.unrun.",
+    ).toBeLessThan(dimmed);
+  });
+
+  it(".node.unrun comes BEFORE the .hover-mark un-dim rule (hover must un-dim an un-run node)", () => {
+    const unrun = css.indexOf(".node.unrun");
+    const hoverMark = css.indexOf(".node.hover-mark");
+    expect(unrun, "the .node.unrun rule is missing").toBeGreaterThan(-1);
+    expect(hoverMark, "the .node.hover-mark rule is missing").toBeGreaterThan(-1);
+    expect(
+      unrun,
+      ".node.hover-mark must be defined AFTER .node.unrun: equal specificity (0,2,0), so " +
+        "source order decides whether a hovered chip can un-dim its un-run canvas node " +
+        "(opacity: 1 must win over 0.45). See the in-css comment above .node.unrun.",
+    ).toBeLessThan(hoverMark);
+  });
+});
