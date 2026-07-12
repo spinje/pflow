@@ -790,21 +790,32 @@ def _schema_type_label(schema: dict) -> str:
     return str(schema_type)
 
 
-def _resolve_local_schema_ref(root_schema: dict, field_schema: dict) -> dict:
-    """Resolve a local JSON Pointer reference, or preserve the original schema."""
-    ref = field_schema.get("$ref")
+def _resolve_schema_pointer(root_schema: dict, ref: str) -> dict | None:
+    """Resolve one local JSON Pointer target."""
     if ref == "#":
         return root_schema
-    if not isinstance(ref, str) or not ref.startswith("#/"):
-        return field_schema
-
+    if not ref.startswith("#/"):
+        return None
     target: object = root_schema
     for raw_segment in ref[2:].split("/"):
         segment = raw_segment.replace("~1", "/").replace("~0", "~")
         if not isinstance(target, dict) or segment not in target:
-            return field_schema
+            return None
         target = target[segment]
-    return target if isinstance(target, dict) else field_schema
+    return target if isinstance(target, dict) else None
+
+
+def _resolve_local_schema_ref(root_schema: dict, field_schema: dict) -> dict:
+    """Resolve chained local JSON Pointer references with a cycle guard."""
+    current = field_schema
+    visited: set[str] = set()
+    while isinstance(ref := current.get("$ref"), str) and ref not in visited:
+        visited.add(ref)
+        target = _resolve_schema_pointer(root_schema, ref)
+        if target is None:
+            break
+        current = target
+    return current
 
 
 def _schema_array_items(schema: dict) -> dict | None:
@@ -855,12 +866,15 @@ def _flatten_declared_output_paths(schema: dict, prefix: str = "result") -> tupl
         nonlocal truncated
         # Bound recursive/branching schemas while keeping ordinary nested tool
         # results useful and terminal output predictable.
-        if depth > _MAX_DECLARED_OUTPUT_DEPTH or len(paths) >= _MAX_DECLARED_OUTPUT_PATHS:
+        if depth > _MAX_DECLARED_OUTPUT_DEPTH:
             truncated = True
             return
         field_schema = _resolve_local_schema_ref(schema, field_schema)
 
         if include_path and path not in seen_paths:
+            if len(paths) >= _MAX_DECLARED_OUTPUT_PATHS:
+                truncated = True
+                return
             paths.append((path, _schema_type_label(field_schema)))
             seen_paths.add(path)
 
