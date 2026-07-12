@@ -13,6 +13,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _CONFIG_SAVE_LOCK = threading.RLock()
+_WINDOWS_TRANSIENT_REPLACE_ERRORS = frozenset({5, 32})
 _WINDOWS_REPLACE_RETRY_DELAYS = (0.01, 0.02, 0.04, 0.08)
 
 
@@ -23,7 +24,7 @@ def _replace_config_file(source: Path, destination: Path) -> None:
             source.replace(destination)
             return
         except PermissionError as exc:
-            if getattr(exc, "winerror", None) != 5:
+            if getattr(exc, "winerror", None) not in _WINDOWS_TRANSIENT_REPLACE_ERRORS:
                 raise
             time.sleep(delay)
 

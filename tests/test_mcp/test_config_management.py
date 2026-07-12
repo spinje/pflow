@@ -91,7 +91,8 @@ class TestAtomicWriteProtection:
             assert "test1" in config["mcpServers"]
             assert "test2" not in config["mcpServers"]
 
-    def test_windows_access_denied_during_replace_is_retried(self):
+    @pytest.mark.parametrize("winerror", [5, 32])
+    def test_transient_windows_replace_error_is_retried(self, winerror: int):
         """A brief Windows destination lock must not fail an atomic save."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "mcp-servers.json"
@@ -106,7 +107,7 @@ class TestAtomicWriteProtection:
                 replace_attempts += 1
                 if replace_attempts < 3:
                     error = PermissionError("Access denied")
-                    error.winerror = 5
+                    error.winerror = winerror
                     raise error
                 return original_replace(source, destination)
 
@@ -145,7 +146,8 @@ class TestAtomicWriteProtection:
             assert config_path.read_text(encoding="utf-8") == original_content
             assert not list(Path(tmpdir).glob(".mcp-servers-*.tmp"))
 
-    def test_permission_error_without_windows_access_denied_code_is_not_retried(self):
+    @pytest.mark.parametrize("winerror", [None, 65])
+    def test_non_transient_permission_error_during_replace_is_not_retried(self, winerror: int | None):
         """Unrelated permission failures must still propagate immediately."""
         with tempfile.TemporaryDirectory() as tmpdir:
             config_path = Path(tmpdir) / "mcp-servers.json"
@@ -153,8 +155,12 @@ class TestAtomicWriteProtection:
             manager.add_server("initial", "stdio", "cmd", [])
             original_content = config_path.read_text(encoding="utf-8")
 
+            error = PermissionError("read-only")
+            if winerror is not None:
+                error.winerror = winerror
+
             with (
-                patch.object(Path, "replace", autospec=True, side_effect=PermissionError("read-only")) as replace,
+                patch.object(Path, "replace", autospec=True, side_effect=error) as replace,
                 patch("pflow.mcp.manager.time.sleep") as sleep,
                 pytest.raises(PermissionError, match="read-only"),
             ):
