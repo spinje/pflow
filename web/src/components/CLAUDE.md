@@ -141,7 +141,17 @@ full detail: params/prompts/code, source `file:line`, loop/batch/io config, + th
 `CachedPrefixBlock` and `BatchItems` listings) and `IoPanel` (the workflow's interface — per
 input: type/required/default/description + consumer chips; per output: producer chip + read
 field + source line; an input with no data-flow edge shows no "used by" — quiet ≠ unconsumed)
-share `PanelHeader` (a large node avatar + name-as-navigate button). `EdgePanel` reads a
+share `PanelHeader` (a large node avatar + name-as-navigate button). An IoPanel port's TWO
+links: the source `file:line` opens the source pane at the PORT's own line (`onOpenSource(ref)`
+→ GraphView's `sourceJumpTarget` — io selections set no selectedNode, so the jump carries an
+explicit ref), and the dot-prefixed field (`.stdout`) SELECTS the producer (both `onNavigate`
+args — opens its ReadPanel, the recorded output's home; deliberately more than the chip beside
+it). EVERY value box carries the ⛶ expand — it lives in `CodeBlock` itself (params, code,
+prompts, batch items, errors, run values — one seam): a portaled full-screen modal
+(`.value-modal-overlay`, in the scoped chrome-token list) with the value un-capped — Esc /
+backdrop / × close; the panel box itself stays scroll-capped at 320px. `expandLabel` titles
+the modal (default "value"); `expandLabel={null}` disables it (the modal's own inner
+CodeBlock — the recursion guard); an empty value renders no button. `EdgePanel` reads a
 contract edge by id: five variants (data / branch+decision-end / error / static-end /
 sequential) — the data variant has a CACHE arm (`input_name === "prompt_cache"`: "cached
 context", never a param binding). RF native selection stays inert — components ignore the

@@ -3,7 +3,7 @@ import { toJsxRuntime } from "hast-util-to-jsx-runtime";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 import type { ElementContent } from "hast";
 
-import type { RFGraph, RFNode, SourceFiles } from "../types";
+import type { RFGraph, RFNode, SourceFiles, SourceRef } from "../types";
 import { buildDecoratedLines, decorateLinesSync } from "../graph/sourceDecorate";
 import { highlight } from "../utils/highlight";
 import {
@@ -29,12 +29,16 @@ interface SourcePaneProps {
   selectedIoKind: "input" | "output" | null;
   renderedIds: ReadonlySet<string>;
   workflowName: string;
-  // A monotonic counter GraphView bumps when the read panel's source link is
-  // clicked: re-assert the selected node's file/line and scroll to it, even
+  // A monotonic counter GraphView bumps when a panel's source link is
+  // clicked: re-assert the jump target's file/line and scroll to it, even
   // when the pane already shows it (the user scrolled away) or browsed to
   // another file via a breadcrumb. The closed→open case is the selectedNode
   // effect's job (the pane mounts already pointed at the node).
   jump: number;
+  // An explicit file:line for the jump (the IoPanel's per-PORT source links —
+  // io selections set no selectedNode). Null/absent → the selected node's own
+  // source, the original ReadPanel gesture.
+  jumpTarget?: SourceRef | null;
   onNavigate: (focus: string, selectedId?: string | null) => void;
 }
 
@@ -52,6 +56,7 @@ export function SourcePane({
   renderedIds,
   workflowName,
   jump,
+  jumpTarget,
   onNavigate,
 }: SourcePaneProps): JSX.Element {
   const [currentFile, setCurrentFile] = useState<string | null>(null);
@@ -60,7 +65,12 @@ export function SourcePane({
   const [highlighted, setHighlighted] = useState<{ file: string; text: string; lines: ReactNode[] } | null>(null);
   const highlightCache = useRef(new Map<string, HighlightCacheEntry>());
   const lineRefs = useRef(new Map<number, HTMLDivElement>());
-  const prevJump = useRef(jump);
+  // null (not `jump`) so the jump effect also runs on MOUNT: a source-link
+  // click while the pane is CLOSED both opens it and bumps `jump` — seeding
+  // with the already-bumped value made that first jump a no-op, and an IoPanel
+  // per-port link (no selectedNode to re-assert it) landed on the io-kind
+  // section heading instead of the port's own line.
+  const prevJump = useRef<number | null>(null);
 
   const files = source?.files ?? {};
   const availableFiles = useMemo(() => Object.keys(files).sort(), [files]);
@@ -111,16 +121,17 @@ export function SourcePane({
     setActiveLine(sectionHeadingLine(source.files[root]!, selectedIoKind));
   }, [selectedIoKind, source]);
 
-  // The read panel's source-link JUMP (GraphView bumps `jump`): re-assert the
-  // selected node's file + line and scroll to it. The guard makes it act ONLY
-  // when `jump` actually changed (the other deps re-run it harmlessly). A
-  // SAME-file jump sets no new state, so the scroll effect below won't re-fire
-  // — scroll directly (lineRefs are current); a file CHANGE re-renders and the
-  // scroll effect (keyed on displayedFile) does the scroll.
+  // A panel source-link JUMP (GraphView bumps `jump`): re-assert the target's
+  // file + line — the explicit `jumpTarget` (IoPanel per-port links) or the
+  // selected node's own source (the ReadPanel gesture) — and scroll to it. The
+  // guard makes it act ONLY when `jump` actually changed (the other deps re-run
+  // it harmlessly). A SAME-file jump sets no new state, so the scroll effect
+  // below won't re-fire — scroll directly (lineRefs are current); a file CHANGE
+  // re-renders and the scroll effect (keyed on displayedFile) does the scroll.
   useEffect(() => {
     if (jump === prevJump.current) return;
     prevJump.current = jump;
-    const ref = selectedNode?.source;
+    const ref = jumpTarget ?? selectedNode?.source;
     if (!source || !ref?.file || !hasFile(source.files, ref.file)) return;
     setMissingFile(null);
     const fileChanged = currentFile !== ref.file;
@@ -129,7 +140,7 @@ export function SourcePane({
     if (!fileChanged && ref.line != null) {
       lineRefs.current.get(ref.line)?.scrollIntoView?.({ block: "center" });
     }
-  }, [jump, source, selectedNode, currentFile]);
+  }, [jump, jumpTarget, source, selectedNode, currentFile]);
 
   useEffect(() => {
     if (!displayedFile || text == null) return;

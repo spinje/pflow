@@ -59,6 +59,27 @@ describe("ParamBlock — batch-alias expansion", () => {
     expect(screen.queryByRole("button", { name: /items/ })).toBeNull();
   });
 
+  it("the param's file:line is a LINK carrying the PARAM's own ref when onOpenSource is wired; plain text otherwise", () => {
+    const onOpenSource = vi.fn();
+    const src = { file: "demo.pflow.md", line: 25 };
+    render(<ParamBlock param={param({ name: "command", value: "ls", source: src })} kind="shell" onOpenSource={onOpenSource} />);
+    const link = screen.getByText("demo.pflow.md:25");
+    expect(link.tagName).toBe("BUTTON");
+    fireEvent.click(link);
+    expect(onOpenSource).toHaveBeenCalledWith(src);
+    cleanup();
+    render(<ParamBlock param={param({ name: "command", value: "ls", source: src })} kind="shell" />);
+    expect(screen.getByText("demo.pflow.md:25").tagName).toBe("SPAN");
+  });
+
+  it("the param value carries the ⛶ expand titled by the PARAM's name (every value box has it)", () => {
+    render(<ParamBlock param={param({ name: "code", value: "x = 1" })} kind="code" />);
+    fireEvent.click(screen.getByLabelText("Expand code"));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toContain("x = 1");
+    expect(screen.getByText("code", { selector: ".value-modal-title" })).toBeTruthy();
+  });
+
   it("shows no expander for a dynamic batch (no literal items to resolve)", () => {
     render(<ParamBlock param={param()} kind="llm" batch={literalBatch({ dynamic: true, items: null })} />);
     expect(screen.queryByRole("button", { name: /items/ })).toBeNull();

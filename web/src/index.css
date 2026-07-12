@@ -70,6 +70,9 @@
    tokens defined on it directly; its descendants are its own content (never RF nodes),
    so scoping here can't recolor the canvas (Task 175). */
 .node-callout,
+/* .value-modal-overlay portals to <body> (outside every chrome container), so the
+   tokens must be re-declared on it; its subtree is its own content, never RF nodes. */
+.value-modal-overlay,
 .react-flow__controls {
   --bg: #0d0d0d;
   --bg-raised: #151515;
@@ -3279,6 +3282,17 @@ button.say-affordance {
   font-size: 11px;
   color: var(--text-faint);
 }
+/* The field-path as a LINK (to the producer's recorded output): identical
+   grey mono, underline only on hover — the read-panel-source-btn treatment. */
+.io-port-path-btn {
+  padding: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+.io-port-path-btn:hover {
+  text-decoration: underline;
+}
 /* Task 175 — a port's value for the in-context run: the faint "this run" label-word over the value
    (rendered by CodeBlock as the scroll-capped .read-param-value block), or the muted absent state. */
 .io-port-run {
@@ -3291,6 +3305,87 @@ button.say-affordance {
   color: var(--text-faint);
   margin-bottom: 3px;
 }
+/* A value box with the expand affordance (CodeBlock's ExpandableBox): the ⛶
+   sits over the box's top-right corner, faint until hovered — readable but
+   never loud on a panel full of values. right: 21px clears the box's own
+   scrollbar (user-tuned 2026-07-12). */
+.code-box {
+  position: relative;
+}
+.value-expand {
+  position: absolute;
+  top: 6px;
+  right: 21px;
+  padding: 2px 6px;
+  background: var(--bg-field);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.value-expand:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+/* The full-screen reading overlay (RunValue's expand): portaled to <body> — the
+   chrome tokens are re-declared on the overlay (see the scoped list at the top).
+   The inner CodeBlock keeps its box recipe; only the 320px cap lifts, the BODY
+   scrolls instead. */
+.value-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+}
+.value-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(960px, 100%);
+  max-height: 100%;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+.value-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.value-modal-title {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+}
+.value-modal-close {
+  margin-left: auto;
+  padding: 2px 6px;
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  font-size: 14px;
+  cursor: pointer;
+}
+.value-modal-close:hover {
+  color: var(--text);
+}
+.value-modal-body {
+  overflow: auto;
+  padding: 16px;
+}
+.value-modal-body .read-param-value {
+  max-height: none;
+  overflow: visible;
+}
+
 .io-port-run-empty {
   font-size: 12px;
   color: var(--text-faint);

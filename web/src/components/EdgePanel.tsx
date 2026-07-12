@@ -13,7 +13,7 @@ import { bindingParam } from "../graph/flow";
 import { bindingLabel, nodeColor } from "../utils/format";
 import { Chip } from "./Chip";
 import { OutcomeTable, ParamBlock } from "./ReadPanel";
-import type { RFEdge, RFGraph, RFNode } from "../types";
+import type { RFEdge, RFGraph, RFNode, SourceRef } from "../types";
 
 // The kind line's tint mirrors the edge's canvas paint (semantic colors from the
 // same CSS vars the components use; literals only as fallbacks).
@@ -111,12 +111,16 @@ export function EdgePanel({
   graph,
   renderedIds,
   onNavigate,
+  onOpenSource,
   onClose,
 }: {
   edge: RFEdge;
   graph: RFGraph;
   renderedIds: ReadonlySet<string>;
   onNavigate: (focus: string, selectedId?: string | null) => void;
+  // Opens the source pane at the received param's file:line (ParamBlock's
+  // link). Absent → plain text (standalone render).
+  onOpenSource?: (ref: SourceRef) => void;
   onClose: () => void;
 }): JSX.Element {
   const sourceNode = graph.nodes.find((n) => n.id === edge.source);
@@ -327,6 +331,7 @@ export function EdgePanel({
             param={param}
             kind={targetNode?.io ? (targetHost?.kind ?? "") : (targetNode?.kind ?? "")}
             highlightRef={highlightRef}
+            onOpenSource={onOpenSource}
           />
         </section>
       )}

@@ -360,6 +360,41 @@ describe("SourcePane", () => {
     rerender(<SourcePane {...props} jump={1} />);
     expect(sourceLine(container, 5).className).toContain("src-line-active");
   });
+
+  it("an explicit jumpTarget wins over the selected node — the IoPanel per-port source link", () => {
+    // An io selection sets no selectedNode; the port link carries its OWN
+    // file:line as jumpTarget, and the jump lands there.
+    const onNavigate = vi.fn();
+    const props = {
+      source,
+      sourceError: null,
+      graph,
+      selectedNode: firstNode, // ROOT_FILE line 5 — must NOT win
+      selectedIoKind: null as "input" | "output" | null,
+      renderedIds: new Set(["n1", "n2", "n3", "g_child"]),
+      workflowName: "root",
+      onNavigate,
+    };
+    const { container, rerender } = render(<SourcePane {...props} jump={0} jumpTarget={null} />);
+    expect(sourceLine(container, 5).className).toContain("src-line-active");
+    rerender(<SourcePane {...props} jump={1} jumpTarget={{ file: ROOT_FILE, line: 9 }} />);
+    expect(sourceLine(container, 9).className).toContain("src-line-active");
+    expect(sourceLine(container, 5).className).not.toContain("src-line-active");
+  });
+
+  it("a jumpTarget applies on MOUNT — the closed-pane port-link click (and beats the io-heading sync)", () => {
+    // Clicking an IoPanel port link with the pane CLOSED both opens (mounts)
+    // the pane and bumps `jump`: the jump must land on the PORT's line, not
+    // the io-kind section heading (an io selection sets no selectedNode to
+    // re-assert it — this exact miss was browser-caught).
+    const { container } = renderPane({
+      selectedNode: null,
+      selectedIoKind: "output",
+      jump: 1,
+      jumpTarget: { file: ROOT_FILE, line: 9 },
+    });
+    expect(sourceLine(container, 9).className).toContain("src-line-active");
+  });
 });
 
 describe("node block extent", () => {

@@ -39,7 +39,7 @@ import {
   readViewParams,
   writeViewParams,
 } from "../utils/viewParams";
-import type { InteractionTarget, NodeRunState, PointTarget, RFEdge, RFGraph, RFNode, RFRef, RunComplete, RunEvent, SourceFiles } from "../types";
+import type { InteractionTarget, NodeRunState, PointTarget, RFEdge, RFGraph, RFNode, RFRef, RunComplete, RunEvent, SourceFiles, SourceRef } from "../types";
 import { EdgePanel } from "../components/EdgePanel";
 import { edgeTypes } from "../components/edges";
 import { GateCallout } from "../components/GateCallout";
@@ -374,11 +374,21 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
     return topLevelSteps(graph)[0]?.id ?? null; // else the first executable step (same predicate as runSteps)
   }, [graph]);
   const changeSourceOpen = useCallback((open: boolean) => { setSourceOpen(open); syncUrl({ source: open }); }, [syncUrl]);
-  // The read panel's source-link click: open the pane (if closed) and bump a
-  // counter so SourcePane re-scrolls to the selected node's line even when it's
-  // already open (the "jump to source" gesture).
+  // A panel source-link click: open the pane (if closed) and bump a counter so
+  // SourcePane re-scrolls even when it's already open (the "jump to source"
+  // gesture). An explicit ref (the IoPanel's per-PORT links — io selections set
+  // no selectedNode) rides `sourceJumpTarget`; null falls back to the selected
+  // node's own source, the original ReadPanel gesture.
   const [sourceJump, setSourceJump] = useState(0);
-  const openSourceAt = useCallback(() => { changeSourceOpen(true); setSourceJump((n) => n + 1); }, [changeSourceOpen]);
+  const [sourceJumpTarget, setSourceJumpTarget] = useState<SourceRef | null>(null);
+  const openSourceAt = useCallback(
+    (ref: SourceRef | null = null) => {
+      setSourceJumpTarget(ref?.file ? ref : null);
+      changeSourceOpen(true);
+      setSourceJump((n) => n + 1);
+    },
+    [changeSourceOpen],
+  );
 
   // Read the contract/edges via refs so the interaction callbacks (focusPort,
   // hoverRow) stay stable while focus restyles `nodes`/`edges`.
@@ -1097,6 +1107,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
                 renderedIds={renderedIds}
                 workflowName={workflowName}
                 jump={sourceJump}
+                jumpTarget={sourceJumpTarget}
                 onNavigate={onNavigate}
               />
               <PanelResizer side="left" onResize={onSourceResize} onReset={onSourceReset} />
@@ -1313,6 +1324,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               graph={graph}
               renderedIds={renderedIds}
               onNavigate={onNavigate}
+              onOpenSource={openSourceAt}
               onClose={() => setSelectedId(null)}
             />
           )}
@@ -1328,6 +1340,7 @@ function GraphCanvas({ workflow, onBack }: GraphViewProps): JSX.Element {
               renderedIds={renderedIds}
               markedPortId={focus != null && selectedIoGroup.members.includes(focus) ? focus : null}
               onNavigate={onNavigate}
+              onOpenSource={openSourceAt}
               onClose={() => setSelectedId(null)}
             />
           )}

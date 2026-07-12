@@ -109,6 +109,7 @@ function show(
     rendered?: string[];
     markedPortId?: string | null;
     onNavigate?: (f: string, s?: string | null) => void;
+    onOpenSource?: (ref: { file: string | null; line: number | null }) => void;
     hasRunContext?: boolean;
     runId?: string | null;
     completedRunId?: string | null;
@@ -127,6 +128,7 @@ function show(
       renderedIds={new Set(over.rendered ?? graph.nodes.map((n) => n.id))}
       markedPortId={over.markedPortId ?? null}
       onNavigate={over.onNavigate ?? noop}
+      onOpenSource={over.onOpenSource}
       onClose={noop}
     />,
   );
@@ -223,6 +225,35 @@ describe("IoPanel — outputs", () => {
     expect(screen.getByText("summary-report")).toBeTruthy(); // the producer chip
     expect(screen.getByText(".result.summary")).toBeTruthy(); // reads as "from summary-report.result.summary"
     expect(screen.getByText("lyrics-generator.pflow.md:12")).toBeTruthy();
+  });
+
+  it("the source line is a LINK carrying the PORT's own file:line when onOpenSource is wired; plain text otherwise", () => {
+    const onOpenSource = vi.fn();
+    show("g1", { onOpenSource });
+    const link = screen.getByText("lyrics-generator.pflow.md:12");
+    expect(link.tagName).toBe("BUTTON");
+    link.click();
+    expect(onOpenSource).toHaveBeenCalledWith({ file: "lyrics-generator.pflow.md", line: 12 });
+    cleanup();
+    // Standalone render (no onOpenSource) keeps the plain-text arm.
+    show("g1");
+    expect(screen.getByText("lyrics-generator.pflow.md:12").tagName).toBe("SPAN");
+  });
+
+  it("the field path is a LINK that SELECTS the producer (focus + open its panel — the recorded output's home)", () => {
+    const onNavigate = vi.fn();
+    show("g1", { onNavigate });
+    const field = screen.getByText(".result.summary");
+    expect(field.tagName).toBe("BUTTON");
+    field.click();
+    // The selection arm (both args) — unlike the chip beside it, which
+    // navigates without opening.
+    expect(onNavigate).toHaveBeenCalledWith("n5", "n5");
+  });
+
+  it("an unresolvable producer degrades the field path to plain text (resolve-or-disable)", () => {
+    show("g1", { rendered: ["g1", "n3"] }); // producer n5 not rendered
+    expect(screen.getByText(".result.summary").tagName).toBe("CODE");
   });
 
   it("an undeclared output's type DERIVES from the producer's shape — never the 'any' filler", () => {

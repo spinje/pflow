@@ -14,12 +14,13 @@ import { fetchRunNode } from "../api/client";
 import { refKey, wrapperPorts } from "../graph/flow";
 import { fullValue, IO_COLOR } from "../utils/format";
 import { ioCardIcon } from "../utils/icons";
+import { resolveEndpointFlatId } from "../utils/viewParams";
 import { Chip } from "./Chip";
 import { Markdown } from "./Markdown";
 import { RunValue } from "./RunValue";
 import { PanelHeader } from "./PanelHeader";
 import { sourceLabel } from "./ReadPanel";
-import type { RFGraph, RFGroup, RFNode, RFRef } from "../types";
+import type { RFGraph, RFGroup, RFNode, RFRef, SourceRef } from "../types";
 
 export function IoPanel({
   group,
@@ -32,6 +33,7 @@ export function IoPanel({
   renderedIds,
   markedPortId,
   onNavigate,
+  onOpenSource,
   onClose,
 }: {
   // The ROOT input_wrapper/output_wrapper group the IO card renders as.
@@ -53,6 +55,9 @@ export function IoPanel({
   // the whole interface, row click = the same panel scrolled to one port).
   markedPortId: string | null;
   onNavigate: (focus: string, selectedId?: string | null) => void;
+  // Opens the source pane (if closed) scrolled to a port's authored file:line —
+  // the ReadPanel source-link gesture, per port. Absent → plain text (standalone).
+  onOpenSource?: (ref: SourceRef) => void;
   onClose: () => void;
 }): JSX.Element {
   const kind = group.kind === "input_wrapper" ? "input" : "output";
@@ -116,7 +121,21 @@ export function IoPanel({
               <div className="read-param-head">
                 <span className="read-param-name">{port.name}</span>
                 {meta && <span className="io-port-meta">{meta}</span>}
-                {src && <span className="read-param-source">{src}</span>}
+                {/* The port's authored home: same grey mono as everywhere, but a
+                    LINK — the ReadPanel source-link gesture (open the pane,
+                    scroll to this port's own line, not the node's). */}
+                {src &&
+                  (onOpenSource && portNode?.source?.file ? (
+                    <button
+                      className="read-param-source read-panel-source-btn"
+                      title={portNode.source.file}
+                      onClick={() => onOpenSource(portNode.source!)}
+                    >
+                      {src}
+                    </button>
+                  ) : (
+                    <span className="read-param-source">{src}</span>
+                  ))}
               </div>
               {/* a <div>: Markdown renders <p> children, and <p>-in-<p> trips
                   validateDOMNesting. The `default:` line below stays plain. */}
@@ -151,11 +170,28 @@ export function IoPanel({
                 const producer = nodeById.get(e.source);
                 const fieldPath = e.output_field ? [e.output_field, ...e.output_path].join(".") : null;
                 const showField = fieldPath != null && !(producer?.io && fieldPath === producer.ref.node_id);
+                // The field is a LINK to the producer's recorded output: the
+                // SELECTION arm (focus + open its ReadPanel, whose "This run"
+                // section holds the value) — deliberately more than the chip
+                // beside it, which navigates without opening. Chip's
+                // resolve-or-disable rule: unresolvable → plain text.
+                const producerFlatId = producer ? resolveEndpointFlatId(graph, renderedIds, producer.id) : null;
                 return (
                   <div className="edge-chips io-port-uses" key={e.id}>
                     <span className="io-port-uses-label">from</span>
                     <Chip node={producer} graph={graph} renderedIds={renderedIds} onNavigate={onNavigate} />
-                    {showField && <code className="io-port-path">.{fieldPath}</code>}
+                    {showField &&
+                      (producerFlatId ? (
+                        <button
+                          className="io-port-path io-port-path-btn"
+                          title={`Open ${producer!.ref.node_id}'s output`}
+                          onClick={() => onNavigate(producerFlatId, producerFlatId)}
+                        >
+                          .{fieldPath}
+                        </button>
+                      ) : (
+                        <code className="io-port-path">.{fieldPath}</code>
+                      ))}
                   </div>
                 );
               })}
@@ -239,7 +275,7 @@ function PortRunValue({
     <div className="io-port-run">
       <span className="io-port-run-label">this run</span>
       {state.phase === "value" ? (
-        <RunValue value={state.value} />
+        <RunValue value={state.value} label={portName} />
       ) : (
         <span className="io-port-run-empty">no recorded value</span>
       )}

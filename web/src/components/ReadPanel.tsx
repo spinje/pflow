@@ -56,6 +56,7 @@ export function ParamBlock({
   kind,
   highlightRef,
   batch,
+  onOpenSource,
 }: {
   param: RFNode["params"][number];
   kind: string;
@@ -65,6 +66,9 @@ export function ParamBlock({
   // inline on the contract. Only LITERAL batches expand (a dynamic batch has no
   // static items). EdgePanel omits this (batch-alias refs draw no edge anyway).
   batch?: BatchSpec | null;
+  // Opens the source pane at the PARAM's own file:line (the IoPanel port-link
+  // gesture). Absent → the ref renders as plain text (standalone render).
+  onOpenSource?: (ref: SourceRef) => void;
 }): JSX.Element {
   const src = sourceLabel(param.source);
   const items = batch && !batch.dynamic ? resolveBatchItems(param.value, batch.as_name, batch.items) : null;
@@ -74,7 +78,18 @@ export function ParamBlock({
       <div className="read-param-head">
         <span className="read-param-name">{param.name}</span>
         {param.is_dynamic && <span className="badge badge-dynamic">dynamic</span>}
-        {src && <span className="read-param-source">{src}</span>}
+        {src &&
+          (onOpenSource && param.source?.file ? (
+            <button
+              className="read-param-source read-panel-source-btn"
+              title={param.source.file}
+              onClick={() => onOpenSource(param.source!)}
+            >
+              {src}
+            </button>
+          ) : (
+            <span className="read-param-source">{src}</span>
+          ))}
         {items && (
           <button
             className="batch-expand"
@@ -86,7 +101,12 @@ export function ParamBlock({
           </button>
         )}
       </div>
-      <CodeBlock code={fullValue(param.value)} lang={paramLanguage(kind, param.name, param.value)} highlightRef={highlightRef} />
+      <CodeBlock
+        code={fullValue(param.value)}
+        lang={paramLanguage(kind, param.name, param.value)}
+        highlightRef={highlightRef}
+        expandLabel={param.name}
+      />
       {items && expanded && (
         // Each item's resolved value, headed by its discriminating field. The
         // body colors with the SAME language as the raw param (a resolved prompt
@@ -95,7 +115,7 @@ export function ParamBlock({
           {items.map((item, i) => (
             <div className="batch-item" key={i}>
               <div className="batch-item-head">{item.label}</div>
-              <CodeBlock code={item.value} lang={paramLanguage(kind, param.name, item.value)} />
+              <CodeBlock code={item.value} lang={paramLanguage(kind, param.name, item.value)} expandLabel={item.label} />
             </div>
           ))}
         </div>
@@ -116,7 +136,7 @@ function CachedPrefixBlock({ text }: { text: string }): JSX.Element {
         <span className="read-param-name">cached prefix</span>
         <span className="badge badge-dynamic">cached</span>
       </div>
-      <CodeBlock code={text} lang="markdown" />
+      <CodeBlock code={text} lang="markdown" expandLabel="cached prefix" />
     </div>
   );
 }
@@ -187,9 +207,11 @@ export function ReadPanel({
   graph?: RFGraph | null;
   renderedIds?: ReadonlySet<string>;
   onNavigate?: (focus: string, selectedId?: string | null) => void;
-  // Opens the source pane (if closed) and scrolls it to this node's file:line.
-  // Absent → the source line renders as plain text (standalone render).
-  onOpenSource?: () => void;
+  // Opens the source pane (if closed) and scrolls it to the given file:line —
+  // the node's own (header link) or a param's (ParamBlock links). No ref falls
+  // back to the selected node's source (SourcePane's jump rule). Absent → the
+  // source lines render as plain text (standalone render).
+  onOpenSource?: (ref?: SourceRef | null) => void;
   onClose: () => void;
   // Task 173 detail panel: when the selected node has a recorded COMPLETION in the current run, GraphView
   // sets `showRunDetail` and passes the run context — the "This run" section then fetches that node's record
@@ -234,7 +256,11 @@ export function ReadPanel({
       )}
       {src &&
         (onOpenSource ? (
-          <button className="read-panel-source read-panel-source-btn" title={node.source?.file ?? ""} onClick={onOpenSource}>
+          <button
+            className="read-panel-source read-panel-source-btn"
+            title={node.source?.file ?? ""}
+            onClick={() => onOpenSource(node.source)}
+          >
             {src}
           </button>
         ) : (
@@ -265,11 +291,11 @@ export function ReadPanel({
         <section className="read-panel-params">
           <h3>Params</h3>
           {node.params.slice(0, cacheInsertIndex(node.params)).map((param) => (
-            <ParamBlock param={param} kind={node.kind} batch={node.batch} key={param.name} />
+            <ParamBlock param={param} kind={node.kind} batch={node.batch} onOpenSource={onOpenSource} key={param.name} />
           ))}
           {node.cached_prefix != null && <CachedPrefixBlock text={node.cached_prefix} />}
           {node.params.slice(cacheInsertIndex(node.params)).map((param) => (
-            <ParamBlock param={param} kind={node.kind} batch={node.batch} key={param.name} />
+            <ParamBlock param={param} kind={node.kind} batch={node.batch} onOpenSource={onOpenSource} key={param.name} />
           ))}
         </section>
       )}
