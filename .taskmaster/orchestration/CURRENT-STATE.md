@@ -11,22 +11,15 @@ Every claim here is a pointer to verify, not a fact._
   command rewritten; close ritual + rolling braindump in the boot stack; this file + `sessions/`
   replace `orchestrator-progress-log.md`, converted to `sessions/session-01.md`). Codex routing
   metadata preservation shipped in #578; redundant planning commands were retired and the
-  `create-plan` skill added in #582. Local `main` points to the orchestration-doc commit
-  `342aac49`; fetched `origin/main` remains `ffaeb5a6`. Remote freshness and #565's open state
-  were verified after permissions were restored on 2026-07-12.
+  `create-plan` skill added in #582. Local `main` and the cached `origin/main` both point to
+  `ffaeb5a6`; remote freshness verified 2026-07-12.
 - The hierarchy has NOT yet run a lane-A/B build — the first launch shakes it down; watch the
-  worktree-workflow flags (`open_cli=false open_cursor=false`) and packet quality. Codex launch
-  rule proven by #565: explicit role/model/effort requires `fork_turns: none`; a full-history fork
-  inherits the parent route and is rejected when explicit routing is also supplied.
+  worktree-workflow flags (`open_cli=false open_cursor=false`) and packet quality. **Shakedown
+  candidate: #565 (lane B).**
 
 ## In flight
 
-- No live Codex subagents. **#565 (MCP probe output paths)** is parked after the session restart:
-  `/root/issue_565` failed twice on encrypted tool-output decoding; its replacement
-  `/root/issue_565_recovery` did not survive the v2→v1 restart and has no resumable live handle.
-  Its worktree `/Users/andfal/projects/pflow-worktrees/fix-mcp-probe-output-paths` and branch
-  `fix/mcp-probe-output-paths` are clean at base `342aac49`; no implementation was lost. Remote
-  freshness and #565's open state are now verified; next action is the Codex v1 relaunch.
+- None locally visible. No Codex subagents are live; `git worktree list` shows only `main`.
 
 ## Current arc
 
@@ -67,4 +60,4 @@ and `task_176/task-review.md` before resume/gate/trace work.
   serves old code).
 - Spec file:line refs last bulk-refreshed 2026-07-02; repo has since absorbed #557's format pass
   + 116's 117-file diff — treat ALL file:line refs as stale; re-verify at use.
-- Worktrees: `main` + `fix-mcp-probe-output-paths` (verified locally 2026-07-12).
+- Worktrees: only `main` exists (verified locally 2026-07-12).
