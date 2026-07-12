@@ -193,10 +193,12 @@ Runner model names are an execution detail; plans continue to use the tier names
 | Opus | `opus` | `gpt-5.6-sol` |
 | Fable | `fable` | `gpt-5.6-sol` |
 
-Claude agent `effort` maps directly to Codex `reasoning_effort`: `low` → `low`, `medium` →
-`medium`, `high` → `high`. When the contract does not pin effort, omit the launch override and
-inherit the runner default. `scripts/sync_claude_assets.py` applies the same model and effort
-mapping to generated `.codex/agents/*.toml`; an unknown source value is a generation error.
+Claude agent `effort` maps directly to the same Codex reasoning level: `low` → `low`, `medium` →
+`medium`, `high` → `high`. Generated agent TOML uses `model_reasoning_effort`; dynamic launches
+use the `reasoning_effort` parameter. When the contract does not pin effort, omit the launch
+override and inherit the runner default. `scripts/sync_claude_assets.py` applies the same model
+and effort mapping to generated `.codex/agents/*.toml`; an unknown source value is a generation
+error.
 
 - **Pass the explicit `model` param on EVERY launch** — agent frontmatter is cached per session;
   the param is the live lever. Use the runner-specific model name from the table above.
