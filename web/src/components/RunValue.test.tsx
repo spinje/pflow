@@ -39,11 +39,34 @@ describe("RunValue expand", () => {
     expect(screen.getByText("report", { selector: ".value-modal-title" })).toBeTruthy();
   });
 
-  it("a non-string value renders as pretty JSON in both the box and the modal", () => {
-    render(<RunValue value={{ file: "a.py", lines: 812 }} label="findings" />);
+  it("a DICT expands to a per-field document — labeled blocks, strings as REAL text (the modal is a reading surface)", () => {
+    const value = { report: "line one\nline two\nline three", repo: "pflow" };
+    render(<RunValue value={value} label="Inputs" />);
+    // The compact box stays JSON (shape-skimmable): the string field is escaped there.
+    expect(document.querySelector(".read-param-value")!.textContent).toContain("\\n");
+    fireEvent.click(screen.getByLabelText("Expand Inputs"));
+    const body = document.querySelector(".value-modal-body")!;
+    // One labeled block per top-level key…
+    expect([...body.querySelectorAll(".value-doc-name")].map((n) => n.textContent)).toEqual(["report", "repo"]);
+    // …and the string field renders with REAL newlines — no JSON `\n` escapes, no quotes.
+    expect(body.textContent).toContain("line one\nline two\nline three");
+    expect(body.textContent).not.toContain("\\n");
+  });
+
+  it("a dict's NON-string fields stay pretty JSON inside their doc block", () => {
+    render(<RunValue value={{ findings: [{ file: "a.py" }], total: 1 }} label="Result" />);
+    fireEvent.click(screen.getByLabelText("Expand Result"));
+    const body = document.querySelector(".value-modal-body")!;
+    expect(body.textContent).toContain('"file": "a.py"'); // the array field, still JSON
+    expect([...body.querySelectorAll(".value-doc-name")].map((n) => n.textContent)).toEqual(["findings", "total"]);
+  });
+
+  it("an ARRAY value keeps the plain JSON modal (no per-field doc)", () => {
+    render(<RunValue value={[{ file: "a.py", lines: 812 }]} label="findings" />);
     fireEvent.click(screen.getByLabelText("Expand findings"));
-    // Two renders (box + modal) of the same pretty-printed JSON.
-    expect(screen.getAllByText(/"file": "a\.py"/)).toHaveLength(2);
+    const body = document.querySelector(".value-modal-body")!;
+    expect(body.querySelector(".value-doc-field")).toBeNull();
+    expect(body.textContent).toContain('"file": "a.py"');
   });
 
   it("Escape, the backdrop, and the close button each close the modal", () => {

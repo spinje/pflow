@@ -3385,6 +3385,22 @@ button.say-affordance {
   max-height: none;
   overflow: visible;
 }
+/* A dict run value expands to a per-field DOCUMENT (RunValue's ValueDoc): the
+   panel's read-param idiom — faint field name over the value box, strings as
+   real text. */
+.value-doc-field {
+  margin: 0 0 14px;
+}
+.value-doc-field:last-child {
+  margin-bottom: 0;
+}
+.value-doc-name {
+  display: block;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
 
 .io-port-run-empty {
   font-size: 12px;

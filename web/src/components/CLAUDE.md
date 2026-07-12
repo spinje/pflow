@@ -151,7 +151,13 @@ prompts, batch items, errors, run values — one seam): a portaled full-screen m
 (`.value-modal-overlay`, in the scoped chrome-token list) with the value un-capped — Esc /
 backdrop / × close; the panel box itself stays scroll-capped at 320px. `expandLabel` titles
 the modal (default "value"); `expandLabel={null}` disables it (the modal's own inner
-CodeBlock — the recursion guard); an empty value renders no button. `EdgePanel` reads a
+CodeBlock — the recursion guard); an empty value renders no button. The modal is a READING
+surface: a caller still holding the structured value can replace its content via `modalBody`
+— `RunValue` uses it to expand a DICT run value as a per-field document (labeled blocks,
+strings as REAL text — not JSON `\n` escapes; top-level only, arrays stay JSON). Deliberately
+RunValue-only: authored params must render exactly as authored (a literal `\n` in a code
+param is content), and the compact box stays JSON (it answers "what shape", the modal "what
+does it say"). `EdgePanel` reads a
 contract edge by id: five variants (data / branch+decision-end / error / static-end /
 sequential) — the data variant has a CACHE arm (`input_name === "prompt_cache"`: "cached
 context", never a param binding). RF native selection stays inert — components ignore the

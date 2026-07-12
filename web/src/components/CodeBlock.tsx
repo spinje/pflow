@@ -22,6 +22,7 @@ export function CodeBlock({
   lang,
   highlightRef,
   expandLabel,
+  modalBody,
 }: {
   code: string;
   lang: string | null;
@@ -32,6 +33,11 @@ export function CodeBlock({
   // DISABLE it: the modal's own inner CodeBlock (the recursion guard) and any
   // surface where a full-screen read makes no sense.
   expandLabel?: string | null;
+  // Custom modal content — the modal is a READING surface, and a caller that
+  // still holds the structured value can render it more readably than this
+  // component's stringified `code` (RunValue's per-field document for dicts).
+  // Absent → the modal shows the same code, un-capped.
+  modalBody?: JSX.Element;
 }): JSX.Element {
   // Markdown (prompts, cached prefix) and plain values teal ALL their refs — the
   // canvas-language treatment the source pane uses. Code/shell/yaml/json values do
@@ -98,7 +104,16 @@ export function CodeBlock({
 
   // An empty value gets no expand — a full-screen read of nothing is noise.
   if (expandLabel === null || code === "") return pre;
-  return <ExpandableBox pre={pre} code={code} lang={lang} highlightRef={highlightRef} label={expandLabel ?? "value"} />;
+  return (
+    <ExpandableBox
+      pre={pre}
+      code={code}
+      lang={lang}
+      highlightRef={highlightRef}
+      label={expandLabel ?? "value"}
+      modalBody={modalBody}
+    />
+  );
 }
 
 // The ⛶ expand affordance every panel value box carries: the box stays
@@ -109,12 +124,14 @@ function ExpandableBox({
   lang,
   highlightRef,
   label,
+  modalBody,
 }: {
   pre: JSX.Element;
   code: string;
   lang: string | null;
   highlightRef?: string;
   label: string;
+  modalBody?: JSX.Element;
 }): JSX.Element {
   const [expanded, setExpanded] = useState(false);
   return (
@@ -129,7 +146,14 @@ function ExpandableBox({
         ⛶
       </button>
       {expanded && (
-        <ValueModal code={code} lang={lang} highlightRef={highlightRef} label={label} onClose={() => setExpanded(false)} />
+        <ValueModal
+          code={code}
+          lang={lang}
+          highlightRef={highlightRef}
+          label={label}
+          modalBody={modalBody}
+          onClose={() => setExpanded(false)}
+        />
       )}
     </div>
   );
@@ -144,12 +168,14 @@ function ValueModal({
   lang,
   highlightRef,
   label,
+  modalBody,
   onClose,
 }: {
   code: string;
   lang: string | null;
   highlightRef?: string;
   label: string;
+  modalBody?: JSX.Element;
   onClose: () => void;
 }): JSX.Element {
   useEffect(() => {
@@ -177,7 +203,7 @@ function ValueModal({
           </button>
         </header>
         <div className="value-modal-body">
-          <CodeBlock code={code} lang={lang} highlightRef={highlightRef} expandLabel={null} />
+          {modalBody ?? <CodeBlock code={code} lang={lang} highlightRef={highlightRef} expandLabel={null} />}
         </div>
       </div>
     </div>,
