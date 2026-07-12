@@ -9,40 +9,41 @@ Every claim here is a pointer to verify, not a fact._
 - **Orchestration restructured 2026-07-11/12** (DECISIONS #1–#11): agent-hierarchy system
   adopted (ORCHESTRATION.md canonical; planner/task-orchestrator/implementer agent defs live;
   command rewritten; close ritual + rolling braindump in the boot stack; this file + `sessions/`
-  replace `orchestrator-progress-log.md`, converted to `sessions/session-01.md`). Codex routing
-  metadata preservation shipped in #578; redundant planning commands were retired and the
-  `create-plan` skill added in #582. Local `main` and the cached `origin/main` both point to
-  `ffaeb5a6`; remote freshness verified 2026-07-12.
+  replace `orchestrator-progress-log.md`, converted to `sessions/session-01.md`). Committed to
+  `main` 2026-07-12 (docs commit). **`main` is unpushed** (this commit + `eeba1e8e` +
+  `276672a4`) — pushes are user-gated.
 - The hierarchy has NOT yet run a lane-A/B build — the first launch shakes it down; watch the
   worktree-workflow flags (`open_cli=false open_cursor=false`) and packet quality. **Shakedown
   candidate: #565 (lane B).**
 
 ## In flight
 
-- None locally visible. No Codex subagents are live; `git worktree list` shows only `main`.
+- **Task 176 (Web-UI Approval Bridge)** — **lane C (manual)**, launched pre-restructure
+  2026-07-11 on **fable** in worktree `feat-web-ui-approval-bridge` (branch
+  `feat/web-ui-approval-bridge`, base `276672a4` = the refreshed-spec commit; brief verified
+  in-tree at `scratchpads/task-176-web-approval-bridge/BRIEF.md`). Spec refresh + 3-item decision
+  ledger LOCKED same day (escalation-answering IN · greying IN-phased-last · `resolved_via:"ui"`
+  OUT — do not re-litigate). **On merge, verify personally**: the pre-flight no-silent-no-op rule
+  and the resume `PFLOW_EXECUTION_ID` mirror hook (both orchestrator catches, not spec
+  inheritance); check whether the greying cut-line was exercised (→ follow-up issue); reconcile
+  roadmap (176 closes the resume/HITL arc); then #546/#568 unblock (serialized behind 176).
 
 ## Current arc
 
-Resume/HITL: 125 ✅ → 164 ✅ → 174 ✅ → 171 ✅ → 176 ✅ (#579). Task 176's review confirms the
-pre-flight no-silent-no-op invariant is mutation-tested, `PFLOW_EXECUTION_ID` already worked and
-gained a pin test, and terminal-replay greying was real-browser verified. Its unfiled follow-up is
-validator-only pre-trace failures after forced resume or UI launch. Read `task_171/task-review.md`
-and `task_176/task-review.md` before resume/gate/trace work.
+Resume/HITL: 125 ✅ → 164 ✅ → 174 ✅ → 171 ✅ → **176 in flight**. Read `task_171/task-review.md`
+before any resume/gate/trace work — 171's beyond-spec deltas: MCP streams traces; exit 4 = paused;
+trace format 2.7.0 (`final_status:"paused"` + `gate_request` on the trailer); loader extracted to
+`runtime/resume_source.py`; `ExecutionResult.is_durable_pause` is the single durability home.
 
-## Parallel-lane candidates (re-scanned 2026-07-12)
+## Parallel-lane candidates (re-scanned 2026-07-11)
 
 - **#542** trace retention — UNBLOCKED (gate was 171). Paused traces are live obligations, never
   prunable; `resume list` depends on trailer scan. Trace seam → serialize.
 - **#562** resumable inline workflows — 171 follow-on; touches trace format → serialize.
 - **#565** MCP probe advertises top-level `${success}` but values live under `result.*` — small,
-  agent-facing correctness bug; lane B shakedown recommendation. Root cause verified locally:
-  MCP registration publishes `outputSchema` fields bare while runtime's canonical success
-  namespace is `result`.
-- **#580** nested run-value rendering — deliberately wait for evidence that Task 176's modal
-  document view is insufficient; do not build pre-emptively. **#581** flaky Windows caplog tests
-  — hygiene lane; suggested global-logger cause remains unverified.
-- **#546** pinned-run resolve race · **#568** track/cancel detached UI runs (respect ADR-0008) ·
-  **#561** TTS clip cache (backlog) · **#538** liveness backstop (check
+  agent-facing correctness bug; likely lane B.
+- **#546** pinned-run resolve race (behind 176) · **#568** track/cancel detached UI runs (behind
+  176; respect ADR-0008) · **#561** TTS clip cache (backlog) · **#538** liveness backstop (check
   overlap with #566 first) · **#544** `llm_*` canonicalization · **#549** post-#539 visibility ·
   **#528** `--output-format` stragglers · **#566/#567/#572/#574/#575** Windows/test-infra tail.
 - **#357** memo-cache drift — issue state UNVERIFIED since 2026-06-23; check before acting.
@@ -60,4 +61,4 @@ and `task_176/task-review.md` before resume/gate/trace work.
   serves old code).
 - Spec file:line refs last bulk-refreshed 2026-07-02; repo has since absorbed #557's format pass
   + 116's 117-file diff — treat ALL file:line refs as stale; re-verify at use.
-- Worktrees: only `main` exists (verified locally 2026-07-12).
+- Worktrees: only `main` + `feat-web-ui-approval-bridge` exist (full sweep 2026-07-11).
