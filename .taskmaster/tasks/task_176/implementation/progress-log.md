@@ -605,3 +605,35 @@ hover `title`, and the highlighted card is the visible confirmation. Long answer
 never rides the button; option labels appear in full on the selected card. Browser-measured:
 gate body 253/253 (no scroll), input 232px (placeholder whole), same row. GateCallout 13/13,
 vitest 779, tsc clean.
+
+## 2026-07-12 — Session close-out (post-close review + live-use session)
+
+Commit anchors for the entries above (written pre-commit): the post-close review fixes
+(escalation-pause merge, dash-target guard, superseded clear) are `e2e4e750`; the
+select-then-Answer escalation UX + one-row layout iteration is `9e2a9c66`. Both pushed to
+PR #579 with [skip review].
+
+**Real-browser verification of the escalation-clobber fix** (between the two commits; stale
+server killed + `make ui-build` first, per the recorded gotcha): on a pinned paused escalation
+(superseded source runs keep their paused trailers — no live producer needed), clicking the ⏸
+escalating step opened "This run" with the recorded completion — measured via a scratchpad
+click-and-inspect workflow: `status: success · 11s · $0.09 · 41,877 in / 445 out` + realized
+input, WHILE the canvas badge read ⏸ and the gate panel stood open (screenshot evidence
+reviewed). Inverse: an approval-paused run (`publish-notes` never ran) kept the section closed
+(`thisRunPresent: false`, `fetchRunNode` never called). Also spot-confirmed the run-node
+reader's secret redaction in the served output (`<REDACTED>`).
+
+The select-then-Answer flow was then exercised END-TO-END by the owner on fresh UI-launched
+gated runs (the mis-click that triggered the redesign consumed a real token with the wrong
+option — the strongest possible validation of the two-step shape). Final layout
+browser-measured: gate body 253/253 (no scroll), input row intact.
+
+**Cleanup state:** the demo `pflow ui` server is killed. The task-176 demo/verification traces
+in `~/.pflow/debug` (56 files: escalate/approve/fail-demo runs + the click/screenshot check
+runs) and `/tmp/pflow-176-demo` + `/tmp/pflow-shots` were listed for deletion but left in place
+(owner declined the bulk rm at the prompt — delete by hand or let trace retention (#542) handle
+them). One escalate-demo run may still sit paused at its gate; answering or ignoring it is
+harmless (durable pause, no live process).
+
+**Open at close:** rebase onto main once the `task-N.md` docs-test fix lands there (the only
+red CI, inherited); the take-or-leave `errorsFromPayload` fold remains deliberately not taken.
