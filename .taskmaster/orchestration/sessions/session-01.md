@@ -1,3 +1,12 @@
+# session-01 — ARCHIVE: converted pre-restructure orchestrator-progress-log.md
+
+_Converted 2026-07-11 during the orchestration restructure (DECISIONS #1, #6). The `## Now`
+snapshot below is FROZEN AS OF 2026-07-11 and superseded by `CURRENT-STATE.md`; the `## Log`
+entries are the authentic pre-restructure session history (2026-06-16 → 2026-07-11).
+Original file history: `git log -- .taskmaster/orchestration/orchestrator-progress-log.md`._
+
+---
+
 # Orchestrator Progress Log
 
 _Mutable state companion to the `/start-orchestration` command — the current build state its boot
