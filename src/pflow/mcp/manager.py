@@ -6,12 +6,28 @@ import logging
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _CONFIG_SAVE_LOCK = threading.RLock()
+_WINDOWS_REPLACE_RETRY_DELAYS = (0.01, 0.02, 0.04, 0.08)
+
+
+def _replace_config_file(source: Path, destination: Path) -> None:
+    """Atomically replace the config, tolerating brief Windows file locks."""
+    for delay in _WINDOWS_REPLACE_RETRY_DELAYS:
+        try:
+            source.replace(destination)
+            return
+        except PermissionError as exc:
+            if getattr(exc, "winerror", None) != 5:
+                raise
+            time.sleep(delay)
+
+    source.replace(destination)
 
 
 class MCPServerManager:
@@ -134,7 +150,7 @@ class MCPServerManager:
                 f.write("\n")  # Add final newline
 
             # Atomic rename (overwrites existing file)
-            Path(temp_path).replace(self.config_path)
+            _replace_config_file(Path(temp_path), self.config_path)
 
             logger.info(f"Saved {len(config.get('mcpServers', {}))} MCP servers to configuration")
 

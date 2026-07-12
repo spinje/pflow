@@ -9,7 +9,7 @@ import os
 import tempfile
 import threading
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 
@@ -90,6 +90,80 @@ class TestAtomicWriteProtection:
             config = manager.load()
             assert "test1" in config["mcpServers"]
             assert "test2" not in config["mcpServers"]
+
+    def test_windows_access_denied_during_replace_is_retried(self):
+        """A brief Windows destination lock must not fail an atomic save."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "mcp-servers.json"
+            manager = MCPServerManager(config_path=config_path)
+            manager.add_server("initial", "stdio", "cmd", [])
+
+            original_replace = Path.replace
+            replace_attempts = 0
+
+            def intermittently_denied(source: Path, destination: Path) -> Path:
+                nonlocal replace_attempts
+                replace_attempts += 1
+                if replace_attempts < 3:
+                    error = PermissionError("Access denied")
+                    error.winerror = 5
+                    raise error
+                return original_replace(source, destination)
+
+            with (
+                patch.object(Path, "replace", autospec=True, side_effect=intermittently_denied),
+                patch("pflow.mcp.manager.time.sleep") as sleep,
+            ):
+                manager.add_server("second", "stdio", "cmd", [])
+
+            assert replace_attempts == 3
+            assert sleep.call_args_list == [call(0.01), call(0.02)]
+            assert set(manager.load()["mcpServers"]) == {"initial", "second"}
+
+    def test_persistent_windows_access_denied_remains_a_save_error(self):
+        """Retry exhaustion must preserve the original config and report failure."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "mcp-servers.json"
+            manager = MCPServerManager(config_path=config_path)
+            manager.add_server("initial", "stdio", "cmd", [])
+            original_content = config_path.read_text(encoding="utf-8")
+
+            def access_denied(_source: Path, _destination: Path) -> None:
+                error = PermissionError("Access denied")
+                error.winerror = 5
+                raise error
+
+            with (
+                patch.object(Path, "replace", autospec=True, side_effect=access_denied) as replace,
+                patch("pflow.mcp.manager.time.sleep") as sleep,
+                pytest.raises(PermissionError, match="Access denied"),
+            ):
+                manager.add_server("second", "stdio", "cmd", [])
+
+            assert replace.call_count == 5
+            assert sleep.call_args_list == [call(0.01), call(0.02), call(0.04), call(0.08)]
+            assert config_path.read_text(encoding="utf-8") == original_content
+            assert not list(Path(tmpdir).glob(".mcp-servers-*.tmp"))
+
+    def test_permission_error_without_windows_access_denied_code_is_not_retried(self):
+        """Unrelated permission failures must still propagate immediately."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "mcp-servers.json"
+            manager = MCPServerManager(config_path=config_path)
+            manager.add_server("initial", "stdio", "cmd", [])
+            original_content = config_path.read_text(encoding="utf-8")
+
+            with (
+                patch.object(Path, "replace", autospec=True, side_effect=PermissionError("read-only")) as replace,
+                patch("pflow.mcp.manager.time.sleep") as sleep,
+                pytest.raises(PermissionError, match="read-only"),
+            ):
+                manager.add_server("second", "stdio", "cmd", [])
+
+            replace.assert_called_once()
+            sleep.assert_not_called()
+            assert config_path.read_text(encoding="utf-8") == original_content
+            assert not list(Path(tmpdir).glob(".mcp-servers-*.tmp"))
 
 
 class TestConcurrentAccess:
