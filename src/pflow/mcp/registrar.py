@@ -261,6 +261,7 @@ class MCPRegistrar:
                     "server": server_name,
                     "tool": tool["name"],
                     "original_schema": tool.get("inputSchema", {}),
+                    "output_schema": tool.get("outputSchema", {}),
                 },
             },
         }
@@ -300,6 +301,8 @@ class MCPRegistrar:
             return None
 
         entry = nodes[node_name]
+        interface = entry.get("interface", {})
+        mcp_metadata = interface.get("mcp_metadata", {})
 
         # Extract server and tool from node name
         parts = node_name.split("-", 2)
@@ -314,9 +317,10 @@ class MCPRegistrar:
             "node_name": node_name,
             "server": server,
             "tool": tool,
-            "description": entry.get("interface", {}).get("description", ""),
-            "params": entry.get("interface", {}).get("params", []),
-            "outputs": entry.get("interface", {}).get("outputs", []),
+            "description": interface.get("description", ""),
+            "params": interface.get("params", []),
+            "outputs": interface.get("outputs", []),
+            "output_schema": mcp_metadata.get("output_schema", {}),
             "module": entry.get("module", ""),
             "class_name": entry.get("class_name", ""),
         }

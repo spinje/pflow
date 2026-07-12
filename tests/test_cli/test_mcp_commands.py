@@ -106,6 +106,7 @@ _TOOL_INFO = {
     "description": "Create an issue",
     "params": [{"key": "repo", "type": "str", "required": True}],
     "outputs": [{"key": "issue", "type": "dict"}],
+    "output_schema": {},
     "module": "pflow.nodes.mcp.node",
     "class_name": "MCPNode",
 }
@@ -129,6 +130,37 @@ def test_mcp_describe_shows_tool_details() -> None:
     assert "Tool: mcp-github-create-issue" in result.output
     assert "Server: github" in result.output
     assert "Parameters:" in result.output
+
+
+def test_mcp_describe_shows_result_prefixed_output_schema_paths() -> None:
+    registrar = _make_registrar_mock({
+        **_TOOL_INFO,
+        "outputs": [{"key": "result", "type": "any"}],
+        "output_schema": {
+            "$defs": {
+                "Image": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                }
+            },
+            "type": "object",
+            "properties": {
+                "issue_url": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                "images": {
+                    "type": "array",
+                    "items": {"$ref": "#/$defs/Image"},
+                },
+            },
+        },
+    })
+
+    with patch("pflow.cli.commands.mcp.MCPRegistrar", return_value=registrar):
+        result = click.testing.CliRunner().invoke(mcp, ["describe", "mcp-github-create-issue"])
+
+    assert result.exit_code == 0
+    assert "Declared output paths (from server schema):" in result.output
+    assert "result.issue_url: string | null" in result.output
+    assert "result.images[0].path: string" in result.output
 
 
 def test_mcp_describe_normalizes_hyphen_to_underscore() -> None:

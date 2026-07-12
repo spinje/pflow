@@ -764,13 +764,81 @@ def _format_parameters(params: list[dict], title: str = "Parameters") -> None:
         click.echo(f"\n{title}: None")
 
 
-def _format_outputs(outputs: list[dict]) -> None:
-    """Format and display outputs."""
+def _schema_type_label(schema: dict) -> str:
+    """Return a readable JSON Schema type label."""
+    schema_type = schema.get("type", "any")
+    if isinstance(schema_type, list):
+        return " | ".join(str(item) for item in schema_type)
+    alternatives = schema.get("anyOf")
+    if schema_type == "any" and isinstance(alternatives, list):
+        labels = [_schema_type_label(item) for item in alternatives if isinstance(item, dict)]
+        if labels:
+            return " | ".join(dict.fromkeys(labels))
+    return str(schema_type)
+
+
+def _resolve_local_schema_ref(root_schema: dict, field_schema: dict) -> dict:
+    """Resolve a local JSON Pointer reference, or preserve the original schema."""
+    ref = field_schema.get("$ref")
+    if not isinstance(ref, str) or not ref.startswith("#/"):
+        return field_schema
+
+    target: object = root_schema
+    for raw_segment in ref[2:].split("/"):
+        segment = raw_segment.replace("~1", "/").replace("~0", "~")
+        if not isinstance(target, dict) or segment not in target:
+            return field_schema
+        target = target[segment]
+    return target if isinstance(target, dict) else field_schema
+
+
+def _schema_array_items(schema: dict) -> dict | None:
+    """Return an array's item schema when its type declaration includes array."""
+    schema_type = schema.get("type")
+    is_array = schema_type == "array" or (isinstance(schema_type, list) and "array" in schema_type)
+    items = schema.get("items")
+    return items if is_array and isinstance(items, dict) else None
+
+
+def _flatten_declared_output_paths(schema: dict, prefix: str = "result") -> list[tuple[str, str]]:
+    """Flatten reliable JSON Schema properties into result-prefixed hints."""
+    paths: list[tuple[str, str]] = []
+
+    def walk(field_schema: dict, path: str, *, include_path: bool = True, depth: int = 0) -> None:
+        if depth > 10:
+            return
+        field_schema = _resolve_local_schema_ref(schema, field_schema)
+
+        if include_path:
+            paths.append((path, _schema_type_label(field_schema)))
+
+        properties = field_schema.get("properties")
+        if isinstance(properties, dict):
+            for name, child_schema in properties.items():
+                if isinstance(child_schema, dict):
+                    walk(child_schema, f"{path}.{name}", depth=depth + 1)
+
+        items = _schema_array_items(field_schema)
+        if items is not None:
+            walk(items, f"{path}[0]", depth=depth + 1)
+
+    walk(schema, prefix, include_path=False)
+    return paths
+
+
+def _format_outputs(outputs: list[dict], output_schema: dict | None = None) -> None:
+    """Format runtime outputs and side-effect-free schema path hints."""
     if outputs:
         click.echo("\nOutputs:")
         for output in outputs:
             desc = f" - {output.get('description', '')}" if output.get("description") else ""
             click.echo(f"  - {output['key']}: {output['type']}{desc}")
+
+    declared_paths = _flatten_declared_output_paths(output_schema or {})
+    if declared_paths:
+        click.echo("\nDeclared output paths (from server schema):")
+        for path, type_label in declared_paths:
+            click.echo(f"  - {path}: {type_label}")
 
 
 def _suggest_similar_tools(registrar: MCPRegistrar, tool: str) -> None:
@@ -840,7 +908,7 @@ def describe_tool(tool: str) -> None:
 
         _format_tool_header(tool_info)
         _format_parameters(tool_info["params"])
-        _format_outputs(tool_info["outputs"])
+        _format_outputs(tool_info["outputs"], tool_info.get("output_schema"))
 
         # Add .pflow.md usage snippet
         tool_name = tool_info["node_name"]

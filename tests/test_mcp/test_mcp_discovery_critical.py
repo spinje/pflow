@@ -166,6 +166,7 @@ class TestMCPRegistrarCritical:
             # Check MCP metadata preserved
             assert interface["mcp_metadata"]["server"] == "github"
             assert interface["mcp_metadata"]["tool"] == "create-issue"
+            assert interface["mcp_metadata"]["output_schema"] == tool_def["outputSchema"]
 
     def test_sync_server_updates_registry(self):
         """Test that syncing a server updates the registry correctly.

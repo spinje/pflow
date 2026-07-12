@@ -145,7 +145,8 @@ class Registry:
         Older registries copied outputSchema properties into top-level outputs,
         even though MCPNode has always stored successful payloads under
         ``result``. Normalize on read so probe, validation, and describe repair
-        existing installations without requiring a network resync.
+        existing installations in memory without requiring a network resync.
+        A later registry write persists the normalized shape.
         """
         canonical_output = {"key": "result", "type": "any", "description": "Tool execution result"}
         for node_name, node_data in nodes.items():
