@@ -31,3 +31,32 @@
   #580 waits by its own evidence trigger; #581 is lower-priority hygiene with an unverified cause.
 - Proposed next: provision the #565 issue worktree with terminal agents suppressed, then launch
   the Codex task-orchestrator with the required packet. Held at the user-steering gate.
+
+## [2026-07-12] main orchestrator — #565 lane-B shakedown launched
+
+- Did: committed the boot reconciliation (`342aac49`); provisioned
+  `/Users/andfal/projects/pflow-worktrees/fix-mcp-probe-output-paths` on
+  `fix/mcp-probe-output-paths` with `open_cli=false open_cursor=false`; verified clean base and
+  Codex write access; launched `/root/issue_565` in issue mode (`gpt-5.6-sol`, high).
+- Codex incompatibility found: a full-history fork cannot also accept explicit agent type/model/
+  effort; the tool rejects it before launch. Retried with `fork_turns: none` and the complete
+  context packet, which preserves the explicit routing contract and hierarchy isolation.
+- Next: shepherd handbacks; on completion verify the lane-B PR/merge/CI claim, tear down via the
+  squash-safe head-OID check, and reconcile state.
+
+## [2026-07-12] main orchestrator — first Codex turn recovered
+
+- Failure: `/root/issue_565` errored before a usable handback because its encrypted function
+  output could not be decoded after a stream disconnect. Worktree inspection proved no diff or
+  commit; HEAD remained `342aac49`.
+- Recovery: used Codex `followup_task` on the SAME agent (the active-turn equivalent of the
+  process's Claude `SendMessage`; passive `send_message` would not trigger an idle turn). Agent
+  accepted the follow-up and restarted from the original packet. No replacement was launched.
+
+## [2026-07-12] main orchestrator — #565 replacement launched
+
+- Failure repeated: same encrypted-function-output decode error on the resumed agent; tree again
+  clean at `342aac49`. Classified the original agent unrecoverable.
+- Recovery: launched the process-authorized replacement `/root/issue_565_recovery` into the SAME
+  worktree with an isolated complete packet and the same explicit route (`gpt-5.6-sol`, high).
+  One replacement attempt only; a repeated platform failure stops the shakedown.
