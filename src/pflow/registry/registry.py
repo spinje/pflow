@@ -156,6 +156,8 @@ class Registry:
             )
             interface = node_data.get("interface")
             if is_mcp_entry and isinstance(interface, dict):
+                # Intentionally unconditional: this is an idempotent repair for
+                # both stale and already-canonical entries.
                 interface["outputs"] = [MCP_CANONICAL_OUTPUT.copy()]
 
     def _load_from_file(self) -> dict[str, dict[str, Any]]:

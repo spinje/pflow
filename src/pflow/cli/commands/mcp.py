@@ -764,9 +764,20 @@ def _format_parameters(params: list[dict], title: str = "Parameters") -> None:
         click.echo(f"\n{title}: None")
 
 
+_MAX_DECLARED_OUTPUT_DEPTH = 10
+_MAX_DECLARED_OUTPUT_PATHS = 100
+
+
 def _schema_type_label(schema: dict) -> str:
     """Return a readable JSON Schema type label."""
-    schema_type = schema.get("type", "any")
+    schema_type = schema.get("type")
+    if schema_type is None:
+        if "properties" in schema:
+            schema_type = "object"
+        elif "items" in schema:
+            schema_type = "array"
+        else:
+            schema_type = "any"
     if isinstance(schema_type, list):
         return " | ".join(str(item) for item in schema_type)
     if schema_type == "any":
@@ -782,6 +793,8 @@ def _schema_type_label(schema: dict) -> str:
 def _resolve_local_schema_ref(root_schema: dict, field_schema: dict) -> dict:
     """Resolve a local JSON Pointer reference, or preserve the original schema."""
     ref = field_schema.get("$ref")
+    if ref == "#":
+        return root_schema
     if not isinstance(ref, str) or not ref.startswith("#/"):
         return field_schema
 
@@ -832,15 +845,18 @@ def _schema_children(field_schema: dict, path: str) -> list[tuple[dict, str, boo
     return children
 
 
-def _flatten_declared_output_paths(schema: dict, prefix: str = "result") -> list[tuple[str, str]]:
+def _flatten_declared_output_paths(schema: dict, prefix: str = "result") -> tuple[list[tuple[str, str]], bool]:
     """Flatten reliable JSON Schema properties into result-prefixed hints."""
     paths: list[tuple[str, str]] = []
     seen_paths: set[str] = set()
+    truncated = False
 
     def walk(field_schema: dict, path: str, *, include_path: bool = True, depth: int = 0) -> None:
-        # Bound recursive $refs and pathological schemas while keeping ordinary
-        # deeply nested tool results useful.
-        if depth > 10:
+        nonlocal truncated
+        # Bound recursive/branching schemas while keeping ordinary nested tool
+        # results useful and terminal output predictable.
+        if depth > _MAX_DECLARED_OUTPUT_DEPTH or len(paths) >= _MAX_DECLARED_OUTPUT_PATHS:
+            truncated = True
             return
         field_schema = _resolve_local_schema_ref(schema, field_schema)
 
@@ -855,7 +871,7 @@ def _flatten_declared_output_paths(schema: dict, prefix: str = "result") -> list
             walk(child_schema, child_path, include_path=emit_path, depth=depth + 1)
 
     walk(schema, prefix, include_path=False)
-    return paths
+    return paths, truncated
 
 
 def _format_outputs(outputs: list[dict], output_schema: dict | None = None) -> None:
@@ -866,11 +882,16 @@ def _format_outputs(outputs: list[dict], output_schema: dict | None = None) -> N
             desc = f" - {output.get('description', '')}" if output.get("description") else ""
             click.echo(f"  - {output['key']}: {output['type']}{desc}")
 
-    declared_paths = _flatten_declared_output_paths(output_schema or {})
+    declared_paths, truncated = _flatten_declared_output_paths(output_schema or {})
     if declared_paths:
         click.echo("\nDeclared output paths (from server schema):")
         for path, type_label in declared_paths:
             click.echo(f"  - {path}: {type_label}")
+        if truncated:
+            click.echo("  - ... (truncated)")
+        click.echo(
+            "  Hints only; server declarations may differ. `pflow probe` executes the tool to show observed paths."
+        )
 
 
 def _suggest_similar_tools(registrar: MCPRegistrar, tool: str) -> None:
