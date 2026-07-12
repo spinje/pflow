@@ -106,6 +106,7 @@ _TOOL_INFO = {
     "description": "Create an issue",
     "params": [{"key": "repo", "type": "str", "required": True}],
     "outputs": [{"key": "issue", "type": "dict"}],
+    "output_schema": {},
     "module": "pflow.nodes.mcp.node",
     "class_name": "MCPNode",
 }
@@ -129,6 +130,107 @@ def test_mcp_describe_shows_tool_details() -> None:
     assert "Tool: mcp-github-create-issue" in result.output
     assert "Server: github" in result.output
     assert "Parameters:" in result.output
+
+
+def test_mcp_describe_shows_result_prefixed_output_schema_paths() -> None:
+    registrar = _make_registrar_mock({
+        **_TOOL_INFO,
+        "outputs": [{"key": "result", "type": "any"}],
+        "output_schema": {
+            "$defs": {
+                "Image": {
+                    "$ref": "#/$defs/ImageDetails",
+                },
+                "ImageDetails": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                },
+            },
+            "type": "object",
+            "properties": {
+                "issue_url": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                "config": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {"path": {"type": "string"}},
+                        },
+                        {"type": "null"},
+                    ]
+                },
+                "images": {
+                    "type": "array",
+                    "items": {"$ref": "#/$defs/Image"},
+                },
+            },
+        },
+    })
+
+    with patch("pflow.cli.commands.mcp.MCPRegistrar", return_value=registrar):
+        result = click.testing.CliRunner().invoke(mcp, ["describe", "mcp-github-create-issue"])
+
+    assert result.exit_code == 0
+    assert "Declared output paths (from server schema):" in result.output
+    assert "result.issue_url: string | null" in result.output
+    assert "result.config: object | null" in result.output
+    assert "result.config.path: string" in result.output
+    assert "result.images[0].path: string" in result.output
+    assert "Hints only; server declarations may differ" in result.output
+
+
+def test_mcp_describe_bounds_recursive_and_wide_output_schemas() -> None:
+    properties = {f"field_{index}": {"type": "string"} for index in range(120)}
+    properties["children"] = {"type": "array", "items": {"$ref": "#"}}
+    registrar = _make_registrar_mock({
+        **_TOOL_INFO,
+        "outputs": [{"key": "result", "type": "any"}],
+        "output_schema": {"properties": properties},
+    })
+
+    with patch("pflow.cli.commands.mcp.MCPRegistrar", return_value=registrar):
+        result = click.testing.CliRunner().invoke(mcp, ["describe", "mcp-github-create-issue"])
+
+    assert result.exit_code == 0
+    assert "result.field_0: string" in result.output
+    assert "result.field_99: string" in result.output
+    assert "result.field_100: string" not in result.output
+    assert "... (truncated)" in result.output
+
+
+def test_mcp_describe_does_not_claim_truncation_at_exact_path_limit() -> None:
+    registrar = _make_registrar_mock({
+        **_TOOL_INFO,
+        "outputs": [{"key": "result", "type": "any"}],
+        "output_schema": {
+            "type": "object",
+            "properties": {f"field_{index}": {"type": "string"} for index in range(100)},
+        },
+    })
+
+    with patch("pflow.cli.commands.mcp.MCPRegistrar", return_value=registrar):
+        result = click.testing.CliRunner().invoke(mcp, ["describe", "mcp-github-create-issue"])
+
+    assert result.exit_code == 0
+    assert "result.field_99: string" in result.output
+    assert "... (truncated)" not in result.output
+
+
+def test_mcp_describe_bounds_self_referencing_output_schema_depth() -> None:
+    registrar = _make_registrar_mock({
+        **_TOOL_INFO,
+        "outputs": [{"key": "result", "type": "any"}],
+        "output_schema": {
+            "type": "object",
+            "properties": {"children": {"type": "array", "items": {"$ref": "#"}}},
+        },
+    })
+
+    with patch("pflow.cli.commands.mcp.MCPRegistrar", return_value=registrar):
+        result = click.testing.CliRunner().invoke(mcp, ["describe", "mcp-github-create-issue"])
+
+    assert result.exit_code == 0
+    assert "result.children[0].children[0]" in result.output
+    assert "... (truncated)" in result.output
 
 
 def test_mcp_describe_normalizes_hyphen_to_underscore() -> None:

@@ -1,6 +1,7 @@
 """Tests for the `pflow probe` command."""
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -8,6 +9,8 @@ import click.testing
 import pytest
 
 from pflow.cli.commands.probe import probe_cmd
+from pflow.cli.commands.read_fields import read_fields
+from pflow.mcp.registrar import MCPRegistrar
 from pflow.registry.registry import Registry
 
 
@@ -118,6 +121,50 @@ def test_probe_short_form_mcp_normalization(runner: click.testing.CliRunner, moc
     assert result.exit_code == 0
     assert "Execution ID:" in result.output
     instance.load.assert_called()
+
+
+def test_probe_mcp_output_schema_paths_resolve_via_read_fields(runner: click.testing.CliRunner) -> None:
+    """MCP outputSchema fields stay beneath the runtime ``result`` namespace."""
+    node_type = "mcp-images-generate"
+    tool = {
+        "name": "generate",
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "images": {"type": "array"},
+            },
+        },
+    }
+    registry_entry = MCPRegistrar()._create_registry_entry("images", tool)
+
+    class StructuredMCPNode:
+        def run(self, shared: dict) -> str:
+            shared["result"] = {"success": True, "images": [{"path": "generated/image.jpg"}]}
+            return "default"
+
+    with (
+        patch("pflow.cli.commands._probe_impl.import_node_class", return_value=StructuredMCPNode),
+        patch("pflow.cli.commands._probe_impl.inject_special_parameters", return_value={}),
+        patch("pflow.cli.commands._probe_impl.Registry") as mock_registry,
+    ):
+        mock_registry.return_value.load.return_value = {node_type: registry_entry}
+        mock_registry.return_value.get_nodes_metadata.return_value = {node_type: registry_entry}
+        probe_result = runner.invoke(probe_cmd, [node_type])
+
+    assert probe_result.exit_code == 0
+    assert "${result.success} (bool) = true" in probe_result.output
+    assert "${result.images} (list, 1 item)" in probe_result.output
+    assert "${result.images[0].path} (str)" in probe_result.output
+    assert "${success}" not in probe_result.output
+    assert "<not found>" not in probe_result.output
+
+    execution_id_match = re.search(r"Execution ID: (exec-[^\s]+)", probe_result.output)
+    assert execution_id_match is not None
+    read_result = runner.invoke(read_fields, [execution_id_match.group(1), "result.success"])
+
+    assert read_result.exit_code == 0
+    assert "result.success: True" in read_result.output
 
 
 def test_probe_unknown_node_errors(runner: click.testing.CliRunner, mock_registry) -> None:

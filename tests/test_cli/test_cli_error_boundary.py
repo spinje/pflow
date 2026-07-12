@@ -9,6 +9,7 @@ See GH #292 and tests/test_cli/CLAUDE.md for test patterns.
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 
@@ -72,11 +73,15 @@ def _run_pflow(args: list[str], env: dict[str, str]) -> subprocess.CompletedProc
 
 
 def _run_pflow_in_process(args: list[str], env: dict[str, str]):
-    """Invoke the real Click group without paying for another Python startup."""
+    """Invoke the real Click group without paying for another Python startup.
+
+    Keep ``PYTEST_CURRENT_TEST`` so the CLI does not replace pytest's logging
+    configuration in this shared process. Neighboring subprocess tests cover
+    production logging; this helper only compares the shared Click boundary.
+    """
     from pflow.cli.main import cli
 
-    clean_env: dict[str, str | None] = {**env, "PYTEST_CURRENT_TEST": None}
-    return CliRunner().invoke(cli, args, env=clean_env)
+    return CliRunner().invoke(cli, args, env=env)
 
 
 def _save_broken_workflow(home_dir, name: str) -> None:
@@ -158,11 +163,15 @@ class TestDescribeParseError:
         # Real-process rendering is already pinned by the neighboring describe
         # and history tests. This symmetry assertion only needs the shared Click
         # boundary, so avoid two more cold Python processes.
+        original_root_level = logging.getLogger().level
+        original_pflow_level = logging.getLogger("pflow").level
         describe_result = _run_pflow_in_process(["describe", "__boundary_symmetry"], env)
         validate_result = _run_pflow_in_process([str(standalone), "--validate-only"], env)
 
         assert describe_result.exit_code == 1
         assert validate_result.exit_code == 1
+        assert logging.getLogger().level == original_root_level
+        assert logging.getLogger("pflow").level == original_pflow_level
 
         # The rendered diagnostic body must match. Both paths use the same
         # MarkdownParseError.to_diagnostics() → format_diagnostic() pipeline.

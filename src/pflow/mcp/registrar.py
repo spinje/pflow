@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from pflow.registry import Registry
+from pflow.registry.constants import MCP_CANONICAL_OUTPUT
 
 from .discovery import MCPDiscovery
 from .manager import MCPServerManager
@@ -239,20 +240,11 @@ class MCPRegistrar:
             "description": "Timeout in seconds for tool execution (default: 30)",
         })
 
-        # Create outputs if available
-        outputs = []
-        if "outputSchema" in tool:
-            outputs = self.discovery.convert_to_pflow_params(tool["outputSchema"])
-
-        # If no specific outputs, use generic result
-        if not outputs:
-            outputs = [
-                {
-                    "key": "result",  # Changed from "name" to "key" to match pflow convention
-                    "type": "any",
-                    "description": "Tool execution result",
-                }
-            ]
+        # MCPNode stores every successful tool response under one canonical
+        # ``result`` output. Keep it open-ended even when outputSchema exists:
+        # server schemas may be absent or shallow, while probe can inspect the
+        # actual response and advertise every path that really resolves.
+        outputs = [MCP_CANONICAL_OUTPUT.copy()]
 
         # Create registry entry pointing to MCPNode
         entry = {
@@ -270,6 +262,7 @@ class MCPRegistrar:
                     "server": server_name,
                     "tool": tool["name"],
                     "original_schema": tool.get("inputSchema", {}),
+                    "output_schema": tool.get("outputSchema", {}),
                 },
             },
         }
@@ -309,6 +302,8 @@ class MCPRegistrar:
             return None
 
         entry = nodes[node_name]
+        interface = entry.get("interface", {})
+        mcp_metadata = interface.get("mcp_metadata", {})
 
         # Extract server and tool from node name
         parts = node_name.split("-", 2)
@@ -323,9 +318,10 @@ class MCPRegistrar:
             "node_name": node_name,
             "server": server,
             "tool": tool,
-            "description": entry.get("interface", {}).get("description", ""),
-            "params": entry.get("interface", {}).get("params", []),
-            "outputs": entry.get("interface", {}).get("outputs", []),
+            "description": interface.get("description", ""),
+            "params": interface.get("params", []),
+            "outputs": interface.get("outputs", []),
+            "output_schema": mcp_metadata.get("output_schema", {}),
             "module": entry.get("module", ""),
             "class_name": entry.get("class_name", ""),
         }

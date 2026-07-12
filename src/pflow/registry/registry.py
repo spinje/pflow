@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .constants import MCP_CANONICAL_OUTPUT
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -113,6 +115,7 @@ class Registry:
 
             # Try to load from file
             nodes = self._load_from_file()
+            self._normalize_mcp_output_namespaces(nodes)
 
             # Check if core nodes need refresh (version change)
             if self._core_nodes_outdated(nodes):
@@ -136,6 +139,26 @@ class Registry:
                 return filtered_nodes
 
             return nodes
+
+    @staticmethod
+    def _normalize_mcp_output_namespaces(nodes: dict[str, dict[str, Any]]) -> None:
+        """Normalize cached MCP entries to the runtime's canonical output.
+
+        Older registries copied outputSchema properties into top-level outputs,
+        even though MCPNode has always stored successful payloads under
+        ``result``. Normalize on read so probe, validation, and describe repair
+        existing installations in memory without requiring a network resync.
+        A later registry write persists the normalized shape.
+        """
+        for node_name, node_data in nodes.items():
+            is_mcp_entry = node_data.get("type") == "mcp" or (
+                node_name.startswith("mcp-") and node_data.get("file_path") == "virtual://mcp"
+            )
+            interface = node_data.get("interface")
+            if is_mcp_entry and isinstance(interface, dict):
+                # Intentionally unconditional: this is an idempotent repair for
+                # both stale and already-canonical entries.
+                interface["outputs"] = [MCP_CANONICAL_OUTPUT.copy()]
 
     def _load_from_file(self) -> dict[str, dict[str, Any]]:
         """Load registry from JSON file without auto-discovery.
