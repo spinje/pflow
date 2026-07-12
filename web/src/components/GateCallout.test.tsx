@@ -90,12 +90,24 @@ describe("GateCallout — approval", () => {
 });
 
 describe("GateCallout — escalation", () => {
-  it("renders the question + option buttons and submits the option's LABEL (never the number)", async () => {
+  it("an option click SELECTS — only the Answer button submits, with the option's LABEL (never the number)", async () => {
+    // Owner decision 2026-07-12 (after the first real mis-click): an answer consumes the gate
+    // token irreversibly, so option cards select and the ONE Answer button is the deliberate
+    // submit. An option click alone must never POST.
     vi.mocked(fetchGate).mockResolvedValue(ESCALATION);
     render(<GateCallout run="r1" onPinRun={vi.fn()} />);
 
     await waitFor(() => expect(screen.getByText("Two migration paths are viable — which one?")).toBeTruthy());
-    fireEvent.click(screen.getByRole("button", { name: /Expand-contract/ }));
+    const option = screen.getByRole("button", { name: /Expand-contract/ });
+    fireEvent.click(option);
+    expect(resumeRun).not.toHaveBeenCalled(); // select, never fire
+    expect(option.getAttribute("aria-pressed")).toBe("true");
+
+    // The button label stays STATIC (owner-preferred one-row layout) — the named answer rides
+    // the hover tooltip; the highlighted card is the visible confirmation.
+    const answer = screen.getByRole("button", { name: "Answer" });
+    expect(answer.getAttribute("title")).toBe("Answer with “Expand-contract”");
+    fireEvent.click(answer);
     await waitFor(() => expect(resumeRun).toHaveBeenCalledWith({ run: "r1", choose: "Expand-contract" }));
   });
 
@@ -103,7 +115,32 @@ describe("GateCallout — escalation", () => {
     vi.mocked(fetchGate).mockResolvedValue(ESCALATION);
     render(<GateCallout run="r1" onPinRun={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: /option 2/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Answer" }));
     await waitFor(() => expect(resumeRun).toHaveBeenCalledWith({ run: "r1", choose: "option 2" }));
+  });
+
+  it("selection and free text are mutually exclusive: typing clears the selection, selecting clears the text", async () => {
+    // One submit at the very end — a successful submit leaves `submitting` latched (the panel
+    // unmounts in production), so every interaction must precede it.
+    vi.mocked(fetchGate).mockResolvedValue(ESCALATION);
+    render(<GateCallout run="r1" onPinRun={vi.fn()} />);
+    const option = await screen.findByRole("button", { name: /Expand-contract/ });
+    const input = screen.getByLabelText("Free-text answer") as HTMLInputElement;
+
+    // Type, then select → the text clears, the option is pressed, the tooltip names the label.
+    fireEvent.change(input, { target: { value: "scratch that" } });
+    fireEvent.click(option);
+    expect(input.value).toBe("");
+    expect(option.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Answer" }).getAttribute("title")).toBe(
+      "Answer with “Expand-contract”",
+    );
+
+    // Select, then type → the selection clears and Answer submits the TEXT.
+    fireEvent.change(input, { target: { value: "do both" } });
+    expect(option.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "Answer" }));
+    await waitFor(() => expect(resumeRun).toHaveBeenCalledWith({ run: "r1", choose: "do both" }));
   });
 
   it("marks the recommended option instead of repeating the recommendation as text", async () => {

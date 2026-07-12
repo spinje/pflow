@@ -574,3 +574,34 @@ dash-guard above; its `=`-path suggestion is already documented-acceptable. One 
 adopted: `useResumeAnswer.submit` now clears `superseded` too (was terminal-by-invariant only —
 `refusal` prioritizes superseded over confirm, so a stuck value would mask later refusals if a
 retry affordance is ever added). vitest 778 green, tsc clean.
+
+## 2026-07-12 — Live human use: select-then-Answer for escalation options (owner decision)
+
+First real human use of the escalation panel surfaced a UX flaw the reviews missed: option
+cards were ONE-CLICK answers, and the owner mis-clicked "merge" (not the recommended option) —
+the token was consumed and the workflow acted on the wrong decision. The cards' affordance
+reads "select", the Answer button read as the confirm, and an answer is irreversible — the
+browser was the LEAST deliberate of the three answer surfaces (the TTY needs type+Enter; the
+CLI needs a typed command).
+
+Owner decided (mockup-confirmed): **select-then-Answer** — option click SELECTS
+(`aria-pressed`, `.gate-selected` highlight, beats `.gate-recommended` by specificity); the one
+Answer button submits whichever source is active and names the selection
+(`Answer with “per-env”`); selecting clears the text, typing clears the selection (always
+exactly one unambiguous source); disabled when neither. Approve/Deny stay one-click (explicit
+action verbs, kind-correct affordance).
+
+Tests: the two option-click tests now pin "option click alone NEVER posts" +
+Answer-submits-the-LABEL; new mutual-exclusion pin (one submit at the END — a successful
+submit latches `submitting`, the panel unmounts in production). GateCallout 13/13, vitest 779,
+tsc clean. Docs: components/CLAUDE.md, guide ui.md + resume.md ("their click" → "their
+answer"). Verified live in the browser by the owner on a fresh gated run.
+
+**Layout iteration (same session, owner-driven):** the first select-then-Answer shape put the
+dynamic `Answer with “X”` label beside the input — it clipped the placeholder and pushed the
+panel past `.node-callout`'s 320px max-height (scrollbar). Owner preferred the original one-row
+input+button layout: the button label is now STATIC ("Answer"), the named answer rides its
+hover `title`, and the highlighted card is the visible confirmation. Long answers: typed text
+never rides the button; option labels appear in full on the selected card. Browser-measured:
+gate body 253/253 (no scroll), input 232px (placeholder whole), same row. GateCallout 13/13,
+vitest 779, tsc clean.

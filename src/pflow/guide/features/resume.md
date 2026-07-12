@@ -42,7 +42,7 @@ pflow resume list                                # pending unanswered pauses (to
 **Or let your human answer in the browser** — usually the better channel when a person is
 deciding: `pflow ui <workflow> --run <execution-id>` opens the paused run on the visual canvas,
 where the paused step carries a ⏸ badge and an answer panel (Approve/Deny for an approval; the
-question, options, and a free-text field for an escalation). Their click delivers the same
+question, options, and a free-text field for an escalation). Their answer delivers the same
 answer as the commands above, and the canvas follows the continued run live. They see the
 resolved preview in context instead of a relayed terminal snippet. A **failed** run opened the
 same way shows a Resume button (same confirmation rules as below).

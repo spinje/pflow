@@ -31,7 +31,10 @@ per-target — a Map in GraphView, status model in `web/CLAUDE.md`'s overlay sea
 the caption plus at most one button, unlock (`blocked`) or ↻ Replay (`done`) — the same
 start-this-clip gesture; `expired` and caption-only boxes render no button).
 **Approval bridge (Task 176):** `GateCallout` (the kind-switched gate panel content — approval
-preview + Approve/Deny, escalation options + free text; answers POST `/api/resume` via
+preview + Approve/Deny; escalation options are SELECTABLE cards + a free-text field with ONE
+Answer button submitting whichever is active — selecting clears the text, typing clears the
+selection (owner decision 2026-07-12: an answer consumes the gate token irreversibly, so
+options never fire on click); answers POST `/api/resume` via
 `resumeRun`, refusals are panel states keyed on `ApiError.body.refusal`, never string-parsed)
 rides a `NodeCallout` GraphView anchors at the ⏸ frontier node; `ResumeControl` (the
 failed/interrupted-run Resume arm, same refusal vocabulary + the ack-then-`force` dialogs)

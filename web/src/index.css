@@ -2566,7 +2566,14 @@ button.say-affordance {
 .gate-recommended {
   border-color: color-mix(in oklab, var(--accent) 55%, transparent);
 }
-/* Free-text answer: input + Answer, one row. */
+/* The chosen option (select-then-Answer, owner decision 2026-07-12). Two classes, so it wins
+   over .gate-recommended's border at any source order. */
+.gate-option.gate-selected {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 14%, var(--bg-field));
+}
+/* Free-text answer: input + Answer, one row (owner-preferred). The button label is STATIC —
+   a dynamic "Answer with X" squeezed the input and overflowed the callout's max-height. */
 .gate-freeform {
   display: flex;
   gap: 6px;

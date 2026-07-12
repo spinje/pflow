@@ -35,7 +35,7 @@ shape as you work.
 - **The user can answer a paused gate right on the canvas.** A run paused at an approval gate
   shows an answer panel anchored at the ⏸ step: Approve/Deny for an approval (with the step's
   resolved values in front of them), or the question, options, and a free-text field for an
-  escalation. Their click continues the run, and the canvas follows the new attempt live. A
+  escalation. Their answer continues the run, and the canvas follows the new attempt live. A
   **failed** run shows a Resume button the same way. So when your run pauses (exit 4 with a
   resume token), opening it for your human — `pflow ui <workflow> --run <token>` (see below) —
   is usually the best way to get the decision; the `resume` topic covers the CLI alternative.

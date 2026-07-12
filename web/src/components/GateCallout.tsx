@@ -2,7 +2,10 @@
 // answer — the ADR-0009 loop (read the gate → render the payload → answer via `pflow resume`,
 // spawned server-side by POST /api/resume). Kind-switched (spec ledger #1): an approval shows
 // the masked action preview + Approve/Deny; an escalation shows the agent's question, its
-// options as one-click answers, and a free-text field. Lives INSIDE a NodeCallout GraphView
+// options as SELECTABLE cards plus a free-text field, with ONE Answer button submitting
+// whichever is active (owner decision 2026-07-12, after the first real mis-click: an answer
+// consumes the gate token irreversibly, so option cards select — they never fire — and
+// selecting clears the text, typing clears the selection). Lives INSIDE a NodeCallout GraphView
 // anchors at the ⏸ frontier node; on a delivered answer the parent PINS the overlay to the
 // new attempt (onPinRun), which clears the paused banner and unmounts this panel.
 //
@@ -43,6 +46,10 @@ export function GateCallout({
   const [gate, setGate] = useState<GateInfo | null>(null);
   const [fetchErrors, setFetchErrors] = useState<ApiErrorEntry[]>([]);
   const [choice, setChoice] = useState("");
+  // The selected option's index, or null. Mutually exclusive with `choice` by construction:
+  // selecting clears the text, typing clears the selection — the Answer button always submits
+  // exactly one unambiguous source.
+  const [selected, setSelected] = useState<number | null>(null);
   const answer = useResumeAnswer(run, onPinRun);
 
   useEffect(() => {
@@ -132,11 +139,17 @@ export function GateCallout({
             <ol className="gate-options">
               {req.options.map((option, i) => (
                 <li key={i}>
+                  {/* SELECTS, never submits (owner decision 2026-07-12): the answer consumes the
+                      gate token irreversibly, so the one deliberate submit is the Answer button. */}
                   <button
                     type="button"
-                    className={`gate-option${i === recommendedIndex ? " gate-recommended" : ""}`}
+                    className={`gate-option${i === recommendedIndex ? " gate-recommended" : ""}${i === selected ? " gate-selected" : ""}`}
+                    aria-pressed={i === selected}
                     disabled={submitting}
-                    onClick={() => answer.submit({ choose: labels[i]! })}
+                    onClick={() => {
+                      setSelected(i);
+                      setChoice("");
+                    }}
                   >
                     <span className="gate-option-label">{labels[i]}</span>
                     {typeof option.description === "string" && (
@@ -156,8 +169,13 @@ export function GateCallout({
             className="gate-freeform"
             onSubmit={(e) => {
               e.preventDefault();
-              // Empty/whitespace never posts — the server would 400 it (its shape guard);
-              // blocking client-side keeps the refusal out of the wire entirely.
+              // One submit path for both sources. Empty/whitespace text never posts — the
+              // server would 400 it (its shape guard); blocking client-side keeps the refusal
+              // out of the wire entirely.
+              if (selected !== null) {
+                answer.submit({ choose: labels[selected]! });
+                return;
+              }
               const text = choice.trim();
               if (text !== "") answer.submit({ choose: text });
             }}
@@ -165,11 +183,23 @@ export function GateCallout({
             <input
               className="gate-freeform-input"
               value={choice}
-              onChange={(e) => setChoice(e.target.value)}
+              onChange={(e) => {
+                setChoice(e.target.value);
+                setSelected(null); // typing moves the intent to free text
+              }}
               placeholder={req.options.length > 0 ? "Or answer in your own words…" : "Type an answer…"}
               aria-label="Free-text answer"
             />
-            <button type="submit" className="gate-btn gate-primary" disabled={submitting || choice.trim() === ""}>
+            {/* Static label, beside the input (owner-preferred layout 2026-07-12): a dynamic
+                "Answer with X" squeezed the input (clipped placeholder) and pushed the panel
+                past the callout's 320px max-height (scrollbar). The highlighted card names the
+                selection; the tooltip carries the full "Answer with X" for hover confirmation. */}
+            <button
+              type="submit"
+              className="gate-btn gate-primary"
+              title={selected !== null ? `Answer with “${labels[selected]}”` : undefined}
+              disabled={submitting || (selected === null && choice.trim() === "")}
+            >
               Answer
             </button>
           </form>
