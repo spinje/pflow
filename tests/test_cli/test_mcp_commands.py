@@ -146,6 +146,15 @@ def test_mcp_describe_shows_result_prefixed_output_schema_paths() -> None:
             "type": "object",
             "properties": {
                 "issue_url": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                "config": {
+                    "oneOf": [
+                        {
+                            "type": "object",
+                            "properties": {"path": {"type": "string"}},
+                        },
+                        {"type": "null"},
+                    ]
+                },
                 "images": {
                     "type": "array",
                     "items": {"$ref": "#/$defs/Image"},
@@ -160,6 +169,8 @@ def test_mcp_describe_shows_result_prefixed_output_schema_paths() -> None:
     assert result.exit_code == 0
     assert "Declared output paths (from server schema):" in result.output
     assert "result.issue_url: string | null" in result.output
+    assert "result.config: object | null" in result.output
+    assert "result.config.path: string" in result.output
     assert "result.images[0].path: string" in result.output
 
 

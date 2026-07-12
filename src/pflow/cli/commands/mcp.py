@@ -769,11 +769,13 @@ def _schema_type_label(schema: dict) -> str:
     schema_type = schema.get("type", "any")
     if isinstance(schema_type, list):
         return " | ".join(str(item) for item in schema_type)
-    alternatives = schema.get("anyOf")
-    if schema_type == "any" and isinstance(alternatives, list):
-        labels = [_schema_type_label(item) for item in alternatives if isinstance(item, dict)]
-        if labels:
-            return " | ".join(dict.fromkeys(labels))
+    if schema_type == "any":
+        for keyword in ("anyOf", "oneOf"):
+            alternatives = schema.get(keyword)
+            if isinstance(alternatives, list):
+                labels = [_schema_type_label(item) for item in alternatives if isinstance(item, dict)]
+                if labels:
+                    return " | ".join(dict.fromkeys(labels))
     return str(schema_type)
 
 
@@ -800,27 +802,57 @@ def _schema_array_items(schema: dict) -> dict | None:
     return items if is_array and isinstance(items, dict) else None
 
 
+def _schema_combinator_branches(schema: dict) -> list[dict]:
+    """Return object-like branches from JSON Schema union combinators."""
+    branches: list[dict] = []
+    for keyword in ("anyOf", "oneOf"):
+        alternatives = schema.get(keyword)
+        if isinstance(alternatives, list):
+            branches.extend(item for item in alternatives if isinstance(item, dict))
+    return branches
+
+
+def _schema_children(field_schema: dict, path: str) -> list[tuple[dict, str, bool]]:
+    """Return nested schemas with their display paths and path-emission flag."""
+    children: list[tuple[dict, str, bool]] = []
+    properties = field_schema.get("properties")
+    if isinstance(properties, dict):
+        children.extend(
+            (child_schema, f"{path}.{name}", True)
+            for name, child_schema in properties.items()
+            if isinstance(child_schema, dict)
+        )
+
+    items = _schema_array_items(field_schema)
+    if items is not None:
+        children.append((items, f"{path}[0]", True))
+
+    # Union branches describe the same parent path, so only emit their children.
+    children.extend((branch, path, False) for branch in _schema_combinator_branches(field_schema))
+    return children
+
+
 def _flatten_declared_output_paths(schema: dict, prefix: str = "result") -> list[tuple[str, str]]:
     """Flatten reliable JSON Schema properties into result-prefixed hints."""
     paths: list[tuple[str, str]] = []
+    seen_paths: set[str] = set()
 
     def walk(field_schema: dict, path: str, *, include_path: bool = True, depth: int = 0) -> None:
+        # Bound recursive $refs and pathological schemas while keeping ordinary
+        # deeply nested tool results useful.
         if depth > 10:
             return
         field_schema = _resolve_local_schema_ref(schema, field_schema)
 
-        if include_path:
+        if include_path and path not in seen_paths:
             paths.append((path, _schema_type_label(field_schema)))
+            seen_paths.add(path)
 
-        properties = field_schema.get("properties")
-        if isinstance(properties, dict):
-            for name, child_schema in properties.items():
-                if isinstance(child_schema, dict):
-                    walk(child_schema, f"{path}.{name}", depth=depth + 1)
-
-        items = _schema_array_items(field_schema)
-        if items is not None:
-            walk(items, f"{path}[0]", depth=depth + 1)
+        # Optional structured values are commonly represented as an object
+        # branch plus a null branch. Traverse branches without repeating the
+        # parent path so their nested properties remain statically discoverable.
+        for child_schema, child_path, emit_path in _schema_children(field_schema, path):
+            walk(child_schema, child_path, include_path=emit_path, depth=depth + 1)
 
     walk(schema, prefix, include_path=False)
     return paths

@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .constants import MCP_CANONICAL_OUTPUT
+
 # Set up logging
 logger = logging.getLogger(__name__)
 
@@ -148,14 +150,13 @@ class Registry:
         existing installations in memory without requiring a network resync.
         A later registry write persists the normalized shape.
         """
-        canonical_output = {"key": "result", "type": "any", "description": "Tool execution result"}
         for node_name, node_data in nodes.items():
             is_mcp_entry = node_data.get("type") == "mcp" or (
                 node_name.startswith("mcp-") and node_data.get("file_path") == "virtual://mcp"
             )
             interface = node_data.get("interface")
             if is_mcp_entry and isinstance(interface, dict):
-                interface["outputs"] = [canonical_output.copy()]
+                interface["outputs"] = [MCP_CANONICAL_OUTPUT.copy()]
 
     def _load_from_file(self) -> dict[str, dict[str, Any]]:
         """Load registry from JSON file without auto-discovery.

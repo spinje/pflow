@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from pflow.registry import Registry
+from pflow.registry.constants import MCP_CANONICAL_OUTPUT
 
 from .discovery import MCPDiscovery
 from .manager import MCPServerManager
@@ -243,7 +244,7 @@ class MCPRegistrar:
         # ``result`` output. Keep it open-ended even when outputSchema exists:
         # server schemas may be absent or shallow, while probe can inspect the
         # actual response and advertise every path that really resolves.
-        outputs = [{"key": "result", "type": "any", "description": "Tool execution result"}]
+        outputs = [MCP_CANONICAL_OUTPUT.copy()]
 
         # Create registry entry pointing to MCPNode
         entry = {
