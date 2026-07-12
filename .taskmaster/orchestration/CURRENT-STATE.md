@@ -13,11 +13,11 @@ Every claim here is a pointer to verify, not a fact._
   now follows the user's explicit constraint: dynamic child launches inherit the runtime model
   and reasoning effort; no override parameters (DECISIONS #3).
 - The hierarchy has now run three Codex lane-B builds end to end (#565/#581/#585), including
-  worktrees with `open_cli=false open_cursor=false`. Fetched `origin/main` is `2ee5fefc`.
+  worktrees with `open_cli=false open_cursor=false`. Local `main` is synchronized with
+  `origin/main` as of this close.
   Proven: nested search/review agents, handbacks, PR/CI loops, `[skip review]`, and teardown.
-  Local `main` includes verified `origin/main` `2ee5fefc`; the close docs are authorized for
-  push. A pre-existing task-planner model edit remains uncommitted because it contradicts the
-  settled Fable planner policy; user direction is required.
+  A pre-existing task-planner model edit remains uncommitted because it contradicts the settled
+  Fable planner policy; user direction is required.
 
 ## In flight
 
