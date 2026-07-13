@@ -161,7 +161,8 @@ structured result (it's a control edge to breakdown). As with any lens-heavy rev
 tends to end on prose, so requesting a schema we don't use only risks a noisy soft-fail.
 Its work lands in the hardened plan file + the progress log.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: ./prompts/plan-review-fix.prompt.md
 - cwd: ${repo_dir}
 - max_turns: 60
@@ -189,7 +190,8 @@ context resets between fresh agents. A `claude-code` node so the whole harness r
 Claude subscription with no API-key/LiteLLM dependency; it reads the hardened plan by path
 itself. Structured output soft-fails on this node type, so `group-tick` guards the shape.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: ./prompts/breakdown.prompt.md
 - cwd: ${repo_dir}
 - max_turns: 10
@@ -336,7 +338,8 @@ can weigh prior rounds. The loop condition is a reliable bool because the node s
 soft-failed `continue` — scalar coercion turns a `"false"` string into a bool, and a missing
 structured result triggers one resume-retry (claude-code `schema_retries`, default 1).
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: ./prompts/review-fix.prompt.md
 - cwd: ${repo_dir}
 - max_turns: 60
@@ -383,7 +386,8 @@ ACTS (edits + commits) and nothing downstream consumes a structured result (cont
 verify); a lens-heavy agent would only risk a noisy soft-fail. Its work lands in git + the
 progress log.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: ./prompts/simplify.prompt.md
 - cwd: ${repo_dir}
 - max_turns: 60
@@ -412,7 +416,8 @@ it, fix genuine breaks, add regression tests. Runs after the whole-codebase revi
 simplicity pass. Verify is the LAST code-TOUCHING stage — nothing changes code after it (it routes
 to a deterministic push → ship; neither changes code), preserving "the final code is verified".
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: ./prompts/verify.prompt.md
 - cwd: ${repo_dir}
 - max_turns: 60
@@ -542,7 +547,8 @@ Open a PR for the work branch against the base branch. The branch is already pus
 node; this runs `gh pr create` (never merges directly) and surfaces anything the reviews/verify
 flagged for the human reviewer.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: ./prompts/ship.prompt.md
 - cwd: ${repo_dir}
 - max_turns: 30

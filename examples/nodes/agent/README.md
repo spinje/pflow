@@ -1,6 +1,6 @@
-# Claude Code Node Examples
+# Agent Node: Claude Backend Examples
 
-Examples for the `claude-code` node: an agentic super node that integrates with the Claude Agent SDK for AI-assisted development tasks.
+Examples for the `agent` node with `backend: claude`: an agentic super node that integrates with the Claude Agent SDK for AI-assisted development tasks.
 
 Features:
 
@@ -14,7 +14,7 @@ Features:
 ### 1. Simple code generation - `claude-code-basic.pflow.md`
 
 ```bash
-pflow examples/nodes/claude-code/claude-code-basic.pflow.md
+pflow examples/nodes/agent/claude-code-basic.pflow.md
 ```
 
 Demonstrates:
@@ -27,7 +27,7 @@ Demonstrates:
 ### 2. Structured code review - `claude-code-schema.pflow.md`
 
 ```bash
-pflow examples/nodes/claude-code/claude-code-schema.pflow.md file_path=your_script.py
+pflow examples/nodes/agent/claude-code-schema.pflow.md file_path=your_script.py
 ```
 
 Demonstrates:
@@ -40,7 +40,7 @@ Demonstrates:
 ### 3. Debugging assistant - `claude-code-debug.pflow.md`
 
 ```bash
-pflow examples/nodes/claude-code/claude-code-debug.pflow.md error_message="TypeError: ..."
+pflow examples/nodes/agent/claude-code-debug.pflow.md error_message="TypeError: ..."
 ```
 
 Demonstrates:
@@ -52,12 +52,12 @@ Demonstrates:
 ### 4. Git workflow integration - `claude-code-git-workflow.pflow.md`
 
 ```bash
-pflow examples/nodes/claude-code/claude-code-git-workflow.pflow.md
+pflow examples/nodes/agent/claude-code-git-workflow.pflow.md
 ```
 
 Demonstrates:
 
-- Multi-stage analysis pipeline (shell -> claude-code -> claude-code -> write-file)
+- Multi-stage analysis pipeline (shell -> agent -> agent -> write-file)
 - Passing upstream node output into the prompt via `${node_id.field}` interpolation
 - System prompts for specific personas
 - Cost aggregation across multiple calls

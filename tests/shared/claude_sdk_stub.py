@@ -1,13 +1,13 @@
-"""Mock ``claude_agent_sdk`` for the claude-code node tests.
+"""Mock ``claude_agent_sdk`` for the agent node's Claude backend tests.
 
 The real ``claude_agent_sdk`` is installed in the dev/test venv, and
-``pflow.nodes.claude.claude_code`` binds its SDK names (``query``, ``ResultMessage``,
+``pflow.nodes.agent.claude_backend`` binds its SDK names (``query``, ``ResultMessage``,
 ``ProcessError``, ...) at IMPORT time via ``from claude_agent_sdk import ...``. Those
 names are therefore fixed to whatever is in ``sys.modules`` the first time the node is
 imported in a process.
 
 ``install()`` puts these mocks into ``sys.modules`` so the node binds to them. It is
-called from ``tests/test_nodes/test_claude/conftest.py``, which pytest loads before any
+called from ``tests/test_nodes/test_agent/conftest.py``, which pytest loads before any
 test module in that directory — so the mock is in place before the node is first
 imported, regardless of which test file pytest processes first.
 
@@ -91,7 +91,7 @@ def install() -> None:
     """Inject the mock ``claude_agent_sdk`` modules into ``sys.modules``.
 
     Idempotent and safe to call repeatedly (it re-points the same mock objects). Must
-    run before ``pflow.nodes.claude.claude_code`` is first imported in the process.
+    run before ``pflow.nodes.agent.claude_backend`` is first imported in the process.
     """
     mock_sdk_types = Mock()
     mock_sdk_types.AssistantMessage = AssistantMessage

@@ -85,7 +85,8 @@ The engine only records the choice; **the workflow decides what happens next**. 
 
 Implement the plan; escalate genuine lasting-impact forks.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: |
     Implement the plan at ${plan_path}.
     ${implement.result.escalation.decision ?? ""}

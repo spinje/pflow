@@ -1,8 +1,8 @@
-# Claude Code Node Authentication Guide
+# Agent Node: Claude Backend Authentication Guide
 
 ## Overview
 
-The `claude-code` node spawns the Claude CLI through the Claude Agent SDK. The CLI
+The `agent` node with `backend: claude` spawns the Claude CLI through the Claude Agent SDK. The CLI
 supports two authentication methods with different billing implications:
 
 1. **Subscription (default)** — uses your Claude Pro/Max entitlements. No per-token charges.
@@ -67,7 +67,8 @@ Set `use_api_key: true` on the node and make `ANTHROPIC_API_KEY` available:
 
 ```markdown
 ### agent
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: Refactor this module
 - use_api_key: true
 ```

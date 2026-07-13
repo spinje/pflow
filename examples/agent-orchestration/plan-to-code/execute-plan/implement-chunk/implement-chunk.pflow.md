@@ -61,7 +61,8 @@ phases, commits its work, and writes a progress-log entry — then ENDS its turn
 (the segment's last step), which resumes this same session. The implement fork just implements,
 commits, and logs.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: ./prompts/implement.prompt.md
 - cwd: ${repo_dir}
 - max_turns: 80
@@ -93,7 +94,8 @@ means the segment produced nothing — a hard failure the parent loop early-exit
 `${implement.llm_usage.session_id}`; if usage is unavailable that resolves empty and this safely
 runs as a fresh self-review (degraded, not broken).
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: ./prompts/happy-check.prompt.md
 - cwd: ${repo_dir}
 - resume: ${implement.llm_usage.session_id}

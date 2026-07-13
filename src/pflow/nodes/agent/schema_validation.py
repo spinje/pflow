@@ -1,8 +1,8 @@
-"""Pure predicates for Claude Code ``output_schema`` validation.
+"""Shared parameter sets and predicates for ``agent`` node validation.
 
 These helpers are shared between the runtime path
-(``ClaudeCodeNode._validate_schema``) and the static preflight path
-(``WorkflowValidator._validate_claude_code_params``). Sharing the predicates
+(``AgentNode._validate_schema``) and the static preflight path
+(``WorkflowValidator._validate_agent_params``). Sharing the predicates
 prevents drift between ``--validate-only`` / ``--dry-run`` and runtime
 ``prep()``.
 
@@ -15,6 +15,38 @@ LLM-side validation is added.
 from __future__ import annotations
 
 from typing import Any, Final, Literal, NamedTuple
+
+SHARED_PARAMS: Final[frozenset[str]] = frozenset({
+    "backend",
+    "prompt",
+    "model",
+    "cwd",
+    "output_schema",
+    "resume",
+    "timeout",
+    "system_prompt",
+    "schema_retries",
+})
+"""Parameters whose shape is shared by every agent backend."""
+
+CLAUDE_PARAMS: Final[frozenset[str]] = frozenset({
+    "allowed_tools",
+    "disallowed_tools",
+    "max_turns",
+    "max_thinking_tokens",
+    "sandbox",
+    "use_api_key",
+})
+"""Parameters accepted by the Claude backend."""
+
+CODEX_PARAMS: Final[frozenset[str]] = frozenset({
+    "approval_policy",
+    "add_dir",
+    "profile",
+    "config",
+    "sandbox",
+})
+"""Parameters accepted by the Codex backend."""
 
 JSON_SCHEMA_MARKERS: Final[frozenset[str]] = frozenset({
     "type",
@@ -36,7 +68,7 @@ TOP_LEVEL_COMBINATORS: Final[tuple[str, ...]] = ("oneOf", "anyOf", "allOf", "enu
 
 
 class TopLevelObjectViolation(NamedTuple):
-    """Reason a schema fails the Claude API's top-level-object requirement.
+    """Reason a schema fails an agent backend's top-level-object requirement.
 
     ``kind`` lets callers choose message framing without re-parsing ``cause``.
     """
@@ -60,11 +92,9 @@ def is_legacy_python_alias_schema(schema: dict[str, Any]) -> bool:
 def top_level_object_violation(schema: dict[str, Any]) -> TopLevelObjectViolation | None:
     """Return a violation when ``schema`` doesn't have top-level ``type: object``, else None.
 
-    The Anthropic API rejects any top-level schema that isn't ``type: object``
-    when the SDK wraps ``output_format`` as a tool's ``input_schema``. This
-    covers both ``type: array``/primitives AND schemas that omit ``type``
-    entirely (combinator-only schemas like top-level ``oneOf``). Verified in
-    Phase 0 and the oneOf follow-up probe.
+    Both supported backends reject any top-level schema that isn't
+    ``type: object``. This covers ``type: array``/primitives and schemas that
+    omit ``type`` entirely (for example, a top-level ``oneOf``).
     """
     top_level_type = schema.get("type")
     if top_level_type == "object":

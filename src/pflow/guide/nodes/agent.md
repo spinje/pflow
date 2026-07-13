@@ -1,10 +1,10 @@
-# Claude Code Node
+# Agent Node (Claude Backend)
 
 **Use for**: Multi-step agentic tasks that require a fully autonomous agent.
 
 **Use the narrower node when it fits**: deterministic data reshaping → `code`, simple shell commands → `shell`, API calls → `http`, ordinary text analysis that doesn't need repository tools → `llm`.
 
-**The test**: Does the task need an autonomous coding agent with access to multiple tools like reading files, editing code, bash etc? YES -> `claude-code`. NO -> use the smaller node that matches the operation.
+**The test**: Does the task need an autonomous coding agent with access to multiple tools like reading files, editing code, bash etc? YES -> `agent`. NO -> use the smaller node that matches the operation.
 
 Use `output_schema` when downstream nodes need structured implementation results. Claude Code schemas must be JSON Schema objects with top-level `type: object`, and `max_turns` must be at least `2` when `output_schema` is set.
 
@@ -17,7 +17,8 @@ Run with `--report` when iterating on prompts. The report shows the rendered pro
 
 Fix the failing behavior and report the exact files changed.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - max_turns: 6
 - allowed_tools:
     - Read
@@ -82,14 +83,15 @@ Cost tracking aggregates the main call and all retries — `llm_usage` top-level
 
 ### Recovering from schema soft-failures
 
-`claude-code` always returns `default`. Schema soft-failures (model didn't comply, a provider error landed alongside the output, or a templated `output_schema` reference resolved to None) do NOT route through `- on-error:` edges.
+`agent` always returns `default`. Schema soft-failures (model didn't comply, a provider error landed alongside the output, or a templated `output_schema` reference resolved to None) do NOT route through `- on-error:` edges.
 
 `${node.result}` is always present: the parsed schema value on success, raw model text (a string) on a soft-failure. With an object schema (the usual case, shown below) success yields a dict, so an `isinstance(result, str)` check cleanly detects the soft-failure — branch on `result`'s type rather than probing for the optional `_schema_error` field. `${node._schema_error}` is set ONLY on a soft-failure; read it inside the fallback branch (where it's guaranteed present). (If your schema's top-level type is itself `string`, the `isinstance` discriminator can't tell success from soft-failure — wrap the value in an object schema so the success shape is a dict.)
 
 ```markdown
 ### review
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: "..."
 - max_turns: 4
 - next: branch-on-schema

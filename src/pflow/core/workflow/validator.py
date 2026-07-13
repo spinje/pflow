@@ -865,11 +865,11 @@ class WorkflowValidator:
     def _validate_claude_code_params(node_id: str, params: dict[str, Any]) -> list[Diagnostic]:
         """Validate Claude Code structured-output constraints without SDK calls.
 
-        Predicates live in ``pflow.nodes.claude.schema_validation`` so the
-        runtime path (``ClaudeCodeNode._validate_schema``) and this static
+        Predicates live in ``pflow.nodes.agent.schema_validation`` so the
+        runtime path (``AgentNode._validate_schema``) and this static
         preflight path can't drift on shape detection.
         """
-        from pflow.nodes.claude.schema_validation import (
+        from pflow.nodes.agent.schema_validation import (
             is_legacy_python_alias_schema,
             top_level_object_violation,
         )

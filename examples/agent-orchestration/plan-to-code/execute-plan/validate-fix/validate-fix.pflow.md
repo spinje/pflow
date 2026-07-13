@@ -131,7 +131,8 @@ itself to see exactly what's red, fixes the ROOT CAUSE (never weakening or delet
 silence it), re-runs to confirm locally, commits the fix, and appends a progress-log entry. Then
 control returns to `run-validate`, which re-checks deterministically.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: ./prompts/fix-tests.prompt.md
 - cwd: ${repo_dir}
 - max_turns: 60

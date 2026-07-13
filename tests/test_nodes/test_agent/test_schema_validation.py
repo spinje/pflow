@@ -1,6 +1,6 @@
-"""Tests for the pure predicates in ``pflow.nodes.claude.schema_validation``.
+"""Tests for the pure predicates in ``pflow.nodes.agent.schema_validation``.
 
-These predicates are imported by both ``ClaudeCodeNode._validate_schema``
+These predicates are imported by both ``AgentNode._validate_schema``
 (runtime) and ``WorkflowValidator._validate_claude_code_params`` (preflight).
 Drift-at-the-predicate-level was the motivating risk for extracting them; the
 tests below pin behavior at the predicate boundary so changes that alter
@@ -9,7 +9,7 @@ acceptance/rejection shape surface here, not via the call-site test files.
 
 from __future__ import annotations
 
-from pflow.nodes.claude.schema_validation import (
+from pflow.nodes.agent.schema_validation import (
     is_legacy_python_alias_schema,
     top_level_object_violation,
 )
