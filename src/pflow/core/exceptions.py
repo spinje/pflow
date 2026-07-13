@@ -1311,7 +1311,7 @@ class ResumeSideEffectConfirmationError(ResumeSourceError):
     """Resume would re-run a side-effecting step without confirmation (Task 164, Decision 4).
 
     A non-interactive (agent / MCP / pipe) resume whose failed step K
-    side-effects (shell / code / claude-code / file-ops / mcp; http reads
+    side-effects (shell / code / agent / file-ops / mcp; http reads
     external state). Resume gives at-least-once execution of K, so its side
     effects MAY fire again — a non-TTY run refuses loudly rather than prompt or
     silently repeat them. Mirrors ``GateNotInteractiveError``'s what/why/how

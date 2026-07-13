@@ -1,7 +1,7 @@
 """Control-flow regression guard for the plan-to-code harness example.
 
 The shipped harness at ``examples/agent-orchestration/plan-to-code/`` is a tree of
-``.pflow.md`` workflows whose *agents* (``claude-code``) cost real money and are
+``.pflow.md`` workflows whose ``agent`` nodes cost real money and are
 non-deterministic, so they can't run in CI. But the harness's value is its
 **control flow** — the loops, early-exit, and gating that orchestrate those agents
 — and that control flow is pure ``code``/routing that CAN run deterministically.
@@ -335,7 +335,7 @@ else:
 
 ### push
 
-Stand-in deterministic push (shell node in the real harness; immune to claude-code settings).
+Stand-in deterministic push (shell node in the real harness; immune to agent backend settings).
 
 - type: code
 - next: ship

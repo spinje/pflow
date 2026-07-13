@@ -371,7 +371,7 @@ def _collect_gated_node_ids(entries: list[PlanEntry]) -> list[str]:
 
 def _is_llm_entry(entry: PlanEntry) -> bool:
     """Identify LLM-family entries for cost rendering."""
-    return entry.node_type in ("LLMNode", "ClaudeCodeNode")
+    return entry.node_type in ("LLMNode", "AgentNode")
 
 
 def _tag_from_entry(entry: PlanEntry) -> str:

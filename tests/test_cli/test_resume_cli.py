@@ -743,7 +743,7 @@ def test_incomplete_killed_mid_node_resumes_at_that_node_e2e(home, shell_wf):
         ("code", True),
         ("http", True),
         ("mcp-github-create_issue", True),
-        ("claude-code", True),
+        ("agent", True),
         ("read-file", True),
         ("write-file", True),
         # The trap: a trace event's node_type is the Python CLASS name, which the

@@ -1392,7 +1392,7 @@ def test_soft_fail_output_shape_not_classified_as_api_warning(agent_node):
 #
 # ``pflow.nodes.agent.schema_validation`` shares the *predicates* between the
 # runtime path (``AgentNode._validate_schema``) and the static preflight
-# path (``WorkflowValidator._validate_claude_code_params``). The shared
+# path (``WorkflowValidator._validate_agent_params``). The shared
 # predicates prevent drift on shape detection, but the CALL SITES can still
 # drift on:
 #
@@ -1447,7 +1447,7 @@ def _runtime_rejects(node: AgentNode, schema: Any) -> bool:
 
 
 def _validator_rejects(schema: Any) -> bool:
-    diagnostics = WorkflowValidator._validate_claude_code_params("review", {"output_schema": schema})
+    diagnostics = WorkflowValidator._validate_agent_params("review", {"backend": "claude", "output_schema": schema})
     return any(d.severity == Severity.ERROR for d in diagnostics)
 
 
@@ -1588,7 +1588,7 @@ def test_runtime_and_validator_agree_on_max_turns_with_schema(agent_node: Any) -
     schema = {"type": "object", "properties": {"x": {"type": "string"}}}
     params = {"backend": "claude", "output_schema": schema, "max_turns": 1, "prompt": "test"}
 
-    diagnostics = WorkflowValidator._validate_claude_code_params("review", params)
+    diagnostics = WorkflowValidator._validate_agent_params("review", params)
     validator_rejected = any(d.severity == Severity.ERROR for d in diagnostics)
 
     agent_node.params = params
@@ -1602,6 +1602,80 @@ def test_runtime_and_validator_agree_on_max_turns_with_schema(agent_node: Any) -
         f"max_turns parity drift: validator={validator_rejected}, runtime={runtime_rejected}"
     )
     assert validator_rejected
+
+
+def test_static_validator_requires_backend_without_output_schema() -> None:
+    diagnostics = WorkflowValidator._validate_agent_params("review", {"prompt": "test"})
+
+    assert [d.message for d in diagnostics] == ["Agent node requires 'backend'. Valid values: claude, codex."]
+    assert diagnostics[0].context == {
+        "category": "validation",
+        "node_type": "agent",
+        "path": "nodes[id=review].params.backend",
+    }
+    assert diagnostics[0].see_also == ["agent"]
+
+
+@pytest.mark.parametrize(
+    ("backend", "other_backend_param"),
+    [("claude", "approval_policy"), ("codex", "max_thinking_tokens")],
+)
+def test_static_validator_rejects_cross_backend_param_before_schema_checks(
+    backend: str,
+    other_backend_param: str,
+) -> None:
+    params = {"backend": backend, "prompt": "test", other_backend_param: "value"}
+
+    diagnostics = WorkflowValidator._validate_agent_params("review", params)
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].message == f"{other_backend_param!r} is not valid for backend {backend!r}."
+
+
+def test_static_validator_reports_codex_max_turns_as_cross_backend_only() -> None:
+    diagnostics = WorkflowValidator._validate_agent_params(
+        "review",
+        {
+            "backend": "codex",
+            "prompt": "test",
+            "output_schema": {"type": "object", "properties": {"value": {"type": "string"}}},
+            "max_turns": 1,
+        },
+    )
+
+    assert len(diagnostics) == 1
+    assert diagnostics[0].message == "'max_turns' is not valid for backend 'codex'."
+
+
+def test_static_validator_defers_templated_backend() -> None:
+    diagnostics = WorkflowValidator._validate_agent_params(
+        "review",
+        {"backend": "${inputs.backend}", "prompt": "test", "approval_policy": "never"},
+    )
+
+    assert diagnostics == []
+
+
+@pytest.mark.parametrize("backend", ["claude", "codex"])
+def test_static_validator_accepts_shared_inputs_param(backend: str) -> None:
+    diagnostics = WorkflowValidator._validate_agent_params(
+        "review",
+        {"backend": backend, "prompt": "test", "inputs": {"repo_dir": "${repo_dir}"}},
+    )
+
+    assert diagnostics == []
+
+
+def test_runtime_validator_accepts_shared_inputs_param(agent_node: Any) -> None:
+    agent_node.params = {
+        "backend": "claude",
+        "prompt": "test",
+        "inputs": {"repo_dir": "${repo_dir}"},
+    }
+
+    prepared = agent_node.prep({})
+
+    assert prepared["backend"] == "claude"
 
 
 # ---------------------------------------------------------------------------

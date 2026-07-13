@@ -51,6 +51,7 @@ class AgentNode(Node):
     Interface:
     - Params: backend: str  # Required backend: claude or codex
     - Params: prompt: str  # Prompt to send to the agent (required)
+    - Params: inputs: dict  # Named values available to file-backed prompt templates (optional)
     - Params: output_schema: dict  # Top-level object JSON Schema (optional)
     - Params: cwd: str  # Working directory (default: current directory)
     - Params: model: str  # Backend model override (optional)

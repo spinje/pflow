@@ -297,10 +297,10 @@ def _should_write_cache_metadata(node_type_name: str) -> bool:
     LLM-producing node type that participates requires extending this gate
     alongside the new node type's ``post()`` implementation.
 
-    ``ClaudeCodeNode`` is intentionally NOT in the allowlist: its
+    ``AgentNode`` is intentionally NOT in the allowlist: its
     ``cache_creation_input_tokens`` / ``cache_read_input_tokens`` come from
     the Claude SDK and reflect SDK-side caching (a different cache layer).
-    Adding pflow's memo ``cache_key`` / ``cache_source`` to ClaudeCodeNode's
+    Adding pflow's memo ``cache_key`` / ``cache_source`` to AgentNode's
     ``llm_usage`` would conflate two distinct cache layers and mislead
     agents reading the trace.
     """
@@ -320,7 +320,7 @@ def _log_skipped_cache_metadata(node_type_name: str, sample_output: Any) -> None
     False, they know they need to extend the allowlist.
 
     Debug-level (not warning) so production logs aren't noisy for the
-    common ClaudeCodeNode case (which is intentionally excluded).
+    common AgentNode case (which is intentionally excluded).
     """
     if isinstance(sample_output, dict) and sample_output.get("llm_usage"):
         logger.debug(

@@ -633,7 +633,7 @@ class TestBuildSummary:
         assert "claude" in md
 
     def test_agent_calls_label_with_turns_and_cache(self) -> None:
-        """claude-code runs render 'Agent calls: N (T turns)', and `in` is the
+        """agent runs render 'Agent calls: N (T turns)', and `in` is the
         cache-inclusive input total read directly from ``total_input_tokens`` — the
         renderer no longer re-adds the cache tiers (#492), with a cache-% suffix."""
         trace = _make_trace(
@@ -657,7 +657,7 @@ class TestBuildSummary:
         assert "LLM calls" not in md
 
     def test_mixed_agent_and_llm_calls_label(self) -> None:
-        """A run with both claude-code and llm nodes surfaces both counts."""
+        """A run with both agent and llm nodes surfaces both counts."""
         trace = _make_trace(
             llm_summary={
                 "total_calls": 5,
@@ -750,7 +750,7 @@ class TestBuildNodeFile:
         assert "- Paid this run: $0.0420" in md
 
     def test_llm_metadata_shows_turns_and_session(self) -> None:
-        # claude-code nodes carry num_turns (agent loop effort) and session_id.
+        # agent nodes carry num_turns (agent loop effort) and session_id.
         event = _make_event(
             llm_call={
                 "model": "claude-sonnet-4-5",
@@ -1074,7 +1074,7 @@ class TestInclusiveInputTokenContract:
     """``input_tokens`` is the cache-inclusive total at every consumer (#492).
 
     The bug: ``trace_report`` used to add the cache tiers on top of ``input_tokens``
-    (correct only for ClaudeCodeNode's old disjoint shape), double-counting every
+    (correct only for AgentNode's old disjoint shape), double-counting every
     inclusive LLMNode call. After the fix the renderer reads ``input_tokens`` verbatim,
     so it agrees with ``metrics.py`` for both node types.
     """
@@ -1093,7 +1093,7 @@ class TestInclusiveInputTokenContract:
         """A per-node Tokens line shows the inclusive input total and a sane cache-%
         (20,000 / 26,000 ≈ 77%) — not the pre-fix 51,000 from re-summing cache."""
         event = _make_event(
-            node_type="ClaudeCodeNode",
+            node_type="AgentNode",
             llm_call={
                 "model": "claude-sonnet-4-5",
                 "input_tokens": 26000,
@@ -1128,7 +1128,7 @@ class TestInclusiveInputTokenContract:
 
     def test_metrics_and_report_agree_on_inclusive_input_total(self) -> None:
         """#492's real surface: ``metrics.py`` and ``trace_report.py`` must report the
-        SAME input total for a trace mixing a claude-code (inclusive-with-cache) call and
+        SAME input total for a trace mixing an agent (inclusive-with-cache) call and
         an LLMNode call. Pre-fix, trace_report added cache on top of ``input_tokens`` and
         diverged from metrics. Runs the real consumers, not mocks (tests/CLAUDE.md #20):
         the trace's ``llm_summary`` is produced by the real ``WorkflowTraceCollector``
@@ -1139,7 +1139,7 @@ class TestInclusiveInputTokenContract:
 
         claude_event = {
             "node_id": "agent",
-            "node_type": "ClaudeCodeNode",
+            "node_type": "AgentNode",
             "duration_ms": 10.0,
             "success": True,
             "timestamp": "2026-03-23T10:00:01",
@@ -1176,11 +1176,11 @@ class TestInclusiveInputTokenContract:
         assert llm_summary["total_tokens"] == 29500
 
     def test_cached_claude_event_source_tokens_render_sane_cache_pct(self) -> None:
-        """A cached claude-code event where cache_read (20,000) exceeds the old uncached
+        """A cached agent event where cache_read (20,000) exceeds the old uncached
         slice (1,000): the now-inclusive denominator keeps the 'Source tokens' cache-%
         under 100% (77%). Pre-fix this latent case could render a nonsensical >100%."""
         event = _make_event(
-            node_type="ClaudeCodeNode",
+            node_type="AgentNode",
             cached=True,
             llm_call={
                 "model": "claude-sonnet-4-5",

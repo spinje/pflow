@@ -77,7 +77,7 @@ def input_token_total(llm_call: Mapping[str, Any]) -> tuple[int, int]:
     normalizes a provider's raw usage at WRITE time, this reads pflow's
     cache-INCLUSIVE ``input_tokens`` total back off a trace ``llm_call`` record
     (falling back to ``prompt_tokens`` for older traces). Every producer
-    (LLMNode, ClaudeCodeNode) writes ``input_tokens`` cache-inclusive, so no
+    (LLMNode, AgentNode) writes ``input_tokens`` cache-inclusive, so no
     reader does render-time cache arithmetic. ``cache_read`` is returned
     alongside only for the cache-hit-% display. The trailing ``or 0`` guards a
     legacy entry that stored an explicit ``None`` instead of omitting the field.

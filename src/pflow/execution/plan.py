@@ -68,7 +68,7 @@ from pflow.runtime.workflow_trace import load_snapshot_or_raise
 
 logger = logging.getLogger(__name__)
 
-_LLM_NODE_CLASSES: frozenset[str] = frozenset({"LLMNode", "ClaudeCodeNode"})
+_LLM_NODE_CLASSES: frozenset[str] = frozenset({"LLMNode", "AgentNode"})
 
 _CostBasis = Literal["upper_bound", "exact"]
 
@@ -982,7 +982,7 @@ def _cache_disabled_entry(
     """Entry for a cache-disabled node — always runs.
 
     A node is cache-disabled either by the per-type default (only `llm` caches by
-    default; shell/code/http/file/mcp/claude-code do not) or by an explicit
+    default; shell/code/http/file/mcp/agent do not) or by an explicit
     `cache: false`. Either way it always runs.
 
     Routes through `_execute_entry` so historical cost/duration estimates from

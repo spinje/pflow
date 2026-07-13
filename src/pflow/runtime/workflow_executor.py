@@ -75,7 +75,7 @@ class WorkflowExecutor(BaseNode):
 
     # The compiler stamps the authored node id onto the instance (compilation/compiler.py). Declared
     # here (only where read — by descend, Task 172) so it's typed; "" only for uncompiled construction.
-    # NOT declared on BaseNode: some nodes (ClaudeCodeNode) distinguish an ABSENT node_id, so a global
+    # NOT declared on BaseNode: some nodes (AgentNode) distinguish an ABSENT node_id, so a global
     # default would change their fallback behavior.
     node_id: str = ""
 

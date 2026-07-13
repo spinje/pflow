@@ -160,7 +160,7 @@ class WorkflowValidator:
         7. Output source validation - Output node references
         8. Unknown param errors - Rejects params not in node interface
         9. Node-specific static parameter semantics - Per-node-type param checks
-           (e.g. claude-code structured-output schema preflight)
+           (e.g. agent structured-output and backend parameter preflight)
         10. Sub-workflow validation - Recursive validation of child workflows
 
         Args:
@@ -813,8 +813,8 @@ class WorkflowValidator:
                 continue
             node_id = node.get("id", "unknown")
             node_type = node.get("type")
-            if node_type == "claude-code":
-                diagnostics.extend(WorkflowValidator._validate_claude_code_params(node_id, params))
+            if node_type == "agent":
+                diagnostics.extend(WorkflowValidator._validate_agent_params(node_id, params))
             elif node_type == "llm":
                 llm_diags, display_model, provider_name, forms = WorkflowValidator._validate_llm_model_id_lite(
                     node_id, params
@@ -862,33 +862,102 @@ class WorkflowValidator:
         )
 
     @staticmethod
-    def _validate_claude_code_params(node_id: str, params: dict[str, Any]) -> list[Diagnostic]:
-        """Validate Claude Code structured-output constraints without SDK calls.
+    def _validate_agent_backend_params(
+        node_id: str,
+        params: dict[str, Any],
+    ) -> tuple[list[Diagnostic], str | None]:
+        """Validate the literal backend and its flat parameter allowlist."""
+        from pflow.nodes.agent.schema_validation import CLAUDE_PARAMS, CODEX_PARAMS, SHARED_PARAMS
 
-        Predicates live in ``pflow.nodes.agent.schema_validation`` so the
-        runtime path (``AgentNode._validate_schema``) and this static
-        preflight path can't drift on shape detection.
+        diagnostics: list[Diagnostic] = []
+        backend = params.get("backend")
+        backend_is_template = isinstance(backend, str) and "${" in backend
+        valid_backend = backend if isinstance(backend, str) and backend in {"claude", "codex"} else None
+
+        if backend is None:
+            diagnostics.append(
+                WorkflowValidator._agent_param_error(
+                    node_id=node_id,
+                    message="Agent node requires 'backend'. Valid values: claude, codex.",
+                    path=f"nodes[id={node_id}].params.backend",
+                    suggestions=["Add `backend: claude` or `backend: codex` to the agent node."],
+                )
+            )
+        elif valid_backend is None and not backend_is_template:
+            diagnostics.append(
+                WorkflowValidator._agent_param_error(
+                    node_id=node_id,
+                    message=f"Invalid backend: {backend!r}. Valid values: claude, codex.",
+                    path=f"nodes[id={node_id}].params.backend",
+                    suggestions=["Set `backend` to `claude` or `codex`."],
+                )
+            )
+
+        if valid_backend is not None:
+            backend_params = CLAUDE_PARAMS if valid_backend == "claude" else CODEX_PARAMS
+            for invalid_param in sorted(set(params) - (SHARED_PARAMS | backend_params)):
+                diagnostics.append(
+                    WorkflowValidator._agent_param_error(
+                        node_id=node_id,
+                        message=f"{invalid_param!r} is not valid for backend {valid_backend!r}.",
+                        path=f"nodes[id={node_id}].params.{invalid_param}",
+                        suggestions=[f"Remove `{invalid_param}` or select the backend that supports it."],
+                    )
+                )
+
+        return diagnostics, valid_backend
+
+    @staticmethod
+    def _validate_agent_max_turns(
+        node_id: str,
+        params: dict[str, Any],
+        backend: str | None,
+    ) -> list[Diagnostic]:
+        """Apply Claude's structured-output turn-floor rule."""
+        if backend != "claude":
+            return []
+        try:
+            max_turns = int(params.get("max_turns", 50))
+        except (TypeError, ValueError):
+            return []
+        if max_turns >= 2:
+            return []
+        return [
+            WorkflowValidator._agent_param_error(
+                node_id=node_id,
+                message=f"max_turns must be >= 2 when output_schema is set (got {max_turns}).",
+                path=f"nodes[id={node_id}].params.max_turns",
+                suggestions=["Set max_turns to 2 or higher, or remove output_schema."],
+            )
+        ]
+
+    @staticmethod
+    def _validate_agent_params(node_id: str, params: dict[str, Any]) -> list[Diagnostic]:
+        """Validate agent backend and structured-output constraints without backend calls.
+
+        Predicates and backend parameter sets live in
+        ``pflow.nodes.agent.schema_validation`` so runtime ``AgentNode.prep``
+        and this static preflight cannot drift.
         """
         from pflow.nodes.agent.schema_validation import (
             is_legacy_python_alias_schema,
             top_level_object_violation,
         )
 
+        diagnostics, valid_backend = WorkflowValidator._validate_agent_backend_params(node_id, params)
+
         output_schema = params.get("output_schema")
         if output_schema is None:
-            return []
+            return diagnostics
 
-        # Templated values resolve at runtime; matches max_turns' defer-on-template
-        # policy below. Without this, composition patterns like
-        # ``output_schema: ${upstream.schema}`` would be hard-rejected at preflight
-        # even though runtime ``_validate_schema`` handles them correctly.
+        # Templated values resolve at runtime. Shared backend/schema validation
+        # still runs for literals while composed values defer to ``prep()``.
         if isinstance(output_schema, str) and "${" in output_schema:
-            return []
+            return diagnostics
 
-        diagnostics: list[Diagnostic] = []
         if not isinstance(output_schema, dict):
             diagnostics.append(
-                WorkflowValidator._claude_code_param_error(
+                WorkflowValidator._agent_param_error(
                     node_id=node_id,
                     message=f"output_schema must be a dict (JSON Schema), got {type(output_schema).__name__}.",
                     path=f"nodes[id={node_id}].params.output_schema",
@@ -899,7 +968,7 @@ class WorkflowValidator:
 
         if not output_schema:
             diagnostics.append(
-                WorkflowValidator._claude_code_param_error(
+                WorkflowValidator._agent_param_error(
                     node_id=node_id,
                     message=(
                         "output_schema is an empty dict. Did you forget to populate the schema body? "
@@ -914,7 +983,7 @@ class WorkflowValidator:
 
         if is_legacy_python_alias_schema(output_schema):
             diagnostics.append(
-                WorkflowValidator._claude_code_param_error(
+                WorkflowValidator._agent_param_error(
                     node_id=node_id,
                     message=(
                         "output_schema appears to use the legacy Python-alias format "
@@ -928,19 +997,16 @@ class WorkflowValidator:
 
         violation = top_level_object_violation(output_schema)
         if violation is not None:
-            # The shared predicate covers non-"object" types AND combinator-only
-            # schemas (oneOf/anyOf/allOf/enum without a top-level type). Both
-            # classes return HTTP 400 from the Anthropic API (Phase 0 + oneOf probe).
             if violation.kind == "missing_type":
                 message = (
-                    "output_schema on claude-code nodes must declare top-level type: object "
+                    "output_schema on agent nodes must declare top-level type: object "
                     f"({violation.cause}). Combinators like oneOf/anyOf/allOf/enum must live "
                     "inside an object wrapper."
                 )
             else:
-                message = f"output_schema on claude-code nodes must have top-level type: object ({violation.cause})."
+                message = f"output_schema on agent nodes must have top-level type: object ({violation.cause})."
             diagnostics.append(
-                WorkflowValidator._claude_code_param_error(
+                WorkflowValidator._agent_param_error(
                     node_id=node_id,
                     message=message,
                     path=f"nodes[id={node_id}].params.output_schema.type",
@@ -951,25 +1017,12 @@ class WorkflowValidator:
                 )
             )
 
-        max_turns = params.get("max_turns", 50)
-        try:
-            max_turns_int = int(max_turns)
-        except (TypeError, ValueError):
-            max_turns_int = None
-        if max_turns_int is not None and max_turns_int < 2:
-            diagnostics.append(
-                WorkflowValidator._claude_code_param_error(
-                    node_id=node_id,
-                    message=f"max_turns must be >= 2 when output_schema is set (got {max_turns_int}).",
-                    path=f"nodes[id={node_id}].params.max_turns",
-                    suggestions=["Set max_turns to 2 or higher, or remove output_schema."],
-                )
-            )
+        diagnostics.extend(WorkflowValidator._validate_agent_max_turns(node_id, params, valid_backend))
 
         return diagnostics
 
     @staticmethod
-    def _claude_code_param_error(
+    def _agent_param_error(
         *,
         node_id: str,
         message: str,
@@ -979,16 +1032,16 @@ class WorkflowValidator:
         return Diagnostic(
             severity=Severity.ERROR,
             source="validator",
-            title="Claude Code Structured Output Validation Error",
+            title="Agent Parameter Validation Error",
             node_id=node_id,
             message=message,
             suggestions=suggestions,
             context={
                 "category": "validation",
-                "node_type": "claude-code",
+                "node_type": "agent",
                 "path": path,
             },
-            see_also=["claude-code"],
+            see_also=["agent"],
         )
 
     # =========================================================================

@@ -1,7 +1,7 @@
 """Tests for the pure predicates in ``pflow.nodes.agent.schema_validation``.
 
 These predicates are imported by both ``AgentNode._validate_schema``
-(runtime) and ``WorkflowValidator._validate_claude_code_params`` (preflight).
+(runtime) and ``WorkflowValidator._validate_agent_params`` (preflight).
 Drift-at-the-predicate-level was the motivating risk for extracting them; the
 tests below pin behavior at the predicate boundary so changes that alter
 acceptance/rejection shape surface here, not via the call-site test files.

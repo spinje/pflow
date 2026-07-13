@@ -7,7 +7,7 @@ ran. Unknown class names fall back to a lowercased form of the class name.
 
 NODE_TYPE_TAGS: dict[str, str] = {
     "LLMNode": "llm",
-    "ClaudeCodeNode": "claude",
+    "AgentNode": "agent",
     "HttpNode": "http",
     "ShellNode": "shell",
     "MCPNode": "mcp",

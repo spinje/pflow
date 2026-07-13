@@ -70,7 +70,7 @@ class TestCacheOptOutCompilation:
         assert _default_cache_for_node_type("llm") is True
         assert _default_cache_for_node_type("shell") is False
         assert _default_cache_for_node_type("code") is False
-        assert _default_cache_for_node_type("claude-code") is False
+        assert _default_cache_for_node_type("agent") is False
         assert _default_cache_for_node_type("http") is False
         assert _default_cache_for_node_type("read-file") is False
         assert _default_cache_for_node_type("write-file") is False

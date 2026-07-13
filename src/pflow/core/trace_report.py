@@ -342,7 +342,7 @@ def _format_tokens(total_in: int, tokens_out: int, cache_read: int, *, with_cach
 def _format_call_count_line(total_calls: int, agent_calls: int, total_turns: int) -> str:
     """Summary line for LLM/agent invocations.
 
-    ``claude-code`` nodes are agentic \u2014 one invocation spans many internal
+    ``agent`` nodes are agentic \u2014 one invocation spans many internal
     turns \u2014 so they're labelled "Agent calls" with the turn total, distinct
     from single-shot "LLM calls". A mixed run surfaces both counts.
     """
@@ -382,7 +382,7 @@ def _format_llm_call_metadata(
     thinking_tokens = llm_call.get("thinking_tokens")
     if isinstance(thinking_tokens, int) and thinking_tokens > 0:
         lines.append(f"- {thinking_label}: {thinking_tokens:,} tokens")
-    # num_turns / session_id are claude-code-only; llm-node calls omit them and
+    # num_turns / session_id are agent-only; llm-node calls omit them and
     # the guards skip the lines. num_turns counts the main agent's loop only —
     # subagent turns are not included (a lens-deploying review node can show a
     # low count despite heavy subagent work).
@@ -922,7 +922,7 @@ def _format_node_metadata(event: dict[str, Any], lines: list[str]) -> None:
             cached=event.get("status") == "cached",
         )
 
-    # Show retry metadata for claude-code schema retries
+    # Show retry metadata for agent schema retries
     node_output = event.get("node_output", {})
     if isinstance(node_output, dict):
         llm_usage = node_output.get("llm_usage")
@@ -1186,7 +1186,7 @@ def _format_cache_telemetry(event: dict[str, Any], lines: list[str]) -> None:
     chunks_skipped = llm_call.get("cache_chunks_skipped") or []
     is_cached_replay = bool(llm_call.get("cache_source"))
     # llm nodes that opted into prompt caching carry the effective system in
-    # `llm_system`; claude-code's prompt-cache tiers come from the SDK and have
+    # `llm_system`; agent backend prompt-cache tiers come from the backend and have
     # no `llm_system`.
     declared_cache = bool(event.get("llm_system"))
 
@@ -1194,7 +1194,7 @@ def _format_cache_telemetry(event: dict[str, Any], lines: list[str]) -> None:
     # line as the input total + "% of input cached". This section remains ONLY
     # for what that line can't carry: a memo/result REPLAY (cache_key + age), or
     # an llm node that DECLARED caching — so "declared but didn't fire" stays
-    # visible even at zero tokens. A live claude-code call (cache fired, no
+    # visible even at zero tokens. A live agent call (cache fired, no
     # declaration, not a replay) no longer emits a divorced section.
     has_signal = is_cached_replay or declared_cache or bool(chunks_skipped)
     if not has_signal:
@@ -1209,7 +1209,7 @@ def _format_cache_telemetry(event: dict[str, Any], lines: list[str]) -> None:
     lines.append("")
 
     # Token tiers only answer "did the DECLARED cache fire?" — show them for the
-    # declared/replay cases; for live claude-code they're already on the Tokens line.
+    # declared/replay cases; for live agent calls they're already on the Tokens line.
     if declared_cache or is_cached_replay:
         if isinstance(cache_creation, int):
             lines.append(f"- Cache write: {cache_creation:,} tokens")

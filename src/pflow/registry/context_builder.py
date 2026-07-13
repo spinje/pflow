@@ -605,12 +605,13 @@ _RICH_SNIPPETS: dict[str, list[str]] = {
         "    - url: https://api.example.com/endpoint",
         "    - method: GET",
     ],
-    "claude-code": [
+    "agent": [
         "    ### step-name",
         "",
         "    Describe what this step does and why.",
         "",
-        "    - type: claude-code",
+        "    - type: agent",
+        "    - backend: claude",
         "    - model: claude-sonnet-4-5",
         "",
         "    ```markdown prompt",

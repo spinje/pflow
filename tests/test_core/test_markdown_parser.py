@@ -1373,7 +1373,8 @@ class TestCodeBlockParsing:
 
             Asks Claude.
 
-            - type: claude-code
+            - type: agent
+            - backend: claude
 
             ```yaml output_schema
             type: object

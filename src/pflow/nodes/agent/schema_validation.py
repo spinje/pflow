@@ -19,6 +19,7 @@ from typing import Any, Final, Literal, NamedTuple
 SHARED_PARAMS: Final[frozenset[str]] = frozenset({
     "backend",
     "prompt",
+    "inputs",
     "model",
     "cwd",
     "output_schema",

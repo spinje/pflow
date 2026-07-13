@@ -69,8 +69,8 @@ class TestValidateUnknownParams:
 
         assert len(errors) == 0
 
-    def test_no_error_for_claude_code_use_api_key(self, registry: Registry) -> None:
-        """Issue #455: use_api_key is a recognized claude-code param.
+    def test_no_error_for_agent_use_api_key(self, registry: Registry) -> None:
+        """Issue #455: use_api_key is a recognized Claude agent param.
 
         Guards the docstring → metadata → validator allow-list chain end-to-end:
         if the `- Params: use_api_key:` line is dropped from the node docstring,
@@ -81,8 +81,9 @@ class TestValidateUnknownParams:
             "nodes": [
                 {
                     "id": "agent",
-                    "type": "claude-code",
+                    "type": "agent",
                     "params": {
+                        "backend": "claude",
                         "prompt": "do a thing",
                         "use_api_key": True,
                     },

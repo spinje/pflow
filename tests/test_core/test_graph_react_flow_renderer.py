@@ -1181,7 +1181,7 @@ def test_shape_from_output_schema_matrix() -> None:
 
 
 def test_output_schema_shape_names_the_field_each_kind_writes() -> None:
-    """claude-code parses its schema value into `result`; llm into `response`.
+    """agent parses its schema value into `result`; llm into `response`.
     The shape's `field` must match where the node actually writes — rows on
     the wrong port would describe a value that doesn't exist there."""
     from pflow.core.workflow.graph.renderers.react_flow import RFOutputShape
@@ -1189,10 +1189,14 @@ def test_output_schema_shape_names_the_field_each_kind_writes() -> None:
     schema = {"type": "object", "properties": {"pr_url": {"type": "string"}}, "required": ["pr_url"]}
     graph = build_graph({
         "nodes": [
-            {"id": "ship", "type": "claude-code", "params": {"prompt": "open a PR", "output_schema": schema}},
+            {
+                "id": "ship",
+                "type": "agent",
+                "params": {"backend": "claude", "prompt": "open a PR", "output_schema": schema},
+            },
             {"id": "ask", "type": "llm", "params": {"prompt": "judge", "output_schema": schema}},
             {"id": "plain", "type": "llm", "params": {"prompt": "chat"}},
-            {"id": "agent", "type": "claude-code", "params": {"prompt": "go"}},
+            {"id": "agent", "type": "agent", "params": {"backend": "claude", "prompt": "go"}},
             {"id": "templated", "type": "llm", "params": {"prompt": "judge", "output_schema": "${schema_ref}"}},
         ],
         "edges": [
@@ -1213,7 +1217,7 @@ def test_output_schema_shape_names_the_field_each_kind_writes() -> None:
     assert ask_shape is not None
     assert ask_shape.field == "response"  # llm writes `response`, never `result`
     # NO schema at all -> the kind's own contract makes the type certain: the
-    # node writes free-form text (llm.py / claude_code.py "Writes:" — the dict
+    # node writes free-form text (llm.py / agent_node.py "Writes:" — the dict
     # arm only occurs WHEN a schema is set).
     assert by_id["plain"].output_shape == RFOutputShape("response", "str", None)
     assert by_id["agent"].output_shape == RFOutputShape("result", "str", None)
@@ -1260,7 +1264,7 @@ def test_batched_node_suppresses_its_per_item_output_shape() -> None:
     `result`/`response`, which lives inside each `results` element. Emitting the
     per-item shape names a top-level port that does not exist (`${node.response}`
     would not resolve). The contract ships output_shape=None for ANY batched node
-    (code/llm/claude-code); the guard is specific to batch — an un-batched
+    (code/llm/agent); the guard is specific to batch — an un-batched
     sibling keeps its authored shape. Also pins the OTHER half: a real
     `${node.results}` read still forms a data-flow edge, so suppression removes
     the wrong row without hiding the batched node's true output."""
@@ -1274,8 +1278,8 @@ def test_batched_node_suppresses_its_per_item_output_shape() -> None:
             {"id": "fan-llm", "type": "llm", "params": {"prompt": "${item}", "output_schema": schema}, "batch": batch},
             {
                 "id": "fan-agent",
-                "type": "claude-code",
-                "params": {"prompt": "${item}", "output_schema": schema},
+                "type": "agent",
+                "params": {"backend": "claude", "prompt": "${item}", "output_schema": schema},
                 "batch": batch,
             },
             {"id": "solo", "type": "llm", "params": {"prompt": "${fan-llm.results}", "output_schema": schema}},

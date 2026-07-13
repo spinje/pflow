@@ -347,7 +347,7 @@ class TestEscalation:
         assert "agent" not in shared.get("__warnings__", {})
 
     def test_schema_softfail_string_result_mentioning_escalation_warns(self):
-        # detect_escalation unit path: a claude-code schema soft-failure leaves a
+        # detect_escalation unit path: an agent schema soft-failure leaves a
         # raw string result + _schema_error in the namespace.
         shared = {
             "agent": {

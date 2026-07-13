@@ -646,7 +646,7 @@ def is_side_effecting(node_type: str) -> bool:
     The inverse of "safe to memo-cache by default": only ``llm`` is pure (its
     output is a deterministic-enough function of its inputs, and caching it is
     the default). Every other registry type either side-effects (shell, code,
-    claude-code, file ops, mcp) or reads external state that may have changed
+    agent, file ops, mcp) or reads external state that may have changed
     (http) — so a resume that re-runs such a node K gives at-least-once
     execution of its effect, which the confirm/``--force`` policy governs.
 
@@ -662,7 +662,7 @@ def _default_cache_for_node_type(node_type: str) -> bool:
     """Whether a node defaults to memo-cache-on when no `cache:` field is set.
 
     Only `llm` caches by default. Every other node type is either side-effecting
-    (shell, code, claude-code, file ops, mcp) or reads external state (http),
+    (shell, code, agent, file ops, mcp) or reads external state (http),
     and silently caching their output across runs is unsafe — especially in
     iteration loops where declared inputs may not change but external state has.
     """

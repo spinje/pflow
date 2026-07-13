@@ -348,7 +348,7 @@ class _LLMSummaryAccumulator:
         self.total_output_tokens += call.get("output_tokens", 0)
         self.total_cache_creation_tokens += call.get("cache_creation_input_tokens", 0) or 0
         self.total_cache_read_tokens += call.get("cache_read_input_tokens", 0) or 0
-        # num_turns is claude-code-only — its presence marks an AGENT call (one
+        # num_turns is agent-only — its presence marks an AGENT call (one
         # invocation = many internal turns), distinct from a single-shot llm call.
         turns = call.get("num_turns")
         if turns is not None and not is_warmup:
@@ -1132,7 +1132,7 @@ class WorkflowTraceCollector:
     def aggregate_llm_usage_with_retries(llm_usage: dict[str, Any]) -> dict[str, Any]:
         """Aggregate tokens/cost/turns from main llm_usage + retries array.
 
-        When llm_usage has a 'retries' field (schema retry attempts from claude-code node),
+        When llm_usage has a 'retries' field (schema retry attempts from an agent node),
         returns a new dict with summed tokens/cost/turns. Otherwise returns the input unchanged.
 
         Args:
@@ -1153,7 +1153,7 @@ class WorkflowTraceCollector:
         aggregated["output_tokens"] = llm_usage.get("output_tokens") or 0
         # uncached_input_tokens is summed alongside input_tokens so the aggregated dict
         # keeps the invariant input_tokens == uncached + cache_creation + cache_read for
-        # retried claude-code calls (#492). Producers that omit it (and never retry)
+        # retried agent calls (#492). Producers that omit it (and never retry)
         # default to 0.
         aggregated["uncached_input_tokens"] = llm_usage.get("uncached_input_tokens") or 0
 
@@ -1197,7 +1197,7 @@ class WorkflowTraceCollector:
     ) -> None:
         """Add LLM usage and response data to the event if present.
 
-        Aggregates tokens/cost across main usage + retries for claude-code schema retry.
+        Aggregates tokens/cost across main usage + retries for agent schema retry.
 
         Args:
             event: Event dictionary to update

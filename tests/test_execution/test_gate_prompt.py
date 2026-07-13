@@ -43,7 +43,7 @@ def _approval(node_id: str = "notify", **preview: Any) -> GateRequest:
 
 
 def _escalation(**kwargs: Any) -> GateRequest:
-    return GateRequest(node_id="agent-step", node_type="ClaudeCodeNode", kind="decision_escalation", **kwargs)
+    return GateRequest(node_id="agent-step", node_type="AgentNode", kind="decision_escalation", **kwargs)
 
 
 class TestCanPrompt:

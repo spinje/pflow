@@ -11,7 +11,7 @@ called from ``tests/test_nodes/test_agent/conftest.py``, which pytest loads befo
 test module in that directory — so the mock is in place before the node is first
 imported, regardless of which test file pytest processes first.
 
-Previously this injection lived at module scope inside ``test_claude_code.py`` and
+Previously this injection lived at module scope inside ``test_agent_node.py`` and
 silently broke whenever another test (e.g. ``test_schema_coercion.py``) imported the
 node first: the node then bound to the REAL SDK classes, and the mock ``ResultMessage`` /
 ``ProcessError`` no longer satisfied the node's ``isinstance`` checks. See tests/CLAUDE.md #17.
