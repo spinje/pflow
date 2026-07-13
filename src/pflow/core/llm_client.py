@@ -35,6 +35,7 @@ The adapter does NOT:
 from __future__ import annotations
 
 import base64
+import copy
 import logging
 import mimetypes
 from collections.abc import Callable
@@ -353,6 +354,16 @@ def complete(
     # completion() by inspecting model_cost, so the merge must precede the
     # call for cost_usd to populate naturally.
     ensure_model_priced(model)
+
+    # LiteLLM mutates the message content lists in place while normalizing
+    # the request for non-Anthropic providers (e.g. it strips ``cache_control``
+    # keys off content blocks). Those blocks are shared by reference with the
+    # caller's ``system`` / ``user_message_blocks`` lists — and the trace hook
+    # holds a reference to ``system`` for the trace record — so an in-place
+    # mutation would silently corrupt pflow's own data after we hand it off.
+    # Give LiteLLM a deep copy: it mutates a throwaway, our originals stay
+    # pristine, and the trace reflects what pflow actually placed.
+    kwargs["messages"] = copy.deepcopy(messages)
 
     try:
         raw_response = litellm.completion(**kwargs)
