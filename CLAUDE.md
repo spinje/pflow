@@ -241,9 +241,10 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - ✅ Task 116: Windows Compatibility
 - ✅ Task 176: Web-UI Approval Bridge
 
-### Planned Features (in order of priority)
+### Roadmap
 
-**v0.14.0**
+**Next**
+- Task 177: Unified Agent Node (claude | codex)
 - Task 142: Explore Function-Based Code Node Syntax
 - Task 46: Workflow Export to Zero-Dependency Code
 - Task 94: Display Available LLM Models
@@ -252,30 +253,23 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - Task 118: Code and Shell Linting
 - Task 121: Workflow Testability
 
-**v0.15.0 - Performance:**
-
+**Then**
 - Task 78: Save User Request History
 - Task 88: MCPMark Benchmarking
-
-**v1.0.0 - Security & Sandboxing:**
 - Task 87: Sandboxed Execution Runtime
 - Task 91: Export as MCP Server Packages
 - Task 97: OAuth for Remote MCP Servers
 - Task 109: Sandbox Bypass Controls
-
-**v1.1.0 - MCP Ecosystem:**
 - Task 65: MCP Gateway Integration
 - Task 81: Find/Install Remote MCP Servers
 - Task 86: MCP Server Discovery Automation
 - Task 123: OAuth Authentication for MCP HTTP Servers
 - Task 152: MCP Server Cli surface Parity
-
-**Refactors:**
 - Task 117: Subcommand JSON Error Output
 - Task 120: Strict Input Type Validation
 - Task 170: One Template Language
 
-**Later:**
+**Later**
 - Task 124: Code Node Dependency Management
 - Task 45: Evaluate n8n integration
 - Task 62: Route stdin to Workflow Inputs
