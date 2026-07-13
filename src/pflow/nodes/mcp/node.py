@@ -12,6 +12,24 @@ from pflow.mcp.auth_utils import build_auth_headers, expand_env_vars_nested
 
 logger = logging.getLogger(__name__)
 
+_SOURCE_LINE_SUFFIX = "_source_line"
+
+
+def _is_source_line_sidecar(key: str, params: dict[str, Any]) -> bool:
+    """True iff ``key`` is a compiler-generated ``_<param>_source_line`` sidecar.
+
+    Fenced-block params carry a ``_source_lines`` sidecar that the compiler flattens into
+    ``f"_{base}_source_line"`` for each real param ``base`` (compiler.py). This is
+    pflow-internal error-line metadata that must never reach an MCP tool call. Requiring
+    ``base`` to be a live param keeps the strip precise: a genuine tool argument that merely
+    ends in ``_source_line`` (e.g. ``data_source_line``, or ``_x_source_line`` with no ``x``
+    param) has no matching base and is forwarded intact.
+    """
+    if not (key.startswith("_") and key.endswith(_SOURCE_LINE_SUFFIX)):
+        return False
+    base = key[1 : -len(_SOURCE_LINE_SUFFIX)]
+    return bool(base) and base in params
+
 
 class MCPNode(Node):
     """Universal MCP node that executes any MCP tool.
@@ -150,13 +168,13 @@ class MCPNode(Node):
         # - GitHub servers (no paths at all)
         # - Slack servers (channel IDs instead of paths)
         # - Any future MCP server without code changes
-        # `_<param>_source_line` keys are pflow-internal sidecar metadata (fenced-block error-line
-        # mapping) that the compiler merges into params — strip them so they never reach the tool
-        # call.
+        # Strip the compiler's `_<param>_source_line` sidecar (fenced-block error-line metadata)
+        # so it never reaches the tool call, while preserving any real arg that merely ends in
+        # `_source_line` — see `_is_source_line_sidecar`.
         tool_args = {
             k: v
             for k, v in self.params.items()
-            if not k.startswith("__") and k != "timeout" and not k.endswith("_source_line")
+            if not k.startswith("__") and k != "timeout" and not _is_source_line_sidecar(k, self.params)
         }
 
         # Get optional timeout from params (validate as positive integer seconds)

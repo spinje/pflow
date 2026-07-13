@@ -28,7 +28,7 @@ class TestSourceLineSidecarFiltering:
             return node.prep({})["arguments"]
 
     def test_source_line_sidecar_excluded_from_tool_args(self):
-        """A `_<param>_source_line` param is dropped; the real param is forwarded."""
+        """The `_<param>_source_line` sidecar (base param present) is dropped; the param survives."""
         arguments = self._prep_arguments({
             "__mcp_server__": "chrome-devtools",
             "__mcp_tool__": "evaluate_script",
@@ -40,13 +40,29 @@ class TestSourceLineSidecarFiltering:
         assert arguments == {"function": "async () => { return 'hi'; }"}
         assert "_function_source_line" not in arguments
 
-    def test_only_source_line_suffix_is_stripped(self):
-        """A user param that merely starts with `_` is preserved — only the suffix is internal."""
+    def test_real_arg_ending_in_source_line_is_preserved(self):
+        """A genuine tool arg ending in `_source_line` (no matching base param) is forwarded intact.
+
+        The strip must be precise: only the compiler's `_<base>_source_line` sidecar, where
+        `base` is a live param, is internal. An MCP tool is free to have an argument literally
+        named `data_source_line`, or `_orphan_source_line` with no `orphan` param — dropping
+        those would be the inverse of issue #497 (silently losing a real argument).
+        """
+        arguments = self._prep_arguments({
+            "__mcp_server__": "srv",
+            "__mcp_tool__": "tool",
+            "data_source_line": 42,  # real arg, no leading underscore
+            "_orphan_source_line": 7,  # real arg, leading underscore but no `orphan` param
+        })
+
+        assert arguments == {"data_source_line": 42, "_orphan_source_line": 7}
+
+    def test_param_starting_with_underscore_is_preserved(self):
+        """A param that starts with `_` but is not a `_source_line` sidecar is preserved."""
         arguments = self._prep_arguments({
             "__mcp_server__": "srv",
             "__mcp_tool__": "tool",
             "_leading_underscore": "keep-me",
-            "_arg_source_line": 3,
         })
 
         assert arguments == {"_leading_underscore": "keep-me"}
