@@ -287,22 +287,36 @@ issue_scaffolding_note = (
 )
 
 if mode == 'implement':
-    # A plan already exists -- point the agent straight at /implement-plan rather
-    # than the exploratory /start-work skill. Name the task/issue number when we
-    # have one (bare-number or URL input) so the skill can resolve the plan file;
-    # otherwise tell it to locate the existing plan itself. When phases is set,
-    # forward it as the skill's phase-scope argument so only those phases run.
-    ref = (issue_number or '').strip()
+    # A plan already exists -- point the agent at /implement-plan, not the
+    # exploratory /start-work skill. When phases is set, forward it as the skill's
+    # phase-scope argument so only those phases run.
     scope_arg = f' phases {phases}' if phases else ''
-    if ref:
-        target = f'Run /implement-plan {ref}{scope_arg}.'
+    if work_type == 'task':
+        # Tasks live in .taskmaster; a bare task number resolves the plan file for
+        # /implement-plan. issue_number is guaranteed digit-only (or empty) by
+        # resolve-description's regex, so it is safe to inline unescaped here.
+        ref = (issue_number or '').strip()
+        if ref:
+            target = f'Run /implement-plan {ref}{scope_arg}.'
+        else:
+            target = f"Run /implement-plan on the task's implementation-plan.md{scope_arg}."
     else:
-        target = f'Run /implement-plan on the existing implementation-plan.md{scope_arg} for this work.'
-    scope_note = f' Implement ONLY phase(s) {phases} and stop after that scope.' if phases else ''
+        # A GitHub issue number is NOT a task id, and issues have no .taskmaster
+        # plan -- so do NOT feed the number to /implement-plan (it would resolve to a
+        # nonexistent task_<n>). The launched agent has the issue context and locates
+        # the issue's existing plan itself.
+        target = f'Run /implement-plan on the existing plan for this issue{scope_arg}.'
+    # Empty phases means "the whole plan". /implement-plan otherwise ASKS before
+    # implementing a whole plan when no scope is given; the worktree's implement
+    # mode is an explicit "execute it directly" request, so tell it to proceed.
+    if phases:
+        directive = f' Implement ONLY phase(s) {phases} and stop after that scope.'
+    else:
+        directive = ' Implement the whole plan directly -- no need to ask before starting.'
     agent_hint = (
         'A plan already exists -- do NOT explore or re-plan. If an /implement-plan '
         f'skill is available, use it to implement the plan directly. {target}'
-        f'{scope_note}{issue_scaffolding_note}'
+        f'{directive}{issue_scaffolding_note}'
     )
 elif work_type == 'issue':
     agent_hint = (

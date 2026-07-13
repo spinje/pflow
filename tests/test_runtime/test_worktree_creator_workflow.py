@@ -98,11 +98,25 @@ def test_implement_mode_without_number_falls_back_to_plan_path() -> None:
     assert "implementation-plan.md" in result["agent_hint"]
 
 
-def test_implement_mode_for_issue_keeps_no_scaffolding_note() -> None:
+def test_implement_mode_for_issue_does_not_pass_issue_number_as_task_id() -> None:
+    # An issue number is NOT a task id and issues have no .taskmaster plan, so it
+    # must not become `/implement-plan 443` (which resolves to a nonexistent task).
     result = run_parse_result(BRANCH_RESPONSE, mode="implement", work_type="issue", issue_number="443")
 
-    assert "/implement-plan 443" in result["agent_hint"]
+    assert "/implement-plan 443" not in result["agent_hint"]
+    assert "existing plan for this issue" in result["agent_hint"]
     assert "do not create taskmaster scaffolding" in result["agent_hint"]
+
+
+def test_implement_mode_without_phases_tells_agent_to_proceed_on_whole_plan() -> None:
+    # /implement-plan asks before implementing a whole plan when no scope is given;
+    # implement mode is an explicit "do it directly" request, so proceed.
+    result = run_parse_result(BRANCH_RESPONSE, mode="implement", issue_number="177")
+
+    assert "whole plan" in result["agent_hint"].lower()
+    assert "no need to ask" in result["agent_hint"].lower()
+    # The proceed directive is mutually exclusive with the phase-scope directive.
+    assert "Implement ONLY phase(s)" not in result["agent_hint"]
 
 
 def test_codex_sandbox_hint_is_skill_neutral_in_implement_mode() -> None:

@@ -93,7 +93,7 @@
     "launch-cli": "ab38eb810b897cdb7cedc97bc3505559",
     "launch-cursor": "2c6fd749b1505c4416a790b4aa7afd75",
     "output-status": "459e5f8341b84441832f695049b995e6",
-    "parse-result": "c7d94eeb4171df58bd15d0629e1315e1",
+    "parse-result": "b97246f4be64a13c0b5770e497099661",
     "resolve-description": "c04d99dc55f1640a7bcbb3d448ea7059"
   },
   "examples/test_llm_templates.pflow.md": {
