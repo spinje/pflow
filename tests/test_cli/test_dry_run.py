@@ -238,6 +238,24 @@ def test_dry_run_classifies_agent_for_cost_and_display(tmp_path) -> None:
     assert "1 agent" in result.output
 
 
+def test_dry_run_codex_with_unpriced_model_degrades_to_unknown_cost(tmp_path) -> None:
+    """An unpriced Codex model is still a valid plan, with unknown cost."""
+    workflow = make_agent_workflow(output_schema=None)
+    params = workflow["nodes"][0]["params"]
+    params["backend"] = "codex"
+    params["model"] = "future-codex-model-not-in-pricing-map"
+    params.pop("max_turns")
+    workflow_path = tmp_path / "codex-agent-plan.pflow.md"
+    write_workflow_file(workflow, workflow_path)
+
+    result = invoke_cli(["--dry-run", str(workflow_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "review  [agent]" in result.output
+    assert "≈ $? (no history)" in result.output
+    assert "1 agent" in result.output
+
+
 def test_dry_run_exits_one_when_plan_contains_error_diagnostic(tmp_path) -> None:
     """Plans that build but carry an ERROR-severity diagnostic must exit 1.
 

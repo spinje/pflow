@@ -1151,6 +1151,11 @@ class WorkflowTraceCollector:
         # Sum input/output tokens (None-safe: use `or 0` to coerce explicit None to 0)
         aggregated["input_tokens"] = llm_usage.get("input_tokens") or 0
         aggregated["output_tokens"] = llm_usage.get("output_tokens") or 0
+        has_reasoning_tokens = "reasoning_output_tokens" in llm_usage or any(
+            "reasoning_output_tokens" in retry for retry in retries
+        )
+        if has_reasoning_tokens:
+            aggregated["reasoning_output_tokens"] = llm_usage.get("reasoning_output_tokens") or 0
         # uncached_input_tokens is summed alongside input_tokens so the aggregated dict
         # keeps the invariant input_tokens == uncached + cache_creation + cache_read for
         # retried agent calls (#492). Producers that omit it (and never retry)
@@ -1181,6 +1186,8 @@ class WorkflowTraceCollector:
             aggregated["input_tokens"] += retry.get("input_tokens") or 0
             aggregated["uncached_input_tokens"] += retry.get("uncached_input_tokens") or 0
             aggregated["output_tokens"] += retry.get("output_tokens") or 0
+            if has_reasoning_tokens:
+                aggregated["reasoning_output_tokens"] += retry.get("reasoning_output_tokens") or 0
             for cache_key in ["cache_creation_input_tokens", "cache_read_input_tokens"]:
                 aggregated[cache_key] += retry.get(cache_key) or 0
 

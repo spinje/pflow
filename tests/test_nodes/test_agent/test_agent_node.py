@@ -126,7 +126,7 @@ def test_claude_rejects_codex_only_param(agent_node) -> None:
         agent_node.prep({})
 
 
-def test_codex_rejects_claude_only_param_before_unavailable_error() -> None:
+def test_codex_rejects_claude_only_param_before_subprocess_launch() -> None:
     node = AgentNode()
     node.params = {"backend": "codex", "prompt": "do work", "max_turns": 5}
 
@@ -134,12 +134,15 @@ def test_codex_rejects_claude_only_param_before_unavailable_error() -> None:
         node.prep({})
 
 
-def test_codex_selection_has_explicit_phase_one_error() -> None:
+def test_codex_selection_loads_real_backend() -> None:
     node = AgentNode()
     node.params = {"backend": "codex", "prompt": "do work"}
 
-    with pytest.raises(RuntimeError, match="codex backend is not available yet"):
-        node.prep({})
+    prepared = node.prep({})
+
+    assert type(prepared["_backend"]).__name__ == "CodexBackend"
+    assert prepared["model"] is None
+    assert prepared["sandbox"] == "workspace-write"
 
 
 # Test Criteria 2: Prompt empty string → ValueError with "cannot be empty"

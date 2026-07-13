@@ -10,8 +10,6 @@ from typing import Any
 from pflow.core.node import Node
 from pflow.nodes.agent.backend import AgentBackend, AgentResult
 from pflow.nodes.agent.schema_validation import (
-    CODEX_PARAMS,
-    SHARED_PARAMS,
     TopLevelObjectViolation,
     is_legacy_python_alias_schema,
     top_level_object_violation,
@@ -19,30 +17,6 @@ from pflow.nodes.agent.schema_validation import (
 
 logger = logging.getLogger(__name__)
 RESTRICTED_DIRECTORIES = ["/", "/etc", "/usr", "/bin", "/sbin", "/lib", "/sys", "/proc"]
-
-
-class _UnavailableCodexBackend:
-    """Phase-1 placeholder that preserves the final backend enum."""
-
-    default_model: str | None = None
-
-    def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
-        invalid = sorted(set(params) - (SHARED_PARAMS | CODEX_PARAMS))
-        if invalid:
-            raise ValueError(f"{invalid[0]!r} is not valid for backend 'codex'")
-        raise RuntimeError("codex backend is not available yet; it will be added in Task 177 Phase 3")
-
-    def run(self, prompt: str, options: dict[str, Any]) -> AgentResult:
-        raise RuntimeError("codex backend is not available yet; it will be added in Task 177 Phase 3")
-
-    def continuation_options(self, previous: AgentResult, options: dict[str, Any]) -> dict[str, Any] | None:
-        return None
-
-    def translate_error(self, exc: Exception, options: dict[str, Any]) -> Exception:
-        return exc
-
-    def build_warning_context(self, options: dict[str, Any], result: AgentResult) -> dict[str, Any]:
-        return {"node_type": "agent", "backend": "codex"}
 
 
 class AgentNode(Node):
@@ -91,7 +65,9 @@ class AgentNode(Node):
             from pflow.nodes.agent.claude_backend import ClaudeBackend
 
             return ClaudeBackend()
-        return _UnavailableCodexBackend()
+        from pflow.nodes.agent.codex_backend import CodexBackend
+
+        return CodexBackend()
 
     def _validate_prompt(self, prompt: Any) -> str:
         """Validate prompt parameter."""
@@ -373,7 +349,7 @@ class AgentNode(Node):
         metadata = result.metadata
         if not metadata.get("usage_available"):
             return None
-        return {
+        usage_record = {
             "input_tokens": metadata.get("input_tokens", 0) or 0,
             "uncached_input_tokens": metadata.get("uncached_input_tokens", 0) or 0,
             "cache_creation_input_tokens": metadata.get("cache_creation_input_tokens", 0) or 0,
@@ -386,6 +362,9 @@ class AgentNode(Node):
             "session_id": metadata.get("session_id"),
             "model": model,
         }
+        if "reasoning_output_tokens" in metadata:
+            usage_record["reasoning_output_tokens"] = metadata.get("reasoning_output_tokens", 0) or 0
+        return usage_record
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         self._store_results(shared, prep_res, exec_res, getattr(self, "node_id", None))
@@ -614,7 +593,7 @@ class AgentNode(Node):
         if metadata:
             input_tokens = metadata.get("input_tokens", 0) or 0
             output_tokens = metadata.get("output_tokens", 0) or 0
-            shared["llm_usage"] = {
+            llm_usage = {
                 "model": prep_res.get("model"),
                 "input_tokens": input_tokens,
                 "uncached_input_tokens": metadata.get("uncached_input_tokens", 0) or 0,
@@ -628,6 +607,9 @@ class AgentNode(Node):
                 "num_turns": metadata.get("num_turns"),
                 "session_id": metadata.get("session_id"),
             }
+            if "reasoning_output_tokens" in metadata:
+                llm_usage["reasoning_output_tokens"] = metadata.get("reasoning_output_tokens", 0) or 0
+            shared["llm_usage"] = llm_usage
             retry_usages = exec_res.get("retry_usages", [])
             if retry_usages:
                 shared["llm_usage"]["retries"] = retry_usages

@@ -1,124 +1,131 @@
-# Braindump: Task 177 Phase 2 → Phase 3
+# Braindump: Task 177 after Phase 3
 
-_Written at the Phase 2 stop point. This intentionally does not summarize the plan, code, or
-progress log; it records only the remaining tacit judgment I would otherwise lose._
+_This intentionally replaces the old Phase 2 → 3 handoff. The filename is retained because the
+user explicitly asked to overwrite it. The progress log contains the implementation inventory and
+test counts; this note records the judgment and uncertainty that are easier to lose._
 
-## User's quality signal in this handoff
+## What the user actually cares about
 
-When told only 14% of the context window remained, the user explicitly chose a complete handoff
-over beginning Phase 3. Their follow-up was: "make the handoff in the progress log and then
-$braindump skill for the last 20% of tacid knowledge that matters." Treat that as a strong signal:
-they prefer a fresh agent doing the subprocess/parser phase coherently over visible progress made
-with degraded context. Do not turn Phase 3 into a hurried partial implementation.
+The user asked whether I was **"FULLY happy with the implementation"** and whether there were
+**"Any loose ends?"** That is the quality bar to carry forward. A large hermetic suite is not enough
+to call the Codex backend merge-ready: the user wants a candid distinction between confidence in
+the design and proof against the real CLI.
 
-## The most important gap I noticed but did not investigate
+My answer was deliberately qualified. I am happy with the architecture, normalization boundary,
+and transport-independent tests. I am not fully happy with real-integration confidence until an
+unrestricted host has exercised text output, structured output, and a separate-process resume.
+Do not soften that caveat merely because the local suite is green.
 
-**NEEDS VERIFICATION — `system_prompt` on Codex.** The public node contract calls
-`system_prompt` shared, and `AgentNode.prep()` already puts it into backend options. The Phase 3
-argv recipe never says how `CodexBackend` delivers it, and `codex exec --help` has no obvious
-system-prompt flag in the recorded CLI reference. Silently ignoring it would violate the shared
-contract while every ordinary prompt test still passed. Before coding the argv builder, determine
-whether the installed CLI has a supported config key such as developer instructions; if not,
-choose an explicit, test-pinned fallback or surface the mismatch to the user rather than quietly
-dropping the value. Resume must preserve the same decision.
+## The mental model that made the implementation cohere
 
-**NEEDS VERIFICATION — `config` serialization.** The plan says `config: dict` becomes repeated
-`-c key=value` arguments but never defines how Python values become TOML literals. Strings need
-quoting/escaping, booleans must be lowercase, and arrays/objects need a supported representation.
-A naive `str(value)` produces invalid TOML for several types. Establish one small serializer from
-observed CLI behavior and pin argv exactly; do not let shell quoting leak into this because argv is
-passed directly, not through a shell.
+Treat the Codex CLI as a protocol adapter, not as a text-producing subprocess:
 
-**NEEDS VERIFICATION — backend parameter shapes.** `approval_policy`, `add_dir`, `profile`,
-`config`, and Codex `sandbox` have names and high-level types in the plan, but not every runtime
-shape/allowed value is test-pinned yet. Verify the installed CLI/config vocabulary before making
-an enum stricter than Codex itself. Static validation only rejects cross-backend keys; Phase 3's
-runtime backend owns these shape checks.
+- typed JSONL is the event/control channel;
+- `--output-last-message` is the only final-answer channel;
+- the thread id is continuation state;
+- schema JSON is an input artifact;
+- stderr, exit status, and failure events together are diagnostic evidence.
 
-## Subprocess/error-flow instinct
+Keeping those channels separate prevents a seductive but incorrect shortcut: deriving the final
+answer from the last `agent_message` event. The recorded stream can contain useful agent messages,
+but the CLI explicitly owns final-message materialization. Preserve that boundary.
 
-The tempting design is one large `run()` that builds temp files, calls `subprocess.run`, parses
-JSONL, and raises `RuntimeError` on any nonzero exit. That will work on happy-path tests but makes
-actionable translation fragile because `AgentNode.exec_fallback()` calls
-`backend.translate_error(exc, opts)` only after the node retry lifecycle. Preserve stdout,
-stderr, exit code, and parsed failure events in a backend-owned exception so translation can tell
-not-installed, auth/login, timeout, and turn failure apart without stringifying away evidence.
+Likewise, do not push Codex-specific parsing or accounting back into `AgentNode`. Phase 1's most
+valuable architectural decision was that a backend returns a normalized `AgentResult`; Phase 3
+works because Codex and Claude meet at that boundary while retaining different transports.
 
-**MIGHT MATTER:** deterministic not-installed/auth failures will still pass through AgentNode's
-ordinary node retry budget before `exec_fallback` translates them; `retriable=False` chiefly stops
-the outer batch retry. Do not accidentally add another retry loop inside CodexBackend. If avoiding
-the two node attempts matters, verify PocketFlow's exception contract first rather than assuming
-`retriable=False` changes `Node._exec()`.
+## Hard-won CLI knowledge
 
-For v1, `subprocess.run(..., timeout=...)` is the simplest correct primitive if cleanup is handled
-in `finally`; the plan's cancellation/orphan concern is real but belongs to deliberate lifecycle
-work, not an improvised process-group abstraction. Keep argv as a list on all platforms. Never use
-`shell=True`.
+These facts were discovered by probing the installed `codex-cli 0.144.3`, not by guessing from
+option names:
 
-## Test construction I would use
+- A profile is a parent `exec` option. `codex exec resume --profile NAME ...` is rejected, while
+  `codex exec --profile NAME resume ...` parses.
+- Resume does not accept the initial command's `--sandbox` form. The compatible resume form is
+  `-c sandbox_mode=...`.
+- `-c key=value` values are TOML. Python `str()` is not a serializer: it mishandles strings,
+  booleans, containers, escaping, and unsupported values.
+- The current official config reference documents `developer_instructions`; that is why shared
+  `system_prompt` maps there instead of being silently ignored or concatenated into the user
+  prompt.
+- Leaving subprocess stdin inherited caused the real CLI to announce that it was reading extra
+  input and risked consuming pflow's own pipe as a `<stdin>` prompt block. `DEVNULL` is a functional
+  isolation requirement, not cosmetic subprocess hygiene.
 
-Drive CodexBackend with a fake `subprocess.run` that:
+If a future CLI changes one of these rules, update the exact argv tests and record the observed
+version. Do not make the builder "more flexible" by sending both old and new flag forms.
 
-- inspects argv;
-- finds the unique `--output-last-message` path and writes the final text there;
-- returns a `CompletedProcess` whose stdout is the recorded typed JSONL stream;
-- varies stderr/return code for error translation tests.
+## Where confidence stops
 
-This exercises the temp-file boundary instead of mocking the parser separately. Add narrow pure
-parser tests only for malformed lines, `turn.failed`, multiple `turn.completed` usage records, and
-command events. Keep the final message sourced from `-o`; do not reintroduce "last agent_message"
-logic just because it is convenient in a canned stream.
+**NEEDS VERIFICATION:** Run the installed-CLI smoke on a host that can resolve and reach
+`api.openai.com`. This sandbox reached the CLI and began the request, then failed DNS resolution.
+That proves command parsing only; it does not prove a successful response.
 
-One pytest trap burned a few minutes during Phase 2: `-k` filters explicitly named node IDs too.
-I once passed explicit example/contract tests alongside `-k 'shared_inputs or static_validator'`
-and misread the result as those explicit tests passing; they had been deselected. Run important
-explicit nodes without `-k`, especially the real-Codex smoke and contract fixtures.
+**NEEDS VERIFICATION:** Exercise all three real workflows independently:
 
-## Contract connections that are easy to miss
+1. plain text with an exact short response;
+2. JSON Schema output read from the final-message file;
+3. a first invocation followed by resume in a new subprocess, confirming the emitted thread id
+   and retained session behavior.
 
-- `inputs` is now shared because file-backed agent prompts use it heavily, but it is data-wiring
-  metadata, not a Codex CLI option. CodexBackend validation must accept it via `SHARED_PARAMS` and
-  then ignore it when building argv.
-- `default_model = None` is intentional for Codex: `AgentNode.prep()` will leave `model` as `None`,
-  allowing omission of `-m`. Do not replace it with the model found in this machine's config.
-- The Phase 1 `_UnavailableCodexBackend` rejects wrong-backend params before its availability
-  error. When replacing it with a lazy import, preserve that user-visible order through the real
-  backend's `validate_params()`; a missing `codex` binary is a run-time concern, not prep-time
-  static availability probing.
-- Structured JSON should become `AgentResult.structured_output`; malformed JSON with otherwise
-  successful final text should flow into AgentNode's existing schema soft-fail machinery, not be
-  converted into an execution exception. Conversely, CLI `turn.failed`/nonzero exit is a real
-  backend failure and must raise.
-- The current dirty tree is intentional and includes all Phase 2 work. Do not use checkout/reset
-  while experimenting with parser mutations. If mutation-testing, copy the target file to a
-  writable scratch location first and restore it explicitly with `apply_patch`.
+The third is especially important. Hermetic tests prove our two argv shapes and parser behavior,
+but not whether Codex persists working directory and additional-directory access in exactly the
+way assumed when resume omits `--cd` and `--add-dir`.
 
-## Assumptions and unexplored edges
+**NEEDS VERIFICATION:** `subprocess.run(timeout=...)` terminates the direct CLI process, but there
+is no explicit process-group/tree cleanup. That is acceptable for the scoped v1 and much safer
+than improvising a cross-platform lifecycle abstraction, but it remains a genuine orphan-process
+risk if the CLI leaves descendants behind on timeout.
 
-**ASSUMPTION:** the installed/logged-in Codex CLI facts captured in the original braindump still
-hold. The current Codex sandbox may deny network even if local auth is valid, so distinguish a
-sandbox network failure from a product/auth failure before changing code.
+**NEEDS VERIFICATION:** Missing-binary and authentication errors become `retriable=False` only
+when `AgentNode.exec_fallback()` translates them. PocketFlow's internal node retry has already
+happened by then. Avoid adding a backend retry loop. If fast-failing deterministic errors becomes
+important, first study and test PocketFlow's node exception lifecycle; the metadata flag alone
+does not bypass it.
 
-**UNEXPLORED:** what a successful resume JSONL stream reports for `thread.started` on every CLI
-version. The original capture says the same thread ID is emitted; pin the parser to observed facts
-but fail loudly/actionably if no thread ID exists rather than inventing one.
+## Test judgment, not just test count
 
-**CONSIDER:** aggregate usage across every `turn.completed` event in one invocation, but do not
-confuse Codex's cumulative session context with pflow's per-invocation accounting. The captured
-resume event is for the resumed turn; summing events emitted by the current subprocess is safe.
+The most valuable Phase 3 tests are the ones whose fake subprocess writes the actual temporary
+final-message file while returning typed JSONL. They cross the backend's real filesystem/argv
+boundary and would catch regressions that parser-only tests miss. Preserve that style.
 
-**MIGHT MATTER:** `reasoning_output_tokens` should remain an additive metadata key and should not
-be folded into visible `output_tokens`. Before finalizing, grep consumers for strict dict models;
-my expectation is they are permissive, but I did not re-verify this during Phase 2.
+The real smoke is intentionally guarded only by `shutil.which("codex")`, following the Phase 3
+plan. This makes it honest but operationally fragile: a machine with Codex installed but logged
+out or offline will run and fail it. Do not quietly change it to opt-in without deciding whether
+CI/local reliability or automatic real-surface coverage is the stronger project policy.
 
-## What I would do first
+The requested test reflection caught one real cross-backend leak: retry aggregation introduced a
+zero-valued `reasoning_output_tokens` field for Claude-style retry usage even though `AgentNode`
+deliberately preserves backend-specific usage shapes. The aggregator is now conditional: the key
+stays absent unless the main call or a retry supplied it, and then all supplied reasoning tokens
+are summed. Tests pin both sides of that contract.
 
-After reading the required files, inspect `AgentBackend`, `ClaudeBackend`, and AgentNode's exact
-retry/post flow together. Then write the Codex argv/parser/error tests before replacing the
-placeholder. The first behavioral checkpoint should be: a completely fake Codex subprocess
-returns text plus normalized usage/session metadata through a real `AgentNode.run()` lifecycle.
-Only after that is green should structured output, resume argv, errors, and the paid/real surface
-be layered on.
+Do not add more event-shape tests for coverage's sake. Add a test only when it protects a real
+protocol boundary, an error translation decision, or lifecycle behavior that could plausibly
+break unnoticed.
+
+## Scope boundaries that still matter
+
+Phase 4 owns the remaining `run-cycle.json` contract mismatch, web literals/bundle generation, and
+UI verification. The one non-sandbox full-suite failure is expected until that phase lands. Do not
+"fix" it by manually editing a generated fixture without following Phase 4's regeneration path.
+
+Phase 5 owns the remaining authored docs, architecture/MCP prose, and cleanup. The strict v1
+`approval_policy` string enum deliberately excludes Codex's granular table form; expanding that is
+future API design, not a Phase 4 cleanup.
+
+`inputs` is a load-bearing shared agent parameter even though Codex ignores it at argv construction.
+It represents workflow data wiring for file-backed prompts. Removing it from `SHARED_PARAMS` would
+recreate the false cross-backend validation failures found in Phase 2.
+
+## What I would do next
+
+Review the current diff, especially option precedence, stdin isolation, retry usage shape, and
+error translation. On an unrestricted host, run the three real workflows above. If those pass,
+proceed to Phase 4 without broadening the Codex backend API.
+
+Do not commit unless the user asks. Phase 1 and Phase 2 are already separate commits; the current
+Phase 3 changes are intentionally left for review.
 
 > **Note to next agent**: Read this document fully before taking any action. When ready, confirm
 > you've read and understood by summarizing the key points, then state you're ready to proceed.
