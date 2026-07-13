@@ -150,7 +150,14 @@ class MCPNode(Node):
         # - GitHub servers (no paths at all)
         # - Slack servers (channel IDs instead of paths)
         # - Any future MCP server without code changes
-        tool_args = {k: v for k, v in self.params.items() if not k.startswith("__") and k != "timeout"}
+        # `_<param>_source_line` keys are pflow-internal sidecar metadata (fenced-block error-line
+        # mapping) that the compiler merges into params — strip them so they never reach the tool
+        # call.
+        tool_args = {
+            k: v
+            for k, v in self.params.items()
+            if not k.startswith("__") and k != "timeout" and not k.endswith("_source_line")
+        }
 
         # Get optional timeout from params (validate as positive integer seconds)
         timeout_param = self.params.get("timeout", 30)
