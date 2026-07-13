@@ -20,15 +20,25 @@ Every claim here is a pointer to verify, not a fact._
   **Opus**, not Fable — scope is planners only; #8 (UI phases → Fable) and #9 (lane-B Fable
   opt-in) stand. DECISIONS #3 amended; ORCHESTRATION + agent def reconciled.
 
-## In flight
+## In flight (launched 2026-07-13, session-04 — 3 parallel lane-B Opus builds)
 
-- ~~**#565 (MCP probe output paths)**~~ — MERGED via PR #583 as `bd6f520a`; all merged-result gates
-  green after #581, worktree/branch safely pruned.
-- ~~**#581 (flaky Windows caplog tests)**~~ — MERGED via PR #584 as `08b319ca`; issue-specific Windows
-  gate passed, authorized unrelated-flake rerun passed, worktree/branch safely pruned.
-- ~~**#585 (Windows MCP config replace WinError 5)**~~ — MERGED via PR #586 as `2ee5fefc`; all
-  Windows gates green, worktree/branch safely pruned. Verified cause: Windows replacement can
-  transiently reject despite existing process-wide `RLock`; fix narrowly retries WinError 5/32.
+Surfaces verified against main by 3 searchers before launch; collision matrix confirmed disjoint
+(files + semantics); none touch `runtime/engine/`/`workflow_executor` or trace format.
+
+- **#413** LiteLLM mutates pflow's `system_blocks` in place → trace lies for OpenAI/Gemini cache
+  runs. Fix = deep-copy at the one adapter boundary (`core/llm_client.py:358`, before
+  `litellm.completion`); Option A (issue's Option C sidecar-refactor rejected as over-eng).
+- **#497** `_*_source_line` sidecar leaks through MCP node's forward filter → `Unknown argument`.
+  Fix = one line at `nodes/mcp/node.py:153` (`and not k.endswith("_source_line")`, matching the
+  `instrumentation.py:166` precedent). No shared helper (one forwarding node → deletion test).
+- **#183** secrets embedded in shell `command`/`stdout`/`stderr` leak to CLI **and** MCP error
+  output. Single shared seam = `_enrich_error_from_node_output` (`executor_service.py:354-359`);
+  covers both. TRAP: `sanitize_parameters` redacts by KEY — a secret inside a string value needs
+  **value-level** substring redaction of known-secret values (env/sensitive param values). Scope
+  = shell fields only (HTTP already redacted; consolidation is a separate follow-up).
+  **Launched PLAN-FIRST** (user directive): investigate secret-value provenance + plumbing, write
+  approach + failure scenarios, self-review the seam before coding; escalate if redaction must
+  reach beyond the enrichment seam.
 
 ## Current arc
 
@@ -45,7 +55,7 @@ Resume/HITL: 125 ✅ → 164 ✅ → 174 ✅ → 171 ✅ → 176 ✅ (#579). Rea
   **#561** TTS clip cache (backlog) · **#538** liveness backstop (check
   overlap with #566 first) · **#544** `llm_*` canonicalization · **#549** post-#539 visibility ·
   **#528** `--output-format` stragglers · **#566/#567/#572/#574/#575** Windows/test-infra tail.
-- **#357** memo-cache drift — issue state UNVERIFIED since 2026-06-23; check before acting.
+- ~~**#357**~~ memo-cache drift — verified CLOSED 2026-06-18; remove from picks.
 - ~~**#581**~~ shipped via #584. ~~**#585**~~ shipped via #586.
 
 ## Watch list (non-obvious, easy to miss)

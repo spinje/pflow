@@ -420,6 +420,71 @@ class TestCompleteHappyPath:
         assert mock_completion.call_args.kwargs["timeout"] == 30.0
 
 
+class TestCompleteDoesNotMutateCallerBlocks:
+    """Regression for issue #413.
+
+    LiteLLM mutates its ``messages`` content lists in place while normalizing
+    the request for non-Anthropic providers (it strips ``cache_control`` keys).
+    ``_build_messages`` places the caller's ``system`` / ``user_message_blocks``
+    list objects into ``messages`` by reference, and the trace hook holds a
+    reference to ``system`` — so before the fix the mutation silently corrupted
+    pflow's own data (the trace showed zero cache markers even though pflow
+    placed one). ``complete()`` now hands LiteLLM a deep copy; the caller's
+    lists must survive untouched. Each test's mock reproduces LiteLLM's
+    in-place mutation, so it FAILS on the unfixed code.
+    """
+
+    @staticmethod
+    def _strip_cache_control_in_place(**kwargs):
+        # Simulate LiteLLM's provider normalization: delete cache_control keys
+        # from every content block it received.
+        for message in kwargs["messages"]:
+            content = message.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict):
+                        block.pop("cache_control", None)
+        return make_litellm_response()
+
+    @patch("litellm.completion")
+    def test_system_blocks_not_mutated(self, mock_completion):
+        mock_completion.side_effect = self._strip_cache_control_in_place
+        system_blocks = [
+            {"type": "text", "text": "Block A"},
+            {"type": "text", "text": "Block B", "cache_control": {"type": "ephemeral"}},
+        ]
+
+        complete(model="openai/gpt-4o-mini", prompt="hi", system=system_blocks)
+
+        # The mock stripped cache_control from the copy it received; pflow's
+        # original list must still carry the marker it placed.
+        assert "cache_control" in system_blocks[1]
+        assert system_blocks[1]["cache_control"] == {"type": "ephemeral"}
+        # Sanity: the mock really did mutate what it was handed (the deep copy).
+        sent_blocks = mock_completion.call_args.kwargs["messages"][0]["content"]
+        assert all("cache_control" not in b for b in sent_blocks)
+
+    @patch("litellm.completion")
+    def test_user_message_blocks_not_mutated(self, mock_completion):
+        mock_completion.side_effect = self._strip_cache_control_in_place
+        user_blocks = [
+            {"type": "text", "text": "static prefix", "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "dynamic suffix"},
+        ]
+
+        complete(
+            model="openai/gpt-4o-mini",
+            prompt="ignored",
+            user_message_blocks=user_blocks,
+        )
+
+        assert "cache_control" in user_blocks[0]
+        assert user_blocks[0]["cache_control"] == {"type": "ephemeral"}
+        # Sanity: the mock really did mutate the copy it was handed.
+        sent_blocks = mock_completion.call_args.kwargs["messages"][0]["content"]
+        assert all("cache_control" not in b for b in sent_blocks)
+
+
 class TestCompleteUsageNormalization:
     @patch("litellm.completion")
     def test_anthropic_cache_fields(self, mock_completion):
