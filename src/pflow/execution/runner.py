@@ -330,6 +330,12 @@ class WorkflowRunner:
         # shared_store holds each input's resolved value (user arg / env / settings /
         # default), so this is immune to the params-vs-defaults split and never carries
         # ``_``/``__`` internal keys. Do NOT replace with {**params, **resolved_defaults}.
+        #
+        # SECRET INVARIANT (see #183): these are RESOLVED values, so a secret input holds its
+        # plaintext here. It is persisted RAW on purpose — `pflow resume` replays from this
+        # snapshot (cli/commands/resume.py reads `source.inputs` back as params, and upstream
+        # node outputs are seeded from the trace too), so it must NOT be redacted at write time
+        # or resume breaks. Secret redaction is a display-time concern, never a trace-write one.
         if trace_collector is not None:
             trace_collector.inputs = {
                 name: shared_store[name] for name in resolved.ir.get("inputs", {}) if name in shared_store
