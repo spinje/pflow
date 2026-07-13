@@ -1,7 +1,7 @@
 ---
 name: task-planner
 description: Investigates ONE pflow task in its worktree, writes + self-reviews its implementation-plan.md, commits it on the feature branch, then stops. Launched only by the main orchestrator, always on Fable.
-model: fable
+model: opus
 tools: Bash, Read, Edit, Write, Glob, Grep, WebFetch, WebSearch, Agent, Skill
 effort: high
 ---
