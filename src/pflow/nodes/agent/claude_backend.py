@@ -125,38 +125,6 @@ class ClaudeBackend:
                 f"Invalid max_thinking_tokens: {max_thinking_tokens}. Must be integer between 1000 and 100000."
             ) from None
 
-    def _validate_use_api_key(self, value: Any) -> bool:
-        """Resolve the use_api_key billing flag to a strict bool.
-
-        Default False blanks ANTHROPIC_API_KEY for the Claude subprocess so it
-        uses the Pro/Max subscription; True lets the ambient key bill to Anthropic
-        Console. A templated value may arrive as a string (node params are not
-        coerced to bool at runtime) — never trust truthiness, since the string
-        "false" is truthy and would silently re-enable per-token billing. Accept
-        real bools, integer 0/1, and canonical bool-string literals; fail closed
-        on anything else.
-        """
-        if value is None:
-            return False
-        if isinstance(value, bool):
-            return value
-        # Accept integer 0/1 (YAML coerces `- use_api_key: 1` to int, and "1"/"0"
-        # strings are already accepted). Safe: bool(0)/bool(1) is unambiguous —
-        # no truthiness footgun — and 2+ still falls through to fail closed.
-        if isinstance(value, int) and value in (0, 1):
-            return bool(value)
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in ("true", "1", "yes"):
-                return True
-            if normalized in ("false", "0", "no"):
-                return False
-        raise TypeError(
-            f"use_api_key must be true or false, got {value!r}. Use "
-            "'- use_api_key: true' to bill ANTHROPIC_API_KEY to your Anthropic "
-            "Console, or omit it to use your Claude Pro/Max subscription."
-        )
-
     def _validate_sandbox(self, sandbox: Any) -> dict | None:
         """Validate sandbox configuration parameter.
 
@@ -213,7 +181,6 @@ class ClaudeBackend:
             "max_turns": max_turns,
             "max_thinking_tokens": self._validate_max_thinking_tokens(params.get("max_thinking_tokens", 8000)),
             "sandbox": self._validate_sandbox(params.get("sandbox")),
-            "use_api_key": self._validate_use_api_key(params.get("use_api_key")),
         }
 
     def run(self, prompt: str, options: dict[str, Any]) -> AgentResult:
@@ -568,19 +535,20 @@ class ClaudeBackend:
         """Build remediation text for an auth failure, tailored to the billing mode."""
         if use_api_key:
             return (
-                "Claude Code authentication failed using ANTHROPIC_API_KEY "
-                "(use_api_key: true) — the key may be invalid or out of credit.\n"
-                "  - Correct ANTHROPIC_API_KEY in your Anthropic Console, or\n"
-                "  - Remove `- use_api_key: true` to use your Claude Pro/Max "
-                "subscription instead (no per-token charges)."
+                "Claude Code authentication failed while API-key billing is permitted "
+                "(use_api_key: true). This flag grants permission but does not prove which "
+                "credential the CLI used.\n"
+                "  - If ANTHROPIC_API_KEY is configured, verify the key and Anthropic Console credit.\n"
+                "  - Otherwise run `claude auth login` and `claude auth status` to verify "
+                "your account/subscription login.\n"
+                "  - Remove `- use_api_key: true` to disallow ANTHROPIC_API_KEY billing."
             )
         return (
             "Claude Code could not authenticate. This node uses your Claude "
             "Pro/Max subscription by default and ignores ANTHROPIC_API_KEY "
             "unless you opt in.\n"
             "  - Recommended: run `claude auth login` (or `claude setup-token` "
-            "for non-interactive/CI) to authenticate with your subscription — no "
-            "per-token charges.\n"
+            "for non-interactive/CI) to authenticate with your account/subscription.\n"
             "  - Or add `- use_api_key: true` to this node to bill "
             "ANTHROPIC_API_KEY to your Anthropic Console (pay per token)."
         )

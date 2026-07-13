@@ -9,10 +9,49 @@ acceptance/rejection shape surface here, not via the call-site test files.
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+
 from pflow.nodes.agent.schema_validation import (
     is_legacy_python_alias_schema,
     top_level_object_violation,
+    validate_use_api_key,
 )
+
+
+class TestValidateUseApiKey:
+    @pytest.mark.parametrize("value", [None, False, 0, "false", "FALSE", " 0 ", "No"])
+    def test_accepts_false_forms(self, value: Any) -> None:
+        assert validate_use_api_key(value) is False
+
+    @pytest.mark.parametrize("value", [True, 1, "true", "TRUE", " 1 ", "Yes"])
+    def test_accepts_true_forms(self, value: Any) -> None:
+        assert validate_use_api_key(value) is True
+
+    @pytest.mark.parametrize(
+        "value",
+        ["", "maybe", "on", "off", 2, -1, 42, [], {}, {"enabled": True}, object()],
+    )
+    def test_rejects_ambiguous_values_with_backend_neutral_guidance(self, value: Any) -> None:
+        with pytest.raises(TypeError, match="use_api_key must be true or false") as exc_info:
+            validate_use_api_key(value)
+
+        message = str(exc_info.value)
+        assert "provider billing" in message
+        assert "Claude" not in message
+        assert "Anthropic" not in message
+        assert "Codex" not in message
+        assert "OpenAI" not in message
+
+    def test_rejected_string_value_is_not_echoed(self) -> None:
+        secret_like_value = "sk-secret-value-that-must-not-leak"  # noqa: S105 - redaction sentinel
+
+        with pytest.raises(TypeError) as exc_info:
+            validate_use_api_key(secret_like_value)
+
+        assert secret_like_value not in str(exc_info.value)
+        assert "got str" in str(exc_info.value)
 
 
 class TestIsLegacyPythonAliasSchema:

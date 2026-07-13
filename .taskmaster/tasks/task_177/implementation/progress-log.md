@@ -228,3 +228,102 @@
   run and `status → exec → status → resume exec` for schema correction; false-mode failures make
   one status call and zero model calls; true mode makes no status call; parent environment and raw
   status secrets never leak; docs retain the narrowed guarantee.
+
+## 2026-07-13 — Phase 6 implementation started
+
+- Read the requested `implement-plan` skill and every file under `.taskmaster/tasks/task_177/` in
+  full before editing. Scope is Phase 6 only: centralize `use_api_key`, add the fail-closed Codex
+  account-auth preflight/provider guard, update focused tests, and reconcile the named auth docs.
+- Re-verified the repository state and corrected the handoff's stale dirty-tree statement: Phases
+  1–5 are committed separately through `fe08e426` (`phase 5 completed`), and the worktree was clean
+  at Phase 6 start. No user changes need to be preserved around the Phase 6 edits.
+- The live seams match the Phase 6 plan: `use_api_key` is still in `CLAUDE_PARAMS`; strict coercion
+  lives privately in `ClaudeBackend`; `AgentNode.prep()` does not prepare a shared value;
+  `CodexBackend.run()` creates temp files and launches the model without an explicit child env or
+  login-status preflight; `_append_config_options()` has no final provider guard; and
+  `translate_error()` currently logs/rewraps every exception before classification.
+- Static validation already imports `SHARED_PARAMS` from the shared module, so moving the parameter
+  there is sufficient for literal Claude and Codex workflows. No validator implementation branch
+  is needed. The registry allowlist is driven by `AgentNode`'s docstring, whose current wording is
+  the only metadata change required.
+- Test-fixture delta confirmed: the existing Codex fake assumes every subprocess is a model call
+  with `--output-last-message`; Phase 6 must replace it with the planned status/exec dispatcher.
+  Existing Claude coercion tests call the backend-private helper and must move to the shared pure
+  helper rather than duplicate the matrix through runtime backends.
+- Documentation still teaches the superseded contract (`use_api_key` as Claude-only and Codex as
+  having no key parameter), including absolute “no API billing/per-token charges” language in the
+  plan-to-code examples. The Phase 6 wording changes are therefore necessary, not mechanical churn.
+- Implemented the production boundary as planned: strict coercion now lives in
+  `schema_validation.validate_use_api_key`; `AgentNode.prep()` prepares it once for either backend;
+  Claude consumes that shared value without changing its child override; and Codex builds one copied
+  environment, checks account auth before temp-file/argv work, and reuses the environment for exec.
+- Codex status classification is a closed enum and discards matched text. Only ChatGPT/access-token
+  account classes pass. API-key, unsupported credential, logged-out/non-zero, conflicting, and
+  unknown output raise secret-safe `CodexNonRetriableError` instances before a model call. Safe mode
+  appends `model_provider="openai"` after caller config; opt-in mode omits both status and provider
+  guard.
+- Refactored the Codex fake subprocess boundary into a status/exec dispatcher and added contract
+  coverage for environment identity/sanitization, status parsing and fail-closed cases, opt-in,
+  provider precedence on initial/resume argv, preflight launch failures, idempotent non-retriable
+  translation, and schema-retry call order. The strict bool matrix now has one owner at the shared
+  helper boundary.
+- Phase 6 focused checkpoint passed on Darwin using the worktree `.venv` and writable temporary
+  HOME: collection found 104 non-e2e tests across the shared validation and Codex backend files;
+  the focused run passed all 104 with the paid real-Codex smoke deselected. The assertions pin
+  `status → exec`, `status → exec → status → resume exec`, one status/zero model calls on safe-mode
+  rejection, no status call in opt-in mode, same-object sanitized env reuse, and provider-last
+  precedence without exposing masked status text.
+
+## 2026-07-13 — Phase 6 completed
+
+- Shipped one shared strict `use_api_key` contract. `AgentNode` normalizes it once; Claude's false
+  mode still blanks only `ANTHROPIC_API_KEY` in SDK options; Codex false mode copies and sanitizes
+  the child environment, requires recognized account auth before every possible model call, and
+  appends the final OpenAI provider override. True mode skips the Codex status guard and preserves
+  explicit key/profile/provider configuration without requiring a key or mutating credentials.
+- Codex authentication failures are fail-closed, secret-safe, and non-retriable. The classifier
+  tolerates unrelated warnings around one recognized status but rejects API-key, personal-token,
+  Bedrock, logged-out/non-zero, conflicting, and unknown/future output. Status launch absence and
+  timeout are converted at the preflight boundary; `translate_error()` preserves those errors
+  unchanged so PocketFlow performs one status call and zero model calls.
+- Updated every Phase 6-named guide/reference/architecture/example/changelog surface. The public
+  guarantee now names the controls precisely and records the Codex compatibility change; it does
+  not claim that custom providers/proxies/base URLs, account credits, auto-reload, overage, or
+  administrator policy cannot be metered. `pflow guide agent` rendered successfully and manual
+  inspection confirmed the shared parameter table, both auth modes, remediation, and caveat.
+- Verification: focused shared-validation/Codex tests passed 104 with one paid e2e deselected; the
+  full affected surface passed 274 with one paid e2e deselected. Repository-wide Ruff lint/format,
+  mypy (253 source files), deptry (254 files), applicable changed-file hooks, and `git diff --check`
+  passed. The complete `make check` gate passed outside the macOS sandbox, including lock
+  consistency, asset sync, all pre-commit hooks, Ruff, mypy, and deptry.
+- Deviation required to make the mandated gate truthful: Phase 5 had committed its authoritative
+  `.claude/agents/review-feature-interactions.md` rename but left the derived
+  `.codex/agents/review-feature-interactions.toml` stale because that path was read-only in the
+  sandbox. Regenerated exactly that one derived file with `make sync-claude-assets`; its two-line
+  semantic diff replaces the old node/class names and `make check` now confirms synchronization.
+- No real model turn, paid/API-key e2e, login/logout, credential mutation, or `codex login status`
+  reality check was run. Those are intentionally unnecessary for this guard phase; the existing
+  paid Codex smoke remains deselected pending explicit owner authorization. No commit was created.
+
+## 2026-07-13 — Phase 6 deep-review fixes completed
+
+- Ran a three-specialist code-mode deep review over the unstaged Phase 6 scope: silent failures /
+  secret handling, validation and impact completeness, and test fidelity / feature interactions.
+  The allowlists, metadata seam, provider precedence, environment isolation, retry sequencing, and
+  named documentation surfaces reviewed cleanly. Reviewers found three concrete warnings and one
+  redaction hardening opportunity; the user approved all four fixes.
+- Removed retained timeout diagnostics completely. Because `TimeoutExpired` can carry partial
+  stdout/stderr, the sanitized Codex preflight error is now raised after leaving the `except` block;
+  its `__cause__` and `__context__` are both `None`. A regression test supplies secret-bearing
+  partial output and asserts that neither text nor exception linkage survives.
+- Corrected opt-in remediation to match the permission-only contract. Claude no longer claims that
+  `use_api_key: true` proves `ANTHROPIC_API_KEY` was effective; it gives conditional key guidance and
+  account-login verification. Codex post-exec auth failures now branch on the normalized flag so
+  opt-in mode points to environment/profile/provider credentials before offering account-login mode.
+- Invalid shared `use_api_key` values now report only their type, never the value. A secret-shaped
+  rejected string test pins redaction. This preserves the exact accepted bool/int/string forms while
+  removing an avoidable template/input secret exposure.
+- Verification after fixes: 50 targeted auth/redaction tests passed; the full affected non-e2e
+  surface passed 277 with one paid Codex e2e deselected; focused Ruff lint/format passed; and the
+  complete `make check` gate passed outside the macOS sandbox (lock consistency, asset sync, Ruff,
+  all pre-commit hooks, mypy, and deptry). No live provider call or commit was made.

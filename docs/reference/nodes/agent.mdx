@@ -28,6 +28,7 @@ Use `llm` for text processing that does not need repository tools. Use `code`, `
 | `system_prompt` | str | No | - | Additional backend system/developer instructions |
 | `resume` | str | No | - | Session/thread ID from a previous agent call |
 | `schema_retries` | int | No | `1` | Corrective structured-output attempts (0–5) |
+| `use_api_key` | bool | No | `false` | Permit API-key or configured-provider billing |
 
 Parameters remain flat. A backend-only parameter used with the other backend is a validation error, so a workflow cannot silently ignore a misspelled or misplaced permission setting.
 
@@ -40,7 +41,6 @@ Parameters remain flat. A backend-only parameter used with the other backend is 
 | `max_turns` | int | No | `50` | Maximum turns (1–100; at least 2 with `output_schema`) |
 | `max_thinking_tokens` | int | No | `8000` | Reasoning budget (1000–100000) |
 | `sandbox` | dict | No | None | Claude Agent SDK sandbox settings |
-| `use_api_key` | bool | No | `false` | Use `ANTHROPIC_API_KEY` and Anthropic Console billing instead of a Claude Pro/Max subscription |
 
 Claude sandbox keys include `enabled`, `autoAllowBashIfSandboxed`, `excludedCommands`, `allowUnsandboxedCommands`, `network`, `enableWeakerNestedSandbox`, and `ignoreViolations`. The backend passes unknown keys through for SDK forward compatibility while validating known value shapes.
 
@@ -184,6 +184,8 @@ Claude resumes by SDK session ID. Codex resumes its on-disk CLI thread, so the I
 
 ## Authentication
 
+`use_api_key` is shared by both backends and fails closed on ambiguous values. Pflow never logs in, stores credentials, or requires a key; `true` is explicit permission for API-key or configured-provider billing.
+
 <Tabs>
   <Tab title="Claude subscription">
     ```bash
@@ -192,7 +194,7 @@ Claude resumes by SDK session ID. Codex resumes its on-disk CLI thread, so the I
     claude auth status
     ```
 
-    This is the default. The node blanks `ANTHROPIC_API_KEY` for the Claude subprocess only, because Claude Code otherwise prefers an ambient key and bills Anthropic Console even when a Pro/Max subscription is logged in. Sibling `llm` nodes still see the original environment.
+    With `use_api_key: false`, the node blanks `ANTHROPIC_API_KEY` for the Claude subprocess only so Claude Code can use its account/subscription login. Sibling `llm` nodes still see the original environment.
 
     Use `claude setup-token` for non-interactive subscription setup.
   </Tab>
@@ -203,17 +205,32 @@ Claude resumes by SDK session ID. Codex resumes its on-disk CLI thread, so the I
     pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
     ```
 
-    This opts into Anthropic Console per-token billing. The flag fails closed on ambiguous values so a string such as `"false"` cannot accidentally enable billing.
+    This permits Anthropic Console per-token billing. The flag fails closed on ambiguous values so a string such as `"false"` cannot accidentally enable billing.
   </Tab>
   <Tab title="Codex login">
     ```bash
     npm install -g @openai/codex
     codex login
+    codex login status
     ```
 
-    The node uses the CLI's existing ChatGPT login and Codex configuration. It does not accept an OpenAI API key parameter.
+    With `use_api_key: false`, the node removes `OPENAI_API_KEY` and `CODEX_API_KEY` from a child-only environment, requires recognized ChatGPT/account access-token auth through `codex login status`, and pins the OpenAI provider selector before each model turn. Parent and sibling environments are unchanged.
+  </Tab>
+  <Tab title="Codex API/provider opt-in">
+    Set `use_api_key: true` only when you intend API-key or configured-provider billing:
+
+    ```markdown
+    - type: agent
+    - backend: codex
+    - use_api_key: true
+    - prompt: Implement the requested change and run focused tests.
+    ```
+
+    True mode skips the account-auth preflight and preserves key, profile, and provider configuration. Existing Codex workflows that intentionally use API-key auth must add this flag or they now fail before the model call.
   </Tab>
 </Tabs>
+
+False mode controls the named first-party key variables, recognized stored API-key auth, and ordinary provider selection. It cannot prove custom profiles, providers, proxies, or base URLs are unmetered, and it cannot prevent account credits, auto-reload, overage, or administrator policy from applying.
 
 ## Error handling
 
@@ -222,7 +239,7 @@ Claude resumes by SDK session ID. Codex resumes its on-disk CLI thread, so the I
 | Claude CLI not found | Claude Code is not installed | `npm install -g @anthropic-ai/claude-code` |
 | Claude authentication failed | No subscription login, or invalid Console key in API-key mode | Run `claude auth login`, or check `ANTHROPIC_API_KEY` when `use_api_key: true` |
 | Codex CLI not found | Codex is not installed | `npm install -g @openai/codex` |
-| Codex authentication failed | CLI login is missing or expired | Run `codex login` |
+| Codex authentication failed | Account login is missing, expired, unrecognized, or API-key auth was not opted into | Run `codex login` / `codex login status`, or add `use_api_key: true` only when API/provider billing is intended |
 | Timeout | The task exceeded the configured subprocess/session limit | Increase `timeout` or split the task |
 | Cross-backend parameter error | A Claude-only parameter was used with Codex, or vice versa | Move to the matching backend or remove the parameter |
 

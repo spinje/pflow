@@ -13,6 +13,7 @@ from pflow.nodes.agent.schema_validation import (
     TopLevelObjectViolation,
     is_legacy_python_alias_schema,
     top_level_object_violation,
+    validate_use_api_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,11 +34,11 @@ class AgentNode(Node):
     - Params: system_prompt: str  # Backend system instructions (optional)
     - Params: resume: str  # Session/thread ID to resume (optional)
     - Params: schema_retries: int  # Corrective structured-output retries (default: 1; max: 5)
+    - Params: use_api_key: bool  # Permit API-key/provider billing (default false)
     - Params: allowed_tools: list  # Claude-only permitted tools (optional)
     - Params: disallowed_tools: list  # Claude-only denied tools (optional)
     - Params: max_turns: int  # Claude-only maximum turns (default: 50)
     - Params: max_thinking_tokens: int  # Claude-only reasoning budget (default: 8000)
-    - Params: use_api_key: bool  # Claude-only opt-in to Anthropic API-key billing
     - Params: approval_policy: str  # Codex-only approval policy override (optional)
     - Params: add_dir: list  # Codex-only additional writable directories (optional)
     - Params: profile: str  # Codex-only CLI profile (optional)
@@ -278,6 +279,7 @@ class AgentNode(Node):
             "resume": self._validate_resume(self.params.get("resume")),
             "timeout": self._validate_timeout(self.params.get("timeout")),
             "schema_retries": self._validate_schema_retries(self.params.get("schema_retries")),
+            "use_api_key": validate_use_api_key(self.params.get("use_api_key")),
             "_backend": backend,
         }
         prepared.update(backend.validate_params(self.params))

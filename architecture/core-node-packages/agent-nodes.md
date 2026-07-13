@@ -8,9 +8,9 @@ The `agent` node is pflow's intentional exception to the [simple node philosophy
 |---|---|---|
 | `agent` | `backend` (`claude` or `codex`), `prompt` | `result` (text or parsed structured output) |
 
-Shared parameters are `prompt`, `inputs`, `model`, `cwd`, `output_schema`, `resume`, `timeout`, `system_prompt`, and `schema_retries`. Backend-only parameters remain flat:
+Shared parameters are `prompt`, `inputs`, `model`, `cwd`, `output_schema`, `resume`, `timeout`, `system_prompt`, `schema_retries`, and `use_api_key`. Backend-only parameters remain flat:
 
-- Claude: `allowed_tools`, `disallowed_tools`, `max_turns`, `max_thinking_tokens`, `use_api_key`, and a dict-shaped `sandbox`.
+- Claude: `allowed_tools`, `disallowed_tools`, `max_turns`, `max_thinking_tokens`, and a dict-shaped `sandbox`.
 - Codex: `approval_policy`, `add_dir`, `profile`, `config`, and a string `sandbox` mode.
 
 The static validator and runtime backend validation share the parameter sets from `nodes/agent/schema_validation.py`. This is load-bearing: registry metadata must list the union so valid workflows pass unknown-parameter validation, while the backend-aware layer rejects a parameter that belongs to the other backend.
@@ -51,11 +51,15 @@ The boundary matters because the transports are not interchangeable. Claude yiel
 
 Claude defaults to `claude-sonnet-4-5`. It normalizes the SDK's split input/cache fields into pflow's inclusive `input_tokens` contract and carries the SDK's API-equivalent `total_cost_usd` as `cost_usd`.
 
-Authentication defaults to a Claude Pro/Max subscription. The backend blanks `ANTHROPIC_API_KEY` in the child environment unless `use_api_key: true`, preventing an ambient key from silently switching the CLI to Anthropic Console billing.
+Authentication defaults to Claude account/subscription mode. The backend blanks `ANTHROPIC_API_KEY` in the child environment unless `use_api_key: true`, preventing that named ambient key from silently switching the CLI to Anthropic Console billing.
 
 ### Codex
 
 `CodexBackend` invokes the installed `codex exec` executable with a shell-free argv list, `stdin=DEVNULL`, an execution timeout, and unique temporary files for the final message and optional schema.
+
+By default, the backend copies the parent environment, removes `OPENAI_API_KEY` and `CODEX_API_KEY`, requires a recognized ChatGPT/account access-token result from `codex login status`, and passes that same child environment to `codex exec`. It also appends `model_provider="openai"` after caller overrides. Each possible model call—including a schema-correction resume—gets a fresh preflight. Deterministic status failures are non-retriable and raw status text is never retained in the exception.
+
+`use_api_key: true` is the shared escape hatch: Codex skips the account preflight and preserves key/profile/provider configuration, while Claude stops blanking `ANTHROPIC_API_KEY`. This grants permission; it neither requires a key nor changes credentials. The false-mode boundary covers named first-party key variables, recognized stored Codex API-key auth, and ordinary provider selection—not custom proxies/base URLs, account credits, auto-reload, overage, or administrator policy.
 
 The channels have distinct jobs:
 

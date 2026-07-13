@@ -7,7 +7,7 @@ Features:
 - Native JSON Schema structured output
 - Metadata capture (cost, duration, token usage) in `llm_usage`
 - Tool use (Read, Write, Edit, Bash, Glob, Grep, LS, WebFetch, WebSearch)
-- Subscription-first auth: Claude Pro/Max by default; opt into API-key billing with `use_api_key: true`
+- Account/subscription-first auth: named API-key paths are disabled by default; opt into API/provider billing with `use_api_key: true`
 
 ## Examples
 
@@ -131,10 +131,12 @@ ${node.llm_usage.session_id}                    # Resumable session ID
 
 ## Authentication
 
-By default this node uses your **Claude Pro/Max subscription** and blanks `ANTHROPIC_API_KEY` for the Claude subprocess, so an ambient key (including one stored via `pflow settings set-env` for the `llm` node) never silently bills your Anthropic Console per token.
+With `use_api_key: false` (the default), the Claude backend blanks `ANTHROPIC_API_KEY` for its subprocess so the CLI can use account/subscription auth. An ambient key—including one stored for sibling `llm` nodes—does not silently select Anthropic Console billing for this subprocess. The parent environment remains unchanged.
 
-- **Subscription (default)**: `claude auth login` (or `claude setup-token` for non-interactive/CI) - no per-token charges. Check with `claude auth status`.
+- **Account/subscription (default)**: `claude auth login` (or `claude setup-token` for non-interactive/CI). Check with `claude auth status`.
 - **API key (opt in)**: set `- use_api_key: true` on the node, with `ANTHROPIC_API_KEY` in the environment (e.g. `pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."`) - bills your Anthropic Console per token.
+
+The false mode controls the named environment key. Account credits, auto-reload, overage, and administrator policy remain provider/account controls and may still apply.
 
 ## Parameters
 
@@ -152,7 +154,7 @@ By default this node uses your **Claude Pro/Max subscription** and blanks `ANTHR
 | `system_prompt`       | None                | System instructions                                         |
 | `resume`              | None                | Session ID to resume a previous conversation                |
 | `sandbox`             | None                | Sandbox configuration (see node docstring for full schema)  |
-| `use_api_key`         | `false`             | Bill to `ANTHROPIC_API_KEY` (Console); default uses subscription |
+| `use_api_key`         | `false`             | Shared permission for API-key/provider billing; Claude false mode blanks `ANTHROPIC_API_KEY` |
 
 ## Best practices
 
@@ -168,7 +170,7 @@ By default this node uses your **Claude Pro/Max subscription** and blanks `ANTHR
 - **Top-level array schema rejected** - wrap arrays or primitives inside a top-level object property.
 - **High cost** - reduce `max_turns`, tighten the prompt, or restrict `allowed_tools`.
 - **Timeouts** - break complex tasks into smaller steps or raise `timeout`.
-- **Authentication failed** - by default this node uses your subscription; run `claude auth login` (check with `claude auth status`), or set `- use_api_key: true` to bill `ANTHROPIC_API_KEY` to your Anthropic Console.
+- **Authentication failed** - default mode uses your account/subscription login; run `claude auth login` (check with `claude auth status`), or set `- use_api_key: true` only when you intend `ANTHROPIC_API_KEY` billing through Anthropic Console.
 
 ## See also
 

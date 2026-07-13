@@ -116,8 +116,14 @@ rss: true
     ### Storage Mode Removed
     The `storage_mode` parameter has been deleted entirely.
 
-    ### Claude Code Billing
-    Claude Code nodes now default to subscription billing; use the `use_api_key: true` parameter to opt into standard API-key billing.
+    ### Agent API-key opt-in
+    `use_api_key` is now one shared strict permission on `agent` nodes. In false/default mode,
+    Claude blanks `ANTHROPIC_API_KEY`; Codex removes `OPENAI_API_KEY` / `CODEX_API_KEY`, requires
+    recognized account auth from `codex login status`, and pins the OpenAI provider selector.
+    Existing Codex workflows that intentionally use API-key or configured-provider billing must
+    add `use_api_key: true` or they now fail before the model call. This guard controls the named
+    key and ordinary provider paths; account credits, auto-reload, overage, custom proxies/base
+    URLs, and administrator policy remain provider/user controls.
 
     ### MCP Result Access
     MCP nodes no longer copy top-level result fields into `${node.field}` or create a `{server}_{tool}_result` alias. Access tool output through the canonical `${node.result.field}` path instead.

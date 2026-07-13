@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import re
 import subprocess
 import tempfile
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +36,15 @@ _AUTH_ERROR_MARKERS = (
     "unauthorized",
 )
 _BARE_TOML_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+_LOGIN_STATUS_TIMEOUT_SECONDS = 10
+
+
+class _AuthClass(Enum):
+    ACCOUNT = "account"
+    API_KEY = "api_key"
+    UNSUPPORTED_CREDENTIAL = "unsupported_credential"
+    LOGGED_OUT = "logged_out"
+    UNKNOWN = "unknown"
 
 
 class CodexNonRetriableError(PflowError):
@@ -76,6 +87,36 @@ class _ParsedEvents:
     progress_events: list[dict[str, Any]] = field(default_factory=list)
     failure_messages: list[str] = field(default_factory=list)
     usage_available: bool = False
+
+
+def _build_child_env(use_api_key: bool) -> dict[str, str]:
+    """Copy the process environment and remove known API keys in safe mode."""
+    env = os.environ.copy()
+    if not use_api_key:
+        env.pop("CODEX_API_KEY", None)
+        env.pop("OPENAI_API_KEY", None)
+    return env
+
+
+def _classify_login_status(stdout: str, stderr: str) -> _AuthClass:
+    """Classify recognized ``codex login status`` lines without retaining text."""
+    recognized: set[_AuthClass] = set()
+    for raw_line in (*stdout.splitlines(), *stderr.splitlines()):
+        line = raw_line.strip()
+        if line in {"Logged in using ChatGPT", "Logged in using access token"}:
+            recognized.add(_AuthClass.ACCOUNT)
+        elif line.startswith("Logged in using an API key - "):
+            recognized.add(_AuthClass.API_KEY)
+        elif line in {
+            "Logged in using personal access token",
+            "Logged in using Amazon Bedrock API key",
+        }:
+            recognized.add(_AuthClass.UNSUPPORTED_CREDENTIAL)
+        elif line == "Not logged in":
+            recognized.add(_AuthClass.LOGGED_OUT)
+    if len(recognized) != 1:
+        return _AuthClass.UNKNOWN
+    return next(iter(recognized))
 
 
 def _toml_key(value: str) -> str:
@@ -183,6 +224,11 @@ class CodexBackend:
         return value
 
     def run(self, prompt: str, options: dict[str, Any]) -> AgentResult:
+        use_api_key = bool(options.get("use_api_key"))
+        env = _build_child_env(use_api_key)
+        if not use_api_key:
+            self._require_account_auth(options, env)
+
         with tempfile.TemporaryDirectory(prefix="pflow-codex-") as temp_dir:
             temp_path = Path(temp_dir)
             message_path = temp_path / "last-message.txt"
@@ -205,6 +251,7 @@ class CodexBackend:
                 encoding="utf-8",
                 timeout=options["timeout"],
                 check=False,
+                env=env,
             )
             duration_ms = round((time.monotonic() - started) * 1000)
             try:
@@ -282,6 +329,64 @@ class CodexBackend:
                 structured_output=structured_output,
             )
 
+    @staticmethod
+    def _require_account_auth(options: dict[str, Any], env: dict[str, str]) -> None:
+        """Require recognized Codex account auth before a safe-mode model call."""
+        completed: subprocess.CompletedProcess[str] | None = None
+        try:
+            completed = subprocess.run(
+                ["codex", "login", "status"],  # noqa: S607 - fixed executable resolved from PATH
+                cwd=options["cwd"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=_LOGIN_STATUS_TIMEOUT_SECONDS,
+                check=False,
+                env=env,
+            )
+        except FileNotFoundError as exc:
+            raise CodexNonRetriableError(
+                "Codex CLI was not found on PATH. Install it with "
+                "`npm install -g @openai/codex`, then authenticate with `codex login`."
+            ) from exc
+        except subprocess.TimeoutExpired:
+            # Raise only after leaving the except block. ``TimeoutExpired`` can
+            # retain partial stdout/stderr, so even ``raise ... from None``
+            # inside the handler would leave secret-bearing data reachable via
+            # ``__context__``.
+            pass
+
+        if completed is None:
+            raise CodexNonRetriableError(
+                "Codex authentication check timed out after 10 seconds. Run `codex login status` manually and retry."
+            ) from None
+
+        auth_class = _classify_login_status(completed.stdout, completed.stderr)
+        if completed.returncode == 0 and auth_class is _AuthClass.ACCOUNT:
+            return
+        if auth_class is _AuthClass.API_KEY:
+            raise CodexNonRetriableError(
+                "Codex is logged in with API-key authentication, but `use_api_key` is false. "
+                "Add `use_api_key: true` only if you intend API-key/provider billing, or run "
+                "`codex login` for account authentication. Inspect the active mode with "
+                "`codex login status`."
+            )
+        if auth_class is _AuthClass.UNSUPPORTED_CREDENTIAL:
+            raise CodexNonRetriableError(
+                "Codex is using an unsupported credential type for safe mode. Run `codex login` "
+                "for account authentication, then verify it with `codex login status`."
+            )
+        if completed.returncode != 0 or auth_class is _AuthClass.LOGGED_OUT:
+            raise CodexNonRetriableError(
+                "Codex account authentication is unavailable. Run `codex login`, then verify "
+                "the account login with `codex login status`."
+            )
+        raise CodexNonRetriableError(
+            "Codex authentication status was not recognized. Inspect `codex login status` "
+            "manually; use `codex login` to establish account authentication."
+        )
+
     def _build_argv(
         self,
         prompt: str,
@@ -342,6 +447,8 @@ class CodexBackend:
             self._append_config(argv, "approval_policy", options["approval_policy"])
         if options.get("system_prompt"):
             self._append_config(argv, "developer_instructions", options["system_prompt"])
+        if not options.get("use_api_key"):
+            self._append_config(argv, "model_provider", "openai")
 
     @staticmethod
     def _append_config(argv: list[str], key: str, value: Any) -> None:
@@ -436,6 +543,8 @@ class CodexBackend:
         return continuation
 
     def translate_error(self, exc: Exception, options: dict[str, Any]) -> Exception:
+        if isinstance(exc, CodexNonRetriableError):
+            return exc
         logger.error("Codex execution failed: %s", exc, exc_info=exc)
         if isinstance(exc, FileNotFoundError):
             return CodexNonRetriableError(
@@ -454,6 +563,14 @@ class CodexBackend:
                 part for part in [exc.stderr.strip(), exc.stdout.strip(), *exc.failure_messages] if part
             ) or str(exc)
         if any(marker in error_text.lower() for marker in _AUTH_ERROR_MARKERS):
+            if options.get("use_api_key"):
+                return CodexNonRetriableError(
+                    "Codex authentication failed while API-key/provider billing is permitted "
+                    "(`use_api_key: true`). Check `OPENAI_API_KEY`, `CODEX_API_KEY`, and any "
+                    "configured profile/provider credentials. To use account authentication "
+                    "instead, remove `use_api_key: true`, run `codex login`, and verify with "
+                    f"`codex login status`.\nOriginal error: {error_text}"
+                )
             return CodexNonRetriableError(
                 f"Codex authentication failed. Run `codex login` and retry.\nOriginal error: {error_text}"
             )

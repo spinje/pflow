@@ -27,6 +27,7 @@ SHARED_PARAMS: Final[frozenset[str]] = frozenset({
     "timeout",
     "system_prompt",
     "schema_retries",
+    "use_api_key",
 })
 """Parameters whose shape is shared by every agent backend."""
 
@@ -36,7 +37,6 @@ CLAUDE_PARAMS: Final[frozenset[str]] = frozenset({
     "max_turns",
     "max_thinking_tokens",
     "sandbox",
-    "use_api_key",
 })
 """Parameters accepted by the Claude backend."""
 
@@ -76,6 +76,32 @@ class TopLevelObjectViolation(NamedTuple):
 
     cause: str
     kind: Literal["non_object_type", "missing_type"]
+
+
+def validate_use_api_key(value: Any) -> bool:
+    """Resolve the shared API-key/provider billing permission to a strict bool.
+
+    Runtime template values may arrive as strings, so Python truthiness is not
+    safe here: ``"false"`` must remain false. Accept only the canonical forms
+    supported by the pre-existing Claude contract and fail closed otherwise.
+    """
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("true", "1", "yes"):
+            return True
+        if normalized in ("false", "0", "no"):
+            return False
+    raise TypeError(
+        f"use_api_key must be true or false, got {type(value).__name__}. Set it to true only when "
+        "you intend to permit API-key or configured-provider billing; otherwise omit "
+        "it or set it to false."
+    )
 
 
 def is_legacy_python_alias_schema(schema: dict[str, Any]) -> bool:

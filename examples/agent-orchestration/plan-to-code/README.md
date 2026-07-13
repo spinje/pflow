@@ -13,8 +13,10 @@ a fresh `git worktree` is the recommended isolation (and the only safe way to ru
 that has uncommitted changes).
 **Prerequisites:** `gh` authenticated with push + PR rights on `origin`; the review-lens
 subagents named in `plan_lenses`/`review_lenses` must exist as `.claude/agents/<name>.md` in the
-target repo (preflight verifies). Claude runs on your subscription by default (no API billing;
-opt into Anthropic Console billing per-node with `use_api_key: true`).
+target repo (preflight verifies). The workflow's Claude agents default to account/subscription
+mode and blank `ANTHROPIC_API_KEY` in their child processes; set `use_api_key: true` per node only
+when Anthropic Console billing is intended. Account credits, overage, and administrator policy
+remain provider/account controls.
 
 ```mermaid
 graph TD

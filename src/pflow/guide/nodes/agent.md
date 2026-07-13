@@ -9,11 +9,11 @@
 - `claude` runs Claude Code.
 - `codex` runs the installed `codex exec` CLI.
 
-All parameters are flat. Shared parameters work with either backend: `prompt`, `inputs`, `model`, `cwd`, `output_schema`, `resume`, `timeout`, `system_prompt`, and `schema_retries`. Backend-only parameters are rejected when paired with the other backend.
+All parameters are flat. Shared parameters work with either backend: `prompt`, `inputs`, `model`, `cwd`, `output_schema`, `resume`, `timeout`, `system_prompt`, `schema_retries`, and `use_api_key`. Backend-only parameters are rejected when paired with the other backend.
 
 | Backend | Backend-specific parameters | `sandbox` shape |
 |---|---|---|
-| `claude` | `allowed_tools`, `disallowed_tools`, `max_turns`, `max_thinking_tokens`, `use_api_key` | dict of Claude sandbox settings |
+| `claude` | `allowed_tools`, `disallowed_tools`, `max_turns`, `max_thinking_tokens` | dict of Claude sandbox settings |
 | `codex` | `approval_policy`, `add_dir`, `profile`, `config` | `read-only`, `workspace-write`, or `full-access` |
 
 When `model` is omitted, Claude uses `claude-sonnet-4-5`; Codex inherits the model from its CLI configuration. Codex defaults to `workspace-write` when `sandbox` is omitted.
@@ -130,6 +130,8 @@ Schema retries use the same continuation mechanism automatically. If a backend c
 
 ## Authentication
 
+`use_api_key` is a shared strict boolean and defaults to `false`. Set it to `true` only when you intend to permit API-key or configured-provider billing. Pflow never logs in, stores credentials, or requires a key on your behalf.
+
 ### Claude
 
 Install and authenticate Claude Code once:
@@ -140,7 +142,7 @@ claude auth login
 claude auth status
 ```
 
-By default, `backend: claude` uses your Claude Pro/Max subscription. The node blanks `ANTHROPIC_API_KEY` for the Claude subprocess only, because the CLI otherwise prefers an ambient key and silently switches to Anthropic Console billing. The parent environment is unchanged, so sibling `llm` nodes can still use the stored key.
+With `use_api_key: false`, `backend: claude` blanks `ANTHROPIC_API_KEY` for the Claude subprocess only so the CLI can use its account/subscription login. The parent environment is unchanged, so sibling `llm` nodes can still use the stored key.
 
 Set `use_api_key: true` only when you intend to bill `ANTHROPIC_API_KEY` to Anthropic Console:
 
@@ -153,7 +155,7 @@ Set `use_api_key: true` only when you intend to bill `ANTHROPIC_API_KEY` to Anth
 - prompt: Refactor this module and run its tests.
 ```
 
-For non-interactive subscription setup, use `claude setup-token`. If authentication fails in default mode, run `claude auth login`; if `use_api_key: true`, check the key and Console credit instead.
+For non-interactive subscription setup, use `claude setup-token`. If authentication fails in default mode, run `claude auth login`; if `use_api_key: true`, check the key and Console credit instead. The false mode controls the named environment key; it cannot prevent account credits, auto-reload, overage, or administrator policy from applying.
 
 ### Codex
 
@@ -162,9 +164,23 @@ Install the CLI and authenticate with your ChatGPT account:
 ```bash
 npm install -g @openai/codex
 codex login
+codex login status
 ```
 
-The backend uses the CLI's existing login and configuration; no OpenAI API key parameter exists on the node. Missing CLI and login errors include these commands in their remediation text.
+With `use_api_key: false`, the backend removes `OPENAI_API_KEY` and `CODEX_API_KEY` from its child-only environment, requires a recognized ChatGPT/account access-token login via `codex login status`, and pins the OpenAI provider selector before every possible model turn. The status and model subprocess receive the same sanitized environment; the parent and sibling nodes are unchanged.
+
+Existing Codex workflows that intentionally use stored or environment API-key auth must now opt in:
+
+```markdown
+### implement
+
+- type: agent
+- backend: codex
+- use_api_key: true
+- prompt: Refactor this module and run its tests.
+```
+
+True mode skips the account-auth guard and preserves configured profile/provider/key behavior. Custom providers, proxies, base URLs, account credits, auto-reload, overage, and administrator policy remain user/provider controls and can still be metered. Missing CLI and login errors name `codex login` and `codex login status` without exposing captured credential status.
 
 ## Choosing permissions
 

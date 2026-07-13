@@ -1669,6 +1669,16 @@ def test_static_validator_accepts_shared_inputs_param(backend: str) -> None:
     assert diagnostics == []
 
 
+@pytest.mark.parametrize("backend", ["claude", "codex"])
+def test_static_validator_accepts_shared_use_api_key_param(backend: str) -> None:
+    diagnostics = WorkflowValidator._validate_agent_params(
+        "review",
+        {"backend": backend, "prompt": "test", "use_api_key": True},
+    )
+
+    assert diagnostics == []
+
+
 def test_runtime_validator_accepts_shared_inputs_param(agent_node: Any) -> None:
     agent_node.params = {
         "backend": "claude",
@@ -1771,17 +1781,6 @@ def test_use_api_key_invalid_value_raises(agent_node):
     assert "use_api_key must be true or false" in str(exc_info.value)
 
 
-def test_use_api_key_accepts_int_0_and_1(agent_node):
-    """Integer 0/1 is accepted (YAML coerces `- use_api_key: 1` to int, and the
-    string forms "1"/"0" are already accepted). 2+ still fails closed."""
-    v = ClaudeBackend()._validate_use_api_key
-    assert v(1) is True
-    assert v(0) is False
-    for bad in (2, -1, 42):
-        with pytest.raises(TypeError):
-            v(bad)
-
-
 def test_default_does_not_mutate_os_environ(monkeypatch, agent_node):
     """The empty-string override must NOT touch os.environ — a sibling llm node
     in the same workflow keeps reading the real key for LiteLLM. This pins the
@@ -1797,11 +1796,18 @@ def test_default_does_not_mutate_os_environ(monkeypatch, agent_node):
     assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-real"
 
 
-def test_use_api_key_registered_as_bool_param():
-    """use_api_key is a declared bool param — this drives the validator allow-list."""
+@pytest.mark.parametrize("backend", ["claude", "codex"])
+def test_use_api_key_registered_as_shared_bool_param(backend: str):
+    """The shared bool declaration drives the backend-blind metadata allowlist."""
     md = PflowMetadataExtractor().extract_metadata(AgentNode)
     params = {p["key"]: p["type"] for p in md["params"]}
     assert params.get("use_api_key") == "bool"
+
+    diagnostics = WorkflowValidator._validate_agent_params(
+        "agent",
+        {"backend": backend, "prompt": "test", "use_api_key": False},
+    )
+    assert diagnostics == []
 
 
 # --- Auth-failure guidance (exec_fallback) ---
@@ -1834,15 +1840,17 @@ def test_exec_fallback_auth_default_suggests_subscription(agent_node):
 
 
 def test_exec_fallback_auth_with_api_key_suggests_fixing_key(agent_node):
-    """Opt-in auth failure points to the Console key, not subscription setup."""
+    """Opt-in guidance covers either effective credential without assuming a key."""
     with pytest.raises(ValueError) as exc_info:
         agent_node.exec_fallback(
             {"_backend": ClaudeBackend(), "use_api_key": True}, Exception("Your credit balance is too low")
         )
     msg = str(exc_info.value)
-    assert "Anthropic Console" in msg
+    assert "grants permission but does not prove" in msg
+    assert "ANTHROPIC_API_KEY" in msg
     assert "Remove `- use_api_key: true`" in msg
-    assert "claude auth login" not in msg
+    assert "claude auth login" in msg
+    assert "claude auth status" in msg
 
 
 def test_exec_fallback_non_auth_error_has_no_auth_guidance(agent_node):
