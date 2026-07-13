@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,7 @@ from pflow.nodes.agent.codex_backend import (
     _AuthClass,
     _build_child_env,
     _classify_login_status,
+    _run_codex_process,
     _toml_value,
 )
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
@@ -71,23 +74,27 @@ def _install_fake_run(
     calls: list[tuple[list[str], dict[str, Any]]] = []
     queued_messages = list(messages or ["hello from codex"])
 
-    def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    def fake_status_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append((argv, kwargs))
-        if argv == ["codex", "login", "status"]:
-            if status_exception is not None:
-                raise status_exception
-            return subprocess.CompletedProcess(
-                argv,
-                status_returncode,
-                stdout=status_stdout,
-                stderr=status_stderr,
-            )
+        assert argv == ["codex", "login", "status"]
+        if status_exception is not None:
+            raise status_exception
+        return subprocess.CompletedProcess(
+            argv,
+            status_returncode,
+            stdout=status_stdout,
+            stderr=status_stderr,
+        )
+
+    def fake_model_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append((argv, kwargs))
         message_path = Path(argv[argv.index("--output-last-message") + 1])
         message = queued_messages.pop(0) if queued_messages else "hello from codex"
         message_path.write_text(message, encoding="utf-8")
         return subprocess.CompletedProcess(argv, returncode, stdout=stdout, stderr=stderr)
 
-    monkeypatch.setattr(codex_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(codex_module.subprocess, "run", fake_status_run)
+    monkeypatch.setattr(codex_module, "_run_codex_process", fake_model_run)
     return calls
 
 
@@ -97,6 +104,128 @@ def _model_calls(calls: list[tuple[list[str], dict[str, Any]]]) -> list[tuple[li
 
 def _status_calls(calls: list[tuple[list[str], dict[str, Any]]]) -> list[tuple[list[str], dict[str, Any]]]:
     return [call for call in calls if call[0] == ["codex", "login", "status"]]
+
+
+class TestCodexProcessLifecycle:
+    def test_posix_timeout_kills_process_group_and_drains_pipes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        argv = ["codex", "exec", "--", "test"]
+        communicate_timeouts: list[int] = []
+        killed_groups: list[tuple[int, int]] = []
+        popen_kwargs: dict[str, Any] = {}
+
+        class FakeProcess:
+            pid = 1234
+            returncode = -9
+            kill_calls = 0
+
+            def communicate(self, *, timeout: int) -> tuple[str, str]:
+                communicate_timeouts.append(timeout)
+                if len(communicate_timeouts) == 1:
+                    raise subprocess.TimeoutExpired(argv, timeout, output="partial", stderr="warning")
+                return "drained stdout", "drained stderr"
+
+            def kill(self) -> None:
+                self.kill_calls += 1
+
+        process = FakeProcess()
+
+        def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
+            assert command == argv
+            popen_kwargs.update(kwargs)
+            return process
+
+        monkeypatch.setattr(codex_module, "_IS_WINDOWS", False)
+        monkeypatch.setattr(codex_module.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(
+            codex_module.os,
+            "killpg",
+            lambda process_group, sig: killed_groups.append((process_group, sig)),
+        )
+
+        with pytest.raises(subprocess.TimeoutExpired) as exc_info:
+            _run_codex_process(argv, cwd="/work", timeout=30, env={"SAFE": "1"})
+
+        assert popen_kwargs == {
+            "cwd": "/work",
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "encoding": "utf-8",
+            "env": {"SAFE": "1"},
+            "start_new_session": True,
+        }
+        assert communicate_timeouts == [30, 1]
+        assert killed_groups == [(1234, codex_module.signal.SIGKILL)]
+        assert process.kill_calls == 1
+        assert exc_info.value.output == "drained stdout"
+        assert exc_info.value.stderr == "drained stderr"
+
+    def test_windows_timeout_uses_taskkill_for_descendants(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        argv = ["codex", "exec", "--", "test"]
+        popen_kwargs: dict[str, Any] = {}
+        taskkill_calls: list[tuple[list[str], dict[str, Any]]] = []
+
+        class FakeProcess:
+            pid = 2468
+            returncode = 1
+            communicate_calls = 0
+            kill_calls = 0
+
+            def communicate(self, *, timeout: int) -> tuple[str, str]:
+                self.communicate_calls += 1
+                if self.communicate_calls == 1:
+                    raise subprocess.TimeoutExpired(argv, timeout)
+                return "", ""
+
+            def kill(self) -> None:
+                self.kill_calls += 1
+
+        process = FakeProcess()
+
+        def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
+            assert command == argv
+            popen_kwargs.update(kwargs)
+            return process
+
+        def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            taskkill_calls.append((command, kwargs))
+            return subprocess.CompletedProcess(command, 0)
+
+        monkeypatch.setattr(codex_module, "_IS_WINDOWS", True)
+        monkeypatch.setattr(codex_module.subprocess, "CREATE_NEW_PROCESS_GROUP", 512, raising=False)
+        monkeypatch.setattr(codex_module.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(codex_module.subprocess, "run", fake_run)
+        monkeypatch.setattr(codex_module.shutil, "which", lambda executable: f"/bin/{executable}")
+
+        with pytest.raises(subprocess.TimeoutExpired):
+            _run_codex_process(argv, cwd="C:/work", timeout=30, env={})
+
+        assert popen_kwargs["creationflags"] == 512
+        assert "start_new_session" not in popen_kwargs
+        assert taskkill_calls == [
+            (
+                ["/bin/taskkill", "/PID", "2468", "/T", "/F"],
+                {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "check": False},
+            )
+        ]
+        assert process.kill_calls == 1
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group behavior")
+    def test_real_timeout_returns_without_waiting_for_grandchild(self, tmp_path: Path) -> None:
+        child_code = "import time; time.sleep(10)"
+        parent_code = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child_code!r}])"
+        started = time.monotonic()
+
+        with pytest.raises(subprocess.TimeoutExpired):
+            _run_codex_process(
+                [sys.executable, "-c", parent_code],
+                cwd=str(tmp_path),
+                timeout=1,
+                env=os.environ.copy(),
+            )
+
+        assert time.monotonic() - started < 3
 
 
 class TestCodexParamValidation:
@@ -215,12 +344,7 @@ class TestCodexArgvAndParsing:
             'model_provider="openai"',
         ]
         assert kwargs["cwd"] == str(tmp_path)
-        assert kwargs["stdin"] is subprocess.DEVNULL
-        assert kwargs["capture_output"] is True
-        assert kwargs["text"] is True
-        assert kwargs["encoding"] == "utf-8"
         assert kwargs["timeout"] == 30
-        assert kwargs["check"] is False
         assert kwargs["env"] is _status_calls(calls)[0][1]["env"]
         assert result.result_text == "hello from codex"
         assert result.metadata == {
@@ -248,9 +372,11 @@ class TestCodexArgvAndParsing:
         schema = {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}
         inspected_schema: list[dict[str, Any]] = []
 
-        def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            if argv == ["codex", "login", "status"]:
-                return subprocess.CompletedProcess(argv, 0, stdout="", stderr="Logged in using ChatGPT")
+        def fake_status_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            assert argv == ["codex", "login", "status"]
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="Logged in using ChatGPT")
+
+        def fake_model_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
             schema_path = Path(argv[argv.index("--output-schema") + 1])
             inspected_schema.append(__import__("json").loads(schema_path.read_text(encoding="utf-8")))
             message_path = Path(argv[argv.index("--output-last-message") + 1])
@@ -258,7 +384,8 @@ class TestCodexArgvAndParsing:
             stdout = SUCCESS_JSONL.replace('"text":"hi"', '"text":"wrong-jsonl-message"')
             return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
 
-        monkeypatch.setattr(codex_module.subprocess, "run", fake_run)
+        monkeypatch.setattr(codex_module.subprocess, "run", fake_status_run)
+        monkeypatch.setattr(codex_module, "_run_codex_process", fake_model_run)
 
         result = CodexBackend().run("Return JSON", _options(tmp_path, output_schema=schema))
 
@@ -343,12 +470,15 @@ class TestCodexArgvAndParsing:
     def test_missing_last_message_file_is_an_execution_failure(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            if argv == ["codex", "login", "status"]:
-                return subprocess.CompletedProcess(argv, 0, stdout="", stderr="Logged in using ChatGPT")
+        def fake_status_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            assert argv == ["codex", "login", "status"]
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="Logged in using ChatGPT")
+
+        def fake_model_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(argv, 0, stdout=SUCCESS_JSONL, stderr="")
 
-        monkeypatch.setattr(codex_module.subprocess, "run", fake_run)
+        monkeypatch.setattr(codex_module.subprocess, "run", fake_status_run)
+        monkeypatch.setattr(codex_module, "_run_codex_process", fake_model_run)
 
         with pytest.raises(CodexProcessError, match="without writing --output-last-message"):
             CodexBackend().run("test", _options(tmp_path))
@@ -603,6 +733,23 @@ class TestCodexAgentLifecycle:
             "session_id": THREAD_ID,
         }
 
+    def test_explicit_model_prices_usage_through_litellm(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Exercise JSONL parsing → LiteLLM pricing → public llm_usage."""
+        _install_fake_run(monkeypatch)
+        node = AgentNode()
+        node.set_params({
+            "backend": "codex",
+            "prompt": "Say hi",
+            "cwd": str(tmp_path),
+            "model": "gpt-5.2-codex",
+            "timeout": 30,
+        })
+        shared: dict[str, Any] = {}
+
+        assert node.run(shared) == "default"
+        assert shared["llm_usage"]["model"] == "gpt-5.2-codex"
+        assert shared["llm_usage"]["cost_usd"] == pytest.approx(0.00998795)
+
     def test_structured_output_success_runs_through_agent_node(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -635,6 +782,7 @@ class TestCodexAgentLifecycle:
             "backend": "codex",
             "prompt": "Answer",
             "cwd": str(tmp_path),
+            "model": "gpt-5.2-codex",
             "timeout": 30,
             "output_schema": {
                 "type": "object",
@@ -655,9 +803,12 @@ class TestCodexAgentLifecycle:
         assert shared["result"] == "still not json"
         assert shared["__warnings__"]["review"]["kind"] == "agent.schema_not_satisfied_after_retries"
         assert len(shared["llm_usage"]["retries"]) == 1
+        assert shared["llm_usage"]["cost_usd"] == pytest.approx(0.00998795)
+        assert shared["llm_usage"]["retries"][0]["cost_usd"] == pytest.approx(0.00998795)
         aggregated = WorkflowTraceCollector.aggregate_llm_usage_with_retries(shared["llm_usage"])
         assert aggregated["reasoning_output_tokens"] == 4
         assert aggregated["input_tokens"] == 29306
+        assert aggregated["cost_usd"] == pytest.approx(0.0199759)
 
     def test_missing_thread_prevents_schema_retry_and_soft_fails(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -687,20 +838,24 @@ class TestCodexAgentLifecycle:
         calls: list[tuple[list[str], dict[str, Any]]] = []
         status_count = 0
 
-        def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        def fake_status_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
             nonlocal status_count
             calls.append((argv, kwargs))
-            if argv == ["codex", "login", "status"]:
-                status_count += 1
-                stderr = (
-                    "Logged in using ChatGPT" if status_count == 1 else "Logged in using an API key - sk-...DO-NOT-LEAK"
-                )
-                return subprocess.CompletedProcess(argv, 0, stdout="", stderr=stderr)
+            assert argv == ["codex", "login", "status"]
+            status_count += 1
+            stderr = (
+                "Logged in using ChatGPT" if status_count == 1 else "Logged in using an API key - sk-...DO-NOT-LEAK"
+            )
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr=stderr)
+
+        def fake_model_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            calls.append((argv, kwargs))
             message_path = Path(argv[argv.index("--output-last-message") + 1])
             message_path.write_text("not json", encoding="utf-8")
             return subprocess.CompletedProcess(argv, 0, stdout=SUCCESS_JSONL, stderr="")
 
-        monkeypatch.setattr(codex_module.subprocess, "run", fake_run)
+        monkeypatch.setattr(codex_module.subprocess, "run", fake_status_run)
+        monkeypatch.setattr(codex_module, "_run_codex_process", fake_model_run)
         node = AgentNode()
         node.node_id = "review"
         node.set_params({

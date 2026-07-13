@@ -266,7 +266,7 @@ The `agent` node includes additional execution metadata in `llm_usage` beyond th
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cost_usd` | float/null | SDK-reported API-equivalent cost for Claude; `null` for Codex CLI runs |
+| `cost_usd` | float/null | API-equivalent cost: SDK-reported for Claude; LiteLLM-estimated for Codex when `model` is explicit and priced; otherwise `null` |
 | `duration_ms` | int | Total execution time |
 | `session_id` | str | Session ID (use with `resume` parameter to continue conversations) |
 | `num_turns` | int | Number of conversation turns |

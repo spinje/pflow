@@ -327,3 +327,57 @@
   surface passed 277 with one paid Codex e2e deselected; focused Ruff lint/format passed; and the
   complete `make check` gate passed outside the macOS sandbox (lock consistency, asset sync, Ruff,
   all pre-commit hooks, mypy, and deptry). No live provider call or commit was made.
+
+## 2026-07-13 — Adversarial end-to-end verification and fixes
+
+- Read the complete task folder, implementation, and focused test surface, then treated the existing
+  suite as context rather than end-to-end proof. Real Claude and Codex text, structured-output, and
+  cross-process resume workflows were exercised with `use_api_key: false` while all three known key
+  variables contained deliberately invalid sentinel values.
+- Both providers completed through account/subscription auth. Separate `pflow` processes resumed the
+  original Claude session and Codex thread, returned the prior exact token, and preserved the exact
+  same session/thread ID. Claude's reported `cost_usd` remains the existing pricing estimate derived
+  from usage; it is not evidence of API-key auth or per-request billing.
+- Found a real parser/compiler/runtime integration defect missed by the mocked backend suites: a
+  documented fenced `prompt` passes validation, but compilation flattens its line metadata to
+  `_prompt_source_line`, which backend allowlist validation rejected. Added one narrow shared
+  predicate for compiler source-line sidecars, used it in both backends, and pinned the complete
+  markdown parser → compiler → real `AgentNode.prep()` path for Claude and Codex. A real Codex fenced
+  workflow then returned the requested exact token.
+- Found that the Codex timeout used `subprocess.run`, which only kills the direct CLI process and can
+  leave tool descendants alive or block while they retain stdout/stderr pipes. Replaced it with an
+  owned process-group runner, POSIX group termination, Windows `taskkill /T /F`, bounded pipe drain,
+  and interruption cleanup. The real regression launches a parent that exits immediately while its
+  sleeping grandchild retains the pipes; cleanup now returns at the configured timeout.
+- Corrected the remaining current architecture overview label from the removed `Claude-Code` node to
+  `Agent`. Temporary manual-verification workflows and logs were deleted after the checks.
+- Darwin verification results: 117 focused non-e2e tests passed with one paid smoke deselected; the
+  affected parser/compiler/agent surface passed 489 with one paid smoke deselected; the broader
+  non-e2e suite passed 8,868 tests with the loopback UI file isolated; that UI file passed all 56
+  tests outside the restricted socket sandbox. `make check` passed in full, including lock and asset
+  synchronization, Ruff, pre-commit, mypy (253 source files), and deptry (254 files).
+
+## 2026-07-13 — Explicit Codex model pricing
+
+- Added one shared LiteLLM pricing seam for completed calls made outside `litellm.completion` and
+  routed Codex usage through it only when the workflow explicitly declares `model`. The estimator
+  passes Codex's cache-inclusive input total and cached-input count to LiteLLM's cache-aware
+  `cost_per_token` calculator. Omitted or unpriced models remain `cost_usd: null`; pflow does not
+  inspect private Codex rollout/session files to infer the CLI-configured model.
+- Kept the existing prompt-cache analysis import surface compatible while moving its pricing data
+  lookup into the shared LiteLLM runtime seam. Added tests against the real bundled LiteLLM catalog,
+  public AgentNode metadata propagation, cache discounts, no-model lazy behavior, unknown-model
+  fallback, and structured-output retry aggregation so every completed Codex call is counted.
+- A real subscription-backed Codex run used `model: gpt-5.5`, `use_api_key: false`, and deliberately
+  invalid `OPENAI_API_KEY`/`CODEX_API_KEY` sentinels. It returned the requested marker with 16,109
+  input tokens (1,920 cached), 23 output tokens, and `cost_usd: 0.072595`; the CLI report propagated
+  the same total. This is an API-equivalent pricing estimate for comparison, not evidence that the
+  ChatGPT subscription incurred a per-token charge. A separate `gpt-5.2-codex` live attempt was
+  correctly rejected by the current ChatGPT account before execution, demonstrating that catalog
+  pricing and account model availability are independent.
+- Verification after the pricing change: 140 focused tests passed with two paid e2e cases
+  deselected; the affected non-e2e surface passed 561 with three deselected; focused mypy passed;
+  and the broad non-e2e suite passed 8,873 tests with the loopback UI file isolated. The final UI
+  subprocess file passed all 56 tests outside the restricted socket sandbox. The complete
+  `make check` gate also passed: lock and asset synchronization, all hooks, Ruff, mypy (253 source
+  files), and deptry (254 files).

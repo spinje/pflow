@@ -70,7 +70,7 @@ The channels have distinct jobs:
 
 Initial and resume argv are built separately. Initial runs accept CLI `--sandbox`, `--cd`, and `--add-dir`. Resume requires `sandbox_mode` as a config override, places `--profile` before the `resume` subcommand, and relies on Codex's on-disk thread store.
 
-Codex omits a model override when the workflow does not declare one, so the CLI configuration remains authoritative. Its CLI usage exposes no per-run USD amount; normalized `cost_usd` is `None`, while `reasoning_output_tokens` remains a separate backend-specific usage field.
+Codex omits a model override when the workflow does not declare one, so the CLI configuration remains authoritative. Its CLI usage exposes no per-run USD amount, but an explicitly declared and LiteLLM-priced `model` lets pflow compute an API-equivalent `cost_usd` from cache-aware token usage. Omitted or unpriced models remain `None`; pflow does not inspect private Codex session files to infer the effective model. `reasoning_output_tokens` remains a separate backend-specific usage field.
 
 ## Structured output contract
 

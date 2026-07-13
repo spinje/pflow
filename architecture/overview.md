@@ -111,7 +111,7 @@ pflow uses hard enforcement. Workflows are structured markdown (`.pflow.md`) wit
 
 95% of workflow steps don't need reasoning:
 - **Deterministic nodes:** MCP, HTTP, Shell (0 tokens during execution)
-- **Intelligence nodes:** LLM, Claude-Code (used only when reasoning adds value)
+- **Intelligence nodes:** LLM, Agent (used only when reasoning adds value)
 
 The orchestrating AI sees schemas and types, not actual data. Data stays in runtime, never enters the AI's context. This provides 5-100x token efficiency and keeps sensitive data out of AI context.
 

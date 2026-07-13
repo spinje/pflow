@@ -7,17 +7,22 @@ import logging
 import math
 import os
 import re
+import shutil
+import signal
 import subprocess
+import sys
 import tempfile
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 from pflow.core.exceptions import PflowError
+from pflow.core.litellm_runtime import estimate_completion_cost_usd
 from pflow.nodes.agent.backend import AgentResult
-from pflow.nodes.agent.schema_validation import CODEX_PARAMS, SHARED_PARAMS
+from pflow.nodes.agent.schema_validation import CODEX_PARAMS, SHARED_PARAMS, is_compiler_source_line_sidecar
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +42,8 @@ _AUTH_ERROR_MARKERS = (
 )
 _BARE_TOML_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 _LOGIN_STATUS_TIMEOUT_SECONDS = 10
+_PROCESS_DRAIN_TIMEOUT_SECONDS = 1
+_IS_WINDOWS = sys.platform == "win32"
 
 
 class _AuthClass(Enum):
@@ -161,6 +168,92 @@ def _event_error_text(value: Any) -> str:
     return str(value) if value is not None else "Codex turn failed without error details"
 
 
+def _terminate_windows_process_tree(pid: int) -> None:
+    """Best-effort termination of a Codex process and all descendants on Windows."""
+    taskkill_path = shutil.which("taskkill") or r"C:\Windows\System32\taskkill.exe"
+    try:
+        completed = subprocess.run(  # noqa: S603 - resolved system utility, argv list, never a shell
+            [taskkill_path, "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return
+    if completed.returncode != 0:
+        logger.debug("taskkill failed while terminating Codex process tree", extra={"pid": pid})
+
+
+def _terminate_codex_process_tree(proc: subprocess.Popen[str]) -> None:
+    """Forcefully stop the Codex process tree after timeout or interruption."""
+    if _IS_WINDOWS:
+        _terminate_windows_process_tree(proc.pid)
+    else:
+        killpg = getattr(os, "killpg", None)
+        if killpg is not None:
+            with suppress(OSError):
+                # start_new_session=True makes the process PID its group ID. Use
+                # that known ID directly: the CLI itself may already have exited
+                # while a descendant still holds stdout/stderr pipes open.
+                killpg(proc.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+    with suppress(OSError):
+        proc.kill()
+
+
+def _run_codex_process(
+    argv: list[str],
+    *,
+    cwd: str,
+    timeout: int,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    """Run one Codex model process and clean up its descendants on abort.
+
+    ``subprocess.run(timeout=...)`` kills only the direct CLI process. Codex may
+    launch command/tool descendants that inherit stdout or stderr, so they can
+    survive a timeout and keep pipe draining blocked. Giving the CLI its own
+    process group and owning ``communicate`` lets pflow terminate the whole tree.
+    """
+    platform_kwargs: dict[str, Any]
+    if _IS_WINDOWS:
+        platform_kwargs = {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+    else:
+        platform_kwargs = {"start_new_session": True}
+
+    proc = subprocess.Popen(  # noqa: S603 - fixed executable, argv list, never a shell
+        argv,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        env=env,
+        **platform_kwargs,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        _terminate_codex_process_tree(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=_PROCESS_DRAIN_TIMEOUT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            stdout = exc.output or ""
+            stderr = exc.stderr or ""
+        raise subprocess.TimeoutExpired(
+            argv,
+            timeout,
+            output=stdout or exc.output,
+            stderr=stderr or exc.stderr,
+        ) from exc
+    except (KeyboardInterrupt, SystemExit):
+        _terminate_codex_process_tree(proc)
+        with suppress(OSError, subprocess.TimeoutExpired):
+            proc.communicate(timeout=_PROCESS_DRAIN_TIMEOUT_SECONDS)
+        raise
+    return subprocess.CompletedProcess(argv, proc.returncode, stdout=stdout, stderr=stderr)
+
+
 class CodexBackend:
     """Run agent turns through the installed ``codex exec`` CLI."""
 
@@ -168,7 +261,8 @@ class CodexBackend:
     max_retries = 2
 
     def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
-        invalid = sorted(set(params) - (SHARED_PARAMS | CODEX_PARAMS))
+        authored_params = {key for key in params if not is_compiler_source_line_sidecar(key, params)}
+        invalid = sorted(authored_params - (SHARED_PARAMS | CODEX_PARAMS))
         if invalid:
             raise ValueError(f"{invalid[0]!r} is not valid for backend 'codex'")
 
@@ -242,15 +336,10 @@ class CodexBackend:
 
             argv = self._build_argv(prompt, options, message_path, schema_path)
             started = time.monotonic()
-            completed = subprocess.run(  # noqa: S603 - fixed executable, argv list, never a shell
+            completed = _run_codex_process(
                 argv,
                 cwd=options["cwd"],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
                 timeout=options["timeout"],
-                check=False,
                 env=env,
             )
             duration_ms = round((time.monotonic() - started) * 1000)
@@ -306,6 +395,12 @@ class CodexBackend:
             input_tokens = usage.get("input_tokens", 0)
             cache_read = usage.get("cached_input_tokens", 0)
             output_tokens = usage.get("output_tokens", 0)
+            cost_usd = estimate_completion_cost_usd(
+                model=options.get("model"),
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_input_tokens=cache_read,
+            )
             metadata = {
                 "input_tokens": input_tokens,
                 "uncached_input_tokens": max(0, input_tokens - cache_read),
@@ -315,7 +410,7 @@ class CodexBackend:
                 "output_tokens": output_tokens,
                 "reasoning_output_tokens": usage.get("reasoning_output_tokens", 0),
                 "total_tokens": input_tokens + output_tokens,
-                "cost_usd": None,
+                "cost_usd": cost_usd,
                 "duration_ms": duration_ms,
                 "num_turns": parsed.num_turns or 1,
                 "session_id": parsed.session_id,

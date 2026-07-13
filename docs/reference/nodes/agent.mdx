@@ -87,7 +87,9 @@ Both backends write these fields when usage is available:
 }
 ```
 
-Claude reports `input_token_accounting: split_cache_fields` and an SDK-reported API-equivalent `cost_usd`. Codex reports `total_includes_cache`, adds `reasoning_output_tokens`, and leaves `cost_usd` as `null` because the CLI does not expose per-run USD cost.
+Claude reports `input_token_accounting: split_cache_fields` and an SDK-reported API-equivalent `cost_usd`. Codex reports `total_includes_cache` and adds `reasoning_output_tokens`. When a workflow declares `model`, pflow estimates the Codex call's API-equivalent `cost_usd` from its LiteLLM pricing catalog and the CLI's cache-aware token usage. The value remains `null` when `model` is omitted or LiteLLM has no pricing for it; pflow does not inspect private Codex session files to infer the CLI-configured model.
+
+API-equivalent cost is an estimate for comparison and planning, not evidence that a subscription-backed call incurred per-token charges.
 
 When schema recovery makes corrective calls, the top-level fields describe the final call and `retries` contains usage records for superseded calls. Reports and trace summaries aggregate the final call and those retry records.
 

@@ -83,6 +83,7 @@ rss: true
   - Added prewarm-batch prompt optimization, capturing shared prefixes as cache blocks to prevent duplicate prompt storage.
   - Fixed the `--only` execution flag to restore a frozen snapshot of historical upstream inputs instead of re-firing side-effecting steps.
   - Added support for reporting true input token counts and agent execution calls in output summaries.
+  - Added cache-aware API-equivalent cost estimates for Codex agent calls when workflows declare a LiteLLM-priced `model`.
   - Added best-effort trace writing, allowing runs to execute safely even under disk-full or read-only filesystem environments.
 
   ## LLM Control and Execution Refinements

@@ -14,10 +14,30 @@ from typing import Any
 import pytest
 
 from pflow.nodes.agent.schema_validation import (
+    is_compiler_source_line_sidecar,
     is_legacy_python_alias_schema,
     top_level_object_violation,
     validate_use_api_key,
 )
+
+
+class TestCompilerSourceLineSidecar:
+    def test_recognizes_metadata_only_when_the_fenced_parameter_exists(self) -> None:
+        params = {"prompt": "hello", "_prompt_source_line": 12}
+
+        assert is_compiler_source_line_sidecar("_prompt_source_line", params) is True
+
+    @pytest.mark.parametrize(
+        ("key", "params"),
+        [
+            ("_prompt_source_line", {"_prompt_source_line": 12}),
+            ("prompt_source_line", {"prompt_source_line": 12}),
+            ("_source_line", {"_source_line": 12}),
+            ("_prompt_line", {"prompt": "hello", "_prompt_line": 12}),
+        ],
+    )
+    def test_rejects_lookalikes_and_orphaned_metadata(self, key: str, params: dict[str, Any]) -> None:
+        assert is_compiler_source_line_sidecar(key, params) is False
 
 
 class TestValidateUseApiKey:

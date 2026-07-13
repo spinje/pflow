@@ -4,8 +4,8 @@ LiteLLM eagerly fetches its model pricing/context map from GitHub at
 ``import litellm`` time (``litellm/__init__.py`` → ``get_model_cost_map``).
 The fetch happens once per Python process via ``httpx.get(URL, timeout=5)``;
 on failure it falls back to a bundled local backup. This means analyzer
-output (``pflow analyze-cache``) and runtime cost (``response_cost`` from
-``_hidden_params``) can drift between runs depending on:
+output (``pflow analyze-cache``), runtime response cost, and external-call
+token estimates can drift between runs depending on:
 
 - Network availability when the process starts.
 - Whether LiteLLM upstream has shipped a pricing update since the bundled
@@ -43,9 +43,8 @@ The determinism contract is now two-tiered:
   in between.
 
 This module is the ONLY production seam for ``import litellm`` and
-``import litellm.exceptions``. The six lazy import sites in ``llm_client.py``,
-``prompt_cache_analysis/cost_estimation.py``, and ``prompt_cache_analysis/token_estimation.py``
-all route through here.
+``import litellm.exceptions``. Runtime calls, pricing projections, external
+token estimates, and token estimation all route through here.
 
 Lazy-import contract: this module must not import ``litellm`` at module
 scope (``importlib.import_module`` is the only call). Pinned by
@@ -56,8 +55,10 @@ from __future__ import annotations
 
 import importlib
 import logging
+import math
 import os
 import threading
+from dataclasses import dataclass
 from typing import Any
 
 _LOCAL_MODEL_COST_MAP_ENV = "LITELLM_LOCAL_MODEL_COST_MAP"
@@ -107,6 +108,16 @@ def _filter_well_formed_upstream_entries(upstream_map: dict[str, Any]) -> dict[s
 # the membership check is authoritative).
 _validator_upstream_attempted = False
 _validator_upstream_fetch_succeeded = False
+
+
+@dataclass(frozen=True)
+class ModelPricing:
+    """Per-token USD rates from one LiteLLM model-cost entry."""
+
+    input_rate: float
+    output_rate: float
+    cache_creation_rate: float
+    cache_read_rate: float
 
 
 def configure_litellm_defaults() -> None:
@@ -248,6 +259,97 @@ def ensure_model_priced(model: str) -> None:
         except Exception as exc:
             _logger.debug("Upstream cost map fetch failed: %s", exc)
         _upstream_attempted = True
+
+
+def get_model_pricing(model: str) -> ModelPricing | None:
+    """Return LiteLLM pricing for ``model``, fetching upstream on a miss.
+
+    LiteLLM's catalog is inconsistent about provider-prefixed keys, so the
+    exact identifier is tried first and then its provider-aware bare form.
+    Missing or incomplete pricing stays ``None``.
+    """
+    if not model:
+        return None
+    try:
+        litellm = import_litellm()
+    except ImportError:
+        _logger.debug("litellm import failed during pricing lookup", exc_info=True)
+        return None
+
+    ensure_model_priced(model)
+    model_cost = getattr(litellm, "model_cost", None)
+    if not isinstance(model_cost, dict):
+        return None
+
+    pricing_dict = model_cost.get(model)
+    if pricing_dict is None:
+        from pflow.core.llm_providers import detect_provider, model_name_without_provider
+
+        provider = detect_provider(model)
+        if provider is not None:
+            pricing_dict = model_cost.get(model_name_without_provider(model, provider))
+    if not isinstance(pricing_dict, dict):
+        return None
+    return pricing_from_dict(pricing_dict)
+
+
+def pricing_from_dict(pricing: dict[str, Any]) -> ModelPricing | None:
+    """Normalize a LiteLLM pricing entry, or return ``None`` if incomplete."""
+    input_rate = pricing.get("input_cost_per_token")
+    output_rate = pricing.get("output_cost_per_token")
+    if not isinstance(input_rate, (int, float)) or not isinstance(output_rate, (int, float)):
+        return None
+
+    creation_rate = pricing.get("cache_creation_input_token_cost")
+    if not isinstance(creation_rate, (int, float)):
+        creation_rate = float(input_rate) * 1.25
+
+    read_rate = pricing.get("cache_read_input_token_cost")
+    if not isinstance(read_rate, (int, float)):
+        read_rate = float(input_rate) * 0.1
+
+    return ModelPricing(
+        input_rate=float(input_rate),
+        output_rate=float(output_rate),
+        cache_creation_rate=float(creation_rate),
+        cache_read_rate=float(read_rate),
+    )
+
+
+def estimate_completion_cost_usd(
+    *,
+    model: str | None,
+    input_tokens: int,
+    output_tokens: int,
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
+) -> float | None:
+    """Estimate one completed call using LiteLLM's token-pricing machinery.
+
+    This is for successful calls made outside ``litellm.completion`` (for
+    example, the Codex CLI backend). ``input_tokens`` follows pflow's stable
+    cache-inclusive contract; the cache tier counts let LiteLLM apply the
+    corresponding discounted or creation rates. Unknown models degrade to
+    ``None`` instead of inventing a price.
+    """
+    if not model or get_model_pricing(model) is None:
+        return None
+
+    litellm = import_litellm()
+    try:
+        input_cost, output_cost = litellm.cost_per_token(
+            model=model,
+            prompt_tokens=max(0, input_tokens),
+            completion_tokens=max(0, output_tokens),
+            cache_creation_input_tokens=max(0, cache_creation_input_tokens),
+            cache_read_input_tokens=max(0, cache_read_input_tokens),
+            call_type="completion",
+        )
+        total = float(input_cost) + float(output_cost)
+    except Exception as exc:
+        _logger.debug("LiteLLM could not estimate completion cost for %s: %s", model, exc)
+        return None
+    return total if math.isfinite(total) and total >= 0 else None
 
 
 def try_load_upstream_catalog() -> bool:

@@ -67,6 +67,8 @@ PYTHON_ALIAS_TYPES: Final[frozenset[str]] = frozenset({"str", "int", "bool", "li
 TOP_LEVEL_COMBINATORS: Final[tuple[str, ...]] = ("oneOf", "anyOf", "allOf", "enum", "const")
 """JSON Schema combinator keys that the Anthropic API rejects at the schema root."""
 
+_SOURCE_LINE_SUFFIX: Final[str] = "_source_line"
+
 
 class TopLevelObjectViolation(NamedTuple):
     """Reason a schema fails an agent backend's top-level-object requirement.
@@ -76,6 +78,23 @@ class TopLevelObjectViolation(NamedTuple):
 
     cause: str
     kind: Literal["non_object_type", "missing_type"]
+
+
+def is_compiler_source_line_sidecar(key: str, params: dict[str, Any]) -> bool:
+    """Return whether ``key`` is compiler metadata for a real fenced parameter.
+
+    The markdown parser records fenced-block line numbers under ``_source_lines``;
+    compilation flattens those entries into ``_<param>_source_line`` parameters so
+    template errors can point back to the authored block. They are not user-facing
+    AgentNode parameters and must not participate in backend allowlist validation.
+
+    Requiring the base parameter to exist keeps the filter precise: a genuine user
+    parameter that merely ends in ``_source_line`` is still rejected normally.
+    """
+    if not (key.startswith("_") and key.endswith(_SOURCE_LINE_SUFFIX)):
+        return False
+    base = key[1 : -len(_SOURCE_LINE_SUFFIX)]
+    return bool(base) and base in params
 
 
 def validate_use_api_key(value: Any) -> bool:

@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from pflow.nodes.agent.backend import AgentResult
-from pflow.nodes.agent.schema_validation import CLAUDE_PARAMS, SHARED_PARAMS
+from pflow.nodes.agent.schema_validation import CLAUDE_PARAMS, SHARED_PARAMS, is_compiler_source_line_sidecar
 
 try:
     from claude_agent_sdk import ClaudeAgentOptions, query
@@ -165,7 +165,8 @@ class ClaudeBackend:
         return sandbox
 
     def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
-        invalid = sorted(set(params) - (SHARED_PARAMS | CLAUDE_PARAMS))
+        authored_params = {key for key in params if not is_compiler_source_line_sidecar(key, params)}
+        invalid = sorted(authored_params - (SHARED_PARAMS | CLAUDE_PARAMS))
         if invalid:
             raise ValueError(f"{invalid[0]!r} is not valid for backend 'claude'")
         max_turns = self._validate_max_turns(params.get("max_turns", 50))
