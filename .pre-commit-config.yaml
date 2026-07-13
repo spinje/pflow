@@ -49,6 +49,20 @@ repos:
 
   - repo: local
     hooks:
+      # Regenerates Codex assets (.agents/skills/*/SKILL.md) from their .claude/
+      # sources so they can't go stale — the same invariant `make check` enforces,
+      # moved earlier so a stale asset fails at commit instead of only in CI (the
+      # failure this hook was added to prevent). always_run + no filenames because
+      # the top-level `exclude: ^\.claude/` hides the source files from pre-commit's
+      # list, and the script discovers them itself; it's ~0.1s so always-running is
+      # free. See scripts/sync_claude_assets.py.
+      - id: sync-claude-assets
+        name: sync Claude→Codex reusable assets
+        entry: uv run --frozen python scripts/sync_claude_assets.py --write
+        language: system
+        always_run: true
+        pass_filenames: false
+
       # Catches ${...} templates leaking out of code blocks in docs — these
       # compile to live JS expressions and crash the page at render, a class
       # `mint validate` does not catch. See scripts/check_mdx_fences.py.
