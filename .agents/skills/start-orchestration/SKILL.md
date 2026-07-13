@@ -26,10 +26,11 @@ between what documents claim and what code does.
 
 ## Boot sequence (every session, before anything else)
 
-1. Read `ORCHESTRATION.md`, then `CURRENT-STATE.md` + the LATEST `sessions/session-NN.md` — if
-   that file is thin (a short check-in, an aborted session), read one further back until you hit
-   a substantive one (DECISIONS #10) — then `braindump-main-orchestrator.md` (the role's tacit
-   layer, refreshed at each close). Treat every claim as a **pointer to verify, not a fact**.
+1. Read `ORCHESTRATION.md` + `DECISIONS.md` (the settled-rulings ledger — you cannot route,
+   merge, or reconcile without it), then `CURRENT-STATE.md` + the LATEST `sessions/session-NN.md`
+   — if that file is thin (a short check-in, an aborted session), read one further back until you
+   hit a substantive one (DECISIONS #10) — then `BRAINDUMP.md` (the role's tacit layer, refreshed
+   at each close). Treat every claim as a **pointer to verify, not a fact**. Read all these files in full before you continue.
 2. Verify reality: `git fetch` + `git log --oneline -15 origin/main` · `gh pr list --state merged
    --limit 10` · `gh issue list --state open --limit 40` (scan for new since the stamp) ·
    `./scripts/tasks` · `git worktree list` · TaskList for live subagents.
@@ -143,9 +144,9 @@ pre-restructure flow, unchanged:
 - **State**: `CURRENT-STATE.md` + `sessions/` · CLAUDE.md roadmap · `./scripts/tasks [N]` ·
   `gh issue list` / `gh pr list` · `git worktree list`.
 - **Pre-restructure history** (on-demand forensics only): `sessions/session-01.md` (the converted
-  old log) · `braindump-2026-07-02-orchestration-genesis.md` (tacit layer from the system's
-  founding — its process claims are SUPERSEDED by ORCHESTRATION.md; its user-working-style
-  observations still hold).
+  old log) · the **Genesis** section of `BRAINDUMP.md` (tacit layer from the system's founding —
+  its process claims are SUPERSEDED by ORCHESTRATION.md; its user-working-style observations still
+  hold).
 - **Durable decisions**: `context/adr/` (+ `ADR-FORMAT.md`) · domain nouns: `context/CONTEXT.md`.
 - **Per task**: `.taskmaster/tasks/task_N/` — spec · `starting-context/` · `implementation/` ·
   `task-review.md`.

@@ -9,8 +9,8 @@ The main orchestrator's session close is a **retrospection event, not a filing c
 docs should already be true (you update them as events land); what this moment adds is the look
 BACK across the whole session — the corrections, overturned calls, improvised mechanisms, and the
 user's exact words — before they age out with your context window. A successor boots on
-`ORCHESTRATION.md → CURRENT-STATE.md → latest session file (thin-file rule, DECISIONS #10) →
-braindump-main-orchestrator.md` and nothing else; this ritual makes that stack sufficient.
+`ORCHESTRATION.md + DECISIONS.md → CURRENT-STATE.md → latest session file (thin-file rule,
+DECISIONS #10) → BRAINDUMP.md` and nothing else; this ritual makes that stack sufficient.
 
 **Ground rule: verify, then write.** Every claim entering a durable file gets checked against
 reality first (`git log`, `gh`, `./scripts/tasks`, `git worktree list`, the filesystem) — a
@@ -75,8 +75,10 @@ Should be near-no-ops if you kept discipline; audit, don't rewrite:
 
 ## 3. Refresh the braindump (the introspection core)
 
-Update `.taskmaster/orchestration/braindump-main-orchestrator.md` **in place, minimal deltas** —
-extend its header with this session's marker. This is a knowledge transfer to yourself, returning
+Update the **rolling tacit layer** — the top section of
+`.taskmaster/orchestration/BRAINDUMP.md`, above the `---` that precedes the frozen **Genesis**
+section (2026-07-02; never refreshed) — **in place, minimal deltas**, extending its header with
+this session's marker. This is a knowledge transfer to yourself, returning
 with no memory. The doctrine, customized for this role:
 
 **The one test, applied line by line to the EXISTING file first:**
@@ -124,4 +126,5 @@ scripts/sync_claude_assets.py --write` after editing any `.claude/` asset.)
 - **Boot-readiness check, the final gate:** re-read your last state as a cold successor would —
   ORCHESTRATION → CURRENT-STATE → session file → braindump. If acting correctly would require a
   fact that exists only in your head, it isn't written yet; go back to step 3.
+  (Boot stack: ORCHESTRATION + DECISIONS → CURRENT-STATE → session file → BRAINDUMP.)
 - Tell the user the session is closed and what the successor will pick up first.

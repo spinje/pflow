@@ -16,8 +16,9 @@ Every claim here is a pointer to verify, not a fact._
   worktrees with `open_cli=false open_cursor=false`. Local `main` is synchronized with
   `origin/main` as of this close.
   Proven: nested search/review agents, handbacks, PR/CI loops, `[skip review]`, and teardown.
-  A pre-existing task-planner model edit remains uncommitted because it contradicts the settled
-  Fable planner policy; user direction is required.
+- **Planner routing changed 2026-07-13** (user commit `647d86f9`): task planners now route
+  **Opus**, not Fable — scope is planners only; #8 (UI phases → Fable) and #9 (lane-B Fable
+  opt-in) stand. DECISIONS #3 amended; ORCHESTRATION + agent def reconciled.
 
 ## In flight
 

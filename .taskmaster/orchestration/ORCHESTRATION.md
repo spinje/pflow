@@ -11,7 +11,7 @@ testing directives, decision ownership, and the epistemic rules all live there.
 | Role | Model | Definition | Job |
 |------|-------|-----------|-----|
 | **Main orchestrator** | user's session | `/start-orchestration` command | Cross-task view: pick lane + work, verify spec freshness (fix staleness itself — spec accuracy is its job; implementation detail is not), provision the worktree, launch planners/task-orchestrators with a context packet, handle handbacks/escalations, talk to the user, **merge the PR and reconcile**, keep `CURRENT-STATE.md` + its session file + the ledgers current. **Never writes plans, never reads plans, never runs deep-review — trust the agents' gates** |
-| **Task planner** | **Fable intent, always** (Claude enforces; Codex inherits runtime route) | `.claude/agents/task-planner.md` | Investigate ONE task (via searchers) IN the task's worktree + write `implementation/implementation-plan.md`, **self-review it** (plan-mode `/deep-review` — mandatory when the plan touches the engine or the trace format, its judgment otherwise), commit it on the feature branch, then STOP. May offer to implement small tasks itself (see Model routing) |
+| **Task planner** | **Opus** (Claude enforces; Codex inherits runtime route) | `.claude/agents/task-planner.md` | Investigate ONE task (via searchers) IN the task's worktree + write `implementation/implementation-plan.md`, **self-review it** (plan-mode `/deep-review` — mandatory when the plan touches the engine or the trace format, its judgment otherwise), commit it on the feature branch, then STOP. May offer to implement small tasks itself (see Model routing) |
 | **Task orchestrator** | Opus intent by default; Fable opt-in where the runner exposes routing | `.claude/agents/task-orchestrator.md` | One task end to end in the same worktree: (plan +) delegate phases → per-phase self-checks → when FULLY happy: code-mode `/deep-review` + apply fixes → `/create-task-review` → `/create-pr` → minimal handback |
 | **Phase implementer** | per launch (routing table) | `.claude/agents/task-phase-implementer.md` | Implement exactly the assigned phase(s); tests as it goes; substance to the progress-log; minimal handback; stop on ambiguity |
 | **Searcher** | pinned (opus) | `pflow-codebase-searcher` | Read-only investigation, cited findings. Never the generic `Explore` or `general-purpose` |
@@ -28,10 +28,10 @@ routing).
 The main orchestrator picks the lane at pick time and states the call. When in doubt between A and
 B, pick A; between A and C, ask the user.
 
-- **Lane A — full task procedure** (the default for `.taskmaster` tasks): split shape (Fable
-  planner → Opus task orchestrator) when the task's PLANNING needs top-tier taste — hard
-  architecture, subtle seam design, a high-complexity spec; single task-orchestrator that plans
-  and implements for ordinary tasks. The shape is a stated judgment call, made visibly.
+- **Lane A — full task procedure** (the default for `.taskmaster` tasks): split shape (a
+  dedicated Opus planner → Opus task orchestrator) when the task's PLANNING needs its own top-tier
+  pass — hard architecture, subtle seam design, a high-complexity spec; single task-orchestrator
+  that plans and implements for ordinary tasks. The shape is a stated judgment call, made visibly.
 - **Lane B — GH-issue lane** (bug fixes & small self-contained tasks — DECISIONS #7): these do NOT
   become tasks. Write a GH issue if none exists (correct root cause, verified against code), then
   launch ONE subagent end to end in a provisioned worktree — a `task-orchestrator` in issue
@@ -85,9 +85,11 @@ file is thin** (a short check-in, an aborted session), **read one further back u
 substantive one** (DECISIONS #10); older files are on-demand forensics; NO session-end digest —
 the file boundary does that job; session-01 is the converted pre-restructure log).
 
-**`braindump-main-orchestrator.md`** — the main-orchestrator role's rolling tacit layer (user's
-exact words, overturned calls, mechanisms, marked uncertainties), refreshed in place at each
-session close via the `/close-orchestrator-session` skill; part of the boot stack.
+**`BRAINDUMP.md`** — the main-orchestrator role's rolling tacit layer (user's exact words,
+overturned calls, mechanisms, marked uncertainties), refreshed in place at each session close via
+the `/close-orchestrator-session` skill; part of the boot stack. Its top section is the live
+layer; a frozen **Genesis** section below the `---` holds the 2026-07-02 founding rationale
+(on-demand forensics, never refreshed).
 
 **`DECISIONS.md`** — the numbered ledger of settled programme/process decisions below the ADR bar.
 Not re-litigated; contradicting information is a user escalation; when a decision changes, the row
@@ -184,8 +186,8 @@ them**, not in up-front documents.
 | Tier | Use for | Rule |
 |------|---------|------|
 | **Sonnet** | Mechanical phases: scaffolding from an exact spec, config wiring, repetitive table-driven tests. Also grep-shaped searcher lookups | Phase text must contain ZERO ambiguity. A Sonnet phase requiring judgment is a planning bug — fix the plan, not the routing |
-| **Opus** | **The default for everything with real judgment**: task orchestrators, most implementer phases, searchers (pinned) | Plans state decisions; bounded judgment may be left to the implementer |
-| **Fable** | **Task planners — always.** **ALL web-UI implementation phases — always** (user ruling 2026-07-11, DECISIONS #8): every phase that writes UI (`web/` → `src/pflow/ui`) routes to a Fable `task-phase-implementer` — never implemented inline by the task orchestrator, never a lower tier — and is built with **deliberate design/UX care**: the plan states the phase's use case + look/feel intent, and visual quality/UX are acceptance criteria verified by driving the UI. Otherwise opt-in where runner routing exists, with a one-line justification: hard architecture, subtle seam design (engine, trace, resume/gate semantics), gnarly debugging. Codex records this as intent but inherits the runtime route. Lane C's terminal builder is the historical Fable home and stays one | Never an ambient default for non-UI implementation |
+| **Opus** | **The default for everything with real judgment**: task planners, task orchestrators, most implementer phases, searchers (pinned) | Plans state decisions; bounded judgment may be left to the implementer |
+| **Fable** | **ALL web-UI implementation phases — always** (user ruling 2026-07-11, DECISIONS #8): every phase that writes UI (`web/` → `src/pflow/ui`) routes to a Fable `task-phase-implementer` — never implemented inline by the task orchestrator, never a lower tier — and is built with **deliberate design/UX care**: the plan states the phase's use case + look/feel intent, and visual quality/UX are acceptance criteria verified by driving the UI. Otherwise opt-in where runner routing exists, with a one-line justification: hard architecture, subtle seam design (engine, trace, resume/gate semantics), gnarly debugging. Codex records this as intent but inherits the runtime route. Lane C's terminal builder is the historical Fable home and stays one | Never an ambient default for non-UI implementation |
 
 Runner model names are an execution detail; plans continue to use the tier names above. The
 Codex names below apply to generated static agent configuration, not dynamic-launch overrides:
