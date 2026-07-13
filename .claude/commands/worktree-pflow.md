@@ -1,26 +1,67 @@
 ---
 description: Create a git worktree for a user driven agent.
-argument-hint: [description of task]
+argument-hint: [task description, or a task/issue number]
 ---
-Create a git worktree for pflow development.
+Create an isolated git worktree for the user's task and launch a coding agent in it. Your job: turn the request below into ONE command by choosing the flags, run it, then report back.
 
+The user's request:
+
+$ARGUMENTS
+
+Current branch (used by the base-branch rule):
 !`git branch --show-current`
 
-Build and run the command:
+## Command
+
 ```bash
-uv run pflow examples/real-workflows/git-worktree-task-creator/workflow.pflow.md task_description='$ARGUMENTS'
+uv run pflow examples/real-workflows/git-worktree-task-creator/workflow.pflow.md <args>
 ```
 
-**Parameter rules:**
-- If `$ARGUMENTS` is empty, ask the user to clarify what task they want to create a worktree for.
-- **If the work is a GitHub issue (the user gives an issue number, an issue URL, or says "issue"), add `work_type=issue`.** This labels it as a GitHub issue (not a pflow `.taskmaster` task) when the launched Claude session opens, so a bare issue number like `443` isn't mistaken for a task id and no task scaffolding is created. Omit it (defaults to `work_type=task`) for ordinary `.taskmaster` tasks.
-- If the current branch is NOT `main`, add `base_branch=main` to the command (unless the user explicitly wants to branch from the current branch).
-- If the user mentions a folder or scratchpad to copy into the worktree, add `copy_folder=<relative-path>` (path relative to repo root, e.g. `copy_folder=scratchpads/my-research`).
-- **If the user asks to start the session with codex instead of Claude Code** (e.g. "use codex", "start with codex"), add `agent=codex`. Defaults to `agent=claude` otherwise. `open_cli` remains the on/off gate for launching the agent regardless of which one is selected.
-- **If the user specifies a model** for the coding agent (e.g. "use opus", "run it on sonnet"), add `model=<model>` — passed through as `--model` to whichever agent launches (both `claude` and `codex` accept it). Accepts an alias (`opus`, `sonnet`) or a full model id (`claude-opus-4-8`). Omit it to use the agent's own default model.
-- If the user specifically asks NOT to open cursor or the coding agent, add `open_cli=false` and/or `open_cursor=false`.
-- **The workflow refuses to clobber an existing worktree/branch by default.** If it errors that the branch/worktree already exists and the user wants to re-run the **same** task and discard the old one, add `overwrite=true`. Do NOT add it just to make a collision go away for a *different* task — a collision between different tasks signals the branch name wasn't specific enough, so pass a more descriptive `task_description` instead.
+`<args>` is always `task_description=...` plus any flags from the tables below.
+Quote a prose description; a bare task/issue number needs no quotes.
 
-Let the user know if the worktree was created successfully and display the path to the worktree.
+## Examples — map the request to `<args>`
 
-Also let the user know that Cursor and the selected coding agent (Claude Code by default, or Codex if `agent=codex`) have been opened in the new worktree (if using default values for open_cli and open_cursor).
+```bash
+# "set up a worktree to add retry logic to the http node"
+task_description='Add retry logic to the HTTP node'
+
+# "start task 177"   (default: explore + write a plan first)
+task_description=177
+
+# "implement task 177 directly / the plan already exists"
+task_description=177 mode=implement
+
+# "implement phase 1 and 2 of task 177"   ← spoken phases become a digit range/list
+task_description=177 mode=implement phases=1-2
+
+# "work on github issue 443 with codex"
+task_description=443 work_type=issue agent=codex
+
+# "task 88 off main (I'm on a feature branch), copy my notes, don't open cursor"
+task_description=88 base_branch=main copy_folder=scratchpads/notes open_cursor=false
+```
+
+## Flags — add when the user asks for it
+
+| Flag | Add when the user… |
+|------|--------------------|
+| `work_type=issue` | refers to a GitHub issue — a number, an issue URL, or says "issue" — so the number isn't taken as a task id (default `task`) |
+| `agent=codex` | wants Codex instead of Claude Code (default `claude`) |
+| `mode=implement` | says "implement directly" / a plan already exists → points the agent at `/implement-plan` instead of the default `explore` → `/start-work`. Pass the bare task/issue number as `task_description` so the plan resolves |
+| `phases=<spec>` | scopes the work to phases (**requires** `mode=implement`). Spoken phases → digits: "phase 1 and 2" → `phases=1-2`, "just phase 3" → `phases=3` |
+| `model=<model>` | names a model — an alias (`opus`, `sonnet`) or a full id (`claude-opus-4-8`). Omit for the agent's own default |
+| `copy_folder=<path>` | wants a folder/scratchpad copied into the fresh worktree (repo-root-relative, e.g. `scratchpads/notes`) |
+| `open_cli=false` / `open_cursor=false` | asks NOT to open the coding agent / Cursor (both default `true`) |
+
+If a value is malformed, the workflow rejects it with an actionable error — fix the arg and rerun rather than guessing at the constraint.
+
+## Rules — decisions that aren't a simple flag
+
+- **No task given** (arguments empty) → ask the user what task or issue to create a worktree for. Don't guess.
+- **Not on `main`** (see the current branch above) → add `base_branch=main` so the worktree branches off main, not unmerged work. To *deliberately* branch off the current feature branch, pass its name explicitly (`base_branch=<current-branch>`) — omitting `base_branch` on a non-main branch is an error, not a shortcut.
+- **Branch/worktree already exists** → the workflow refuses to clobber it. Add `overwrite=true` ONLY to re-run the *same* task and discard the old one. A collision with a *different* task means the name was too vague — give a more specific `task_description` instead of forcing it.
+
+## After it runs
+
+Report the worktree path from the output. Unless `open_cli`/`open_cursor` were disabled, also tell the user that Cursor and the selected agent (Claude Code, or Codex when `agent=codex`) opened in the new worktree.
