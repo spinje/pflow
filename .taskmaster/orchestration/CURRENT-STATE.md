@@ -7,68 +7,55 @@ Every claim here is a pointer to verify, not a fact._
 ## Process
 
 - **Orchestration restructured 2026-07-11/12** (DECISIONS #1–#11): agent-hierarchy system
-  adopted (ORCHESTRATION.md canonical; planner/task-orchestrator/implementer agent defs live;
-  command rewritten; close ritual + rolling braindump in the boot stack; this file + `sessions/`
-  replace `orchestrator-progress-log.md`, converted to `sessions/session-01.md`). Codex routing
-  now follows the user's explicit constraint: dynamic child launches inherit the runtime model
-  and reasoning effort; no override parameters (DECISIONS #3).
-- The hierarchy has now run three Codex lane-B builds end to end (#565/#581/#585), including
-  worktrees with `open_cli=false open_cursor=false`. Local `main` is synchronized with
-  `origin/main` as of this close.
-  Proven: nested search/review agents, handbacks, PR/CI loops, `[skip review]`, and teardown.
-- **Planner routing changed 2026-07-13** (user commit `647d86f9`): task planners now route
-  **Opus**, not Fable — scope is planners only; #8 (UI phases → Fable) and #9 (lane-B Fable
-  opt-in) stand. DECISIONS #3 amended; ORCHESTRATION + agent def reconciled.
+  (ORCHESTRATION.md canonical; planner/task-orchestrator/implementer agent defs; close ritual +
+  rolling `BRAINDUMP.md` in the boot stack; this file + `sessions/` replace the old single log).
+- Hierarchy proven end to end: Codex lane-B (#565/#581/#585) + session-04's Claude lane-B
+  (#413/#497). Nested searchers, handbacks, PR/CI loops, `[skip review]`, squash-merge, teardown.
+- **Planner routing = Opus** (user `647d86f9`, DECISIONS #3 amended): planners only; #8 (UI→Fable)
+  and #9 (lane-B Fable opt-in) stand.
+- **Merge policy** (DECISIONS #4/#14): orchestrator merges when fully ready — CI green + the
+  implementing agent has acted on auto-reviewer (claude-review/Codex) PR comments.
 
-## In flight (launched 2026-07-13, session-04 — 3 parallel lane-B Opus builds)
+## Recently shipped (session-04, 2026-07-13)
 
-Surfaces verified against main by 3 searchers before launch; collision matrix confirmed disjoint
-(files + semantics); none touch `runtime/engine/`/`workflow_executor` or trace format.
+Three issues picked from an open-issue scan; two shipped, one closed after investigation.
 
-- **#413** LiteLLM mutates pflow's `system_blocks` in place → trace lies for OpenAI/Gemini cache
-  runs. Fix = deep-copy at the one adapter boundary (`core/llm_client.py:358`, before
-  `litellm.completion`); Option A (issue's Option C sidecar-refactor rejected as over-eng).
-- **#497** `_*_source_line` sidecar leaks through MCP node's forward filter → `Unknown argument`.
-  Fix = one line at `nodes/mcp/node.py:153` (`and not k.endswith("_source_line")`, matching the
-  `instrumentation.py:166` precedent). No shared helper (one forwarding node → deletion test).
-- **#183** secrets embedded in shell `command`/`stdout`/`stderr` leak to CLI **and** MCP error
-  output. Single shared seam = `_enrich_error_from_node_output` (`executor_service.py:354-359`);
-  covers both. TRAP: `sanitize_parameters` redacts by KEY — a secret inside a string value needs
-  **value-level** substring redaction of known-secret values (env/sensitive param values). Scope
-  = shell fields only (HTTP already redacted; consolidation is a separate follow-up).
-  **Launched PLAN-FIRST** (user directive): investigate secret-value provenance + plumbing, write
-  approach + failure scenarios, self-review the seam before coding; escalate if redaction must
-  reach beyond the enrichment seam.
+- ~~**#413**~~ (LiteLLM in-place mutation → trace corruption) → PR **#587** MERGED (`dcf757bf`).
+- ~~**#497**~~ (sidecar breaks MCP-node fenced params) → PR **#588** MERGED (`c161c5ee`); also
+  carried a fix for the stale `.agents/start-orchestration` mirror (now on main).
+- ~~**#183**~~ (secrets in error output) → **CLOSED not-planned** — verified not a present-day leak.
+  Full rationale + the correct future fix (declared-secret primitive + exact-known-secret masking)
+  live in the **#183 close comment** and `core/CLAUDE.md` (`security_utils` note); **#516 re-scoped**
+  to keychain-backend. No code change beyond two invariant/rationale doc notes (`runner.py`,
+  `core/CLAUDE.md`).
 
 ## Current arc
 
-Resume/HITL: 125 ✅ → 164 ✅ → 174 ✅ → 171 ✅ → 176 ✅ (#579). Read
-`task_171/task-review.md` and `task_176/task-review.md` before resume/gate/trace work.
+Resume/HITL is closed: 125 ✅ → 164 ✅ → 174 ✅ → 171 ✅ → 176 ✅ (#579). Read
+`task_171/task-review.md` + `task_176/task-review.md` before any resume/gate/trace work. No task
+currently in flight — next pick is open (roadmap v0.14.0: Task 142 next, then 46/94/99/111/118/121).
 
-## Parallel-lane candidates (re-scanned 2026-07-13)
+## Parallel-lane candidates (open issues, re-scanned 2026-07-13)
 
-- **#542** trace retention — UNBLOCKED (gate was 171). Paused traces are live obligations, never
-  prunable; `resume list` depends on trailer scan. Trace seam → serialize.
-- **#562** resumable inline workflows — 171 follow-on; touches trace format → serialize.
-- ~~**#565**~~ shipped via #583; remove from future picks.
-- **#546** pinned-run resolve race · **#568** track/cancel detached UI runs (respect ADR-0008) ·
-  **#561** TTS clip cache (backlog) · **#538** liveness backstop (check
-  overlap with #566 first) · **#544** `llm_*` canonicalization · **#549** post-#539 visibility ·
-  **#528** `--output-format` stragglers · **#566/#567/#572/#574/#575** Windows/test-infra tail.
-- ~~**#357**~~ memo-cache drift — verified CLOSED 2026-06-18; remove from picks.
-- ~~**#581**~~ shipped via #584. ~~**#585**~~ shipped via #586.
+- **#542** trace retention (paused traces are never prunable; `resume list` scans trailers) ·
+  **#562** resumable inline workflows — both touch trace format → serialize.
+- **#546** pinned-run resolve race · **#568** track/cancel detached UI runs (ADR-0008) · **#538**
+  liveness backstop (check #566 overlap) · **#544** `llm_*` canonicalization · **#549** post-#539
+  visibility · **#528** `--output-format` · **#561** TTS clip cache (backlog) ·
+  **#566/#567/#572/#574/#575** Windows/test-infra tail.
+- **#550/#551/#552** MCP `evaluate_script` cluster (JS UX; #550 = injection bug) · **#580** UI
+  run-value unwrap (Fable) · **#553** misleading "Workflow Not Found" · **#520/#521** validator/parser.
+- ~~#357~~ closed · ~~#565/#581/#585~~ shipped · ~~#413/#497~~ shipped · ~~#183~~ closed.
 
 ## Watch list (non-obvious, easy to miss)
 
-- **Trace-format seam is hot**: 171 (2.7.0) + #562 + #542 all touch trailer semantics —
-  serialize; never fan out. Trace-touching work: run the Task-159 baseline
-  (`task_159/baseline/verify.sh`) as the free outer regression net.
-- Recurring conflation attractor: `is_trace_locked` (probe, `ui/run_tailer.py`) vs
-  `_lock_trace_handle` (writer flock, `workflow_trace.py`) — two agents got this wrong; distrust
-  docs placing the probe in `workflow_trace.py`.
+- **Trace-format seam is hot**: #562 + #542 touch trailer semantics — serialize, never fan out.
+  Trace-touching work: run the Task-159 baseline (`task_159/baseline/verify.sh`) as the free net.
+- Conflation attractor: `is_trace_locked` (probe, `ui/run_tailer.py`) vs `_lock_trace_handle`
+  (writer flock, `workflow_trace.py`) — two agents got this wrong; distrust docs placing the probe
+  in `workflow_trace.py`.
 - Windows is a **blocking CI gate** (`tests-windows`); ADR-0013 governs shell semantics.
-- Real-browser verification requires killing stale `pflow ui` servers first (reuse-if-up probe
-  serves old code).
-- Spec file:line refs last bulk-refreshed 2026-07-02; repo has since absorbed #557's format pass
-  + 116's 117-file diff — treat ALL file:line refs as stale; re-verify at use.
-- Worktrees: only `main` (verified after #565/#581/#585 teardown).
+- Real-browser verification requires killing stale `pflow ui` servers first (reuse-if-up serves old code).
+- ALL spec file:line refs are stale (repo absorbed #557 + 116's diff + session-04 merges) — re-verify at use.
+- **Local main was behind origin** (branches cut from an unpushed local commit); reconciled to
+  `origin/main` = `c161c5ee` after the session-04 merges. Worktrees: only `main`.

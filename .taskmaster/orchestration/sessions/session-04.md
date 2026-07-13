@@ -27,3 +27,27 @@
 - User directive: **#183 plans first** (trap: key-based sanitize misses value-embedded secrets).
 - Next: docs-commit-first → provision 3 worktrees sequentially → launch 3 Opus issue-mode
   task-orchestrators (#413/#497 implement-direct; #183 plan-first) → shepherd → merge → reconcile.
+
+## [2026-07-13] main orchestrator — #413/#497 shipped; #183 escalated → investigated → closed
+
+- **#413** PR #587 MERGED (`dcf757bf`); **#497** PR #588 MERGED (`c161c5ee`, Codex P2 fixed
+  precisely + regression test; carried a stale `.agents` mirror fix). Both worktrees torn down.
+  User granted standing merge authority (merge when fully ready; auto-reviewer comments are a gate).
+- **#183 escalated to root-cause** on user direction ("step back, big picture"). Ran it end to
+  end: plan-first agent hit the scope guard (4 leak surfaces, not 1); 3 investigation searchers
+  mapped the whole secret landscape; a resume-dep check OVERTURNED my on-write recommendation
+  (resume reads secrets back from the trace); a **Codex adversarial design review** (user-requested,
+  `codex exec`) found the taint-masking design too simplistic (durable-provenance gap, 3-seams-not-N,
+  diagnostic dedup trap, exclusions).
+- **The step-back that resolved it** (user drove): verified settings.json is 0600 and a normal
+  settings API key **never leaks** to trace/report/cache/shared-store — #183 is theorized (needs a
+  deliberate non-main pattern). Two of my calls were **overturned by the user's probing** and I
+  conceded both: (1) the trace/cache file-perm "fix" is arguably WRONG (they're observability
+  artifacts, not credential stores); (2) I overstated "#516's premise is wrong" — plaintext-0600 is
+  acceptable/standard; keychain is the real top-10% *upgrade*, non-urgent.
+- **Outcome (no code change):** #183 CLOSED not-planned (full analysis + correct future fix in its
+  close comment); #516 re-scoped to "optional OS-keychain backend; env + 0600 already in place".
+  Codex review + searcher outputs in scratchpad. Local main reconciled to `origin/main`.
+- Tacit: the user's "are we solving the right thing / step back" challenges twice caught me
+  pattern-matching (perms consistency; premise-is-wrong). Verify the OBSERVED leak before designing
+  the fix — the whole masking arc was scoped against a leak that doesn't happen on the main path.

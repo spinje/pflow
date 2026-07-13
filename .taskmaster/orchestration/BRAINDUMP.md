@@ -1,7 +1,7 @@
 # Braindump — main orchestrator (rolling tacit layer)
 
 _Refreshed in place at each session close (`/close-orchestrator-session`, step 3 — the doctrine
-lives there). Sessions: seeded 2026-07-12; closes 2026-07-12 and 2026-07-13._
+lives there). Sessions: seeded 2026-07-12; refreshed at the 2026-07-12, 2026-07-13, and session-04 (2026-07-13) closes._
 
 Predecessor tacit layer: the **Genesis** section at the bottom of this file (2026-07-02) —
 HISTORICAL; its process claims are superseded by ORCHESTRATION.md, its working-style observations
@@ -30,11 +30,21 @@ were absorbed into the command's "Working with the user".
 - **Codex approval seam:** relayed user approval may be rejected in child transcripts for external
   writes. The working mechanism is root performs only the exact directly authorized push/PR/
   rerun/merge action, then resumes the same child for ownership and monitoring.
-- **RESOLVED 2026-07-13:** the pre-existing `.claude/agents/task-planner.md` `model: opus` edit —
-  previously flagged local-only and contradicting the Fable planner policy — was committed by the
-  user (`647d86f9` "dont use fable as default for subagents"). Planners now route Opus; scope is
-  planners only (DECISIONS #3 amended; #8 UI→Fable and #9 lane-B opt-in stand). No longer
-  local-only.
+- **User challenge pattern — "step back / are we solving the right thing" (session-04, twice).**
+  They caught me pattern-matching both times: proposing a file-perm "consistency fix" (traces/cache
+  aren't credential stores — locking them is arguably wrong) and asserting "#516's premise is wrong"
+  (plaintext at 0600 is the accepted CLI standard; OS-keychain is the non-urgent *upgrade*). Lesson:
+  **verify the OBSERVED leak before designing the fix** — the whole secret-masking design arc was
+  scoped against a leak that does NOT happen on the main path (a settings key never reaches the
+  trace/output). Their probing IS the audit; hold the gate, concede plainly when overturned.
+- **Mechanism — adversarial DESIGN review via Codex** (session-04, user-invoked). For a hard design
+  call, get an independent critique of the *proposed design* (not a diff). Working zsh invocation:
+  `codex exec --sandbox workspace-write -c 'approvals_reviewer="auto_review"' "$(cat prompt.md)"`.
+  Traps: the user's PowerShell form uses backtick line-continuations (write it single-line for zsh);
+  `--ask-for-approval` is NOT valid for `codex exec` (drop it — exec is non-interactive); output
+  streams ~MB (redirect to a file, read the tail). It surfaced real flaws my own review missed
+  (durable-provenance gap, three-seams-not-N). Local-only: that review + the session's searcher
+  outputs live in `scratchpad/` (gitignored) — gone once this machine's temp clears.
 Note to next agent: read this file fully, summarize it to yourself, then proceed.
 
 ---
