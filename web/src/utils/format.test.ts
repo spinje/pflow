@@ -152,8 +152,8 @@ describe("paramLanguage (fail-closed: null = render plain, exactly as today)", (
     expect(paramLanguage("shell", "command", "ls -la")).toBe("bash");
     expect(paramLanguage("llm", "prompt", "Write a poem")).toBe("markdown");
     expect(paramLanguage("llm", "system", "You are terse")).toBe("markdown");
-    expect(paramLanguage("claude-code", "prompt", "Fix the bug")).toBe("markdown");
-    expect(paramLanguage("claude-code", "system_prompt", "Be careful")).toBe("markdown");
+    expect(paramLanguage("agent", "prompt", "Fix the bug")).toBe("markdown");
+    expect(paramLanguage("agent", "system_prompt", "Be careful")).toBe("markdown");
   });
 
   it("branches on the VALUE type, never the name: a string output_schema is plain", () => {
@@ -174,7 +174,7 @@ describe("paramLanguage (fail-closed: null = render plain, exactly as today)", (
       paramLanguage("code", "code", "x"),
       paramLanguage("shell", "command", "x"),
       paramLanguage("llm", "prompt", "x"),
-      paramLanguage("claude-code", "system_prompt", "x"),
+      paramLanguage("agent", "system_prompt", "x"),
     ];
     for (const lang of emitted) {
       expect(lang).not.toBeNull();

@@ -134,7 +134,7 @@ export function paramLanguage(kind: string, name: string, value: unknown): strin
   if (kind === "shell" && name === "command") return "bash";
   // Prompts color as markdown SOURCE (VS Code-style), never rendered (user decision).
   if (kind === "llm" && (name === "prompt" || name === "system")) return "markdown";
-  if (kind === "claude-code" && (name === "prompt" || name === "system_prompt")) return "markdown";
+  if (kind === "agent" && (name === "prompt" || name === "system_prompt")) return "markdown";
   return null;
 }
 
@@ -174,13 +174,13 @@ const KIND_COLORS: Record<string, string> = {
   shell: "#7ee787",
   http: "#7fb4f5",
   llm: "#8fa6f0",
-  "claude-code": "#9c89b8",
+  agent: "#9c89b8",
   code: "#ffd479",
   python: "#ffd479",
   file: "#5ec8b0",
   mcp: "#ff8fab",
   // Sub-workflow magenta (user-picked via shoot-lab, 2026-06-10): vivid enough to
-  // mark structure, clearly apart from mcp's salmon-pink and claude-code's violet.
+  // mark structure, clearly apart from mcp's salmon-pink and agent's violet.
   workflow: "#e26ad8",
   input: "#94a3b8",
   output: "#ff9eaa",
@@ -243,7 +243,7 @@ export function nodeColor(node: RoleFacts): string {
   return kindColor(node.kind);
 }
 
-// The small category line on a node card (the kind, e.g. "CLAUDE CODE"). Title-ish
+// The small category line on a node card (the kind, e.g. "AGENT"). Title-ish
 // uppercase; the human description (purpose) is the bold line below it. A code
 // node's ROLE replaces its kind (the n8n model): CONDITION / TRANSFORM.
 export function categoryLabel(node: RoleFacts): string {

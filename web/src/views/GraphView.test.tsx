@@ -1631,7 +1631,7 @@ describe("GraphView — approval bridge (Task 176)", () => {
     // (post-close review finding, 2026-07-12). Reverting the merge OR the paused-with-id
     // showRunDetail arm fails this test.
     vi.mocked(fetchRunNode).mockResolvedValue({
-      node_type: "claude-code",
+      node_type: "agent",
       status: "success",
       duration_ms: 2100,
       cost_usd: null,

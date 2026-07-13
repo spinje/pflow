@@ -36,7 +36,7 @@ const ESCALATION: GateInfo = {
   gate_kind: "decision_escalation",
   gate_request: {
     node_id: "triage",
-    node_type: "claude-code",
+    node_type: "agent",
     kind: "decision_escalation",
     preview: {},
     question: "Two migration paths are viable — which one?",
