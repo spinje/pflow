@@ -30,7 +30,7 @@ between what documents claim and what code does.
    merge, or reconcile without it), then `CURRENT-STATE.md` + the LATEST `sessions/session-NN.md`
    — if that file is thin (a short check-in, an aborted session), read one further back until you
    hit a substantive one (DECISIONS #10) — then `BRAINDUMP.md` (the role's tacit layer, refreshed
-   at each close). Treat every claim as a **pointer to verify, not a fact**. Read all these files in full before you continue.
+   at each close). Treat every claim as a **pointer to verify, not a fact**.
 2. Verify reality: `git fetch` + `git log --oneline -15 origin/main` · `gh pr list --state merged
    --limit 10` · `gh issue list --state open --limit 40` (scan for new since the stamp) ·
    `./scripts/tasks` · `git worktree list` · TaskList for live subagents.
