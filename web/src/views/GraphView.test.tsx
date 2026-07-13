@@ -771,7 +771,9 @@ describe("GraphView mount", () => {
 
       fitViewSpy.mockClear();
       fireEvent.click(screen.getByText("greet")); // the source endpoint chip
-      await waitFor(() => expect(fitViewSpy).toHaveBeenCalled());
+      // Camera-follow is async (navigate → layout → fitView); waitFor's 1s default
+      // is too tight under CI load (observed ~1.07s), so give the follow headroom.
+      await waitFor(() => expect(fitViewSpy).toHaveBeenCalled(), { timeout: 5000 });
       const followed = fitViewSpy.mock.calls.some(
         (c) => (c[0] as { nodes?: { id: string }[] } | undefined)?.nodes?.[0]?.id === "n0",
       );
@@ -822,7 +824,7 @@ describe("GraphView mount", () => {
 
     fitViewSpy.mockClear();
     fireEvent.click(container.querySelector(".chip-stack .edge-chip")!);
-    await waitFor(() => expect(fitViewSpy).toHaveBeenCalled());
+    await waitFor(() => expect(fitViewSpy).toHaveBeenCalled(), { timeout: 5000 });
     const followed = fitViewSpy.mock.calls.some(
       (c) => (c[0] as { nodes?: { id: string }[] } | undefined)?.nodes?.[0]?.id === "g_wf",
     );
@@ -845,12 +847,14 @@ describe("GraphView mount", () => {
 
     fitViewSpy.mockClear();
     act(() => live.handlers!.frame({ kind: "node", ref: GRAPH.nodes[1]!.ref }));
-    await waitFor(() =>
-      expect(
-        fitViewSpy.mock.calls.some(
-          (call) => (call[0] as { nodes?: { id: string }[] } | undefined)?.nodes?.[0]?.id === "n1",
-        ),
-      ).toBe(true),
+    await waitFor(
+      () =>
+        expect(
+          fitViewSpy.mock.calls.some(
+            (call) => (call[0] as { nodes?: { id: string }[] } | undefined)?.nodes?.[0]?.id === "n1",
+          ),
+        ).toBe(true),
+      { timeout: 5000 },
     );
     expect(container.querySelector(".read-panel")).toBeNull();
     expect(live.report).toHaveBeenCalledTimes(reportsAfterOpen);
@@ -897,7 +901,7 @@ describe("GraphView mount", () => {
     // produces no paint epoch for a deferred camera request to wait on.
     fitViewSpy.mockClear();
     act(() => live.handlers!.focus(target));
-    await waitFor(() => expect(fitViewSpy).toHaveBeenCalled());
+    await waitFor(() => expect(fitViewSpy).toHaveBeenCalled(), { timeout: 5000 });
   });
 
   it("reveals both collapsed endpoint chains before applying a live edge focus", async () => {
