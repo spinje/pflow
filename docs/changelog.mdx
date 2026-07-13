@@ -38,7 +38,8 @@ rss: true
 
   ```markdown
   ### approve-release
-  - type: claude-code
+  - type: agent
+  - backend: claude
   - prompt: Audit and approve the compiled changelog
   - approval: required
 
@@ -54,7 +55,7 @@ rss: true
 
   **Highlights**
   - Added human-in-the-loop approval gates via the `approval: required` modifier, pausing execution for interactive YES/NO confirmations.
-  - Added agent-raised escalation gates, allowing `claude-code` or `code` steps to pause execution using `result.escalation` blocks.
+  - Added agent-raised escalation gates, allowing `agent` or `code` steps to pause execution using `result.escalation` blocks.
   - Added the `--auto-approve=<node-id>` repeatable CLI flag and an equivalent MCP `auto_approve` execution option.
   - Implemented the `loop:` node modifier with `while:` and `until:` conditions, backed by a robust engine-reentry compiler pattern.
   - Added the `carry:` state-mapping block (`{ input_key: ${loop-node.output} }`) to thread outputs sequentially across loop iterations.
@@ -97,7 +98,7 @@ rss: true
   - Flipped memoization defaults: only `llm` nodes cache by default; all other node types require explicit `- cache: true`.
   - Added support for JSON literals (`string`, `number`, `boolean`, `null`) inside `??` template coalesce operations.
   - Improved the `??` operator to fall through on absent sub-fields and unexecuted branches without raising validation errors.
-  - Added self-healing schemas to `claude-code` outputs, enabling scalar type coercion and resume-retries on schema soft-failures.
+  - Added self-healing schemas to `agent` outputs, enabling scalar type coercion and resume-retries on schema soft-failures.
   - Added pre-execution validation for LLM model IDs, throwing validation errors before initiating live provider calls.
   - Unified reasoning budget parameter mappings (`reasoning_effort` and `reasoning_max_tokens`) across LLM providers.
   - Added support for shielding `${...}` templates in flow-style YAML, preventing unquoted inline maps from parsing incorrectly.
@@ -172,7 +173,8 @@ rss: true
 
   ````markdown
   ### audit-code
-  - type: claude-code
+  - type: agent
+  - backend: claude
   - max_turns: 5
   - prompt: Audit the security of the root directory.
 
@@ -1182,7 +1184,7 @@ rss: true
   - `http` — all methods, auth, request bodies, automatic JSON parsing.
   - `file` — read, write, copy, move, delete.
   - `mcp` — bridge to any MCP server over stdio or HTTP transport.
-  - `claude-code` — delegate agentic subtasks to Claude Code.
+  - `agent` — delegate agentic subtasks to Claude Code or Codex.
   - `git` / `github` — common operations without shell scripting.
 
   ## MCP server

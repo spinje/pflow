@@ -14,13 +14,25 @@ try:
     from claude_agent_sdk import ClaudeAgentOptions, query
     from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
+    ClaudeSDKError: type[Exception] | None
+    CLIConnectionError: type[Exception] | None
+    CLINotFoundError: type[Exception] | None
+    ProcessError: type[Exception] | None
     try:
-        from claude_agent_sdk import ClaudeSDKError, CLIConnectionError, CLINotFoundError, ProcessError
+        from claude_agent_sdk import ClaudeSDKError as _ClaudeSDKError
+        from claude_agent_sdk import CLIConnectionError as _CLIConnectionError
+        from claude_agent_sdk import CLINotFoundError as _CLINotFoundError
+        from claude_agent_sdk import ProcessError as _ProcessError
+
+        ClaudeSDKError = _ClaudeSDKError
+        CLIConnectionError = _CLIConnectionError
+        CLINotFoundError = _CLINotFoundError
+        ProcessError = _ProcessError
     except ImportError:
-        CLINotFoundError = None
-        CLIConnectionError = None
-        ProcessError = None
         ClaudeSDKError = None
+        CLIConnectionError = None
+        CLINotFoundError = None
+        ProcessError = None
 except ImportError as exc:
     raise ImportError("Claude Agent SDK is not installed. Install with: pip install claude-agent-sdk") from exc
 
@@ -276,7 +288,7 @@ class ClaudeBackend:
 
     async def _execute_with_timeout(
         self, prompt: str, options: ClaudeAgentOptions, prep_res: dict[str, Any]
-    ) -> dict[str, Any]:
+    ) -> AgentResult:
         """Execute Claude Code query with timeout handling.
 
         Args:
@@ -302,7 +314,7 @@ class ClaudeBackend:
 
     async def _run_claude_session(
         self, prompt: str, options: ClaudeAgentOptions, prep_res: dict[str, Any]
-    ) -> dict[str, Any]:
+    ) -> AgentResult:
         """Run the Claude Code session and process messages.
 
         Args:

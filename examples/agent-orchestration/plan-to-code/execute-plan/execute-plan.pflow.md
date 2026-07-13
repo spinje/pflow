@@ -186,7 +186,7 @@ Its work lands in the hardened plan file + the progress log.
 ### breakdown
 
 Group the (now hardened) plan's top-level phases into ordered agent-handoff segments — where
-context resets between fresh agents. A `claude-code` node so the whole harness runs on the
+context resets between fresh agents. An `agent` node so the whole harness runs on the
 Claude subscription with no API-key/LiteLLM dependency; it reads the hardened plan by path
 itself. Structured output soft-fails on this node type, so `group-tick` guards the shape.
 
@@ -234,7 +234,7 @@ are done, which to implement now). Routing target of `check-groups`'s loop-back 
 ```python code
 bd: object
 prior: int
-# Guard claude-code schema soft-fail: on non-compliance `result` is a raw string, not a dict.
+# Guard agent schema soft-fail: on non-compliance `result` is a raw string, not a dict.
 if not isinstance(bd, dict) or not bd.get("segments"):
     raise RuntimeError(
         "breakdown did not return a usable segments list (schema soft-fail or empty). "
@@ -336,7 +336,7 @@ this as a fresh process (new context) while the agent reports `continue: true`, 
 the runaway backstop. `${__iteration__}` (1-based) is the round number, passed to the prompt so it
 can weigh prior rounds. The loop condition is a reliable bool because the node self-heals a
 soft-failed `continue` — scalar coercion turns a `"false"` string into a bool, and a missing
-structured result triggers one resume-retry (claude-code `schema_retries`, default 1).
+structured result triggers one resume-retry (`agent` `schema_retries`, default 1).
 
 - type: agent
 - backend: claude
@@ -491,12 +491,12 @@ else:
 ### push
 
 Push the work branch to origin so `ship` can open a PR. Pushing is deterministic, not agentic, so
-it is a `code` node running in pflow's OWN process — NOT a claude-code agent. That matters: a user's
+it is a `code` node running in pflow's OWN process — NOT an agent node. That matters: a user's
 Claude Code permission rule on push (e.g. `"permissions": {"ask": ["Bash(git push:*)"]}` in
 `~/.claude/settings.json`) blocks an agent's `git push` even under `permission_mode:
 bypassPermissions` — bypass skips interactive prompts but does NOT override a settings `ask`/`deny`
 policy rule, and non-interactively an `ask` resolves to blocked. (This is exactly what blocked an
-earlier run's agentic ship.) Those rules govern claude-code agents only, never pflow's own
+earlier run's agentic ship.) Those rules govern agent backends only, never pflow's own
 subprocess — same reason `branch-setup` is a shell node.
 
 It distinguishes the two failure modes deliberately. A missing `origin` remote is TOLERATED — it

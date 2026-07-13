@@ -1131,25 +1131,25 @@ Note: Type preservation ensures `max_tokens` receives `1000` (int), not `"1000"`
 }
 ```
 
-#### Claude Code Integration with Cost Tracking
+#### Agent Integration with Cost Tracking
 
 ```json
 {
   "nodes": [
     {
       "id": "generate",
-      "type": "claude-code",
+      "type": "agent",
       "params": {
-        "content": "${user_request}",
-        "message": "Generate code for: ${user_request}"
+        "backend": "claude",
+        "prompt": "Generate code for: ${user_request}"
       }
     },
     {
       "id": "report",
-      "type": "file.write",
+      "type": "write-file",
       "params": {
         "file_path": "output.txt",
-        "content": "Code: ${generate.response}\n\nCost: $${generate.llm_usage.cost_usd}"
+        "content": "Code: ${generate.result}\n\nCost: ${generate.llm_usage.cost_usd}"
       }
     }
   ]

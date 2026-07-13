@@ -628,7 +628,7 @@ Analysis results from the LLM processing step.
 
 #### Iteration is Free
 
-Only `llm` nodes cache by default — their output is purely a function of their declared inputs. Every other node type (shell/code/http/file/mcp/claude-code) defaults to NOT caching because it side-effects or reads external state, so iteration loops over filesystem state work correctly without annotations. When you edit a prompt and re-run, changed `llm` nodes re-execute and unchanged ones return instantly. Use this:
+Only `llm` nodes cache by default — their output is purely a function of their declared inputs. Every other node type (shell/code/http/file/mcp/agent) defaults to NOT caching because it side-effects or reads external state, so iteration loops over filesystem state work correctly without annotations. When you edit a prompt and re-run, changed `llm` nodes re-execute and unchanged ones return instantly. Use this:
 
 - Edit a prompt file → re-run → only affected `llm` nodes re-execute (~seconds, not minutes)
 - `--dry-run` → preview plan + cost/duration estimate without running (expensive runs, checking what an edit invalidated)

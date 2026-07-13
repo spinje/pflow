@@ -1,7 +1,6 @@
 # Implementation Plan — Task 177: Unified `agent` Node (claude | codex)
 
 > **Read alongside** `.taskmaster/tasks/task_177/task-177.md` (the what & why — not restated here).
-> **On approval, save this file to** `.taskmaster/tasks/task_177/implementation/implementation-plan.md`.
 > Per-phase scope/tier/agent/checkpoint notes are **recommendations** per ORCHESTRATION.md
 > (§ Model routing, § Agent economics, § Checkpoints); whoever runs the plan may adjust on live
 > judgment. The *what* (decisions, edge cases, behavior) is binding.
@@ -18,6 +17,14 @@ session established: codex's CLI runs on the user's ChatGPT subscription, has na
 bundled binary, so v1 uses the CLI. The `AgentBackend` seam keeps the future SDK swap invisible to
 `type: agent`.
 
+## Current branch state
+
+Phases 1–4 are complete and committed as separate commits. Phase 5 is implemented in the current
+working tree but is not yet committed. Do not reset, rewrite, or mechanically regenerate those
+changes when implementing the continuation below. Start by reading this task directory and the
+current implementations/tests/docs in full, then treat **Phase 6 as the only remaining feature
+phase** unless the progress log identifies an unfinished Phase 5 verification item.
+
 ## Resolved decisions (no open forks — implement as stated)
 
 - **Param shape: FLAT + per-backend validation.** All params are flat (no nested `claude:`/`codex:`
@@ -30,9 +37,9 @@ bundled binary, so v1 uses the CLI. The `AgentBackend` seam keeps the future SDK
 - **Shared vs backend-specific params** (VERIFIED against `claude_code.py:177-210` — param names,
   types, defaults, and the full `llm_usage` output contract at :182-193 all match):
   - *Shared (validated in `AgentNode`), valid for both backends, same shape*: `prompt`, `model`,
-    `cwd`, `output_schema`, `resume`, `timeout`, `system_prompt`, `schema_retries`.
+    `cwd`, `output_schema`, `resume`, `timeout`, `system_prompt`, `schema_retries`, `use_api_key`.
   - *claude-only (validated in `ClaudeBackend`)*: `allowed_tools`, `disallowed_tools`, `max_turns`,
-    `max_thinking_tokens`, `use_api_key`.
+    `max_thinking_tokens`.
   - *codex-only (validated in `CodexBackend`)*: `approval_policy`, `add_dir`, `profile`, `config`.
   - ***`sandbox`* is valid for BOTH backends but is BACKEND-SHAPED** — see next bullet. It is NOT a
     shared param; each backend validates its own shape.
@@ -48,6 +55,46 @@ bundled binary, so v1 uses the CLI. The `AgentBackend` seam keeps the future SDK
   - Frozenset model: `sandbox` goes in BOTH `CLAUDE_PARAMS` and `CODEX_PARAMS` (never cross-rejected);
     the allowed set for backend B is `SHARED_PARAMS ∪ B_PARAMS`; each `validate_params` validates
     sandbox's shape for its backend. The docstring union lists `sandbox` once.
+- **`use_api_key` is a shared permission guard, not a required billing mode.** It keeps the exact
+  existing strict coercion contract (`None`/false/0/no → false; true/1/yes → true; ambiguous values
+  fail closed) and defaults to false. False disables the first-party API-key paths pflow can
+  identify and control; true explicitly permits them, but pflow does not require a key or force a
+  paid request. This avoids a breaking Claude semantic change and lets an opted-in Codex run use
+  either stored API auth or an explicitly supplied environment key. A caller-selected custom
+  profile, provider, proxy, base URL, or enterprise credential system is outside this boolean's
+  complete control and must be described as an explicit escape hatch, not silently included in the
+  guarantee.
+- **Codex safe mode (`use_api_key: false`) is a read-only preflight at the spend boundary.** Before
+  every `codex exec` or `codex exec resume`, copy the parent environment, remove
+  `CODEX_API_KEY` and `OPENAI_API_KEY`, run `codex login status` with that exact environment, and
+  pass the same environment to the model command. Never mutate `os.environ`; sibling nodes retain
+  their keys. Do not cache status: each `CodexBackend.run()` is a separate possible spend,
+  including structured-output correction turns.
+- **Known Codex status classification is fail closed and secret-safe.** Parse stripped lines from
+  both stdout and stderr because current Codex writes status to stderr and warnings may precede it.
+  Accept only `Logged in using ChatGPT` and `Logged in using access token` (account/workspace
+  entitlement). Reject `Logged in using an API key - <masked>`, personal access token, Amazon
+  Bedrock API key, `Not logged in`, non-zero status, and unknown/future output. Never include raw
+  status stdout/stderr in logs or exceptions because the API-key form contains masked credential
+  material. Errors say what class was rejected and direct the user to `codex login status` /
+  `codex login`, without echoing the captured line.
+- **Codex opt-in mode (`use_api_key: true`) skips the account-auth preflight.** Preserve the caller's
+  key variables and provider/profile/config behavior. pflow does not call `codex login
+  --with-api-key`, store credentials, or issue a paid probe. This is deliberate: `CODEX_API_KEY`
+  can take precedence during `codex exec` while `codex login status` reports stored auth, so status
+  cannot reliably prove an opted-in execution's effective credential.
+- **Pin the Codex provider only in safe mode.** Append `-c model_provider="openai"` after every
+  caller-supplied `config`, `approval_policy`, and system-prompt override, for both initial and
+  resume argv. This prevents the ordinary profile/config provider-selection path from bypassing
+  the guard. Do not pass `forced_login_method`: Codex can log out and delete mismatched credentials,
+  and pflow's guard must be read-only. Do not use `--ignore-user-config`, which would silently break
+  the shipped `profile`/`config` contract.
+- **Billing guarantee is intentionally narrow and honest.** In false mode pflow scrubs the known
+  first-party key variables, rejects known stored Codex API-key auth, and pins Codex's provider
+  selector; it does not prove that every custom profile/provider/proxy/base-URL credential path is
+  unmetered. Nor can it detect or prevent purchased ChatGPT/Claude usage credits, auto-reload, plan
+  overage, or administrator policy. Docs must describe the concrete protections, never collapse
+  them into "API-key billing is impossible" or "this run cannot incur an incremental charge."
 - **Structured output**: keep the top-level `type: object` schema constraint for **both** backends
   (shared validation). Keep the existing soft-fail contract: on non-conforming output, fall back to
   raw text in `result`, set `_schema_error`, emit `__warnings__[node_id]` → DEGRADED; never route
@@ -130,8 +177,9 @@ New package `src/pflow/nodes/agent/` (rename of `nodes/claude/`):
   `_run_claude_session`, `_process_assistant_message`, `_extract_metadata`,
   `_create_completion_event`, `_enrich_error_result_exception`, `_is_auth_error`,
   `_auth_failure_guidance`, `_AUTH_ERROR_MARKERS`, and the claude-only validators
-  (`max_thinking_tokens`, `resume`, `use_api_key`, claude sandbox sub-keys) + the top-level-object
-  error text. Behavior identical to today's node.
+  (`max_thinking_tokens`, claude sandbox sub-keys) + the top-level-object error text. The shared
+  `use_api_key` value is normalized by `AgentNode`; Claude only consumes it. Behavior otherwise
+  remains identical to today's node.
 - **`codex_backend.py` — `CodexBackend`** (new, Phase 3): drives `codex exec` via subprocess.
 - **`schema_validation.py`**: unchanged predicates; update docstring references.
 - **`__init__.py`**: keep the lazy `__getattr__` pattern (today's `nodes/claude/__init__.py:18-23`)
@@ -394,13 +442,231 @@ content; a migrated harness example runs.
 
 ---
 
+## Phase 6 — Shared API-key opt-in + fail-closed Codex account-auth guard
+
+**Status**: continuation added after the Phase 5 implementation. This phase supersedes every
+earlier sentence that calls `use_api_key` Claude-only or says Codex has no API-key parameter.
+
+**Scope**: ~small-medium (four production modules, four focused test modules, and auth wording in
+the Phase 5 docs). **Tier**: **Opus** — billing/auth is a security boundary and the subprocess
+lifecycle has real edge cases. Use one `task-phase-implementer`; do not split code and tests across
+agents. **Checkpoint after the focused non-e2e gate**: review the exact public guarantee and the
+mocked status/exec call sequences before committing. No design fork remains. Append a Phase 6
+section to `implementation/progress-log.md` at start, after each verification gate, and at handback;
+record commands/results and decisions, not a duplicate of this plan.
+
+### 6.1 Centralize the shared parameter without changing Claude behavior
+
+1. In `src/pflow/nodes/agent/schema_validation.py`:
+   - Move `use_api_key` from `CLAUDE_PARAMS` to `SHARED_PARAMS`. Do not add it to `CODEX_PARAMS`;
+     there must be one source of truth saying it is shared.
+   - Move Claude's existing strict coercion into a public-in-package pure helper
+     `validate_use_api_key(value: Any) -> bool`. Preserve the accepted forms exactly:
+     `None`, `False`, integer `0`, and case-insensitive strings `false`/`0`/`no` → `False`;
+     `True`, integer `1`, and strings `true`/`1`/`yes` → `True`. Reject every other integer,
+     string, collection, or object with backend-neutral guidance. Do not use Python truthiness.
+2. In `src/pflow/nodes/agent/agent_node.py`:
+   - Change the docstring entry to a shared parameter: "permit API-key/provider billing
+     (default false)". This docstring remains the static metadata/unknown-param allowlist.
+   - Normalize the value once in `prep()` and put `"use_api_key"` directly in `prepared` before
+     merging backend-specific results.
+3. In `src/pflow/nodes/agent/claude_backend.py`:
+   - Delete the private `_validate_use_api_key` implementation and stop returning a duplicate
+     `use_api_key` entry from `validate_params()`.
+   - Leave execution semantics unchanged: false blanks `ANTHROPIC_API_KEY` in the child-only
+     environment; true leaves it available. Do not add a key-existence preflight—true grants
+     permission but does not require billing.
+4. `src/pflow/core/workflow/validator.py` must not gain another auth-specific allowlist or branch.
+   Its existing import of `SHARED_PARAMS` should make Codex accept the parameter statically. If a
+   test fails, fix the shared metadata/set seam rather than duplicating backend knowledge.
+
+### 6.2 Put the Codex guard immediately before every possible model call
+
+Implement the following private, independently testable pieces in
+`src/pflow/nodes/agent/codex_backend.py`; names may vary only if the replacement is equally literal:
+
+1. Add `_LOGIN_STATUS_TIMEOUT_SECONDS = 10` and a small explicit auth classification type (an enum
+   or string `Literal`; do not return free-form CLI text).
+2. Add `_build_child_env(use_api_key: bool) -> dict[str, str]`:
+   - Start from `os.environ.copy()`.
+   - In false mode, remove `CODEX_API_KEY` and `OPENAI_API_KEY` with `pop(..., None)`.
+   - In true mode, remove nothing.
+   - Never assign to, clear, or restore the process-global `os.environ`.
+3. Add a pure `_classify_login_status(stdout: str, stderr: str)`:
+   - Inspect stripped non-empty lines from both streams, ignoring unrelated warning lines when one
+     recognized status line is present.
+   - Recognize the current exact forms: `Logged in using ChatGPT`; `Logged in using access token`;
+     `Logged in using an API key - ` prefix; `Logged in using personal access token`;
+     `Logged in using Amazon Bedrock API key`; and `Not logged in`.
+   - Collapse them to account, API key, unsupported credential, logged out, or unknown. If output
+     contains conflicting recognized classes, classify it as unknown. Never return or log the
+     matched raw line.
+4. Add `_require_account_auth(options, env)` and call it at the start of `run()` when
+   `use_api_key` is false, before creating output/schema files or constructing `codex exec` argv:
+   - Run exactly `codex login status` as argv `['codex', 'login', 'status']` with
+     `cwd=options['cwd']`, `stdin=subprocess.DEVNULL`, `capture_output=True`, `text=True`,
+     `encoding='utf-8'`, `check=False`, the fixed 10-second timeout, and the same `env` object that
+     will be passed to execution.
+   - Accept account mode (`ChatGPT` or access token) even if a warning line was also emitted.
+   - Reject API key, personal token, Bedrock, logged-out/non-zero, conflicting, and unknown results
+     by raising `CodexNonRetriableError` with concise remediation. API-key rejection says to add
+     `use_api_key: true` only if the user intends API billing; logged-out says to run `codex login`;
+     unknown says to inspect `codex login status` manually. None may interpolate stdout/stderr.
+   - Convert `FileNotFoundError` into the existing install/login `CodexNonRetriableError` and a
+     status timeout into a distinct non-retriable "authentication check timed out" error. These
+     conversions must happen here so `Node._exec()` does not retry the preflight.
+5. Pass the child env to the subsequent `subprocess.run(codex exec...)`. Reuse that one environment
+   object; do not rebuild it between status and exec. Because structured-output correction calls
+   `backend.run()` again, the expected sequence is `status → exec → status → resume exec`.
+6. In true mode, skip `_require_account_auth()` entirely and execute with the unmodified copied
+   environment. This supports both stored API login and `CODEX_API_KEY` environment precedence and
+   avoids falsely treating the stored-login status as the effective opted-in credential.
+
+### 6.3 Make safe-mode provider precedence explicit and non-destructive
+
+1. In `_append_config_options`, retain the current order for user `config`, dedicated
+   `approval_policy`, and `system_prompt`.
+2. When `use_api_key` is false, append `model_provider="openai"` **last within
+   `_append_config_options`** using the existing TOML serializer. This must apply to initial and
+   resume commands because both share the config helper. A user/profile `model_provider` entry may
+   remain earlier in argv; the last matching `model_provider` value is authoritative. Resume's
+   later `sandbox_mode` config remains later in the overall argv and must not be reordered.
+3. When true, append no provider guard; preserve the caller's profile/config behavior.
+4. Never add `forced_login_method`. A mismatch can cause Codex to log out and delete credentials,
+   which violates the read-only guard. Never add `--ignore-user-config`; it would break legitimate
+   model, feature, profile, and config inheritance that Task 177 intentionally exposes.
+5. At the top of `translate_error()`, return an existing `CodexNonRetriableError` unchanged before
+   logging/rewrapping it. Preflight errors must reach `Node._exec()` as `retriable=False`, produce
+   one status subprocess, and produce zero model subprocesses. Keep the existing post-exec auth
+   translation as defense against credential expiry between preflight and execution.
+
+### 6.4 Refactor subprocess fixtures once, then add contract-focused coverage
+
+Do not duplicate a fake runner per test. In
+`tests/test_nodes/test_agent/test_codex_backend.py`, replace `_install_fake_run` with a dispatcher
+that distinguishes `['codex', 'login', 'status']` from `codex exec...`, records all calls, and writes
+`--output-last-message` only for exec calls. Provide a tiny local filter/helper for model calls so
+existing argv/result assertions do not depend on raw call indexes. Update the two inline fakes that
+currently assume every argv has `--output-last-message` (schema-file inspection and missing-message
+tests) to dispatch status too.
+
+Required tests—combine with parametrization where it improves clarity, but do not omit a behavior:
+
+1. `tests/test_nodes/test_agent/test_schema_validation.py` owns the pure strict-bool matrix:
+   all accepted false/true forms above, plus ambiguous strings, integers other than 0/1,
+   collections, and objects failing closed. Move the existing private-Claude coercion assertions;
+   do not test the same matrix through two backends.
+2. `tests/test_nodes/test_agent/test_agent_node.py`:
+   - Parameterize metadata/static acceptance so `use_api_key` is valid for both `claude` and
+     `codex`, while backend-exclusive params still reject cross-backend.
+   - Keep the existing Claude child-environment and auth-guidance tests, updated to use the shared
+     helper/prepared value rather than `ClaudeBackend._validate_use_api_key`.
+3. `tests/test_nodes/test_agent/test_codex_backend.py`:
+   - Add `use_api_key: False` to `_options()`. Add an `AgentNode.prep()` assertion for the shared
+     default; keep the direct `CodexBackend.validate_params()` expected dict backend-specific and
+     unchanged.
+   - Happy safe mode: ambient `OPENAI_API_KEY` and `CODEX_API_KEY` exist; status reports ChatGPT on
+     stderr; order is status then exec; both receive the same sanitized env; parent `os.environ`
+     remains unchanged; result parsing still succeeds. Also prove a recognized status on stdout
+     works and an access-token status is accepted.
+   - Fail-closed matrix: stored API-key status (with a fake masked suffix), personal token, Bedrock,
+     `Not logged in`/non-zero, warning-only output, unknown future output, and conflicting known
+     lines each make zero exec calls. Assert the exception is non-retriable, actionable, and does
+     not contain the masked suffix or raw status.
+   - Opt-in: `use_api_key: True` makes exactly one exec call, no status call, preserves both key
+     variables, and does not append the safe-mode provider override.
+   - Strengthen the full initial-argv test with a conflicting user `model_provider`; in false mode,
+     filter the config values for `model_provider` and assert the last matching value is
+     `model_provider="openai"`. Confirm the same matching-value precedence on resume without
+     requiring it to follow resume's `sandbox_mode` config.
+   - File-not-found and 10-second status-timeout paths raise their distinct non-retriable guidance.
+     Retain direct `codex exec` auth-error translation coverage for the race/expiry case.
+   - Through a real `AgentNode` with `wait=0`, safe-mode preflight reporting stored API-key auth
+     performs one status call, zero exec calls, and raises the same `CodexNonRetriableError`; this
+     protects the idempotent translation and retry flag.
+   - Strengthen the malformed-schema test to assert `status → exec → status → resume exec`; keep
+     the existing soft-fail, session, and retry-usage assertions unchanged. If the second preflight
+     fails, preserve the existing behavior: keep the first result and degrade without a second
+     model call.
+4. `tests/test_core/test_unknown_param_validation.py` covers `use_api_key` as an allowed shared
+   parameter for both literal backends. No new workflow-validator implementation branch is allowed.
+5. Do not add redundant batch/Windows tests: generic non-retriable sequential/parallel behavior is
+   already covered in `tests/test_runtime/test_batch_node.py`, while argv/env dict behavior is
+   platform-neutral and Windows CI owns real subprocess validation. Do not add an API-key e2e test;
+   logging in with a key mutates credentials and a model call may incur cost.
+
+### 6.5 Correct every shipped auth explanation and record the compatibility change
+
+Update these files together so the guide, reference, examples, and architecture teach one contract:
+
+- `src/pflow/guide/nodes/agent.md`
+- `docs/reference/nodes/agent.mdx`
+- `architecture/core-node-packages/agent-nodes.md`
+- `examples/nodes/agent/README.md`
+- `examples/agent-orchestration/plan-to-code/README.md`
+- `examples/agent-orchestration/plan-to-code/run-from-plan.pflow.md`
+- `docs/changelog.mdx`
+- `.taskmaster/tasks/task_177/task-177.md` and this plan (already ruled above)
+
+Move `use_api_key` into the shared parameter presentation and document both backends:
+
+- Default/false: Claude scrubs `ANTHROPIC_API_KEY`; Codex scrubs `CODEX_API_KEY` and
+  `OPENAI_API_KEY`, requires recognized account auth via `codex login status`, and pins the OpenAI
+  provider. Parent/sibling environments are unchanged.
+- True: explicitly permits API-key or configured-provider billing; provide setup commands as user-run commands,
+  never commands for an AI agent to execute. Do not imply pflow stores or logs in with credentials.
+- Codex remediation names `codex login` and `codex login status`; the old sentence "no OpenAI API
+  key parameter exists" must disappear.
+- Explain the intentional compatibility change: existing Codex workflows using API-key auth now
+  fail before the model call unless they add `use_api_key: true`.
+- Replace "no per-token charges" / "cannot charge" claims with the precise boundary: false mode
+  scrubs the named first-party key variables and rejects recognized stored API-key auth; account
+  credits, auto-reload, overage/admin policy, and explicit profile/provider/proxy/base-URL
+  configuration remain provider/user controls and can still be metered.
+
+### Phase 6 verification gate
+
+Before any test command, read and follow `.agents/skills/pflow-sandbox-testing/SKILL.md`. On this
+Darwin worktree, use the repository `.venv` and a writable temporary HOME; do not substitute
+`uv run`, `make test`, or `make check` inside the sandbox and then misdiagnose cache/home failures.
+
+Run in order:
+
+1. Focused source tests:
+   `HOME=/private/tmp/pflow-test-home PYTHONWARNDEFAULTENCODING=1 .venv/bin/python -m pytest tests/test_nodes/test_agent/test_schema_validation.py tests/test_nodes/test_agent/test_codex_backend.py -m 'not e2e' -q`
+2. Full affected Python surface:
+   `HOME=/private/tmp/pflow-test-home PYTHONWARNDEFAULTENCODING=1 .venv/bin/python -m pytest tests/test_nodes/test_agent tests/test_core/test_unknown_param_validation.py tests/test_docs/test_example_validation.py tests/test_docs/test_guide_example_validation.py -m 'not e2e' -q`
+3. Run repository lint/format/type checks with the direct `.venv/bin/...` commands prescribed by
+   the sandbox-testing skill, plus `git diff --check`. If a tool is absent or a full check requires
+   unsandboxed writes, report the exact unverified check instead of changing caches or HOME outside
+   the approved roots.
+4. Render `pflow guide agent` through the sandbox-safe CLI path and manually inspect the shared
+   parameter table, both auth modes, remediation, and billing caveat.
+5. A real `codex login status` is a safe optional reality check. Do **not** run a real model turn or
+   mutate Codex auth merely to close this phase; the existing subscription smoke remains
+   `@pytest.mark.e2e` and requires explicit owner authorization because account credits/overage may
+   apply.
+
+**Phase 6 handback true-state**: both backends expose one shared strict `use_api_key` permission;
+Claude behavior is unchanged; Codex default mode performs one secret-safe account-auth check per
+possible model turn with a child-only sanitized environment and final provider guard; opt-in mode
+preserves explicit key/provider configuration; deterministic preflight failures are non-retriable;
+all shipped docs state the same narrow guarantee; focused non-e2e tests and checks are green.
+
+---
+
 ## Completion (task-orchestrator, after all phases FULLY happy)
 
-- **`make test-all-local`** green (adds e2e).
+- Confirm Phase 6's checkpoint and focused non-e2e gate before committing its code/docs. Do not run
+  paid/API-key e2e. Run **`make test-all-local`** only after the owner explicitly authorizes real
+  provider calls with awareness that account credits/overage may apply; otherwise log that e2e as
+  intentionally deferred and run the complete non-e2e suite.
 - **Code-mode `/deep-review`** on the full branch diff (this touches the node contract + structured
   output + token accounting — apply fixes, log every finding's disposition).
-- End-to-end reality check both backends: `uv run pflow` an `agent`+`claude` workflow and an
-  `agent`+`codex` workflow (incl. structured output + cross-run resume). Confirm clean slate with the
+- Only with the same explicit owner authorization, end-to-end reality check both backends:
+  `uv run pflow` an `agent`+`claude` workflow and an `agent`+`codex` workflow (incl. structured
+  output + cross-run resume). Otherwise retain the already-recorded Phase 1–5 reality checks and do
+  not make a provider call just to revalidate the guard. Confirm clean slate with the
   **broadened grep** (impact-completeness W7 — the hyphen-only form missed `claude_code.` diagnostic
   kinds, the `_claude_code_param_error` helper, and `ClaudeCodeNode` in comments):
   `grep -rnE "claude[-_]code|ClaudeCodeNode" src tests docs examples architecture .claude/agents src/pflow/guide CLAUDE.md`
@@ -449,10 +715,14 @@ Empirically confirmed against `codex-cli 0.144.1` on this machine (do not re-der
 - **Resume**: `codex exec resume [SESSION_ID] [PROMPT]` (or `--last`) — **disk-based**, works across
   separate processes (reads `~/.codex/sessions/**/rollout-*.jsonl`).
 
-**Auth (verified)**: `codex exec` runs on the user's **ChatGPT subscription** via existing
-`codex login` — `~/.codex/auth.json` holds OAuth `tokens.access_token`, **no `OPENAI_API_KEY`
-required**. Confirmed: `codex exec --sandbox read-only "Reply with ONLY the word BANANA."` → `BANANA`,
-exit 0. If not logged in, `translate_error` should point at `codex login`.
+**Auth (verified)**: `codex exec` supports both account-backed ChatGPT auth and API-key auth.
+The originating machine's `~/.codex/auth.json` held OAuth `tokens.access_token` with no
+`OPENAI_API_KEY`; a subscription turn succeeded. `codex login status` is the narrow supported
+preflight, writes status on stderr in the verified CLI, and currently reports ChatGPT, API key,
+access token, personal access token, Bedrock API key, or not-logged-in modes. Current Codex source
+also shows `CODEX_API_KEY` can take precedence for execution while login status reads stored auth;
+therefore Phase 6 must use one sanitized child environment and cannot infer opted-in execution auth
+from status alone. See Phase 6 for the binding guard/parser behavior.
 
 **Token usage shape (verified via the SDK spike, same underlying binary)** —
 `TokenUsageBreakdown(cached_input_tokens, input_tokens, output_tokens, reasoning_output_tokens,

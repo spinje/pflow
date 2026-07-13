@@ -1,16 +1,24 @@
-# Agent Node (Claude Backend)
+# Agent Node
 
-**Use for**: Multi-step agentic tasks that require a fully autonomous agent.
+**Use for**: multi-step work that needs an autonomous coding agent to inspect files, edit a repository, run commands, and iterate on results.
 
-**Use the narrower node when it fits**: deterministic data reshaping → `code`, simple shell commands → `shell`, API calls → `http`, ordinary text analysis that doesn't need repository tools → `llm`.
+**Use a narrower node when it fits**: deterministic data reshaping → `code`, one command → `shell`, one API call → `http`, ordinary text analysis without repository tools → `llm`.
 
-**The test**: Does the task need an autonomous coding agent with access to multiple tools like reading files, editing code, bash etc? YES -> `agent`. NO -> use the smaller node that matches the operation.
+`backend` is required:
 
-Use `output_schema` when downstream nodes need structured implementation results. Claude Code schemas must be JSON Schema objects with top-level `type: object`, and `max_turns` must be at least `2` when `output_schema` is set.
+- `claude` runs Claude Code.
+- `codex` runs the installed `codex exec` CLI.
 
-Run with `--report` when iterating on prompts. The report shows the rendered prompt, result, tool usage, and cost so you can tighten the task without guessing.
+All parameters are flat. Shared parameters work with either backend: `prompt`, `inputs`, `model`, `cwd`, `output_schema`, `resume`, `timeout`, `system_prompt`, and `schema_retries`. Backend-only parameters are rejected when paired with the other backend.
 
-### Node Creation Pattern
+| Backend | Backend-specific parameters | `sandbox` shape |
+|---|---|---|
+| `claude` | `allowed_tools`, `disallowed_tools`, `max_turns`, `max_thinking_tokens`, `use_api_key` | dict of Claude sandbox settings |
+| `codex` | `approval_policy`, `add_dir`, `profile`, `config` | `read-only`, `workspace-write`, or `full-access` |
+
+When `model` is omitted, Claude uses `claude-sonnet-4-5`; Codex inherits the model from its CLI configuration. Codex defaults to `workspace-write` when `sandbox` is omitted.
+
+## Claude pattern
 
 `````markdown
 ### implement-fix
@@ -38,12 +46,7 @@ properties:
     type: array
     items:
       type: string
-  follow_up:
-    type: string
-required:
-  - summary
-  - files_changed
-  - tests_run
+required: [summary, files_changed, tests_run]
 ```
 
 ```prompt
@@ -56,79 +59,127 @@ commands in tests_run.
 ```
 `````
 
-Downstream nodes can read structured fields directly:
+## Codex pattern
 
-```markdown
-- content: ${implement-fix.result.summary}
-- content: ${implement-fix.result.files_changed}
-```
+`````markdown
+### review-fix
 
-### Claude Code Rules
-
-- Keep prompts specific: state the bug, success criteria, files or commands already known, and verification expectation.
-- Prefer narrow tool access with `allowed_tools` / `disallowed_tools` when the workflow should constrain what the agent can do.
-- Use `output_schema` for summaries that downstream nodes will route, save, or format.
-- Do not ask Claude Code to emit both prose and machine data in the same result; put all required fields in the schema.
-- If the task is only "transform this object into that object", use `code` instead.
-
-### Schema self-healing
-
-When `output_schema` is set, the node automatically recovers from schema soft-failures through two mechanisms:
-
-1. **Scalar coercion**: Type-wrong scalar fields are canonically coerced (e.g., `"false"` string → `False` boolean, `"3"` → `3` int). Nested objects/arrays aren't coerced.
-
-2. **Resume retry** (default `schema_retries: 1`): If the model produces no structured output, uncoercible values, or a value outside a declared `enum`/`const`, pflow asks the same session to re-emit with an explicit schema prompt. One corrective pass by default. Set `schema_retries: 0` to disable (schema soft-failures immediately fall through to raw text + warning). An object schema without declared `properties` is unconstrained (any object conforms).
-
-Cost tracking aggregates the main call and all retries — `llm_usage` top-level fields already include retry costs. `--report` shows the retry count per node.
-
-### Recovering from schema soft-failures
-
-`agent` always returns `default`. Schema soft-failures (model didn't comply, a provider error landed alongside the output, or a templated `output_schema` reference resolved to None) do NOT route through `- on-error:` edges.
-
-`${node.result}` is always present: the parsed schema value on success, raw model text (a string) on a soft-failure. With an object schema (the usual case, shown below) success yields a dict, so an `isinstance(result, str)` check cleanly detects the soft-failure — branch on `result`'s type rather than probing for the optional `_schema_error` field. `${node._schema_error}` is set ONLY on a soft-failure; read it inside the fallback branch (where it's guaranteed present). (If your schema's top-level type is itself `string`, the `isinstance` discriminator can't tell success from soft-failure — wrap the value in an object schema so the success shape is a dict.)
-
-```markdown
-### review
+Review the current change and return actionable findings.
 
 - type: agent
-- backend: claude
-- prompt: "..."
-- max_turns: 4
-- next: branch-on-schema
+- backend: codex
+- cwd: .
+- sandbox: workspace-write
+- approval_policy: never
+- add_dir:
+    - ../shared-fixtures
 
 ```yaml output_schema
 type: object
 properties:
   summary: { type: string }
-required: [summary]
+  findings:
+    type: array
+    items: { type: string }
+required: [summary, findings]
 ```
 
-### branch-on-schema
+```prompt
+Review the current worktree for correctness. Fix confirmed issues, run focused
+tests, and return the final summary and any remaining findings.
+```
+`````
 
-Route on whether the result came back structured.
+`approval_policy` accepts `untrusted`, `on-request`, or `never`. `config` passes TOML-compatible Codex configuration overrides; prefer the dedicated parameters when one exists. The node isolates Codex stdin, so the CLI cannot consume pflow's own input pipe.
 
-- type: code
-- inputs:
-    review_result: ${review.result}
-- next: use-result, fallback
+## Structured output and schema recovery
 
-```python code
-review_result: Any
-# Structured output is the parsed object; a soft-failure leaves raw text (str).
-if isinstance(review_result, str):
-    next: str = "fallback"
-else:
-    next: str = "use-result"
+`output_schema` uses each backend's native structured-output surface. Both backends require top-level `type: object`. Wrap arrays, primitives, or top-level combinators inside an object property.
+
+When `output_schema` is set, pflow can recover from schema soft-failures in two ways:
+
+1. **Scalar coercion** converts canonical scalar values such as `"false"` → `false` and `"3"` → `3`. Nested objects and arrays are not coerced.
+2. **Resume retry** asks the same backend session to emit only an object matching the schema. `schema_retries` defaults to `1`; set it to `0` to disable validation/retry and accept the backend result as-is.
+
+For Claude, `max_turns` must be at least `2` when structured output is enabled. Codex has no `max_turns` parameter.
+
+On exhausted or unavailable schema recovery, the node still returns `default`: `${node.result}` contains raw text, `${node._schema_error}` contains the reason, and the workflow becomes `DEGRADED`. Schema soft-failures do not follow `on-error` edges.
+
+When recovery made corrective calls, `${node.llm_usage}` describes the final call and `llm_usage.retries` records the superseded calls. Reports and trace summaries aggregate usage across them.
+
+## Resume an agent session
+
+Both backends write a resumable identifier to `llm_usage.session_id`. Pass it through `resume` to continue that session, including in a later pflow invocation:
+
+```markdown
+### investigate
+
+- type: agent
+- backend: codex
+- prompt: Inspect the failing tests and identify the root cause. Do not edit yet.
+
+### implement
+
+- type: agent
+- backend: codex
+- resume: ${investigate.llm_usage.session_id}
+- prompt: Implement the fix you proposed and run the focused tests.
 ```
 
-### fallback
+Schema retries use the same continuation mechanism automatically. If a backend call produces no session ID, pflow keeps the raw result and degrades instead of starting an unrelated fresh session.
 
-Handle the soft-failure. `${review._schema_error}` is present on this branch.
+## Authentication
 
-- type: shell
-- next: end
+### Claude
 
-```shell command
-echo "schema soft-failed: ${review._schema_error}" >&2
+Install and authenticate Claude Code once:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+claude auth login
+claude auth status
 ```
+
+By default, `backend: claude` uses your Claude Pro/Max subscription. The node blanks `ANTHROPIC_API_KEY` for the Claude subprocess only, because the CLI otherwise prefers an ambient key and silently switches to Anthropic Console billing. The parent environment is unchanged, so sibling `llm` nodes can still use the stored key.
+
+Set `use_api_key: true` only when you intend to bill `ANTHROPIC_API_KEY` to Anthropic Console:
+
+```markdown
+### implement
+
+- type: agent
+- backend: claude
+- use_api_key: true
+- prompt: Refactor this module and run its tests.
 ```
+
+For non-interactive subscription setup, use `claude setup-token`. If authentication fails in default mode, run `claude auth login`; if `use_api_key: true`, check the key and Console credit instead.
+
+### Codex
+
+Install the CLI and authenticate with your ChatGPT account:
+
+```bash
+npm install -g @openai/codex
+codex login
+```
+
+The backend uses the CLI's existing login and configuration; no OpenAI API key parameter exists on the node. Missing CLI and login errors include these commands in their remediation text.
+
+## Choosing permissions
+
+For Claude, constrain tools with `allowed_tools` / `disallowed_tools` and use a Claude sandbox dict when command isolation is required.
+
+For Codex, choose the narrowest sandbox that can complete the task:
+
+- `read-only` for analysis without file edits.
+- `workspace-write` for normal repository work (default).
+- `full-access` only when the task must write outside the workspace sandbox.
+
+`add_dir` grants additional writable directories on initial Codex runs. Resume continues the persisted Codex thread; do not assume a resumed turn re-applies initial working-directory or additional-directory flags.
+
+## Result handling
+
+Downstream nodes read free-form text as `${node.result}` or structured fields such as `${node.result.summary}`. Every successful backend call also writes normalized `llm_usage` fields: token counts, duration, turn count, session ID, and model. Claude supplies an API-equivalent `cost_usd`; Codex CLI usage has `cost_usd: null` and additionally reports `reasoning_output_tokens`.
+
+Run with `--report` while tuning prompts. The report shows the rendered prompt, result, tools, retries, token usage, and available cost data.

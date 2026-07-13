@@ -62,6 +62,6 @@ Use `--dry-run` to discover gates before running: gated steps are tagged `[…, 
 
 ## Escalations — the agent asks you
 
-The second gate kind is raised by an agent step at runtime instead of declared by you. When a `claude-code` step discovers a decision it should not make alone, it returns an `escalation` object (question, options, recommendation) in its structured output — the run pauses, you choose (pick an option or type an answer), and your decision is written back into the step's result for the workflow to act on, typically by re-running the agent with the decision via `loop:`.
+The second gate kind is raised by an agent step at runtime instead of declared by you. When an `agent` step discovers a decision it should not make alone, it returns an `escalation` object (question, options, recommendation) in its structured output — the run pauses, you choose (pick an option or type an answer), and your decision is written back into the step's result for the workflow to act on, typically by re-running the agent with the decision via `loop:`.
 
 See `pflow guide approval` for the escalation contract, the re-fork recipe, and the full rules (batch steps can't be gated — gate around them; loop steps prompt every iteration; cached steps never prompt).

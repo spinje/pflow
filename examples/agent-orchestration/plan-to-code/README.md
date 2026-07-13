@@ -76,8 +76,8 @@ graph TD
     execute-plan__in_max_fix_rounds --> execute-plan__branch-setup
     subgraph execute-plan ["execute-plan (workflow)<br/>Run the invocation-agnostic core."]
         execute-plan__branch-setup[["branch-setup (shell)<br/>Create (or reset) the work branch off the base branch, once, before any implemen"]]:::shell
-        execute-plan__plan-review-fix["plan-review-fix (claude-code)<br/>Harden the plan before any code is written, in ONE agent: deploy plan-review len"]:::code
-        execute-plan__breakdown["breakdown (claude-code)<br/>Group the (now hardened) plan's top-level phases into ordered agent-handoff segm"]:::code
+        execute-plan__plan-review-fix["plan-review-fix (agent)<br/>Harden the plan before any code is written, in ONE agent: deploy plan-review len"]:::code
+        execute-plan__breakdown["breakdown (agent)<br/>Group the (now hardened) plan's top-level phases into ordered agent-handoff segm"]:::code
         execute-plan__group-tick["group-tick (code)<br/>Hold the segment index."]:::code
         subgraph execute-plan__implement-chunk-in ["implement-chunk inputs"]
             execute-plan__implement-chunk__in_plan[/"plan (string)"/]:::input
@@ -93,8 +93,8 @@ graph TD
         execute-plan__implement-chunk__in_progress_log --> execute-plan__implement-chunk__implement
         execute-plan__implement-chunk__in_repo_dir --> execute-plan__implement-chunk__implement
         subgraph execute-plan__implement-chunk ["implement-chunk (workflow)<br/>The loop worker: a whole sub-workflow per segment (implement fork only — no revi"]
-            execute-plan__implement-chunk__implement["implement (claude-code)<br/>Fresh implement fork: reads {plan, spec, progress log} by path, implements ONLY "]:::code
-            execute-plan__implement-chunk__happy-check["happy-check (claude-code)<br/>Always-on final self-review of the just-implemented segment, run as a follow-up "]:::code
+            execute-plan__implement-chunk__implement["implement (agent)<br/>Fresh implement fork: reads {plan, spec, progress log} by path, implements ONLY "]:::code
+            execute-plan__implement-chunk__happy-check["happy-check (agent)<br/>Always-on final self-review of the just-implemented segment, run as a follow-up "]:::code
             execute-plan__implement-chunk__report-commits["report-commits (code)<br/>Surface a clean integer commit count for the parent loop, guarding the claude-co"]:::code
             execute-plan__implement-chunk__implement --> execute-plan__implement-chunk__happy-check
             execute-plan__implement-chunk__happy-check --> execute-plan__implement-chunk__report-commits
@@ -128,7 +128,7 @@ graph TD
         subgraph execute-plan__seg-gate ["seg-gate (workflow)<br/>Per-segment deterministic test/quality gate (with auto-fix)."]
             execute-plan__seg-gate__run-validate["run-validate (code)<br/>Run the project's validation command in `repo_dir` and report pass/fail BY EXIT "]:::code
             execute-plan__seg-gate__check-validate["check-validate (code)<br/>Decide the loop on the command's REAL result: pass → done (`ok: true`); fail and"]:::code
-            execute-plan__seg-gate__fix-tests["fix-tests (claude-code)<br/>A fresh fix fork."]:::code
+            execute-plan__seg-gate__fix-tests["fix-tests (agent)<br/>A fresh fix fork."]:::code
             execute-plan__seg-gate__run-validate --> execute-plan__seg-gate__check-validate
             execute-plan__seg-gate__check-validate -->|fix-tests| execute-plan__seg-gate__fix-tests
             execute-plan__seg-gate__fix-tests --> execute-plan__seg-gate__run-validate
@@ -148,10 +148,10 @@ graph TD
         execute-plan__in_base_branch --> execute-plan__seg-gate__in_base_branch
         execute-plan__in_max_fix_rounds --> execute-plan__seg-gate__in_max_fix_rounds
         execute-plan__check-groups{"check-groups (code)<br/>Decide: loop back for the next segment, or (once all segments are implemented) a"}:::decision
-        execute-plan__review-round["review-round (claude-code)<br/>⟳ while result.continue · ≤ max_review_rounds<br/>One whole-codebase review-fix round (a fresh agent): deploy the relevant lenses "]:::code
+        execute-plan__review-round["review-round (agent)<br/>⟳ while result.continue · ≤ max_review_rounds<br/>One whole-codebase review-fix round (a fresh agent): deploy the relevant lenses "]:::code
         execute-plan__review-round -.->|"⟳"| execute-plan__review-round
-        execute-plan__simplify["simplify (claude-code)<br/>One focused simplicity pass over the COMPLETE implemented + reviewed change, run"]:::code
-        execute-plan__verify["verify (claude-code)<br/>Adversarial verification of the fully-implemented, reviewed, and simplified resu"]:::code
+        execute-plan__simplify["simplify (agent)<br/>One focused simplicity pass over the COMPLETE implemented + reviewed change, run"]:::code
+        execute-plan__verify["verify (agent)<br/>Adversarial verification of the fully-implemented, reviewed, and simplified resu"]:::code
         subgraph execute-plan__final-gate-in ["final-gate inputs"]
             execute-plan__final-gate__in_repo_dir[/"repo_dir (string)"/]:::input
             execute-plan__final-gate__in_validate_command[/"validate_command (string)"/]:::input
@@ -170,7 +170,7 @@ graph TD
         subgraph execute-plan__final-gate ["final-gate (workflow)<br/>Final deterministic test/quality gate (with auto-fix), over the WHOLE result."]
             execute-plan__final-gate__run-validate["run-validate (code)<br/>Run the project's validation command in `repo_dir` and report pass/fail BY EXIT "]:::code
             execute-plan__final-gate__check-validate["check-validate (code)<br/>Decide the loop on the command's REAL result: pass → done (`ok: true`); fail and"]:::code
-            execute-plan__final-gate__fix-tests["fix-tests (claude-code)<br/>A fresh fix fork."]:::code
+            execute-plan__final-gate__fix-tests["fix-tests (agent)<br/>A fresh fix fork."]:::code
             execute-plan__final-gate__run-validate --> execute-plan__final-gate__check-validate
             execute-plan__final-gate__check-validate -->|fix-tests| execute-plan__final-gate__fix-tests
             execute-plan__final-gate__fix-tests --> execute-plan__final-gate__run-validate
@@ -191,7 +191,7 @@ graph TD
         execute-plan__in_max_fix_rounds --> execute-plan__final-gate__in_max_fix_rounds
         execute-plan__check-final["check-final (code)<br/>Ship only if the final gate is green."]:::code
         execute-plan__push["push (code)<br/>Push the work branch to origin so `ship` can open a PR."]:::code
-        execute-plan__ship["ship (claude-code)<br/>Open a PR for the work branch against the base branch."]:::code
+        execute-plan__ship["ship (agent)<br/>Open a PR for the work branch against the base branch."]:::code
         execute-plan__branch-setup --> execute-plan__plan-review-fix
         execute-plan__plan-review-fix --> execute-plan__breakdown
         execute-plan__breakdown --> execute-plan__group-tick

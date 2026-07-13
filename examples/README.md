@@ -38,7 +38,7 @@ Deliberately broken files for testing the parser. Used by `tests/test_docs/test_
 Nested workflow examples — a main workflow calling sub-workflows.
 
 ### nodes/
-Node-specific examples (claude-code).
+Node-specific examples, including the unified `agent` node.
 
 ### real-workflows/
 Production-quality workflows with their own READMEs:

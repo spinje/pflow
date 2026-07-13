@@ -288,8 +288,8 @@ The CLI is recommended for iterative work (building, debugging). The MCP server 
 | `http` | HTTP requests | Yes |
 | `read-file`, `write-file`, etc. | File operations | Yes |
 | `mcp` | Call MCP server tools | Yes |
-| `llm` | LLM API calls (via `llm` library) | No |
-| `claude-code` | Claude Code CLI for complex tasks | No |
+| `llm` | LLM API calls through the LiteLLM adapter | No |
+| `agent` | Agentic repository work via Claude or Codex | No |
 
 ### Key Features
 

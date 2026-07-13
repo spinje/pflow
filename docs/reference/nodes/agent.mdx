@@ -1,0 +1,234 @@
+---
+title: "Agent"
+description: "Run Claude Code or OpenAI Codex for repository-aware tasks"
+icon: "square-asterisk"
+---
+
+<Note>
+  **Agent commands.** Your AI agent uses this node in workflows. You don't configure it directly.
+</Note>
+
+The `agent` node gives a workflow an autonomous coding agent that can inspect files, edit a repository, run commands, and iterate. Each node declares `backend: claude` or `backend: codex`; the workflow-facing result and structured-output behavior stay the same across both.
+
+Use `llm` for text processing that does not need repository tools. Use `code`, `shell`, or `http` when one deterministic operation is enough.
+
+## Parameters
+
+### Shared parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `backend` | str | Yes | - | `claude` or `codex` |
+| `prompt` | str | Yes | - | Task sent to the agent (max 10,000 characters) |
+| `inputs` | dict | No | - | Named values available to a file-backed prompt template |
+| `output_schema` | dict | No | - | Top-level object JSON Schema for structured output |
+| `cwd` | str | No | Current directory | Working directory |
+| `model` | str | No | Backend default | Model override. Claude defaults to `claude-sonnet-4-5`; Codex inherits its CLI configuration |
+| `timeout` | int | No | `300` | Execution timeout in seconds (30–3600) |
+| `system_prompt` | str | No | - | Additional backend system/developer instructions |
+| `resume` | str | No | - | Session/thread ID from a previous agent call |
+| `schema_retries` | int | No | `1` | Corrective structured-output attempts (0–5) |
+
+Parameters remain flat. A backend-only parameter used with the other backend is a validation error, so a workflow cannot silently ignore a misspelled or misplaced permission setting.
+
+### Claude parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `allowed_tools` | list | No | All tools | Permitted Claude tools or patterns |
+| `disallowed_tools` | list | No | None | Denied Claude tools or patterns |
+| `max_turns` | int | No | `50` | Maximum turns (1–100; at least 2 with `output_schema`) |
+| `max_thinking_tokens` | int | No | `8000` | Reasoning budget (1000–100000) |
+| `sandbox` | dict | No | None | Claude Agent SDK sandbox settings |
+| `use_api_key` | bool | No | `false` | Use `ANTHROPIC_API_KEY` and Anthropic Console billing instead of a Claude Pro/Max subscription |
+
+Claude sandbox keys include `enabled`, `autoAllowBashIfSandboxed`, `excludedCommands`, `allowUnsandboxedCommands`, `network`, `enableWeakerNestedSandbox`, and `ignoreViolations`. The backend passes unknown keys through for SDK forward compatibility while validating known value shapes.
+
+### Codex parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `sandbox` | str | No | `workspace-write` | `read-only`, `workspace-write`, or `full-access` |
+| `approval_policy` | str | No | CLI configuration | `untrusted`, `on-request`, or `never` |
+| `add_dir` | list | No | `[]` | Additional writable directories for an initial run |
+| `profile` | str | No | - | Codex CLI configuration profile |
+| `config` | dict | No | `{}` | TOML-compatible Codex configuration overrides |
+
+`full-access` maps to the Codex CLI's `danger-full-access` mode. Dedicated node parameters take precedence over the same key in `config`.
+
+## Output
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `result` | str/dict | Free-form text, parsed structured output, or raw text after a schema soft-failure |
+| `llm_usage` | dict | Normalized token, duration, turn, model, and session metadata |
+| `_schema_error` | str | Present when structured output could not be validated or recovered |
+
+Schema soft-failures make the workflow `DEGRADED`, but the node still follows its normal success route. They do not trigger `on-error`; downstream logic should branch on the result shape or handle `_schema_error` in a fallback path.
+
+### Usage metadata
+
+Both backends write these fields when usage is available:
+
+```json
+{
+  "model": "backend-model-or-null",
+  "input_tokens": 14653,
+  "uncached_input_tokens": 4669,
+  "cache_creation_input_tokens": 0,
+  "cache_read_input_tokens": 9984,
+  "input_token_accounting": "total_includes_cache",
+  "output_tokens": 25,
+  "total_tokens": 14678,
+  "cost_usd": null,
+  "duration_ms": 3450,
+  "num_turns": 1,
+  "session_id": "019f..."
+}
+```
+
+Claude reports `input_token_accounting: split_cache_fields` and an SDK-reported API-equivalent `cost_usd`. Codex reports `total_includes_cache`, adds `reasoning_output_tokens`, and leaves `cost_usd` as `null` because the CLI does not expose per-run USD cost.
+
+When schema recovery makes corrective calls, the top-level fields describe the final call and `retries` contains usage records for superseded calls. Reports and trace summaries aggregate the final call and those retry records.
+
+## Choose a backend
+
+<Tabs>
+  <Tab title="Claude">
+    ```markdown
+    ### implement
+
+    Fix the failing test and report what changed.
+
+    - type: agent
+    - backend: claude
+    - max_turns: 6
+    - allowed_tools: [Read, Edit, Bash]
+    - prompt: Fix the failing test, keep the patch focused, and run the smallest relevant test command.
+    ```
+
+    Claude-specific tool lists and sandbox settings let the workflow constrain the Claude Agent SDK surface.
+  </Tab>
+  <Tab title="Codex">
+    ```markdown
+    ### implement
+
+    Fix the failing test and report what changed.
+
+    - type: agent
+    - backend: codex
+    - sandbox: workspace-write
+    - approval_policy: never
+    - prompt: Fix the failing test, keep the patch focused, and run the smallest relevant test command.
+    ```
+
+    Codex runs through `codex exec` with shell-free arguments and isolated stdin. `workspace-write` is the normal editing mode; use `read-only` for analysis and reserve `full-access` for tasks that must write outside the workspace sandbox.
+  </Tab>
+</Tabs>
+
+## Structured output
+
+Both backends use their native JSON Schema support. The schema must declare top-level `type: object`; wrap arrays, primitives, or top-level combinators inside an object property.
+
+````markdown
+### review
+
+Review the current change and return structured findings.
+
+- type: agent
+- backend: codex
+- sandbox: read-only
+
+```yaml output_schema
+type: object
+properties:
+  summary: { type: string }
+  issues:
+    type: array
+    items: { type: string }
+  approved: { type: boolean }
+required: [summary, issues, approved]
+```
+
+```prompt
+Review the current change for correctness and missing tests. Do not edit files.
+```
+````
+
+The parsed object is available at `${review.result}` and fields such as `${review.result.approved}`.
+
+Pflow canonically coerces type-wrong scalar values, then asks the same session for a corrected object when needed. `schema_retries` controls those continuation calls. If the backend produces no session ID or still misses the schema, pflow preserves raw text in `result`, sets `_schema_error`, and marks the workflow `DEGRADED`.
+
+Set `schema_retries: 0` when you want native structured output without pflow's conformance check or corrective continuation.
+
+## Resume a session
+
+Both backends expose a persistent identifier as `llm_usage.session_id`:
+
+```markdown
+### investigate
+
+- type: agent
+- backend: claude
+- prompt: Diagnose the failure and propose a fix. Do not edit yet.
+
+### implement
+
+- type: agent
+- backend: claude
+- resume: ${investigate.llm_usage.session_id}
+- prompt: Implement the proposed fix and run the focused tests.
+```
+
+Claude resumes by SDK session ID. Codex resumes its on-disk CLI thread, so the ID also works across separate pflow invocations. A resumed Codex command does not re-apply initial `cwd` or `add_dir` flags; keep extra-directory assumptions explicit in the task.
+
+## Authentication
+
+<Tabs>
+  <Tab title="Claude subscription">
+    ```bash
+    npm install -g @anthropic-ai/claude-code
+    claude auth login
+    claude auth status
+    ```
+
+    This is the default. The node blanks `ANTHROPIC_API_KEY` for the Claude subprocess only, because Claude Code otherwise prefers an ambient key and bills Anthropic Console even when a Pro/Max subscription is logged in. Sibling `llm` nodes still see the original environment.
+
+    Use `claude setup-token` for non-interactive subscription setup.
+  </Tab>
+  <Tab title="Claude API key">
+    Set `use_api_key: true` and provide `ANTHROPIC_API_KEY`:
+
+    ```bash
+    pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
+    ```
+
+    This opts into Anthropic Console per-token billing. The flag fails closed on ambiguous values so a string such as `"false"` cannot accidentally enable billing.
+  </Tab>
+  <Tab title="Codex login">
+    ```bash
+    npm install -g @openai/codex
+    codex login
+    ```
+
+    The node uses the CLI's existing ChatGPT login and Codex configuration. It does not accept an OpenAI API key parameter.
+  </Tab>
+</Tabs>
+
+## Error handling
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| Claude CLI not found | Claude Code is not installed | `npm install -g @anthropic-ai/claude-code` |
+| Claude authentication failed | No subscription login, or invalid Console key in API-key mode | Run `claude auth login`, or check `ANTHROPIC_API_KEY` when `use_api_key: true` |
+| Codex CLI not found | Codex is not installed | `npm install -g @openai/codex` |
+| Codex authentication failed | CLI login is missing or expired | Run `codex login` |
+| Timeout | The task exceeded the configured subprocess/session limit | Increase `timeout` or split the task |
+| Cross-backend parameter error | A Claude-only parameter was used with Codex, or vice versa | Move to the matching backend or remove the parameter |
+
+The node itself retries execution failures twice before surfacing the backend-specific error. Deterministic Codex installation and authentication failures are marked non-retriable for outer batch retries.
+
+## Related
+
+- [LLM node](/reference/nodes/llm) — text processing without repository tools
+- [Claude Agent SDK documentation](https://platform.claude.com/docs/en/agent-sdk/python)

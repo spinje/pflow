@@ -87,7 +87,7 @@ The failed run prints the exact command to use (`To resume from the failed step:
 | `--dry-run` | Preview the resumed tail's cost and cache plan (from the failed step onward) without running |
 | `KEY=VALUE` | Override the original run's inputs |
 
-The failed step runs again from the start, so if it already partly side-effected (an HTTP POST that sent but timed out on the response), resuming re-fires it — at-least-once execution. A side-effecting step (`shell`/`code`/`claude-code`/file-ops/`mcp`) asks for confirmation at a terminal and refuses for non-interactive agents unless you pass `--force`; an idempotent `llm` step resumes silently. See [`pflow guide resume`](/reference/cli/guide) for the full behavior (loop restart, gate re-prompting, top-level granularity, interrupted-run handling).
+The failed step runs again from the start, so if it already partly side-effected (an HTTP POST that sent but timed out on the response), resuming re-fires it — at-least-once execution. A side-effecting step (`shell`/`code`/`agent`/file-ops/`mcp`) asks for confirmation at a terminal and refuses for non-interactive agents unless you pass `--force`; an idempotent `llm` step resumes silently. See [`pflow guide resume`](/reference/cli/guide) for the full behavior (loop restart, gate re-prompting, top-level granularity, interrupted-run handling).
 
 ## Answer a paused gate
 
@@ -478,7 +478,7 @@ Use this when a node has external side effects (API calls, file writes) that sho
 
 ### Per-node caching
 
-Only `llm` nodes cache by default — their output is purely a function of their declared inputs. Every other node type (`shell`, `code`, `http`, file ops, `mcp`, `claude-code`) defaults to NOT caching, because they side-effect or read external state (`git branch`, `date`, environment variables, files, network). So a node like `git branch --show-current` re-runs every time with no annotation needed:
+Only `llm` nodes cache by default — their output is purely a function of their declared inputs. Every other node type (`shell`, `code`, `http`, file ops, `mcp`, `agent`) defaults to NOT caching, because they side-effect or read external state (`git branch`, `date`, environment variables, files, network). So a node like `git branch --show-current` re-runs every time with no annotation needed:
 
 ```markdown
 ### get-branch

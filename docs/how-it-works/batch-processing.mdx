@@ -213,7 +213,7 @@ Fetch each API call with exponential node backoff.
     parallel: true
 ```
 
-For nodes that return an `"error"` action when exhausted (`llm`, `shell`, `mcp`, `code`, file nodes), batch does not run another item attempt. Attempts multiply only for nodes that re-raise after node retries are exhausted, such as `http`, `claude-code`, or custom nodes using the default fallback.
+For nodes that return an `"error"` action when exhausted (`llm`, `shell`, `mcp`, `code`, file nodes), batch does not run another item attempt. Attempts multiply only for nodes that re-raise after node retries are exhausted, such as `http`, `agent`, or custom nodes using the default fallback.
 
 ## What you'll see
 

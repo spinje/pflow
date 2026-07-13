@@ -11,9 +11,9 @@ examples/
 ├── error-handling/        # ⚠️ USED BY TESTS — edge-case error scenarios (test_failed_node_invariant.py)
 ├── invalid/               # ⚠️ USED BY TESTS — parse error test cases (test_example_validation.py)
 ├── nested/                # Nested workflow examples (main + sub-workflows)
-├── nodes/                 # Node-specific examples (claude-code)
+├── nodes/                 # Node-specific examples (including agent backends)
 ├── real-workflows/        # Real-world workflows (changelog, release, vision-scraper, announcements)
-├── agent-orchestration/   # plan-to-code + parallel-planner-review harnesses (claude-code)
+├── agent-orchestration/   # plan-to-code + parallel-planner-review agent harnesses
 ├── bundling/              # Workflow-bundling-on-save examples (see TESTING.md)
 ├── file-references/       # External file-reference (${file:...}) examples (see TESTING.md)
 ├── mcp-http/              # MCP HTTP transport examples

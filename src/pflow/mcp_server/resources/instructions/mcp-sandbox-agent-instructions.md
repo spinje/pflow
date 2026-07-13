@@ -630,7 +630,7 @@ Analysis results from the LLM processing step.
 
 #### Iteration is Free
 
-Only `llm` nodes cache by default — their output is purely a function of their declared inputs. Every other node type (shell/code/http/file/mcp/claude-code) defaults to NOT caching because it side-effects or reads external state, so iteration loops over filesystem state work correctly without annotations. When you re-execute a workflow with `workflow_execute`, unchanged `llm` nodes return instantly from cache; other nodes re-execute. Use `- cache: true` to opt a node into caching only when its output is purely a function of its declared inputs (no filesystem/clock/env/network).
+Only `llm` nodes cache by default — their output is purely a function of their declared inputs. Every other node type (shell/code/http/file/mcp/agent) defaults to NOT caching because it side-effects or reads external state, so iteration loops over filesystem state work correctly without annotations. When you re-execute a workflow with `workflow_execute`, unchanged `llm` nodes return instantly from cache; other nodes re-execute. Use `- cache: true` to opt a node into caching only when its output is purely a function of its declared inputs (no filesystem/clock/env/network).
 
 <!-- PART 2 START: Building Workflows -->
 <!-- Covers: Input declaration, node creation patterns, validation, testing, saving workflows, technical reference -->

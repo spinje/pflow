@@ -510,14 +510,14 @@ chips/groups/batches):
 - **`RFNode.output_shape`** (TRANSFORM L2, 2026-06-10; typing extended
   2026-06-11): the authored shape of the node's structured output.
   `shape.field` names the port the kind actually WRITES: `"result"` for
-  code/claude-code, `"response"` for llm. Everything is FAIL-CLOSED — a type
+  code/agent, `"response"` for llm. Everything is FAIL-CLOSED — a type
   ships only when it is authored truth or a Python-semantics certainty
   (`_TypeScope` + `_key_type` in react_flow.py; the resolution forms are
   pinned in `test_key_type_resolution_matrix`). Rules a consumer must know:
   code keys ship when every module-scope `result` assignment is a literal
   dict with the SAME key set (branch-assigned gates qualify; any mutation /
   differing arms → `keys=None`, never partial); **a schema-LESS llm/
-  claude-code node ships `{field, "str", keys: null}`** (kind contract:
+  agent node ships `{field, "str", keys: null}`** (kind contract:
   free-form text) — so every such card renders a quiet `→ response: str` row
   (D4) — while a schema *present but unreadable* (templated `${...}`,
   non-object) stays null (its runtime value is parsed JSON; "str" would lie).
@@ -532,7 +532,7 @@ chips/groups/batches):
   platform facts). Filtered to kinds present in the graph. The frontend's
   LAST type fallback on output rows that already exist — it never creates a
   row, and per-node authored shapes always win (so it effectively serves
-  shell/http/file/mcp; llm/claude-code/code always have a shape).
+  shell/http/file/mcp; llm/agent/code always have a shape).
 - **`RFEdge.output_path`** (TRANSFORM L2): the ref's sub-path below
   `output_field` — `${gen.result.ok}` ships `["ok"]`. Cleared together with
   `output_field` on truncation re-anchoring. The per-key landing uses the FIRST

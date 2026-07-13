@@ -11,10 +11,10 @@ Features:
 
 ## Examples
 
-### 1. Simple code generation - `claude-code-basic.pflow.md`
+### 1. Simple code generation - `claude-basic.pflow.md`
 
 ```bash
-pflow examples/nodes/agent/claude-code-basic.pflow.md
+pflow examples/nodes/agent/claude-basic.pflow.md
 ```
 
 Demonstrates:
@@ -24,10 +24,10 @@ Demonstrates:
 - Cost tracking via `${node.llm_usage.cost_usd}`
 - Duration and token usage
 
-### 2. Structured code review - `claude-code-schema.pflow.md`
+### 2. Structured code review - `claude-schema.pflow.md`
 
 ```bash
-pflow examples/nodes/agent/claude-code-schema.pflow.md file_path=your_script.py
+pflow examples/nodes/agent/claude-schema.pflow.md file_path=your_script.py
 ```
 
 Demonstrates:
@@ -37,10 +37,10 @@ Demonstrates:
 - Declared workflow inputs referenced as `${file_path}`
 - Multiple output files from a single analysis
 
-### 3. Debugging assistant - `claude-code-debug.pflow.md`
+### 3. Debugging assistant - `claude-debug.pflow.md`
 
 ```bash
-pflow examples/nodes/agent/claude-code-debug.pflow.md error_message="TypeError: ..."
+pflow examples/nodes/agent/claude-debug.pflow.md error_message="TypeError: ..."
 ```
 
 Demonstrates:
@@ -49,10 +49,10 @@ Demonstrates:
 - Optional inputs (`code_context`, `stack_trace`)
 - Confidence scoring and prevention tips
 
-### 4. Git workflow integration - `claude-code-git-workflow.pflow.md`
+### 4. Git workflow integration - `claude-git-workflow.pflow.md`
 
 ```bash
-pflow examples/nodes/agent/claude-code-git-workflow.pflow.md
+pflow examples/nodes/agent/claude-git-workflow.pflow.md
 ```
 
 Demonstrates:
@@ -87,9 +87,9 @@ required: [summary, score, items]
 
 Access fields directly: `${node.result.summary}`, `${node.result.score}`, `${node.result.items}`.
 
-If the SDK returns no structured output, the raw text is available at `${node.result}`, an error message is available at `${node._schema_error}`, and `shared["__warnings__"][node_id]` marks the workflow status `DEGRADED`.
+If the SDK returns no structured output, the raw text is available at `${node.result}`, an error message is available at `${node._schema_error}`, and the workflow status becomes `DEGRADED`.
 
-The node always returns `default` from `post()` — schema soft-failures DO NOT route through `- on-error:` edges. Wire schema-recovery logic by inspecting `${node._schema_error}` or the workflow `DEGRADED` status, not the error edge.
+Schema soft-failures follow the normal success route — they do NOT route through `- on-error:` edges. Wire schema-recovery logic by inspecting the result shape or the workflow `DEGRADED` status, not the error edge.
 
 ## Passing context into the prompt
 
@@ -115,7 +115,8 @@ Every execution captures:
 
 ```
 ${node.llm_usage.model}                         # Model identifier
-${node.llm_usage.input_tokens}                  # Non-cached input tokens
+${node.llm_usage.input_tokens}                  # Total input tokens, including cached tokens
+${node.llm_usage.uncached_input_tokens}         # Input tokens not served from cache
 ${node.llm_usage.output_tokens}                 # Output tokens
 ${node.llm_usage.total_tokens}                  # Sum of input + output
 ${node.llm_usage.cache_creation_input_tokens}   # Cache-creation tokens

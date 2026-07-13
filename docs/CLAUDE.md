@@ -438,7 +438,7 @@ Use `<Update>` for changelog entries. This creates the timeline layout automatic
 - `http` - HTTP requests
 - `shell` - shell commands
 - `code` - Python data transformation
-- `claude-code` - agentic development
+- `agent` - agentic development via Claude or Codex
 - `mcp` - MCP bridge
 
 ---

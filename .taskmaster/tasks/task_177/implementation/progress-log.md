@@ -136,3 +136,95 @@
 - Moved both supplied Codex theme SVGs into `web/src/assets/icons/` as `codex-dark.svg` and `codex-light.svg`, documented their trademark attribution, and removed the root `Codex_light_dark/` staging directory. The light variant is retained beside the active dark variant for a future light UI theme; the current dark-only bundle imports only `codex-dark.svg`.
 - Verification: the focused icon suite passes 2 tests; `make ui-build` passes strict TypeScript and the production Vite build; the complete web suite passes 801 tests across 55 files. An accidental overlapped `npm test`/`npm ci` attempt was invalid because the installer replaced dependencies under the runner; it was terminated and the clean sequential full-suite rerun passed.
 - The screenshot skill remains environment-blocked: a fresh port 8795 launch reproduces the sandbox's false “port already in use” bind failure, so no current-bundle browser screenshot can be captured here. No Phase 5 work was started and no commit was created.
+
+## 2026-07-13 — Phase 5 started
+
+- Read the requested `implement-plan` skill, the required `pflow-sandbox-testing` skill, the `claude-md-update` skill, and every file under `.taskmaster/tasks/task_177/` in full before editing. Scope is Phase 5 only: remaining examples, guide, user docs, architecture/MCP prose, agent-facing instruction cleanup, and the prescribed validation gates.
+- Re-verified repository state against the user handoff: Phases 1–4 are committed separately at `267c8e28`, `b0e03a55`, `ef8f6414`, and `a20b27a1`; the worktree was clean at Phase 5 start.
+- The plan's remaining migration surfaces are live. The shipped guide topic has already been renamed to `agent.md` and examples already use `type: agent` + `backend: claude`, but the guide is still Claude-only and the example filenames/README prose still use `claude-code`. Phase 5 will author the dual-backend contract and finish filename/prose cleanup rather than repeat the completed syntax migration.
+- The broadened grep found additional stale agent-facing references in `tests/CLAUDE.md` and `src/pflow/core/CLAUDE.md` beyond the plan's abbreviated `CLAUDE.md` list. They describe load-bearing import/token boundaries, so they will be updated to the current `AgentNode` / `ClaudeBackend` architecture rather than deleted.
+- Historical architecture documents under `architecture/historical/` remain intentionally unchanged, as the plan directs. The real npm package name `@anthropic-ai/claude-code` in Claude installation guidance and assertions also remains intentional. Any other residual `claude-code`, `claude_code`, or `ClaudeCodeNode` reference in shipped/current prose is in scope.
+- Updating `.claude/agents/review-feature-interactions.md` makes its generated `.codex/agents/review-feature-interactions.toml` stale. The prescribed `scripts/sync_claude_assets.py --write` reached that target but the sandbox exposes `.codex/` read-only and rejected the write with `Operation not permitted`. The authoritative Claude source remains corrected; regeneration of the derived Codex asset is an environment handoff unless a writable surface becomes available.
+- Direct repository-wide mypy exposed 10 errors in the committed Phase 1 Claude adapter despite prior progress entries claiming mypy was green: two async methods declare `dict` while returning `AgentResult`, and the optional old-SDK exception-import fallback assigns `None` to names inferred as class-only. Phase 5 will correct these annotations/import aliases without changing runtime behavior because this is Task 177's final cleanup phase and leaving a known task-local quality-gate failure would violate the plan's completion gate.
+
+## 2026-07-13 — Phase 5 completed
+
+- Finished the clean-slate public migration: authored a dual-backend `pflow guide agent` topic; renamed and rewrote the Mintlify node reference; updated current guide/MCP instructions, docs, architecture, root/example indexes, changelog examples, and agent-facing `CLAUDE.md` facts; renamed the four Claude example files; and replaced stale harness prose/diagrams. Folded the subscription-vs-API-key material from `nodes/agent/AUTHENTICATION.md` into the shipped guide before deleting the standalone internal file.
+- The guide/reference now pin the actual flat contract: required `backend`, shared versus backend-only parameters, backend-shaped sandbox, Codex model/config inheritance, Claude/Codex authentication, native object-schema output, scalar coercion plus same-session retries, soft-failure routing, normalized usage differences, and cross-run resume IDs. Corrected two inherited prose errors while authoring: `input_tokens` is cache-inclusive, and top-level `llm_usage` describes the final schema attempt while `retries` stores superseded calls (reports/traces aggregate them).
+- Cleanup deviation required by the final gate: corrected the pre-existing Claude adapter type defects found by mypy. Optional SDK exception classes now use explicit nullable aliases, and both async execution methods correctly declare `AgentResult`; runtime behavior is unchanged. The complete non-e2e agent suite passes after the change.
+- Intentional residuals: historical architecture/release records remain unchanged; `/integrations/claude-code` remains the real Claude Code product integration route; `@anthropic-ai/claude-code` remains the real npm package. The scoped clean-slate search finds no current `type: claude-code`, `ClaudeCodeNode`, or `claude_code.*` identifier.
+- Verification: focused docs/guide/MCP batch 111 passed; related agent/orchestration/graph/CLI batch 315 passed with the paid real-Codex e2e deselected; final agent batch 202 passed with that e2e deselected; final broad sandbox-capable non-e2e suite 8,803 passed. The excluded UI file separately reports 53 passed / 3 failed, all three failing before product code because this sandbox forbids loopback `socket.bind`. `pflow guide agent`, both named workflow validations, and a full 14-node/3-sub-workflow plan-to-code dry-run succeed.
+- Quality: repository-wide Ruff lint and format, mypy (253 source files), deptry (254 files), applicable pre-commit hooks on all 50 changed/new files, MDX fences, links, JSON formatting, and `git diff --check` pass. `make check` itself cannot start because `uv lock --locked` reproduces the documented macOS NULL-object/Tokio sandbox panic. Its asset-sync equivalent additionally reports the one generated `.codex/agents/review-feature-interactions.toml` file that cannot be regenerated because `.codex/` is read-only here; run `make sync-claude-assets` on a writable checkout.
+- Manual proof still outside this sandbox: execute a paid/live migrated agent example and the Phase 3 text/schema/separate-process Codex resume checks on a network-enabled host. Phase 5 did not make live backend calls or commit changes.
+
+## 2026-07-13 — Phase 6 auth/billing guard planned
+
+- The user identified a contract gap after Phase 5: `use_api_key` exists only for Claude, while
+  Codex inherits its environment/configuration and can use API-key auth without a node-level opt-in.
+  The requirement is now explicit: pflow must protect the known first-party API-key paths by
+  default and require an affirmative node parameter before permitting them.
+- Read every Task 177 file in full and re-verified the live seams before planning. Current code puts
+  `use_api_key` in `CLAUDE_PARAMS`, normalizes it inside `ClaudeBackend`, and launches
+  `codex exec` without an explicit `env`, so Codex inherits `OPENAI_API_KEY` / `CODEX_API_KEY` and
+  arbitrary profile/config provider selection.
+- Used three focused `pflow-codebase-searcher` reviews—not a generic explorer—to independently map
+  auth enforcement, test/fixture impact, and the maintainable public API. Their findings were
+  reconciled into a binding Phase 6 in `implementation-plan.md`; the task spec was updated so an
+  isolated implementer no longer encounters the obsolete "Claude-only" / "Codex has no key
+  parameter" contract.
+- Resolved `use_api_key` as one shared strict permission flag rather than a new auth-mode enum.
+  Omitted/false preserves Claude's existing child-only `ANTHROPIC_API_KEY` scrubbing and activates
+  the Codex account-auth guard. True permits stored/environment API-key or configured-provider use
+  but does not require a key, mutate credentials, or force a paid request. This preserves Claude
+  compatibility and directly models the user's "do not permit API-key use without opt-in" intent.
+- Codex safe-mode design is pinned at the spend boundary: copy (never mutate) `os.environ`; remove
+  `OPENAI_API_KEY` and `CODEX_API_KEY`; run `codex login status` with a fixed short timeout; and pass
+  that same environment object to `codex exec`. Repeat the preflight for every `CodexBackend.run`,
+  including schema-correction/resume turns; do not cache it.
+- Status parsing is exact, fail-closed, and secret-safe. Accept ChatGPT login and enterprise Codex
+  access-token status; reject stored API-key, personal-token, Bedrock, logged-out/non-zero,
+  conflicting, and unknown/future output before a model call. Parse both stdout and stderr, tolerate
+  unrelated warning lines around one recognized status, and never put the raw status or masked key
+  in logs/exceptions.
+- Defense-in-depth decision: append `model_provider="openai"` after caller provider selectors in
+  false mode, while retaining profile/config support. Do not use `forced_login_method` because
+  Codex documents that a credential mismatch logs the user out; do not use `--ignore-user-config`
+  because it would break Task 177's shipped configuration contract. In true mode, preserve the
+  caller's environment/provider behavior and skip status because `CODEX_API_KEY` execution
+  precedence can differ from stored-login status.
+- Narrowed the guarantee after adversarial review. The guard controls named first-party key
+  variables, recognized stored Codex API-key auth, and the ordinary provider selector; it cannot
+  prove that custom profiles/providers/proxies/base URLs are unmetered. It also cannot prevent
+  purchased ChatGPT/Claude credits, auto-reload, overage, or administrator policy. Shipped docs must
+  state these concrete protections rather than promise zero incremental spend.
+- The Phase 6 plan specifies exact production ownership, pure helpers, subprocess arguments,
+  non-retriable error propagation, fixture dispatcher refactor, parameterized status matrix,
+  AgentNode/static-validation coverage, docs to update, and sandbox-safe non-e2e commands. Paid
+  API-key e2e, credential mutation, and unapproved real provider calls are explicitly excluded.
+- Official Codex auth documentation confirmed subscription and usage-based API-key sign-in,
+  `codex login status`, ChatGPT-managed enterprise access tokens, and the destructive mismatch
+  behavior of `forced_login_method`. Current OpenAI credit documentation confirmed that ChatGPT
+  plan usage can consume purchased credits/auto top-up after included allowance. The Codex-manual
+  helper could not resolve `developers.openai.com` inside the sandbox, so the check used the same
+  official pages through the available web surface; no local Codex auth state was changed.
+- Final plan verification: the focused design reviewer found and then re-checked fixes for four
+  ambiguities—absolute billing wording, AgentNode versus backend default ownership, resume config
+  ordering, and mismatch-test naming—and declared Phase 6 isolation-ready with no remaining major
+  ambiguity. `git diff --check` passes for the plan/spec changes. No production implementation or
+  tests were run during this planning-only step.
+
+## 2026-07-13 — Phase 6 implementation handoff
+
+- **Next scope:** implement Phase 6 only from `implementation-plan.md` § Phase 6. Phases 1–4 are
+  committed separately; Phase 5 and this planning update are present in the current dirty worktree.
+  Preserve all existing changes and inspect the diff before editing.
+- **Required read order:** all files under `.taskmaster/tasks/task_177/`, then the current agent
+  production modules, focused tests, and auth documentation named by Phase 6. Append commands,
+  results, and implementation discoveries below this handoff rather than duplicating the plan.
+- **Testing rule:** read `.agents/skills/pflow-sandbox-testing/SKILL.md` before any test command.
+  Use the plan's direct `.venv`/temporary-HOME non-e2e gates. Do not run a real model request,
+  API-key login, logout, or credential-changing command without explicit owner authorization.
+- **Checkpoint:** before committing, confirm the mocked sequence is `status → exec` for each safe
+  run and `status → exec → status → resume exec` for schema correction; false-mode failures make
+  one status call and zero model calls; true mode makes no status call; parent environment and raw
+  status secrets never leak; docs retain the narrowed guarantee.

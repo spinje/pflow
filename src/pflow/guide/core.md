@@ -389,7 +389,7 @@ Errors include fix suggestions — read them carefully and apply the recommended
 
 Caching: only `llm` nodes cache by default (their output is purely a function of
 their declared inputs). Every other node type — shell, code, http, file ops, mcp,
-claude-code — defaults to NOT caching, because they side-effect or read external
+agent — defaults to NOT caching, because they side-effect or read external
 state. Use this:
 
 - Edit a prompt or parameter → re-run → changed `llm` nodes re-execute, unchanged ones return instantly
