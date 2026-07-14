@@ -8,7 +8,7 @@ cache_source, cache_age_sec, and cache_chunks_skipped (all on the
 - ``trace["workflow_path"]`` always present (None when constructor didn't
   set it; the production paths always set it).
 - Cache-metadata fields gate on node type — only ``LLMNode`` participates;
-  ``ClaudeCodeNode`` and shell/file/http nodes are intentionally excluded.
+  ``AgentNode`` and shell/file/http nodes are intentionally excluded.
 - The ``llm_usage`` keyset extension flows through both ``_add_llm_data``
   integration sites (workflow_trace.py + batch_executor.py — the
   whole-dict assignment passes new keys through with no consumer change).
@@ -91,12 +91,12 @@ def test_gate_allows_llm_node() -> None:
     assert _should_write_cache_metadata("LLMNode") is True
 
 
-def test_gate_excludes_claude_code_node() -> None:
-    """ClaudeCodeNode's cache tokens come from the SDK, not pflow's memo
-    cache. Adding pflow's memo cache_key/cache_source to ClaudeCodeNode's
+def test_gate_excludes_agent_node() -> None:
+    """AgentNode's cache tokens come from its backend, not pflow's memo
+    cache. Adding pflow's memo cache_key/cache_source to AgentNode's
     llm_usage would conflate two distinct cache layers and mislead agents
     reading the trace."""
-    assert _should_write_cache_metadata("ClaudeCodeNode") is False
+    assert _should_write_cache_metadata("AgentNode") is False
 
 
 @pytest.mark.parametrize(
@@ -214,8 +214,8 @@ def test_apply_memo_hit_skips_cache_metadata_for_non_llm_node() -> None:
     assert "cache_key" not in shared["shell-step"]
 
 
-def test_apply_memo_hit_skips_for_claude_code_node() -> None:
-    """ClaudeCodeNode is the load-bearing exclusion (intentional per round-3
+def test_apply_memo_hit_skips_for_agent_node() -> None:
+    """AgentNode is the load-bearing exclusion (intentional per round-3
     review): its cache_creation_input_tokens / cache_read_input_tokens
     represent SDK-side caching, not pflow's memo cache. Mixing the two
     misleads agents reading the trace."""
@@ -228,7 +228,7 @@ def test_apply_memo_hit_skips_for_claude_code_node() -> None:
         "default",
         cached_output,
         "config-hash",
-        node_type_name="ClaudeCodeNode",
+        node_type_name="AgentNode",
         cache_key="some-key",
         created_at=time.time(),
     )

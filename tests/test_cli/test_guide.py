@@ -173,10 +173,11 @@ def test_llm_guide_points_to_prompt_caching_without_duplication() -> None:
     assert "`1m` through `60m`" not in result
 
 
-def test_claude_code_guide_documents_structured_output_without_internals() -> None:
-    result = compose_guide(["claude-code"])
-    assert "# Claude Code Node" in result
-    assert "type: claude-code" in result
+def test_agent_guide_documents_structured_output_without_internals() -> None:
+    result = compose_guide(["agent"])
+    assert "# Agent Node" in result
+    assert "type: agent" in result
+    assert "backend: claude" in result
     assert "top-level `type: object`" in result
     assert "`max_turns` must be at least `2`" in result
     assert "### Parameters" in result
@@ -368,18 +369,19 @@ def test_compose_from_workflow_detects_multiple_types(tmp_path: Path) -> None:
     assert "Code" in result
 
 
-def test_compose_from_workflow_detects_claude_code(tmp_path: Path) -> None:
-    wf = tmp_path / "claude.pflow.md"
+def test_compose_from_workflow_detects_agent(tmp_path: Path) -> None:
+    wf = tmp_path / "agent.pflow.md"
     wf.write_text(
-        "# Claude\n\nUse Claude Code.\n\n## Steps\n\n"
+        "# Agent\n\nUse an agent.\n\n## Steps\n\n"
         "### fix\n\nFix code.\n\n"
-        "- type: claude-code\n"
+        "- type: agent\n"
+        "- backend: claude\n"
         "- max_turns: 2\n\n"
         "```prompt\nFix the failing test.\n```\n",
         encoding="utf-8",
     )
     result = compose_guide([str(wf)])
-    assert "# Claude Code Node" in result
+    assert "# Agent Node" in result
     assert "### Parameters" in result
 
 

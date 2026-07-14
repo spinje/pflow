@@ -48,22 +48,19 @@ actual costs use the same rate.
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
 from pflow.core.cache_ttl import parse_cache_ttl
-from pflow.core.llm_providers import detect_provider, model_name_without_provider
+from pflow.core.litellm_runtime import ModelPricing, get_model_pricing, pricing_from_dict
+from pflow.core.llm_providers import detect_provider
 
 from .types import PerCallRow, ProjectionExclusion, invocation_count_for
 
 if TYPE_CHECKING:
     from pflow.core.trace_tree import TraceTree
-
-logger = logging.getLogger(__name__)
-
 
 # Anthropic 1h-TTL cache write multiplier (vs base input rate). Mirrors
 # ``llm_client.py:1047`` — keep the two sites in lockstep so predicted and
@@ -87,19 +84,6 @@ class CostTier(str, Enum):
     def __str__(self) -> str:
         """Match ``StrEnum`` stringification while supporting Python 3.10."""
         return self.value
-
-
-@dataclass(frozen=True)
-class ModelPricing:
-    """Per-token rates for one model.
-
-    All rates are in USD per token (e.g. ``3e-6`` for $3/M tokens).
-    """
-
-    input_rate: float
-    output_rate: float
-    cache_creation_rate: float  # 5-min default per LiteLLM's table.
-    cache_read_rate: float
 
 
 @dataclass(frozen=True)
@@ -166,79 +150,6 @@ class ActuallyPaidCost:
 
     total_usd: float | None
     tier: CostTier
-
-
-# ---------------------------------------------------------------------------
-# Pricing lookup
-# ---------------------------------------------------------------------------
-
-
-def get_model_pricing(model: str) -> ModelPricing | None:
-    """Return ``ModelPricing`` for the given model, or ``None`` if unpriced.
-
-    Tries the prefixed model name first, then the bare name (without provider
-    prefix). Mirrors ``llm_client.py::_maybe_normalize_anthropic_1h_cost``'s
-    bare-name fallback — LiteLLM's ``model_cost`` keys are inconsistent across
-    providers.
-    """
-    if not model:
-        return None
-    try:
-        from pflow.core.litellm_runtime import ensure_model_priced, import_litellm
-
-        litellm = import_litellm()
-    except ImportError:
-        logger.debug("litellm import failed during pricing lookup", exc_info=True)
-        return None
-
-    # Merge upstream cost map on first miss for models missing from the
-    # bundled JSON. Idempotent + cheap after the first call.
-    ensure_model_priced(model)
-
-    model_cost = getattr(litellm, "model_cost", None)
-    if not isinstance(model_cost, dict):
-        return None
-
-    pricing_dict = model_cost.get(model)
-    if pricing_dict is None:
-        provider = detect_provider(model)
-        if provider is not None:
-            bare = model_name_without_provider(model, provider)
-            pricing_dict = model_cost.get(bare)
-    if not isinstance(pricing_dict, dict):
-        return None
-
-    return pricing_from_dict(pricing_dict)
-
-
-def pricing_from_dict(d: dict) -> ModelPricing | None:
-    """Construct a ``ModelPricing`` from one ``litellm.model_cost`` entry.
-
-    Returns ``None`` if the entry lacks the minimum (input + output) rates.
-    Cache rates fall back to derived defaults (1.25x base / 0.1x base) when
-    the entry doesn't carry them — matches the documented Anthropic ratios
-    so workflows targeting models with sparse pricing data still get a
-    plausible estimate rather than ``None``.
-    """
-    input_rate = d.get("input_cost_per_token")
-    output_rate = d.get("output_cost_per_token")
-    if not isinstance(input_rate, (int, float)) or not isinstance(output_rate, (int, float)):
-        return None
-
-    creation_rate = d.get("cache_creation_input_token_cost")
-    if not isinstance(creation_rate, (int, float)):
-        creation_rate = float(input_rate) * 1.25
-
-    read_rate = d.get("cache_read_input_token_cost")
-    if not isinstance(read_rate, (int, float)):
-        read_rate = float(input_rate) * 0.1
-
-    return ModelPricing(
-        input_rate=float(input_rate),
-        output_rate=float(output_rate),
-        cache_creation_rate=float(creation_rate),
-        cache_read_rate=float(read_rate),
-    )
 
 
 # ---------------------------------------------------------------------------

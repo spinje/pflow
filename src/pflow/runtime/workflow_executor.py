@@ -75,7 +75,7 @@ class WorkflowExecutor(BaseNode):
 
     # The compiler stamps the authored node id onto the instance (compilation/compiler.py). Declared
     # here (only where read — by descend, Task 172) so it's typed; "" only for uncompiled construction.
-    # NOT declared on BaseNode: some nodes (ClaudeCodeNode) distinguish an ABSENT node_id, so a global
+    # NOT declared on BaseNode: some nodes (AgentNode) distinguish an ABSENT node_id, so a global
     # default would change their fallback behavior.
     node_id: str = ""
 
@@ -159,6 +159,9 @@ class WorkflowExecutor(BaseNode):
         # flag must reach grandchildren too (a per-item heuristic would not).
         "__gate_resolver__",
         "__gate_prompt_allowed__",
+        # Parallel batch cancellation must reach AgentNodes nested inside a
+        # sub-workflow so their external process trees stop with the host item.
+        "__pflow_cancel_event__",
     )
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:

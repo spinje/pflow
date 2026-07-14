@@ -10,6 +10,7 @@ import aiLlm from "../assets/icons/ai-llm.svg";
 import anthropic from "../assets/icons/anthropic.svg";
 import bash from "../assets/icons/bash.svg";
 import claude from "../assets/icons/claude.svg";
+import codexDark from "../assets/icons/codex-dark.svg";
 import gemini from "../assets/icons/gemini.svg";
 import mcp from "../assets/icons/mcp.svg";
 import ollama from "../assets/icons/ollama.svg";
@@ -31,6 +32,11 @@ import type { RFNode } from "../types";
 // LLM provider (the `provider/model` prefix) → brand icon. Unknown → sparkle.
 const PROVIDER_ICON: Record<string, string> = { anthropic, openai, gemini, ollama };
 
+// Agent backend → product icon. The canvas is dark-only, so Codex uses its
+// white-on-transparent mark. Missing/dynamic/unknown backends keep the neutral
+// sparkle through KIND_ICON.agent below.
+const AGENT_BACKEND_ICON: Record<string, string> = { claude, codex: codexDark };
+
 // Node kind → icon. http/file are placeholders until real art lands; code reuses
 // the python icon (user's call). llm is resolved from its model param (see iconFor).
 const KIND_ICON: Record<string, string> = {
@@ -38,7 +44,7 @@ const KIND_ICON: Record<string, string> = {
   mcp,
   python,
   code: python,
-  "claude-code": claude,
+  agent: aiLlm,
   workflow: subworkflow,
   http: placeholder,
   file: placeholder,
@@ -48,11 +54,17 @@ const KIND_ICON: Record<string, string> = {
  *  CONDITION (fork glyph). Behavior (loop/batch) never swaps the tile — it rides
  *  the border chip rail (ChipRail.tsx, 2026-06-10; retired the old looped-
  *  sub-workflow loop-glyph swap): identity doesn't mutate.
- *  For `llm`, match the provider in its `model` param (`provider/model`); fall
- *  back to a sparkle for dynamic/missing/unknown models. */
+ *  For `agent`, match its resolved `backend` param; for `llm`, match the
+ *  provider in its `model` param (`provider/model`). Both fall back to a
+ *  sparkle for dynamic/missing/unknown values. */
 export function iconFor(node: RFNode): string {
   if (isCondition(node)) return condition;
   if (isTransform(node)) return transform; // shuffle glyph, cyan -> white (transform.svg)
+  if (node.kind === "agent") {
+    const backend = node.params.find((p) => p.name === "backend")?.value;
+    if (typeof backend === "string" && AGENT_BACKEND_ICON[backend]) return AGENT_BACKEND_ICON[backend];
+    return aiLlm;
+  }
   if (node.kind === "llm") {
     const model = node.params.find((p) => p.name === "model")?.value;
     if (typeof model === "string") {

@@ -8,6 +8,8 @@ Covers:
   returning the module.
 - ``ensure_model_priced`` merges upstream cost map on first cache miss,
   is idempotent + thread-safe, and degrades silently on fetch failure.
+- ``estimate_completion_cost_usd`` routes external token usage through
+  LiteLLM's cache-aware pricing and preserves the unknown-model fallback.
 - Importing the helper module itself does not pull ``litellm`` into
   ``sys.modules`` (lazy-import contract).
 - **Meta-test**: no production module under ``src/pflow/`` directly imports
@@ -96,6 +98,88 @@ def test_import_litellm_sets_env_var_and_returns_module(monkeypatch: pytest.Monk
     assert litellm.__name__ == "litellm"
     # Sanity: model_cost was populated at import time
     assert isinstance(getattr(litellm, "model_cost", None), dict)
+
+
+def test_estimate_completion_cost_passes_cache_inclusive_usage_to_litellm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """External backends must use LiteLLM's calculator, including cache tiers."""
+    from pflow.core.litellm_runtime import estimate_completion_cost_usd, import_litellm
+
+    litellm = import_litellm()
+    calls: list[dict] = []
+
+    def fake_cost_per_token(**kwargs):
+        calls.append(kwargs)
+        return 0.012, 0.003
+
+    monkeypatch.setattr(litellm, "cost_per_token", fake_cost_per_token)
+
+    cost = estimate_completion_cost_usd(
+        model="gpt-5.2-codex",
+        input_tokens=15_000,
+        output_tokens=250,
+        cache_creation_input_tokens=100,
+        cache_read_input_tokens=10_000,
+    )
+
+    assert cost == pytest.approx(0.015)
+    assert calls == [
+        {
+            "model": "gpt-5.2-codex",
+            "prompt_tokens": 15_000,
+            "completion_tokens": 250,
+            "cache_creation_input_tokens": 100,
+            "cache_read_input_tokens": 10_000,
+            "call_type": "completion",
+        }
+    ]
+
+
+def test_estimate_completion_cost_uses_bundled_codex_cache_pricing() -> None:
+    """Pin the real LiteLLM seam, not only a mocked return value.
+
+    For bundled ``gpt-5.2-codex`` rates, this usage is:
+    4,669 uncached input + 9,984 cached input + 5 output tokens.
+    """
+    from pflow.core.litellm_runtime import estimate_completion_cost_usd
+
+    cost = estimate_completion_cost_usd(
+        model="gpt-5.2-codex",
+        input_tokens=14_653,
+        output_tokens=5,
+        cache_read_input_tokens=9_984,
+    )
+
+    assert cost == pytest.approx(0.00998795)
+
+
+def test_estimate_completion_cost_without_model_does_not_import_litellm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An inherited Codex CLI model stays unpriced without import overhead."""
+    import pflow.core.litellm_runtime as runtime
+
+    monkeypatch.setattr(runtime, "import_litellm", lambda: pytest.fail("LiteLLM must remain lazy"))
+
+    assert runtime.estimate_completion_cost_usd(model=None, input_tokens=100, output_tokens=10) is None
+
+
+def test_estimate_completion_cost_unknown_model_stays_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catalog misses must not silently turn into a misleading zero-dollar call."""
+    import pflow.core.litellm_runtime as runtime
+
+    monkeypatch.setattr(runtime, "get_model_pricing", lambda model: None)
+    monkeypatch.setattr(runtime, "import_litellm", lambda: pytest.fail("unpriced model must not be calculated"))
+
+    assert (
+        runtime.estimate_completion_cost_usd(
+            model="future-codex-model",
+            input_tokens=100,
+            output_tokens=10,
+        )
+        is None
+    )
 
 
 def test_import_litellm_exceptions_returns_exceptions_module(monkeypatch: pytest.MonkeyPatch) -> None:

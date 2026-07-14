@@ -225,7 +225,7 @@ Beyond their primary outputs, some nodes expose metadata that downstream nodes c
 
 ### LLM token usage
 
-Both `llm` and `claude-code` nodes write `llm_usage` with token counts:
+Both `llm` and `agent` nodes write `llm_usage` with token counts:
 
 ```markdown
 ### analyze
@@ -258,18 +258,21 @@ Available fields on `${node_id.llm_usage}`:
 | `total_tokens` | int | Input + output |
 | `cache_creation_input_tokens` | int | Tokens used for cache creation |
 | `cache_read_input_tokens` | int | Tokens read from cache |
-| `input_token_accounting` | str | How `input_tokens` was derived. The `llm` node reports `total_includes_cache` or `split_cache_fields` depending on what the provider returned; `claude-code` always reports `split_cache_fields` (the Claude SDK splits cached tokens into separate fields). |
+| `input_token_accounting` | str | How `input_tokens` was derived. `llm` varies by provider; the Claude agent backend reports `split_cache_fields`, while Codex reports `total_includes_cache`. |
 
-### Claude Code metadata
+### Agent metadata
 
-The `claude-code` node includes additional execution metadata in `llm_usage` beyond the standard token fields:
+The `agent` node includes additional execution metadata in `llm_usage` beyond the standard token fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `cost_usd` | float | Cost in USD from Claude Code SDK |
+| `cost_usd` | null | Paid provider cost is unavailable for agent backends |
+| `api_equivalent_cost_usd` | float/null | Comparison estimate: SDK-reported for Claude; LiteLLM-estimated for Codex when usage is present and `model` is explicit and priced |
 | `duration_ms` | int | Total execution time |
 | `session_id` | str | Session ID (use with `resume` parameter to continue conversations) |
 | `num_turns` | int | Number of conversation turns |
+| `reasoning_output_tokens` | int | Codex reasoning tokens (Codex backend only) |
+| `retries` | array | Usage records for superseded structured-output correction calls, when any |
 
 Access via `${node_id.llm_usage.field}`:
 
@@ -278,14 +281,16 @@ Access via `${node_id.llm_usage.field}`:
 
 Start an analysis session.
 
-- type: claude-code
+- type: agent
+- backend: codex
 - prompt: Analyze the codebase structure
 
 ### step_two
 
 Continue the same session with follow-up work.
 
-- type: claude-code
+- type: agent
+- backend: codex
 - prompt: Now refactor the issues you found
 - resume: ${step_one.llm_usage.session_id}
 ```

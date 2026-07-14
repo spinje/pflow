@@ -53,7 +53,7 @@ shell --command="git commit -m 'Fix issue 1234'"
 | **`copy-file`** | Copy a file | Params: `source`, `destination` → Writes: `copied` |
 | **`shell`** | Execute shell commands | Params: `command` → Writes: `stdout`, `stderr` |
 | **`http`** | Make HTTP requests | Params: `url`, `method` → Writes: `response` |
-| **[`claude-code`](../core-node-packages/claude-nodes.md)** | Claude Code CLI for complex tasks | Params: `instructions` → Writes: `code_report` |
+| **[`agent`](../core-node-packages/agent-nodes.md)** | Agentic repository work via Claude or Codex | Params: `backend`, `prompt` → Writes: `result`, `llm_usage` |
 
 ### The LLM Node: Smart Exception to Prevent Proliferation
 

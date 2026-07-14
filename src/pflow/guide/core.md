@@ -389,7 +389,7 @@ Errors include fix suggestions — read them carefully and apply the recommended
 
 Caching: only `llm` nodes cache by default (their output is purely a function of
 their declared inputs). Every other node type — shell, code, http, file ops, mcp,
-claude-code — defaults to NOT caching, because they side-effect or read external
+agent — defaults to NOT caching, because they side-effect or read external
 state. Use this:
 
 - Edit a prompt or parameter → re-run → changed `llm` nodes re-execute, unchanged ones return instantly
@@ -576,7 +576,7 @@ result: float = sum(i['pricing']['amount'] for i in items)
 ```
 ````
 
-**Before adding processing steps:** Can the source produce cleaner output? (LLM/Claude Code: use `output_schema`; Claude Code schemas must be top-level objects and need `max_turns >= 2`. HTTP: check for `format=json` param.) Fix at source instead of adding nodes.
+**Before adding processing steps:** Can the source produce cleaner output? (LLM/Agent: use `output_schema`; Agent backends require top-level `type: object`, and Claude additionally needs `max_turns >= 2`. HTTP: check for `format=json` param.) Fix at source instead of adding nodes.
 
 **The golden rule:** Every transformation step must solve a verified problem, not prevent a hypothetical one.
 

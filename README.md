@@ -87,7 +87,7 @@ Once saved, this runs the same way every time — same steps, same order, same d
 
 ## How your agent uses pflow
 
-pflow has 8 node types: `shell`, `code` (Python), `http`, file operations, `llm` calls, `mcp` tools, and a `claude-code` node for delegating to another agent.
+pflow has 8 node types: `shell`, `code` (Python), `http`, file operations, `llm` calls, `mcp` tools, and an `agent` node that delegates repository work to Claude or Codex.
 
 Before anything runs, validation catches errors — wrong template references, missing inputs, type mismatches. Your agent handles the whole lifecycle:
 

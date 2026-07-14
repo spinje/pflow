@@ -633,7 +633,7 @@ class TestBuildSummary:
         assert "claude" in md
 
     def test_agent_calls_label_with_turns_and_cache(self) -> None:
-        """claude-code runs render 'Agent calls: N (T turns)', and `in` is the
+        """agent runs render 'Agent calls: N (T turns)', and `in` is the
         cache-inclusive input total read directly from ``total_input_tokens`` — the
         renderer no longer re-adds the cache tiers (#492), with a cache-% suffix."""
         trace = _make_trace(
@@ -657,7 +657,7 @@ class TestBuildSummary:
         assert "LLM calls" not in md
 
     def test_mixed_agent_and_llm_calls_label(self) -> None:
-        """A run with both claude-code and llm nodes surfaces both counts."""
+        """A run with both agent and llm nodes surfaces both counts."""
         trace = _make_trace(
             llm_summary={
                 "total_calls": 5,
@@ -749,8 +749,25 @@ class TestBuildNodeFile:
         assert "- Tokens: 1,000 in / 200 out" in md
         assert "- Paid this run: $0.0420" in md
 
+    def test_agent_estimate_is_not_rendered_as_paid_cost(self) -> None:
+        event = _make_event(
+            llm_call={
+                "model": "gpt-5.5",
+                "input_tokens": 1000,
+                "output_tokens": 200,
+                "cost_usd": None,
+                "api_equivalent_cost_usd": 0.042,
+                "num_turns": 1,
+            }
+        )
+
+        md = _build_node_file(event)
+
+        assert "- Paid this run: —" in md
+        assert "- API-equivalent estimate: $0.0420" in md
+
     def test_llm_metadata_shows_turns_and_session(self) -> None:
-        # claude-code nodes carry num_turns (agent loop effort) and session_id.
+        # agent nodes carry num_turns (agent loop effort) and session_id.
         event = _make_event(
             llm_call={
                 "model": "claude-sonnet-4-5",
@@ -1074,7 +1091,7 @@ class TestInclusiveInputTokenContract:
     """``input_tokens`` is the cache-inclusive total at every consumer (#492).
 
     The bug: ``trace_report`` used to add the cache tiers on top of ``input_tokens``
-    (correct only for ClaudeCodeNode's old disjoint shape), double-counting every
+    (correct only for AgentNode's old disjoint shape), double-counting every
     inclusive LLMNode call. After the fix the renderer reads ``input_tokens`` verbatim,
     so it agrees with ``metrics.py`` for both node types.
     """
@@ -1093,7 +1110,7 @@ class TestInclusiveInputTokenContract:
         """A per-node Tokens line shows the inclusive input total and a sane cache-%
         (20,000 / 26,000 ≈ 77%) — not the pre-fix 51,000 from re-summing cache."""
         event = _make_event(
-            node_type="ClaudeCodeNode",
+            node_type="AgentNode",
             llm_call={
                 "model": "claude-sonnet-4-5",
                 "input_tokens": 26000,
@@ -1128,7 +1145,7 @@ class TestInclusiveInputTokenContract:
 
     def test_metrics_and_report_agree_on_inclusive_input_total(self) -> None:
         """#492's real surface: ``metrics.py`` and ``trace_report.py`` must report the
-        SAME input total for a trace mixing a claude-code (inclusive-with-cache) call and
+        SAME input total for a trace mixing an agent (inclusive-with-cache) call and
         an LLMNode call. Pre-fix, trace_report added cache on top of ``input_tokens`` and
         diverged from metrics. Runs the real consumers, not mocks (tests/CLAUDE.md #20):
         the trace's ``llm_summary`` is produced by the real ``WorkflowTraceCollector``
@@ -1139,7 +1156,7 @@ class TestInclusiveInputTokenContract:
 
         claude_event = {
             "node_id": "agent",
-            "node_type": "ClaudeCodeNode",
+            "node_type": "AgentNode",
             "duration_ms": 10.0,
             "success": True,
             "timestamp": "2026-03-23T10:00:01",
@@ -1176,11 +1193,11 @@ class TestInclusiveInputTokenContract:
         assert llm_summary["total_tokens"] == 29500
 
     def test_cached_claude_event_source_tokens_render_sane_cache_pct(self) -> None:
-        """A cached claude-code event where cache_read (20,000) exceeds the old uncached
+        """A cached agent event where cache_read (20,000) exceeds the old uncached
         slice (1,000): the now-inclusive denominator keeps the 'Source tokens' cache-%
         under 100% (77%). Pre-fix this latent case could render a nonsensical >100%."""
         event = _make_event(
-            node_type="ClaudeCodeNode",
+            node_type="AgentNode",
             cached=True,
             llm_call={
                 "model": "claude-sonnet-4-5",
@@ -1786,6 +1803,26 @@ class TestCostInTables:
         )
         md = _build_summary(trace, source_path="test")
         assert "Total cost: $0.0847" in md
+
+    def test_summary_header_labels_api_equivalent_estimate(self) -> None:
+        trace = _make_trace(
+            llm_summary={
+                "total_calls": 1,
+                "total_tokens": 5000,
+                "total_cost_usd": None,
+                "pricing_available": False,
+                "unavailable_models": [{"name": "gpt-5.5", "calls": 1}],
+                "unavailable_models_unnamed_count": 0,
+                "total_api_equivalent_cost_usd": 0.0847,
+                "models_used": ["gpt-5.5"],
+            }
+        )
+
+        md = _build_summary(trace, source_path="test")
+
+        assert "Total cost: —" in md
+        assert "API-equivalent estimate: $0.0847" in md
+        assert "Total cost: $0.0847" not in md
 
 
 # --- Error summary ---
@@ -3141,3 +3178,23 @@ def test_resolve_final_status_does_not_flip_stored_failed_without_failed_node_id
     # Authoritative branch: failed_node_ids present → trust the stored final_status.
     modern = {"failed_node_ids": ["a"], "final_status": "failed", "nodes": []}
     assert _resolve_final_status(modern) == "failed"
+
+
+def test_agent_report_renders_promoted_prompt_and_tools() -> None:
+    event = _make_event(
+        node_id="review",
+        node_type="AgentNode",
+        llm_prompt="Inspect repository",
+        agent_tools=[
+            {"name": "shell", "input_summary": "git status"},
+            {"name": "read_file", "input_summary": "src/pflow/app.py"},
+        ],
+        node_output={"result": "done"},
+    )
+
+    markdown = _build_node_file(event)
+
+    assert "## Prompt\n\nInspect repository" in markdown
+    assert "## Tools" in markdown
+    assert "- `shell`: git status" in markdown
+    assert "- `read_file`: src/pflow/app.py" in markdown

@@ -37,7 +37,7 @@ _NODE_TYPE_TO_TOPIC: dict[str, str] = {
 _TOPIC_TO_NODE_TYPES: dict[str, list[str]] = {
     "http": ["http"],
     "llm": ["llm"],
-    "claude-code": ["claude-code"],
+    "agent": ["agent"],
     "code": ["code"],
     "shell": ["shell"],
     "file": ["read-file", "write-file", "copy-file", "move-file", "delete-file"],
@@ -458,7 +458,7 @@ def _format_param_line(param: dict) -> str:
 
 def _placeholder_entry_content() -> str:
     return """\
-pflow runs workflows — sequences of nodes (http, shell, llm, claude-code, code, file, mcp) \
+pflow runs workflows — sequences of nodes (http, shell, llm, agent, code, file, mcp) \
 that pass data via `${...}` templates.
 
 Quick start:

@@ -37,7 +37,7 @@ Two tiers, both in-process
 
 Both tiers are in-process and run in the default ``make test`` suite (no
 ``e2e`` marker, or the guard would not run by default). The execution subset is
-deliberately narrow: no network (http/mcp), no LLM cost (llm/claude-code), and
+deliberately narrow: no network (http/mcp), no LLM cost (llm/agent), and
 no missing-input failures, so it stays hermetic and fast.
 
 Tolerances (deliberate, not false-failure suppression)
@@ -169,7 +169,7 @@ def _unregistered_types(path: Path, registered: set[str]) -> set[str]:
 
 
 # Node types safe to execute in-process with no external dependencies and
-# deterministic behavior. NOT http/mcp (network), llm/claude-code (cost), or
+# deterministic behavior. NOT http/mcp (network), llm/agent (cost), or
 # file ops (would need a hermetic-cwd guarantee before widening).
 _RUNNABLE_NODE_TYPES = {"code", "shell"}
 

@@ -1030,6 +1030,31 @@ class TestWorkflowTraceCollector:
             assert summary["total_cost_usd"] == pytest.approx(0.08)
             assert summary["pricing_available"] is True
 
+    def test_agent_api_equivalent_estimate_is_separate_from_paid_cost(self, streaming_collector, temp_home):
+        with patch("pathlib.Path.home", return_value=temp_home):
+            streaming_collector.record_node_execution(
+                node_id="agent-1",
+                node_type="AgentNode",
+                duration_ms=100.0,
+                success=True,
+                node_output={
+                    "llm_usage": {
+                        "model": "gpt-5.5",
+                        "total_tokens": 100,
+                        "cost_usd": None,
+                        "api_equivalent_cost_usd": 0.05,
+                        "num_turns": 1,
+                    },
+                },
+            )
+
+            filepath = streaming_collector.save_to_file()
+            summary = load_trace_file(filepath)["llm_summary"]
+
+        assert summary["total_cost_usd"] is None
+        assert summary["pricing_available"] is False
+        assert summary["total_api_equivalent_cost_usd"] == pytest.approx(0.05)
+
     def test_llm_summary_unpriced_call_surfaces_as_none(self, streaming_collector, temp_home):
         """Regression: when any call has cost_usd=None (unknown-pricing model),
         total_cost_usd is None and partial_cost_usd carries the priced subset.
@@ -2082,3 +2107,30 @@ class TestTraceHookCapturesSystem:
         )
 
         assert collector.events[0]["llm_system"] == "Per-item system from LLMNode.post()"
+
+
+def test_agent_prompt_and_tools_promote_to_canonical_trace_fields() -> None:
+    collector = WorkflowTraceCollector("agent-trace")
+
+    collector.record_node_execution(
+        node_id="review",
+        node_type="AgentNode",
+        duration_ms=10,
+        success=True,
+        node_params={"backend": "codex", "prompt": "Inspect ${target}"},
+        template_resolutions={"prompt": {"template": "Inspect ${target}", "resolved": "Inspect repository"}},
+        node_output={
+            "result": "done",
+            "_agent_prompt": "Inspect repository",
+            "_agent_tools": [{"name": "shell", "input_summary": "git status"}],
+            "llm_usage": {"input_tokens": 10, "output_tokens": 2},
+        },
+    )
+
+    event = collector.events[0]
+    assert event["llm_prompt"] == "Inspect repository"
+    assert event["agent_tools"] == [{"name": "shell", "input_summary": "git status"}]
+    assert "prompt" not in event["node_params"]
+    assert "prompt" not in event["template_resolutions"]
+    assert "_agent_prompt" not in event["node_output"]
+    assert "_agent_tools" not in event["node_output"]

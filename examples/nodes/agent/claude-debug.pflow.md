@@ -1,4 +1,4 @@
-# Claude Code Debug
+# Agent (Claude) Debug
 
 Analyze an error with Claude Code to provide debugging assistance,
 including root cause analysis, fixes, and prevention tips.
@@ -34,7 +34,8 @@ Full stack trace if available.
 
 Analyze the error and provide structured debugging assistance.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: "Analyze this error and provide debugging assistance:\n\nError message:\n${error_message}\n\nCode context (if available):\n${code_context}\n\nStack trace (if available):\n${stack_trace}"
 - max_turns: 2
 - system_prompt: You are an expert debugger. Be concise but thorough. Focus on practical solutions.

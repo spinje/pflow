@@ -2,7 +2,7 @@
 
 **Use when**: composing several steps — LLM calls, agents, or plain nodes — into a recognizable shape: fan work out and merge it, verify a result from independent angles, generate many options and narrow to the best, rank by elimination, or repeat until done. These are recipes built from pflow's primitives (`batch`, `loop`, branching), not new node types.
 
-**Why patterns help**: an LLM call or agent asked to do everything in one pass degrades — it gets lazy (does 7 of 15 asked), grades its own work favorably, and drifts from the original goal. Each pattern splits the work across separate steps, each with its own fresh context, and recombines the results — so no single call carries the whole load. The workers can be `llm` nodes (as in the examples below), `claude-code` agents, or plain `code`/`shell`/`http` nodes — whichever fits the step. The judgment-heavy patterns (verification, generate-and-filter, tournament) usually use `llm` or `claude-code`; fan-out, classify, and loop-until-done work with any node type.
+**Why patterns help**: an LLM call or agent asked to do everything in one pass degrades — it gets lazy (does 7 of 15 asked), grades its own work favorably, and drifts from the original goal. Each pattern splits the work across separate steps, each with its own fresh context, and recombines the results — so no single call carries the whole load. The workers can be `llm` nodes (as in the examples below), `agent` nodes, or plain `code`/`shell`/`http` nodes — whichever fits the step. The judgment-heavy patterns (verification, generate-and-filter, tournament) usually use `llm` or `agent`; fan-out, classify, and loop-until-done work with any node type.
 
 | Pattern | Shape | Built on |
 |---|---|---|

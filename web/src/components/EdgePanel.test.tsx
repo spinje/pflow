@@ -73,7 +73,7 @@ describe("EdgePanel — data variant", () => {
   // confusion in the panel must fail here, not pass vacuously (review-caught).
   const graph: RFGraph = {
     nodes: [
-      node("n1", { ref: { node_id: "happy-check", ancestor_path: [], port: null }, kind: "claude-code" }),
+      node("n1", { ref: { node_id: "happy-check", ancestor_path: [], port: null }, kind: "agent" }),
       node("n2", {
         ref: { node_id: "report-commits", ancestor_path: [], port: null },
         kind: "code",
@@ -105,7 +105,7 @@ describe("EdgePanel — data variant", () => {
         node("plan_path", { kind: "input", io: { data_type: "string", required: true, default: null } }),
         node("chunk", { kind: "code" }),
         node("implement", {
-          kind: "claude-code",
+          kind: "agent",
           params: [{ name: "prompt", value: "work in ${repo_dir} on ${chunk.body} using ${plan_path}", is_dynamic: true, source: null }],
         }),
       ],
@@ -124,7 +124,7 @@ describe("EdgePanel — data variant", () => {
     const marks = [...document.querySelectorAll("mark.ref-mark")].map((m) => m.textContent);
     expect(marks).toEqual(["${repo_dir}"]);
     // The kind→language WIRING pin (mutation-caught gap): the panel must feed
-    // paramLanguage the param OWNER's kind — a claude-code prompt asks the
+    // paramLanguage the param OWNER's kind — an agent prompt asks the
     // highlight seam for markdown. Without this, dropping the `kind` prop
     // silently kills panel highlighting with every unit test green.
     expect(highlight).toHaveBeenCalledWith("work in ${repo_dir} on ${chunk.body} using ${plan_path}", "markdown");
@@ -236,7 +236,7 @@ describe("EdgePanel — data variant", () => {
 describe("EdgePanel — branch / end variants", () => {
   // mirrors run-from-plan e12/e14: check-validate forks to fix-tests or ends
   const graph: RFGraph = {
-    nodes: [node("check-validate", { kind: "code", is_decision: true }), node("fix-tests", { kind: "claude-code" }), node("__end__", { kind: "end" })],
+    nodes: [node("check-validate", { kind: "code", is_decision: true }), node("fix-tests", { kind: "agent" }), node("__end__", { kind: "end" })],
     edges: [
       edge("e12", "check-validate", "fix-tests", "branch", { label: "fix-tests", condition: "elif round < cap" }),
       edge("e14", "check-validate", "__end__", "end", { condition: "if ok · else" }),
@@ -316,7 +316,7 @@ describe("EdgePanel — loop (a control cycle with no LoopSpec — the validate-
       nodes: [
         node("run-validate", { kind: "code" }),
         node("check-validate", { kind: "code", is_decision: true }),
-        node("fix-tests", { kind: "claude-code" }),
+        node("fix-tests", { kind: "agent" }),
       ],
       edges: [
         edge("e_rc", "run-validate", "check-validate", "sequential", { shadowed: true }),

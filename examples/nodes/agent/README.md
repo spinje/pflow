@@ -1,20 +1,20 @@
-# Claude Code Node Examples
+# Agent Node: Claude Backend Examples
 
-Examples for the `claude-code` node: an agentic super node that integrates with the Claude Agent SDK for AI-assisted development tasks.
+Examples for the `agent` node with `backend: claude`: an agentic super node that integrates with the Claude Agent SDK for AI-assisted development tasks.
 
 Features:
 
 - Native JSON Schema structured output
 - Metadata capture (cost, duration, token usage) in `llm_usage`
 - Tool use (Read, Write, Edit, Bash, Glob, Grep, LS, WebFetch, WebSearch)
-- Subscription-first auth: Claude Pro/Max by default; opt into API-key billing with `use_api_key: true`
+- Account/subscription-first auth: named API-key paths are disabled by default; opt into API/provider billing with `use_api_key: true`
 
 ## Examples
 
-### 1. Simple code generation - `claude-code-basic.pflow.md`
+### 1. Simple code generation - `claude-basic.pflow.md`
 
 ```bash
-pflow examples/nodes/claude-code/claude-code-basic.pflow.md
+pflow examples/nodes/agent/claude-basic.pflow.md
 ```
 
 Demonstrates:
@@ -24,10 +24,10 @@ Demonstrates:
 - Cost tracking via `${node.llm_usage.cost_usd}`
 - Duration and token usage
 
-### 2. Structured code review - `claude-code-schema.pflow.md`
+### 2. Structured code review - `claude-schema.pflow.md`
 
 ```bash
-pflow examples/nodes/claude-code/claude-code-schema.pflow.md file_path=your_script.py
+pflow examples/nodes/agent/claude-schema.pflow.md file_path=your_script.py
 ```
 
 Demonstrates:
@@ -37,10 +37,10 @@ Demonstrates:
 - Declared workflow inputs referenced as `${file_path}`
 - Multiple output files from a single analysis
 
-### 3. Debugging assistant - `claude-code-debug.pflow.md`
+### 3. Debugging assistant - `claude-debug.pflow.md`
 
 ```bash
-pflow examples/nodes/claude-code/claude-code-debug.pflow.md error_message="TypeError: ..."
+pflow examples/nodes/agent/claude-debug.pflow.md error_message="TypeError: ..."
 ```
 
 Demonstrates:
@@ -49,15 +49,15 @@ Demonstrates:
 - Optional inputs (`code_context`, `stack_trace`)
 - Confidence scoring and prevention tips
 
-### 4. Git workflow integration - `claude-code-git-workflow.pflow.md`
+### 4. Git workflow integration - `claude-git-workflow.pflow.md`
 
 ```bash
-pflow examples/nodes/claude-code/claude-code-git-workflow.pflow.md
+pflow examples/nodes/agent/claude-git-workflow.pflow.md
 ```
 
 Demonstrates:
 
-- Multi-stage analysis pipeline (shell -> claude-code -> claude-code -> write-file)
+- Multi-stage analysis pipeline (shell -> agent -> agent -> write-file)
 - Passing upstream node output into the prompt via `${node_id.field}` interpolation
 - System prompts for specific personas
 - Cost aggregation across multiple calls
@@ -87,9 +87,9 @@ required: [summary, score, items]
 
 Access fields directly: `${node.result.summary}`, `${node.result.score}`, `${node.result.items}`.
 
-If the SDK returns no structured output, the raw text is available at `${node.result}`, an error message is available at `${node._schema_error}`, and `shared["__warnings__"][node_id]` marks the workflow status `DEGRADED`.
+If the SDK returns no structured output, the raw text is available at `${node.result}`, an error message is available at `${node._schema_error}`, and the workflow status becomes `DEGRADED`.
 
-The node always returns `default` from `post()` — schema soft-failures DO NOT route through `- on-error:` edges. Wire schema-recovery logic by inspecting `${node._schema_error}` or the workflow `DEGRADED` status, not the error edge.
+Schema soft-failures follow the normal success route — they do NOT route through `- on-error:` edges. Wire schema-recovery logic by inspecting the result shape or the workflow `DEGRADED` status, not the error edge.
 
 ## Passing context into the prompt
 
@@ -115,25 +115,29 @@ Every execution captures:
 
 ```
 ${node.llm_usage.model}                         # Model identifier
-${node.llm_usage.input_tokens}                  # Non-cached input tokens
+${node.llm_usage.input_tokens}                  # Total input tokens, including cached tokens
+${node.llm_usage.uncached_input_tokens}         # Input tokens not served from cache
 ${node.llm_usage.output_tokens}                 # Output tokens
 ${node.llm_usage.total_tokens}                  # Sum of input + output
 ${node.llm_usage.cache_creation_input_tokens}   # Cache-creation tokens
 ${node.llm_usage.cache_read_input_tokens}       # Cache-read tokens
-${node.llm_usage.cost_usd}                      # Cost in USD
+${node.llm_usage.cost_usd}                      # Paid provider cost (unavailable for agent backends)
+${node.llm_usage.api_equivalent_cost_usd}       # API-equivalent comparison estimate
 ${node.llm_usage.duration_ms}                   # Wall-clock duration
 ${node.llm_usage.num_turns}                     # Conversation turns used
 ${node.llm_usage.session_id}                    # Resumable session ID
 ```
 
-`cost_usd` is the SDK-reported API-equivalent estimated cost. Actual billing depends on auth method; Claude Pro/Max subscription runs may report an API-equivalent cost without a direct per-call charge.
+`api_equivalent_cost_usd` is a comparison estimate, not evidence of provider billing. Agent backends leave `cost_usd` unavailable because account credits, subscriptions, API keys, and provider policy determine the actual charge outside pflow.
 
 ## Authentication
 
-By default this node uses your **Claude Pro/Max subscription** and blanks `ANTHROPIC_API_KEY` for the Claude subprocess, so an ambient key (including one stored via `pflow settings set-env` for the `llm` node) never silently bills your Anthropic Console per token.
+With `use_api_key: false` (the default), the Claude backend blanks `ANTHROPIC_API_KEY` for its subprocess so the CLI can use account/subscription auth. An ambient key—including one stored for sibling `llm` nodes—does not silently select Anthropic Console billing for this subprocess. The parent environment remains unchanged.
 
-- **Subscription (default)**: `claude auth login` (or `claude setup-token` for non-interactive/CI) - no per-token charges. Check with `claude auth status`.
+- **Account/subscription (default)**: `claude auth login` (or `claude setup-token` for non-interactive/CI). Check with `claude auth status`.
 - **API key (opt in)**: set `- use_api_key: true` on the node, with `ANTHROPIC_API_KEY` in the environment (e.g. `pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."`) - bills your Anthropic Console per token.
+
+The false mode controls the named environment key. Account credits, auto-reload, overage, and administrator policy remain provider/account controls and may still apply.
 
 ## Parameters
 
@@ -151,7 +155,7 @@ By default this node uses your **Claude Pro/Max subscription** and blanks `ANTHR
 | `system_prompt`       | None                | System instructions                                         |
 | `resume`              | None                | Session ID to resume a previous conversation                |
 | `sandbox`             | None                | Sandbox configuration (see node docstring for full schema)  |
-| `use_api_key`         | `false`             | Bill to `ANTHROPIC_API_KEY` (Console); default uses subscription |
+| `use_api_key`         | `false`             | Shared permission for API-key/provider billing; Claude false mode blanks `ANTHROPIC_API_KEY` |
 
 ## Best practices
 
@@ -167,7 +171,7 @@ By default this node uses your **Claude Pro/Max subscription** and blanks `ANTHR
 - **Top-level array schema rejected** - wrap arrays or primitives inside a top-level object property.
 - **High cost** - reduce `max_turns`, tighten the prompt, or restrict `allowed_tools`.
 - **Timeouts** - break complex tasks into smaller steps or raise `timeout`.
-- **Authentication failed** - by default this node uses your subscription; run `claude auth login` (check with `claude auth status`), or set `- use_api_key: true` to bill `ANTHROPIC_API_KEY` to your Anthropic Console.
+- **Authentication failed** - default mode uses your account/subscription login; run `claude auth login` (check with `claude auth status`), or set `- use_api_key: true` only when you intend `ANTHROPIC_API_KEY` billing through Anthropic Console.
 
 ## See also
 

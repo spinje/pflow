@@ -41,7 +41,8 @@ Implement the issue in an isolated worktree and commit. Genuinely agentic:
 write code, run tests, iterate. Reports `commits_made` so the next step can
 decide whether a review is warranted.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: ./prompts/implement.prompt.md
 - cwd: ${repo_dir}
 - max_turns: 80
@@ -90,7 +91,8 @@ A real review — reads the diff AND the surrounding code (callers, tests,
 related modules), which is why it is an agent, not a single LLM call. Adequate
 `max_turns` so it is never starved mid-review.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: ./prompts/review.prompt.md
 - cwd: ${repo_dir}
 - max_turns: 12

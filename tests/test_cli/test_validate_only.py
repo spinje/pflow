@@ -303,16 +303,16 @@ class TestValidateOnlyJSONOutput:
         assert len(output_data["errors"]) > 0
 
 
-def make_claude_code_workflow(
+def make_agent_workflow(
     *,
     output_schema: Any,
     max_turns: int = 2,
     prompt: str = "Return a result.",
     node_id: str = "review",
 ) -> dict[str, Any]:
-    """Build a single-node claude-code workflow IR for preflight tests.
+    """Build a single-node Claude-backed agent workflow IR for preflight tests.
 
-    Centralizes the 15-line shape that every ``TestValidateOnlyClaudeCodeStructuredOutput``
+    Centralizes the shape that every ``TestValidateOnlyAgentStructuredOutput``
     case used to inline. Tests pass only the field(s) they're actually exercising
     (typically ``output_schema``, sometimes ``max_turns``); other fields take
     test-safe defaults.
@@ -321,8 +321,9 @@ def make_claude_code_workflow(
         "nodes": [
             {
                 "id": node_id,
-                "type": "claude-code",
+                "type": "agent",
                 "params": {
+                    "backend": "claude",
                     "prompt": prompt,
                     "max_turns": max_turns,
                     "output_schema": output_schema,
@@ -333,11 +334,87 @@ def make_claude_code_workflow(
     }
 
 
-class TestValidateOnlyClaudeCodeStructuredOutput:
-    """Validation-only must catch Claude Code schema contracts before execution."""
+class TestValidateOnlyAgentBackendParams:
+    """Backend-required and cross-backend checks run without output_schema."""
 
-    def test_validate_only_rejects_claude_code_array_root_schema(self, tmp_path: Path) -> None:
-        workflow = make_claude_code_workflow(
+    def test_validate_only_rejects_missing_backend(self, tmp_path: Path) -> None:
+        workflow = make_agent_workflow(output_schema=None)
+        workflow["nodes"][0]["params"].pop("backend")
+        workflow_path = tmp_path / "agent-missing-backend.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code != 0
+        assert "requires 'backend'" in result.output
+        assert "claude, codex" in result.output
+
+    def test_validate_only_rejects_cross_backend_param_without_schema(self, tmp_path: Path) -> None:
+        workflow = make_agent_workflow(output_schema=None)
+        workflow["nodes"][0]["params"]["approval_policy"] = "never"
+        workflow_path = tmp_path / "agent-cross-backend-param.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code != 0
+        assert "'approval_policy' is not valid for backend 'claude'" in result.output
+
+    def test_validate_only_rejects_claude_string_sandbox(self, tmp_path: Path) -> None:
+        # A codex-style string sandbox on claude fails at runtime prep; --validate-only must match.
+        workflow = make_agent_workflow(output_schema=None)
+        workflow["nodes"][0]["params"]["sandbox"] = "workspace-write"
+        workflow_path = tmp_path / "agent-claude-str-sandbox.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code != 0
+        assert "sandbox must be a dict" in result.output
+
+    def test_validate_only_rejects_codex_dict_sandbox(self, tmp_path: Path) -> None:
+        workflow = make_agent_workflow(output_schema=None)
+        workflow["nodes"][0]["params"]["backend"] = "codex"
+        workflow["nodes"][0]["params"].pop("max_turns")
+        workflow["nodes"][0]["params"]["sandbox"] = {"enabled": True}
+        workflow_path = tmp_path / "agent-codex-dict-sandbox.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code != 0
+        assert "sandbox must be one of: read-only, workspace-write, full-access" in result.output
+
+    def test_validate_only_rejects_schema_retries_out_of_range(self, tmp_path: Path) -> None:
+        workflow = make_agent_workflow(output_schema=None)
+        workflow["nodes"][0]["params"]["schema_retries"] = 99
+        workflow_path = tmp_path / "agent-schema-retries-oob.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code != 0
+        assert "schema_retries cannot exceed 5" in result.output
+
+    def test_validate_only_accepts_valid_codex_shapes(self, tmp_path: Path) -> None:
+        # Regression: the shape checks must not over-reject a well-formed codex node.
+        workflow = make_agent_workflow(output_schema=None)
+        workflow["nodes"][0]["params"]["backend"] = "codex"
+        workflow["nodes"][0]["params"].pop("max_turns")
+        workflow["nodes"][0]["params"].update({"sandbox": "read-only", "approval_policy": "never"})
+        workflow_path = tmp_path / "agent-codex-valid.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code == 0
+
+
+class TestValidateOnlyAgentStructuredOutput:
+    """Validation-only must catch agent schema contracts before execution."""
+
+    def test_validate_only_rejects_agent_array_root_schema(self, tmp_path: Path) -> None:
+        workflow = make_agent_workflow(
             output_schema={"type": "array", "items": {"type": "string"}},
             prompt="Return an array.",
         )
@@ -350,8 +427,8 @@ class TestValidateOnlyClaudeCodeStructuredOutput:
         assert "top-level type: object" in result.output
         assert "review" in result.output
 
-    def test_validate_only_rejects_claude_code_max_turns_one_with_schema(self, tmp_path: Path) -> None:
-        workflow = make_claude_code_workflow(
+    def test_validate_only_rejects_agent_max_turns_one_with_schema(self, tmp_path: Path) -> None:
+        workflow = make_agent_workflow(
             output_schema={
                 "type": "object",
                 "properties": {"status": {"type": "string"}},
@@ -369,11 +446,11 @@ class TestValidateOnlyClaudeCodeStructuredOutput:
         assert "max_turns must be >= 2" in result.output
         assert "review" in result.output
 
-    def test_validate_only_rejects_claude_code_oneof_root_schema(self, tmp_path: Path) -> None:
+    def test_validate_only_rejects_agent_oneof_root_schema(self, tmp_path: Path) -> None:
         """Top-level oneOf (no top-level type) is rejected at preflight.
         Verified via real-API probe: the API returns HTTP 400 for combinator-only schemas.
         """
-        workflow = make_claude_code_workflow(
+        workflow = make_agent_workflow(
             output_schema={
                 "oneOf": [
                     {"type": "object", "properties": {"yes": {"type": "boolean"}}},
@@ -392,9 +469,9 @@ class TestValidateOnlyClaudeCodeStructuredOutput:
         assert "oneOf" in result.output
         assert "review" in result.output
 
-    def test_validate_only_rejects_claude_code_missing_top_level_type(self, tmp_path: Path) -> None:
+    def test_validate_only_rejects_agent_missing_top_level_type(self, tmp_path: Path) -> None:
         """A schema dict without top-level `type` is rejected — the API requires `type: object`."""
-        workflow = make_claude_code_workflow(
+        workflow = make_agent_workflow(
             output_schema={"properties": {"status": {"type": "string"}}},
             prompt="Return status.",
         )
@@ -407,8 +484,8 @@ class TestValidateOnlyClaudeCodeStructuredOutput:
         assert "top-level type: object" in result.output
         assert "review" in result.output
 
-    def test_validate_only_rejects_claude_code_legacy_schema(self, tmp_path: Path) -> None:
-        workflow = make_claude_code_workflow(
+    def test_validate_only_rejects_agent_legacy_schema(self, tmp_path: Path) -> None:
+        workflow = make_agent_workflow(
             output_schema={"status": {"type": "str", "description": "Legacy schema style"}},
             prompt="Return status.",
         )
@@ -445,8 +522,9 @@ class TestValidateOnlyClaudeCodeStructuredOutput:
                 },
                 {
                     "id": "review",
-                    "type": "claude-code",
+                    "type": "agent",
                     "params": {
+                        "backend": "claude",
                         "prompt": "Return status.",
                         "max_turns": 2,
                         "output_schema": "${build_schema.result}",
@@ -455,7 +533,7 @@ class TestValidateOnlyClaudeCodeStructuredOutput:
             ],
             "edges": [{"from": "build_schema", "to": "review", "action": "default"}],
         }
-        workflow_path = tmp_path / "claude-templated-schema.pflow.md"
+        workflow_path = tmp_path / "agent-templated-schema.pflow.md"
         write_workflow_file(workflow, workflow_path)
 
         result = invoke_cli(["--validate-only", str(workflow_path)])

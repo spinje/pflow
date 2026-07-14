@@ -10,7 +10,7 @@ Where pflow is today (v0.14.0):
 
 - **Standalone orchestration engine** with compile-once batch optimization (~7x speedup for large parallel workflows)
 - **Markdown workflows** — `.pflow.md` files that agents read and write naturally
-- **Node system** — file, llm, http, shell, code (Python), claude-code, and MCP bridge
+- **Node system** — file, llm, http, shell, code (Python), agent (Claude or Codex), and MCP bridge
 - **Conditional branching** — `on-error`, static routing, and data-driven routing via code nodes with branch convergence (`??` coalesce operator)
 - **Nested workflows** — saved or file-based workflows as nodes inside other workflows, with automatic input/output mapping
 - **Memoization cache** — unchanged nodes serve cached results across re-runs, with `--only`, `--no-cache`, and per-node `cache: false` controls

@@ -130,7 +130,8 @@ candidate pool so the next cycle doesn't re-pick a done issue and collide on its
 existing branch. Without the relabel the loop would never converge. Approved
 issues get a PR; `request-changes` issues are relabeled `agent-needs-human`.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: ./prompts/open-prs.prompt.md
 - cwd: ${find-repo.stdout}
 - max_turns: 30

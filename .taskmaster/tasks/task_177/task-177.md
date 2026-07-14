@@ -10,7 +10,11 @@ backend drives the `codex exec` CLI, not the beta Python SDK.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-07-14
 
 ## Priority
 
@@ -72,6 +76,7 @@ belonging to the other backend is a blocking validation error naming the active 
 - output_schema: { ... }               # top-level type:object (required by both backends)
 - resume: ${prev.llm_usage.session_id} # thread/session id from a prior agent node
 - timeout: 300
+- use_api_key: false                  # shared: known first-party key paths require explicit true
 - approval_policy: never               # codex-only  (claude-only keys here would be rejected)
 - add_dir: [../shared]                 # codex-only
 
@@ -88,7 +93,8 @@ Decisions):
   --output-schema <schema.json> -o <last-message-file> --json`
 - Resume: `codex exec resume <SESSION_ID> [PROMPT]` — **disk-based**, works across separate
   invocations (reads `~/.codex/sessions/**/rollout-*.jsonl`).
-- Auth: the user's existing `codex login` (ChatGPT subscription) — no API key required.
+- Auth: account-backed `codex login` by default; known stored/environment API-key paths require the
+  shared `use_api_key: true` opt-in. Custom profile/provider/proxy config remains caller-owned.
 - Parse `--json` JSONL events for the final message + token usage; normalize to `llm_usage`.
 
 ## Design Decisions
@@ -124,11 +130,21 @@ Decisions):
 - **FLAT params + per-backend validation** (superseded the earlier nested-escape-hatch idea — user
   ruling during planning; the implementation plan is authoritative). All params flat; a param
   belonging to the other backend is a blocking validation error. Shared (valid for both):
-  `prompt`, `model`, `cwd`, `output_schema`, `resume`, `timeout`, `system_prompt`, `schema_retries`.
-  claude-only: `allowed_tools`, `disallowed_tools`, `max_turns`, `max_thinking_tokens`, `use_api_key`.
+  `prompt`, `model`, `cwd`, `output_schema`, `resume`, `timeout`, `system_prompt`, `schema_retries`,
+  `use_api_key`. claude-only: `allowed_tools`, `disallowed_tools`, `max_turns`,
+  `max_thinking_tokens`.
   codex-only: `approval_policy`, `add_dir`, `profile`, `config`. **`sandbox` is valid for BOTH but
   backend-shaped** (claude: dict `SandboxSettings`; codex: string mode) — each backend validates its
   own shape. See the implementation plan's "Resolved decisions" for the exact frozenset model.
+
+- **Known first-party API-key paths are opt-in for both backends.** `use_api_key` is a shared strict
+  boolean and defaults to `false`. False scrubs the named first-party key variables and, for Codex,
+  rejects recognized stored API-key auth before a model call; true permits those paths but does not
+  require a key or force a paid request. Claude preserves its existing child-environment key
+  scrubbing. Codex also verifies account-backed auth with `codex login status` and pins the OpenAI
+  provider selector in safe mode. This guard cannot prove that custom profiles/providers/proxies or
+  base URLs are unmetered, and it cannot control account-level purchased credits, auto-reload, or
+  plan overage policies; documentation must state the concrete guard rather than promise zero spend.
 
 - **Autonomous by default.** claude-code hardcodes `permission_mode: bypassPermissions`;
   `codex exec` is non-interactive by default (does not prompt). Default codex `approval_policy`
@@ -159,7 +175,7 @@ after this lands:
 - Register node type `agent` (auto-derived from `AgentNode`). `claude-code` no longer resolves.
 - Required `prompt`; required `backend` ∈ {`claude`, `codex`}.
 - Shared params accepted for both backends: `model`, `cwd`, `output_schema`, `resume`, `timeout`,
-  `system_prompt`, `schema_retries`.
+  `system_prompt`, `schema_retries`, `use_api_key` (strict bool; default `false`).
 - `sandbox` is accepted for both backends but is **backend-shaped**: claude expects a config dict
   (`enabled`/`network`/`excludedCommands`/… — unchanged from today's node), codex expects a string
   mode (`read-only`|`workspace-write`|`full-access`). Each backend validates its own shape.
@@ -171,9 +187,18 @@ after this lands:
 ### Codex (CLI) backend
 - Runs `codex exec` with prompt, `-m/-s/-C`, `--skip-git-repo-check`, and `--output-schema`
   when a schema is set; captures the final message via `-o <file>` and/or `--json`.
-- Authenticates via the user's existing `codex login` (ChatGPT subscription); no API key
-  required. If codex is not installed / not logged in, produce an actionable error naming the
-  fix (`codex login`).
+- With `use_api_key: false` or omitted, removes ambient `CODEX_API_KEY`/`OPENAI_API_KEY` from a
+  child-only environment, runs `codex login status` with that same environment, and proceeds only
+  for recognized ChatGPT/account access-token auth. API-key, personal-token, Bedrock, logged-out,
+  and unknown status results fail closed before `codex exec`. Safe mode appends
+  `model_provider="openai"` after user config/profile selectors. This closes the ordinary alternate
+  provider path but does not claim to sandbox an explicitly customized proxy/base URL. It must not
+  use `forced_login_method`, which can log the user out when credentials mismatch.
+- With `use_api_key: true`, preserves the environment and configured provider without requiring a
+  particular auth mode. This is the explicit permission boundary for API-key/provider billing;
+  pflow never logs in, stores credentials, or performs a paid probe on the user's behalf.
+- If Codex is not installed or account auth is unavailable in safe mode, produce a non-retriable,
+  actionable error naming `codex login` / `codex login status`; never expose raw status output.
 - `resume: <session_id>` runs `codex exec resume <session_id> <prompt>` and continues the
   prior thread across separate workflow runs.
 - Normalizes codex token usage
@@ -184,7 +209,8 @@ after this lands:
 ### Claude backend
 - Behaviorally identical to today's `claude-code` node (the existing logic, moved behind
   `ClaudeBackend`). No regression in params, structured output, resume, token accounting, or
-  auth (subscription vs `use_api_key`).
+  auth. `use_api_key: false` continues to scrub `ANTHROPIC_API_KEY` from only the child process;
+  true permits the existing API-key behavior.
 
 ### Behavioral parity (special-cases the new node must replicate)
 - **Validator schema preflight**: rekey the `node_type == "claude-code"` dispatch
@@ -273,6 +299,13 @@ Acceptance scenarios to implement:
 - Codex resume across two separate workflow runs: run A creates a thread and emits
   `session_id`; run B passes `resume: <that id>` and the agent continues the same thread
   (recalls prior context).
+- `backend: codex` with omitted/false `use_api_key` and ChatGPT/account-token auth performs
+  `codex login status` then runs with API-key variables removed only from the child environment.
+- The same safe mode rejects API-key, personal-token, Bedrock, logged-out, and unknown status
+  results exactly once and before any `codex exec`; errors are non-retriable and never include the
+  CLI's raw/masked credential output.
+- `backend: codex` with `use_api_key: true` skips the account-auth guard and preserves the caller's
+  environment/provider configuration. No paid API-key end-to-end test is required.
 - Cross-backend param validation: a claude-only param (e.g. `max_thinking_tokens`) under
   `backend: codex` (or vice versa) is a blocking validation error naming the active backend.
 - Repo-wide: no shipped code/guide/docs/example references `claude-code`; `pflow guide agent`

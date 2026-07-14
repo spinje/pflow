@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from tests.shared.markdown_utils import write_workflow_file
-from tests.test_cli.test_validate_only import make_claude_code_workflow
+from tests.test_cli.test_validate_only import make_agent_workflow
 from tests.test_cli.test_workflow_commands import invoke_cli
 
 
@@ -208,11 +208,11 @@ def test_dry_run_exits_one_on_missing_required_input(tmp_path) -> None:
     assert result.exit_code == 1
 
 
-def test_dry_run_rejects_claude_code_invalid_schema_before_plan(tmp_path) -> None:
-    """Dry-run must share validation-only's Claude Code schema checks."""
-    workflow_path = tmp_path / "claude-invalid-schema-dry-run.pflow.md"
+def test_dry_run_rejects_agent_invalid_schema_before_plan(tmp_path) -> None:
+    """Dry-run must share validation-only's agent schema checks."""
+    workflow_path = tmp_path / "agent-invalid-schema-dry-run.pflow.md"
     write_workflow_file(
-        make_claude_code_workflow(
+        make_agent_workflow(
             output_schema={"type": "array", "items": {"type": "string"}},
             prompt="Return an array.",
         ),
@@ -223,6 +223,37 @@ def test_dry_run_rejects_claude_code_invalid_schema_before_plan(tmp_path) -> Non
 
     assert result.exit_code == 1
     assert "top-level type: object" in result.stderr
+
+
+def test_dry_run_classifies_agent_for_cost_and_display(tmp_path) -> None:
+    """AgentNode keeps the former agentic cost/duration planning behavior."""
+    workflow_path = tmp_path / "agent-plan.pflow.md"
+    write_workflow_file(make_agent_workflow(output_schema=None), workflow_path)
+
+    result = invoke_cli(["--dry-run", str(workflow_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "review  [agent]" in result.output
+    assert "≈ $? (no history)" in result.output
+    assert "1 agent" in result.output
+
+
+def test_dry_run_codex_with_unpriced_model_degrades_to_unknown_cost(tmp_path) -> None:
+    """An unpriced Codex model is still a valid plan, with unknown cost."""
+    workflow = make_agent_workflow(output_schema=None)
+    params = workflow["nodes"][0]["params"]
+    params["backend"] = "codex"
+    params["model"] = "future-codex-model-not-in-pricing-map"
+    params.pop("max_turns")
+    workflow_path = tmp_path / "codex-agent-plan.pflow.md"
+    write_workflow_file(workflow, workflow_path)
+
+    result = invoke_cli(["--dry-run", str(workflow_path)])
+
+    assert result.exit_code == 0, result.output
+    assert "review  [agent]" in result.output
+    assert "≈ $? (no history)" in result.output
+    assert "1 agent" in result.output
 
 
 def test_dry_run_exits_one_when_plan_contains_error_diagnostic(tmp_path) -> None:

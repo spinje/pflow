@@ -1,4 +1,4 @@
-pflow — workflow execution system. Chains nodes (http, shell, llm, code, file, mcp, claude-code)
+pflow — workflow execution system. Chains nodes (http, shell, llm, agent, code, file, mcp)
 that pass data via `${...}` templates. Write `.pflow.md` files, run them, iterate.
 
 First Action:
@@ -40,7 +40,7 @@ Topics are already condensed to the minimum — read each in full. Truncating ba
 Nodes:
   http             JSON REST APIs
   llm              LLM inference (summarize, interpret, decide)
-  claude-code      Agentic coding in a repository (edit, test, debug)
+  agent            Agentic coding via Claude or Codex (edit, test, debug)
   code             Python data transformation (filter, reshape, compute)
   shell            Shell commands and CLI tools (git, curl, docker)
   file             File read/write

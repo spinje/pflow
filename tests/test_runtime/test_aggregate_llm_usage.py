@@ -140,6 +140,53 @@ class TestAggregateLLMUsageWithRetries:
         assert result["cost_usd"] == 0
         assert result["num_turns"] == 0
 
+    def test_retries_preserve_absence_of_backend_specific_reasoning_tokens(self, collector):
+        """Claude-style retry usage must not gain a Codex-only zero field."""
+        llm_usage = {
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "retries": [{"input_tokens": 50, "output_tokens": 10}],
+        }
+
+        result = collector.aggregate_llm_usage_with_retries(llm_usage)
+
+        assert "reasoning_output_tokens" not in result
+
+    def test_retries_sum_reasoning_tokens_when_only_retry_supplies_them(self, collector):
+        """A reasoning field from any attempt activates reasoning aggregation."""
+        llm_usage = {
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "retries": [
+                {"input_tokens": 50, "output_tokens": 10, "reasoning_output_tokens": 7},
+            ],
+        }
+
+        result = collector.aggregate_llm_usage_with_retries(llm_usage)
+
+        assert result["reasoning_output_tokens"] == 7
+
+    def test_agent_api_equivalent_estimates_sum_without_entering_paid_cost(self, collector):
+        llm_usage = {
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cost_usd": None,
+            "api_equivalent_cost_usd": 0.02,
+            "retries": [
+                {
+                    "input_tokens": 50,
+                    "output_tokens": 10,
+                    "cost_usd": None,
+                    "api_equivalent_cost_usd": 0.01,
+                }
+            ],
+        }
+
+        result = collector.aggregate_llm_usage_with_retries(llm_usage)
+
+        assert result["cost_usd"] is None
+        assert result["api_equivalent_cost_usd"] == pytest.approx(0.03)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

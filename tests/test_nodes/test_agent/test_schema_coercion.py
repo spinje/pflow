@@ -1,8 +1,8 @@
-"""Tests for claude-code schema coercion and retry (Task #465)."""
+"""Tests for agent schema coercion and retry (Task #465)."""
 
 import pytest
 
-from pflow.nodes.claude.claude_code import ClaudeCodeNode
+from pflow.nodes.agent.agent_node import AgentNode
 
 
 class TestSchemaCoercion:
@@ -21,7 +21,7 @@ class TestSchemaCoercion:
 
         # Test "false" → False
         structured_output = {"continue": "false", "enabled": "true"}
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["continue"] is False
         assert coerced["enabled"] is True
@@ -30,7 +30,7 @@ class TestSchemaCoercion:
 
         # Test case-insensitive and whitespace handling
         structured_output = {"continue": "  False  ", "enabled": " TRUE"}
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["continue"] is False
         assert coerced["enabled"] is True
@@ -49,7 +49,7 @@ class TestSchemaCoercion:
 
         # Test string integers
         structured_output = {"commits_made": "3", "files_changed": "5"}
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["commits_made"] == 3
         assert coerced["files_changed"] == 5
@@ -58,7 +58,7 @@ class TestSchemaCoercion:
 
         # Test "3.0" → 3
         structured_output = {"commits_made": "3.0"}
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["commits_made"] == 3
         assert conforming is True
@@ -74,7 +74,7 @@ class TestSchemaCoercion:
         }
 
         structured_output = {"confidence": "0.95", "score": "42"}
-        coerced, conforming, _coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, _coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["confidence"] == 0.95
         assert coerced["score"] == 42.0
@@ -91,7 +91,7 @@ class TestSchemaCoercion:
         }
 
         structured_output = {"message": 42, "status": True}
-        coerced, conforming, _coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, _coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["message"] == "42"
         assert coerced["status"] == "True"
@@ -109,7 +109,7 @@ class TestSchemaCoercion:
         }
 
         structured_output = {"continue": True, "count": 5, "name": "test"}
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         assert coerced == structured_output
         assert conforming is True
@@ -125,13 +125,13 @@ class TestSchemaCoercion:
         }
 
         structured_output = {"continue": "maybe"}
-        coerced, conforming, _coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, _coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         assert conforming is False
         assert coerced["continue"] == "maybe"  # Unchanged
 
-    def test_nested_fields_not_coerced(self):
-        """Test that nested object/array fields are NOT coerced (v1 scope limit)."""
+    def test_nested_fields_not_coerced_but_are_validated(self):
+        """Nested fields are not coerced, but whole-schema validation still rejects mismatches."""
         schema = {
             "type": "object",
             "properties": {
@@ -149,12 +149,13 @@ class TestSchemaCoercion:
             "top_level": "true",
             "nested": {"inner": "false"},  # Nested, should NOT be coerced
         }
-        coerced, _conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["top_level"] is True  # Top-level coerced
         assert coerced["nested"]["inner"] == "false"  # Nested NOT coerced
         assert "top_level" in coerced_fields
         assert "nested" not in coerced_fields
+        assert conforming is False
 
     def test_extra_fields_ignored(self):
         """Test that extra fields (not in schema) are ignored."""
@@ -169,7 +170,7 @@ class TestSchemaCoercion:
             "required_field": "true",
             "extra_field": "value",
         }
-        coerced, conforming, _coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, _coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["required_field"] is True
         assert coerced["extra_field"] == "value"  # Preserved
@@ -186,7 +187,7 @@ class TestSchemaCoercion:
         }
 
         structured_output = {"other_field": "value"}
-        _coerced, conforming, _coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        _coerced, conforming, _coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         assert conforming is False
 
@@ -196,11 +197,11 @@ class TestSchemaCoercion:
         Regression (#465 review): this used to return conforming=False, which under the
         default schema_retries triggered a pointless retry and then dropped valid output to
         raw text. (The node-level gate that coercion only runs when an output_schema is set
-        is covered by test_schema_retries_no_op_without_output_schema in test_claude_code.py.)
+        is covered by test_schema_retries_no_op_without_output_schema in test_agent_node.py.)
         """
         schema = {"type": "object"}  # no 'properties' key
         output = {"anything": 1, "nested": {"x": 2}}
-        coerced, conforming, fields = ClaudeCodeNode._coerce_structured_output(output, schema)
+        coerced, conforming, fields = AgentNode._coerce_structured_output(output, schema)
         assert conforming is True
         assert coerced == output
         assert fields == []
@@ -212,7 +213,7 @@ class TestSchemaCoercion:
             "properties": {"risk_level": {"type": "string", "enum": ["low", "medium", "high"]}},
             "required": ["risk_level"],
         }
-        _, conforming, _ = ClaudeCodeNode._coerce_structured_output({"risk_level": "unknown"}, schema)
+        _, conforming, _ = AgentNode._coerce_structured_output({"risk_level": "unknown"}, schema)
         assert conforming is False
 
     def test_enum_valid_conforming(self):
@@ -221,15 +222,15 @@ class TestSchemaCoercion:
             "type": "object",
             "properties": {"risk_level": {"type": "string", "enum": ["low", "medium", "high"]}},
         }
-        _, conforming, _ = ClaudeCodeNode._coerce_structured_output({"risk_level": "low"}, schema)
+        _, conforming, _ = AgentNode._coerce_structured_output({"risk_level": "low"}, schema)
         assert conforming is True
 
     def test_const_violation_non_conforming(self):
         """A field constrained by const must equal it, else non-conforming."""
         schema = {"type": "object", "properties": {"kind": {"const": "report"}}}
-        _, bad, _ = ClaudeCodeNode._coerce_structured_output({"kind": "other"}, schema)
+        _, bad, _ = AgentNode._coerce_structured_output({"kind": "other"}, schema)
         assert bad is False
-        _, good, _ = ClaudeCodeNode._coerce_structured_output({"kind": "report"}, schema)
+        _, good, _ = AgentNode._coerce_structured_output({"kind": "report"}, schema)
         assert good is True
 
     def test_enum_checked_after_coercion(self):
@@ -238,7 +239,7 @@ class TestSchemaCoercion:
             "type": "object",
             "properties": {"level": {"type": "integer", "enum": [1, 2, 3]}},
         }
-        coerced, conforming, fields = ClaudeCodeNode._coerce_structured_output({"level": "2"}, schema)
+        coerced, conforming, fields = AgentNode._coerce_structured_output({"level": "2"}, schema)
         assert coerced["level"] == 2
         assert conforming is True
         assert "level" in fields
@@ -253,7 +254,7 @@ class TestSchemaCoercion:
         }
 
         structured_output = {"optional_field": None}
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["optional_field"] is None
         assert conforming is True
@@ -270,12 +271,84 @@ class TestSchemaCoercion:
 
         # Runtime value is "42" → coerce to integer (matches "integer" in type list)
         structured_output = {"flexible_field": "42"}
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         # Should coerce to integer since "42" matches integer type after coercion
         assert coerced["flexible_field"] == 42
         assert conforming is True
         assert "flexible_field" in coerced_fields
+
+    @pytest.mark.parametrize(
+        ("field_schema", "value"),
+        [
+            ({"type": "object"}, "not-an-object"),
+            ({"type": "array"}, {"not": "an-array"}),
+            ({"type": "null"}, "not-null"),
+        ],
+    )
+    def test_non_scalar_type_mismatches_are_non_conforming(self, field_schema, value):
+        schema = {"type": "object", "properties": {"value": field_schema}, "required": ["value"]}
+
+        coerced, conforming, fields = AgentNode._coerce_structured_output({"value": value}, schema)
+
+        assert coerced == {"value": value}
+        assert conforming is False
+        assert fields == []
+
+    @pytest.mark.parametrize("declared_types", [["integer", "string"], ["string", "integer"]])
+    def test_valid_union_value_is_preserved_independent_of_order(self, declared_types):
+        schema = {
+            "type": "object",
+            "properties": {"code": {"type": declared_types, "enum": ["03"]}},
+            "required": ["code"],
+        }
+
+        coerced, conforming, fields = AgentNode._coerce_structured_output({"code": "03"}, schema)
+
+        assert coerced == {"code": "03"}
+        assert conforming is True
+        assert fields == []
+
+    def test_union_accepts_valid_object_branch(self):
+        schema = {
+            "type": "object",
+            "properties": {"value": {"type": ["object", "string"]}},
+            "required": ["value"],
+        }
+
+        coerced, conforming, fields = AgentNode._coerce_structured_output({"value": {"ok": True}}, schema)
+
+        assert coerced == {"value": {"ok": True}}
+        assert conforming is True
+        assert fields == []
+
+    def test_enum_uses_json_schema_boolean_number_equality(self):
+        schema = {
+            "type": "object",
+            "properties": {"value": {"enum": [1]}},
+            "required": ["value"],
+        }
+
+        _, conforming, _ = AgentNode._coerce_structured_output({"value": True}, schema)
+
+        assert conforming is False
+
+    def test_whole_schema_validates_nested_required_fields(self):
+        schema = {
+            "type": "object",
+            "properties": {
+                "nested": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                }
+            },
+            "required": ["nested"],
+        }
+
+        _, conforming, _ = AgentNode._coerce_structured_output({"nested": {}}, schema)
+
+        assert conforming is False
 
     def test_mutation_safety(self):
         """Test that coercion returns a new dict, doesn't mutate input."""
@@ -289,7 +362,7 @@ class TestSchemaCoercion:
         original = {"field": "true"}
         original_copy = original.copy()
 
-        coerced, _conforming, _coerced_fields = ClaudeCodeNode._coerce_structured_output(original, schema)
+        coerced, _conforming, _coerced_fields = AgentNode._coerce_structured_output(original, schema)
 
         # Original should be unchanged
         assert original == original_copy
@@ -299,14 +372,12 @@ class TestSchemaCoercion:
         assert coerced["field"] is True
         assert coerced is not original  # New dict
 
-    def test_coerce_python_float_to_int(self):
-        """Regression test for float-to-int coercion bug.
+    def test_preserve_schema_valid_integral_float(self):
+        """JSON Schema treats an integral float as an integer-valued number.
 
-        When the SDK returns a Python float (5.0) but schema expects integer,
-        it should coerce. The original implementation only handled STRING "5.0"
-        → int coercion, not actual float 5.0 → int.
-
-        Bug found during verification adversarial testing on 2026-06-03.
+        Recovery coercion must not rewrite values that already satisfy the
+        authored schema; doing so makes unions and enum constraints dependent
+        on Python representation rather than JSON Schema semantics.
         """
         schema = {
             "type": "object",
@@ -315,18 +386,17 @@ class TestSchemaCoercion:
             },
         }
 
-        # Test Python float → int (the bug case)
         structured_output = {"count": 5.0}
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
-        assert coerced["count"] == 5
-        assert isinstance(coerced["count"], int)
+        assert coerced["count"] == 5.0
+        assert isinstance(coerced["count"], float)
         assert conforming is True
-        assert "count" in coerced_fields
+        assert coerced_fields == []
 
         # Test float with non-integer value (should NOT coerce)
         structured_output = {"count": 5.5}
-        coerced, conforming, coerced_fields = ClaudeCodeNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["count"] == 5.5  # Unchanged
         assert conforming is False  # Non-conforming

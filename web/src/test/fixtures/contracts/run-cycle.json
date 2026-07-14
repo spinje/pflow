@@ -333,9 +333,15 @@
         "ancestor_path": [],
         "port": null
       },
-      "kind": "claude-code",
+      "kind": "agent",
       "purpose": "Finalize the cycle by opening a PR per approved branch (push + `gh pr create`),\nnever merging into `${base_branch}` directly. **Critically, it also removes the\n`agent-ready` label from every issue it touches** \u2014 that is what shrinks the\ncandidate pool so the next cycle doesn't re-pick a done issue and collide on its\nexisting branch. Without the relabel the loop would never converge. Approved\nissues get a PR; `request-changes` issues are relabeled `agent-needs-human`.",
       "params": [
+        {
+          "name": "backend",
+          "value": "claude",
+          "is_dynamic": false,
+          "source": null
+        },
         {
           "name": "prompt",
           "value": "You are finalizing this cycle's work by opening **pull requests** \u2014 do NOT merge\ninto ${base_branch} directly.\n\nPer-issue results (each item has `branch`, `commits_made`, `verdict`, `summary`,\nand `item.number` / `item.title` for the original issue):\n${results}\n\nYou are on ${base_branch} in the main checkout. For each result:\n\n**verdict \"approve\" and commits_made > 0:**\n- `git push -u origin <branch>`\n- `gh pr create --base ${base_branch} --head <branch> --title \"<item.title>\" --body \"Automated implementation of #<item.number>.\\n\\n<summary>\"`\n- `gh issue edit <item.number> --remove-label agent-ready`\n- record `<branch>` under `prs_opened`.\n\n**verdict \"request-changes\" (or commits_made == 0):**\n- `gh issue edit <item.number> --remove-label agent-ready --add-label agent-needs-human`\n- (optional) `gh issue comment <item.number> --body \"<review notes>\"`\n- record `#<item.number>` under `needs_human`.\n\n**Removing the `agent-ready` label is REQUIRED for every issue you touch** \u2014\nit takes the issue out of the candidate pool so the next cycle does not\nre-attempt it and collide on the now-existing branch. This label removal is what\nlets the outer loop converge. Report `prs_opened` and `needs_human`.\n",
@@ -552,9 +558,15 @@
         ],
         "port": null
       },
-      "kind": "claude-code",
+      "kind": "agent",
       "purpose": "Implement the issue in an isolated worktree and commit. Genuinely agentic:\nwrite code, run tests, iterate. Reports `commits_made` so the next step can\ndecide whether a review is warranted.",
       "params": [
+        {
+          "name": "backend",
+          "value": "claude",
+          "is_dynamic": false,
+          "source": null
+        },
         {
           "name": "prompt",
           "value": "Implement GitHub issue #${issue.number}: \"${issue.title}\".\n\nWork in an ISOLATED git worktree so you do not collide with sibling agents\nrunning on the same checkout:\n\n    git worktree add -b ${issue.branch} ../wt-${issue.branch} ${base_branch}\n\nDo all your work inside that worktree directory. Make the smallest correct\nchange, run the most relevant tests, and commit.\n\nSet commits_made to the number of commits you actually created on\n${issue.branch} (0 if you could not complete the work).\n",
@@ -692,7 +704,7 @@
           "is_dynamic": false,
           "source": {
             "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
-            "line": 79
+            "line": 80
           }
         }
       ],
@@ -702,7 +714,7 @@
       "parent": "g2",
       "source": {
         "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
-        "line": 69
+        "line": 70
       },
       "is_decision": true,
       "is_terminal": false,
@@ -729,9 +741,15 @@
         ],
         "port": null
       },
-      "kind": "claude-code",
+      "kind": "agent",
       "purpose": "A real review \u2014 reads the diff AND the surrounding code (callers, tests,\nrelated modules), which is why it is an agent, not a single LLM call. Adequate\n`max_turns` so it is never starved mid-review.",
       "params": [
+        {
+          "name": "backend",
+          "value": "claude",
+          "is_dynamic": false,
+          "source": null
+        },
         {
           "name": "prompt",
           "value": "Review branch ${branch} against ${base_branch}.\n\nThe implementer's summary was:\n${summary}\n\nThis is a real review \u2014 read the diff AND the surrounding code it touches\n(callers, tests, related modules), not just the patch in isolation. Run:\n\n    git diff ${base_branch}...${branch}\n\nCheck correctness, missing or broken tests, and regressions in the code paths\nthis change affects. Return verdict \"approve\" only if it is safe to merge as-is;\notherwise \"request-changes\" with specific notes.\n",
@@ -810,7 +828,7 @@
       "parent": "g2",
       "source": {
         "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
-        "line": 87
+        "line": 88
       },
       "is_decision": false,
       "is_terminal": false,
@@ -888,7 +906,7 @@
       "parent": "g4",
       "source": {
         "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
-        "line": 122
+        "line": 124
       },
       "is_decision": false,
       "is_terminal": true,
@@ -924,7 +942,7 @@
       "parent": "g4",
       "source": {
         "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
-        "line": 128
+        "line": 130
       },
       "is_decision": false,
       "is_terminal": true,
@@ -960,7 +978,7 @@
       "parent": "g4",
       "source": {
         "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
-        "line": 136
+        "line": 138
       },
       "is_decision": false,
       "is_terminal": true,
@@ -996,7 +1014,7 @@
       "parent": "g4",
       "source": {
         "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/implement-and-review-one/implement-and-review-one.pflow.md",
-        "line": 142
+        "line": 144
       },
       "is_decision": false,
       "is_terminal": true,
@@ -1051,7 +1069,7 @@
       "parent": "g5",
       "source": {
         "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
-        "line": 163
+        "line": 164
       },
       "is_decision": false,
       "is_terminal": true,
@@ -1082,7 +1100,7 @@
       "parent": "g5",
       "source": {
         "file": "examples/agent-orchestration/parallel-planner-review/run-cycle/run-cycle.pflow.md",
-        "line": 170
+        "line": 171
       },
       "is_decision": false,
       "is_terminal": true,
@@ -1653,9 +1671,10 @@
     }
   ],
   "kind_output_types": {
-    "claude-code": {
+    "agent": {
       "result": "str|dict",
       "_schema_error": "str",
+      "_agent_error": "str",
       "llm_usage": "dict"
     },
     "code": {

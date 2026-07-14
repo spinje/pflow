@@ -7,7 +7,7 @@ ran. Unknown class names fall back to a lowercased form of the class name.
 
 NODE_TYPE_TAGS: dict[str, str] = {
     "LLMNode": "llm",
-    "ClaudeCodeNode": "claude",
+    "AgentNode": "agent",
     "HttpNode": "http",
     "ShellNode": "shell",
     "MCPNode": "mcp",
@@ -34,3 +34,8 @@ def is_llm_node_type(node_type_name: str) -> bool:
     ``runtime.engine`` package — see ``runtime/workflow_trace.py``.
     """
     return node_type_name == "LLMNode"
+
+
+def is_model_node_type(node_type_name: str) -> bool:
+    """Return whether a node has model prompt/usage trace semantics."""
+    return node_type_name in {"LLMNode", "AgentNode"}

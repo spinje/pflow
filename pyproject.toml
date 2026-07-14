@@ -139,6 +139,7 @@ markers = [
     "serial: marks tests that must run sequentially (deselect with '-m \"not serial\"')",
     "integration: marks cross-component integration tests (rarely used; subprocess/pipe tests use the e2e marker)",
     "e2e: marks real process, shell, pipe, or external-boundary tests",
+    "paid: marks tests that can incur provider charges and must be explicitly selected",
     "trace_files: allows tests to write workflow trace JSON files",
     "no_fake_llm_keys: disable the autouse fake-LLM-key injection (for tests asserting the missing-key code path)",
 ]

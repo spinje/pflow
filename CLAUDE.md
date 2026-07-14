@@ -52,7 +52,7 @@ This file provides guidance to Claude Code when working with code and documentat
 
 ## Project Overview
 
-**pflow** is a CLI-first workflow execution system. AI agents create markdown workflow files (`.pflow.md`), iterate on them via CLI, then save them for reuse. Workflows chain nodes (`shell`, `http`, `llm`, `file`, `mcp`, `python`, `claude-code`) that communicate through a shared store.
+**pflow** is a CLI-first workflow execution system. AI agents create markdown workflow files (`.pflow.md`), iterate on them via CLI, then save them for reuse. Workflows chain nodes (`shell`, `http`, `llm`, `file`, `mcp`, `code`, `agent`) that communicate through a shared store.
 
 > **For conceptual understanding** (why pflow exists, core bets, design decisions): See `architecture/overview.md`
 > **For technical architecture** (execution pipeline, abstractions, components): See `architecture/architecture.md`
@@ -112,7 +112,7 @@ pflow/
 │   ├── execution/           # Execution UX, formatters
 │   ├── runtime/             # Compilation, engine, tracing
 │   ├── nodes/               # Platform node implementations
-│   │   └── (shell, http, llm, file, mcp, python, claude)
+│   │   └── (shell, http, llm, file, mcp, python, agent)
 │   ├── mcp/                 # MCP client integration (for MCP nodes in workflows)
 │   ├── mcp_server/          # pflow-as-MCP-server for AI agents
 │   ├── registry/            # Node registry, scanning, context building, discovery
@@ -184,7 +184,7 @@ Proactively use `pflow-codebase-searcher` subagents in PARALLEL when reading doc
 
 MVP feature-complete. Published to PyPI (initial release v0.8.0; current version per `pyproject.toml`).
 
-**What's implemented**: shell/http/llm/mcp/`code` (Python)/claude-code nodes plus five file-op nodes (read/write/copy/move/delete-file) — registry names, not directory names; template system (`${var}` with nested path access), batch processing, MCP integration (client + server), metrics/tracing, settings/security, CLI with Unix pipe support, workflow save/load, registry, skills publishing.
+**What's implemented**: shell/http/llm/mcp/`code` (Python)/`agent` (Claude or Codex) nodes plus five file-op nodes (read/write/copy/move/delete-file) — registry names, not directory names; template system (`${var}` with nested path access), batch processing, MCP integration (client + server), metrics/tracing, settings/security, CLI with Unix pipe support, workflow save/load, registry, skills publishing.
 
 **Recently Completed:**
 - ✅ Task 105: Auto-Parse JSON Strings During Nested Template Access
@@ -248,7 +248,7 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - Task 142: Explore Function-Based Code Node Syntax
 - Task 46: Workflow Export to Zero-Dependency Code
 - Task 94: Display Available LLM Models
-- Task 99: Expose pflow Tools to Claude Code Node
+- Task 99: Expose pflow Tools to the Agent Node
 - Task 111: Batch Limit for Iteration
 - Task 118: Code and Shell Linting
 - Task 121: Workflow Testability

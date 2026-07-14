@@ -111,7 +111,7 @@ pflow uses hard enforcement. Workflows are structured markdown (`.pflow.md`) wit
 
 95% of workflow steps don't need reasoning:
 - **Deterministic nodes:** MCP, HTTP, Shell (0 tokens during execution)
-- **Intelligence nodes:** LLM, Claude-Code (used only when reasoning adds value)
+- **Intelligence nodes:** LLM, Agent (used only when reasoning adds value)
 
 The orchestrating AI sees schemas and types, not actual data. Data stays in runtime, never enters the AI's context. This provides 5-100x token efficiency and keeps sensitive data out of AI context.
 
@@ -288,8 +288,8 @@ The CLI is recommended for iterative work (building, debugging). The MCP server 
 | `http` | HTTP requests | Yes |
 | `read-file`, `write-file`, etc. | File operations | Yes |
 | `mcp` | Call MCP server tools | Yes |
-| `llm` | LLM API calls (via `llm` library) | No |
-| `claude-code` | Claude Code CLI for complex tasks | No |
+| `llm` | LLM API calls through the LiteLLM adapter | No |
+| `agent` | Agentic repository work via Claude or Codex | No |
 
 ### Key Features
 

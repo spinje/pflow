@@ -30,7 +30,7 @@ architecture/
 │   └── template-variables.md  # ${variable} syntax reference
 ├── core-node-packages/
 │   ├── llm-nodes.md           # LLM node spec
-│   └── claude-nodes.md        # Claude Code node spec
+│   └── agent-nodes.md         # Unified Claude/Codex agent node architecture
 ├── implementation-details/
 │   └── metadata-extraction.md # Node metadata extraction system
 ├── vision/                    # ⚠️ Future directions, NOT current implementation
@@ -67,7 +67,7 @@ Only notes that help you decide whether to read a file. If the filename is self-
 
 ### Core Node Packages
 
-**llm-nodes.md** vs **claude-nodes.md** — Two-tier AI architecture. `llm` = general-purpose text processing via API through pflow's LiteLLM adapter. `claude-code` = agentic "super node" via Claude Code CLI with full project context and tool access. Different tools for different jobs.
+**llm-nodes.md** vs **agent-nodes.md** — Two-tier AI architecture. `llm` = general-purpose text processing via API through pflow's LiteLLM adapter. `agent` = repository-aware autonomous work through the Claude or Codex backend. Different tools for different jobs.
 
 ### Reference
 

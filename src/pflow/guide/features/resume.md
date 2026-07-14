@@ -1,6 +1,6 @@
 # Resuming a run — failed, interrupted, or paused at a gate
 
-**Use when**: a long or expensive run failed partway (an `llm`/`http`/`mcp`/`claude-code` step timed out, a transient error survived retries) and you want to continue from the failed step instead of paying for the whole run again — or a run **paused at an approval gate** in a non-interactive context and you hold its resume token (see "Answering a paused gate" below).
+**Use when**: a long or expensive run failed partway (an `llm`/`http`/`mcp`/`agent` step timed out, a transient error survived retries) and you want to continue from the failed step instead of paying for the whole run again — or a run **paused at an approval gate** in a non-interactive context and you hold its resume token (see "Answering a paused gate" below).
 
 ```bash
 pflow resume <execution-id>      # resume that exact failed attempt (from the failed run's output)
@@ -69,7 +69,7 @@ Everything not overridden is reused from the inputs the failed run used.
 The failed step runs **again** from the start. If it already partly side-effected before failing — an http POST that sent but timed out on the response, an mcp tool that created a resource, a shell command that wrote a file — resuming re-fires it. This is at-least-once execution of the failed step.
 
 - An **idempotent** failed step (an `llm` step) resumes silently — re-running is safe.
-- A **side-effecting** failed step (`shell` / `code` / `claude-code` / file operations / `mcp`; `http` too — even reads touch external systems):
+- A **side-effecting** failed step (`shell` / `code` / `agent` / file operations / `mcp`; `http` too — even reads touch external systems):
   - At a terminal, resume asks for confirmation before re-running the step (default No).
   - **For AI agents** (no terminal): resume **refuses with a clear error** rather than silently repeating the side effect. Confirm with your human that re-running the step is safe, then re-run with `--force`.
 

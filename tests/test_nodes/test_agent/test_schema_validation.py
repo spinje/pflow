@@ -1,7 +1,7 @@
-"""Tests for the pure predicates in ``pflow.nodes.claude.schema_validation``.
+"""Tests for the pure predicates in ``pflow.nodes.agent.schema_validation``.
 
-These predicates are imported by both ``ClaudeCodeNode._validate_schema``
-(runtime) and ``WorkflowValidator._validate_claude_code_params`` (preflight).
+These predicates are imported by both ``AgentNode._validate_schema``
+(runtime) and ``WorkflowValidator._validate_agent_params`` (preflight).
 Drift-at-the-predicate-level was the motivating risk for extracting them; the
 tests below pin behavior at the predicate boundary so changes that alter
 acceptance/rejection shape surface here, not via the call-site test files.
@@ -9,10 +9,69 @@ acceptance/rejection shape surface here, not via the call-site test files.
 
 from __future__ import annotations
 
-from pflow.nodes.claude.schema_validation import (
+from typing import Any
+
+import pytest
+
+from pflow.nodes.agent.schema_validation import (
+    is_compiler_source_line_sidecar,
     is_legacy_python_alias_schema,
     top_level_object_violation,
+    validate_use_api_key,
 )
+
+
+class TestCompilerSourceLineSidecar:
+    def test_recognizes_metadata_only_when_the_fenced_parameter_exists(self) -> None:
+        params = {"prompt": "hello", "_prompt_source_line": 12}
+
+        assert is_compiler_source_line_sidecar("_prompt_source_line", params) is True
+
+    @pytest.mark.parametrize(
+        ("key", "params"),
+        [
+            ("_prompt_source_line", {"_prompt_source_line": 12}),
+            ("prompt_source_line", {"prompt_source_line": 12}),
+            ("_source_line", {"_source_line": 12}),
+            ("_prompt_line", {"prompt": "hello", "_prompt_line": 12}),
+        ],
+    )
+    def test_rejects_lookalikes_and_orphaned_metadata(self, key: str, params: dict[str, Any]) -> None:
+        assert is_compiler_source_line_sidecar(key, params) is False
+
+
+class TestValidateUseApiKey:
+    @pytest.mark.parametrize("value", [None, False, 0, "false", "FALSE", " 0 ", "No"])
+    def test_accepts_false_forms(self, value: Any) -> None:
+        assert validate_use_api_key(value) is False
+
+    @pytest.mark.parametrize("value", [True, 1, "true", "TRUE", " 1 ", "Yes"])
+    def test_accepts_true_forms(self, value: Any) -> None:
+        assert validate_use_api_key(value) is True
+
+    @pytest.mark.parametrize(
+        "value",
+        ["", "maybe", "on", "off", 2, -1, 42, [], {}, {"enabled": True}, object()],
+    )
+    def test_rejects_ambiguous_values_with_backend_neutral_guidance(self, value: Any) -> None:
+        with pytest.raises(TypeError, match="use_api_key must be true or false") as exc_info:
+            validate_use_api_key(value)
+
+        message = str(exc_info.value)
+        assert "provider billing" in message
+        assert "Claude" not in message
+        assert "Anthropic" not in message
+        assert "Codex" not in message
+        assert "OpenAI" not in message
+
+    def test_rejected_string_value_is_not_echoed(self) -> None:
+        secret_like_value = "sk-secret-value-that-must-not-leak"  # noqa: S105 - redaction sentinel
+
+        with pytest.raises(TypeError) as exc_info:
+            validate_use_api_key(secret_like_value)
+
+        assert secret_like_value not in str(exc_info.value)
+        assert "got str" in str(exc_info.value)
 
 
 class TestIsLegacyPythonAliasSchema:

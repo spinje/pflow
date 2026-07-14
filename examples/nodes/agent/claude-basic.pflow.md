@@ -1,4 +1,4 @@
-# Claude Code Basic
+# Agent (Claude) Basic
 
 Generate a Fibonacci function with Claude Code, save it to a file,
 and report execution cost and duration.
@@ -9,7 +9,8 @@ and report execution cost and duration.
 
 Generate a Python Fibonacci function using Claude Code.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: Write a Python function that calculates the nth Fibonacci number using dynamic programming. Include proper error handling, type hints, and a docstring explaining the algorithm.
 - max_turns: 1
 

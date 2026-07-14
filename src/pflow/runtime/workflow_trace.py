@@ -17,7 +17,7 @@ from typing import Any, TextIO
 
 from pflow.core.diagnostic import Diagnostic, warning_degrades_status
 from pflow.core.exceptions import OnlySnapshotMissingError
-from pflow.core.node_type_display import is_llm_node_type
+from pflow.core.node_type_display import is_model_node_type
 from pflow.core.trace_io import (
     RESERVED_LINE_KEYS,
     TRACE_JSONL_MARKER,
@@ -237,6 +237,9 @@ def _strip_redundant_llm_trace_fields(event: dict[str, Any]) -> None:
         if isinstance(container, dict):
             container.pop("prompt", None)
             container.pop("system", None)
+            if container_key == "node_output":
+                container.pop("_agent_prompt", None)
+                container.pop("_agent_tools", None)
 
     node_params = event.get("node_params")
     if isinstance(node_params, dict):
@@ -335,6 +338,8 @@ class _LLMSummaryAccumulator:
     total_num_turns: int = 0
     agent_calls: int = 0
     priced_cost: float = 0.0
+    api_equivalent_cost: float = 0.0
+    has_api_equivalent_cost: bool = False
     models: set[str] = field(default_factory=set)
     unavailable_models: Counter[str] = field(default_factory=Counter)
     unavailable_models_unnamed_count: int = 0
@@ -348,7 +353,7 @@ class _LLMSummaryAccumulator:
         self.total_output_tokens += call.get("output_tokens", 0)
         self.total_cache_creation_tokens += call.get("cache_creation_input_tokens", 0) or 0
         self.total_cache_read_tokens += call.get("cache_read_input_tokens", 0) or 0
-        # num_turns is claude-code-only — its presence marks an AGENT call (one
+        # num_turns is agent-only — its presence marks an AGENT call (one
         # invocation = many internal turns), distinct from a single-shot llm call.
         turns = call.get("num_turns")
         if turns is not None and not is_warmup:
@@ -365,6 +370,10 @@ class _LLMSummaryAccumulator:
                 self.unavailable_models_unnamed_count += 1
         else:
             self.priced_cost += cost
+        api_equivalent_cost = call.get("api_equivalent_cost_usd")
+        if isinstance(api_equivalent_cost, (int, float)) and not isinstance(api_equivalent_cost, bool):
+            self.api_equivalent_cost += float(api_equivalent_cost)
+            self.has_api_equivalent_cost = True
         if is_real_model and not is_warmup:
             self.models.add(model)
 
@@ -403,6 +412,8 @@ class _LLMSummaryAccumulator:
         else:
             result["total_cost_usd"] = round(self.priced_cost, 6)
             result["pricing_available"] = True
+        if self.has_api_equivalent_cost:
+            result["total_api_equivalent_cost_usd"] = round(self.api_equivalent_cost, 6)
         return result
 
 
@@ -740,7 +751,7 @@ class WorkflowTraceCollector:
 
         # Add LLM-specific data if present
         self._add_llm_data(event, node_id, node_output or {})
-        if is_llm_node_type(node_type):
+        if is_model_node_type(node_type):
             _strip_redundant_llm_trace_fields(event)
 
         self._stamp_correlation(event, node_id, frame)
@@ -1132,7 +1143,7 @@ class WorkflowTraceCollector:
     def aggregate_llm_usage_with_retries(llm_usage: dict[str, Any]) -> dict[str, Any]:
         """Aggregate tokens/cost/turns from main llm_usage + retries array.
 
-        When llm_usage has a 'retries' field (schema retry attempts from claude-code node),
+        When llm_usage has a 'retries' field (schema retry attempts from an agent node),
         returns a new dict with summed tokens/cost/turns. Otherwise returns the input unchanged.
 
         Args:
@@ -1151,9 +1162,14 @@ class WorkflowTraceCollector:
         # Sum input/output tokens (None-safe: use `or 0` to coerce explicit None to 0)
         aggregated["input_tokens"] = llm_usage.get("input_tokens") or 0
         aggregated["output_tokens"] = llm_usage.get("output_tokens") or 0
+        has_reasoning_tokens = "reasoning_output_tokens" in llm_usage or any(
+            "reasoning_output_tokens" in retry for retry in retries
+        )
+        if has_reasoning_tokens:
+            aggregated["reasoning_output_tokens"] = llm_usage.get("reasoning_output_tokens") or 0
         # uncached_input_tokens is summed alongside input_tokens so the aggregated dict
         # keeps the invariant input_tokens == uncached + cache_creation + cache_read for
-        # retried claude-code calls (#492). Producers that omit it (and never retry)
+        # retried agent calls (#492). Producers that omit it (and never retry)
         # default to 0.
         aggregated["uncached_input_tokens"] = llm_usage.get("uncached_input_tokens") or 0
 
@@ -1161,14 +1177,10 @@ class WorkflowTraceCollector:
         for cache_key in ["cache_creation_input_tokens", "cache_read_input_tokens"]:
             aggregated[cache_key] = llm_usage.get(cache_key) or 0
 
-        # Sum cost (handle None for models without pricing like Ollama)
-        # If all costs are None, result is None. If any cost is numeric, sum only numeric ones.
-        main_cost = llm_usage.get("cost_usd")
-        retry_costs = [r.get("cost_usd") for r in retries if r.get("cost_usd") is not None]
-        if main_cost is not None or retry_costs:
-            aggregated["cost_usd"] = (main_cost or 0) + sum(retry_costs)
-        else:
-            aggregated["cost_usd"] = None
+        # Sum paid cost and API-equivalent estimates independently. Keeping the
+        # estimate out of cost_usd prevents subscription-backed agent calls from
+        # entering readers' "actually paid" channel.
+        WorkflowTraceCollector._aggregate_retry_costs(aggregated, llm_usage, retries)
 
         # Sum turns (None-safe: .get() with default only handles absent keys, not explicit None)
         # Use `or 0` to coerce None to 0 for aggregation
@@ -1181,6 +1193,8 @@ class WorkflowTraceCollector:
             aggregated["input_tokens"] += retry.get("input_tokens") or 0
             aggregated["uncached_input_tokens"] += retry.get("uncached_input_tokens") or 0
             aggregated["output_tokens"] += retry.get("output_tokens") or 0
+            if has_reasoning_tokens:
+                aggregated["reasoning_output_tokens"] += retry.get("reasoning_output_tokens") or 0
             for cache_key in ["cache_creation_input_tokens", "cache_read_input_tokens"]:
                 aggregated[cache_key] += retry.get(cache_key) or 0
 
@@ -1188,6 +1202,25 @@ class WorkflowTraceCollector:
         aggregated["total_tokens"] = aggregated["input_tokens"] + aggregated["output_tokens"]
 
         return aggregated
+
+    @staticmethod
+    def _aggregate_retry_costs(
+        aggregated: dict[str, Any],
+        llm_usage: dict[str, Any],
+        retries: list[dict[str, Any]],
+    ) -> None:
+        """Aggregate paid costs and API-equivalent estimates independently."""
+        for cost_key in ("cost_usd", "api_equivalent_cost_usd"):
+            main_cost = llm_usage.get(cost_key)
+            retry_costs: list[float] = []
+            for retry in retries:
+                retry_cost = retry.get(cost_key)
+                if retry_cost is not None:
+                    retry_costs.append(float(retry_cost))
+            if main_cost is not None or retry_costs:
+                aggregated[cost_key] = (main_cost or 0) + sum(retry_costs)
+            elif cost_key in llm_usage or any(cost_key in retry for retry in retries):
+                aggregated[cost_key] = None
 
     def _add_llm_data(
         self,
@@ -1197,7 +1230,7 @@ class WorkflowTraceCollector:
     ) -> None:
         """Add LLM usage and response data to the event if present.
 
-        Aggregates tokens/cost across main usage + retries for claude-code schema retry.
+        Aggregates tokens/cost across main usage + retries for agent schema retry.
 
         Args:
             event: Event dictionary to update
@@ -1223,9 +1256,13 @@ class WorkflowTraceCollector:
         # while the node_output fallback covers batch workers and legacy/external callers.
         prompt = self.llm_prompts.pop(node_id, None)
         if not prompt and isinstance(node_output, dict):
-            prompt = node_output.get("prompt")
+            prompt = node_output.get("prompt") or node_output.get("_agent_prompt")
         if isinstance(prompt, str):
             event["llm_prompt"] = prompt  # No truncation
+
+        agent_tools = node_output.get("_agent_tools") if isinstance(node_output, dict) else None
+        if isinstance(agent_tools, list):
+            event["agent_tools"] = agent_tools
 
         # 2.2.0: surface the effective system content. Lookup mirrors prompt (pop-on-consume too, same
         # cross-workflow-collision reason): trace_hook capture wins; node_output fallback covers parallel

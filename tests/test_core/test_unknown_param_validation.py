@@ -69,8 +69,9 @@ class TestValidateUnknownParams:
 
         assert len(errors) == 0
 
-    def test_no_error_for_claude_code_use_api_key(self, registry: Registry) -> None:
-        """Issue #455: use_api_key is a recognized claude-code param.
+    @pytest.mark.parametrize("backend", ["claude", "codex"])
+    def test_no_error_for_agent_use_api_key(self, registry: Registry, backend: str) -> None:
+        """use_api_key is a recognized shared agent param.
 
         Guards the docstring → metadata → validator allow-list chain end-to-end:
         if the `- Params: use_api_key:` line is dropped from the node docstring,
@@ -81,8 +82,9 @@ class TestValidateUnknownParams:
             "nodes": [
                 {
                     "id": "agent",
-                    "type": "claude-code",
+                    "type": "agent",
                     "params": {
+                        "backend": backend,
                         "prompt": "do a thing",
                         "use_api_key": True,
                     },

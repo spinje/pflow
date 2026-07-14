@@ -1,4 +1,4 @@
-# Claude Code Git Workflow
+# Agent (Claude) Git Workflow
 
 Analyze git changes and commit history with Claude Code to automatically
 generate a comprehensive pull request description.
@@ -29,7 +29,8 @@ git log --oneline -10
 
 Analyze the git changes and commit history to understand what was implemented.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - max_turns: 3
 
 ```yaml output_schema
@@ -72,7 +73,8 @@ ${git_log.stdout}
 
 Generate a comprehensive pull request description based on the analysis.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - max_turns: 2
 - system_prompt: You are a senior developer writing clear, professional PR descriptions. Use markdown formatting and be concise but thorough.
 

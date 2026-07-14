@@ -1,4 +1,4 @@
-# Claude Code Schema
+# Agent (Claude) Schema
 
 Review a Python file for code quality and security issues using Claude Code
 with structured output schema. Saves both a review report and an improved
@@ -26,7 +26,8 @@ Read the Python source file for review.
 
 Review the code for quality, security issues, and best practices.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: "Review this Python code for quality, security issues, and best practices:\n\n${read_code.content}"
 - max_turns: 2
 

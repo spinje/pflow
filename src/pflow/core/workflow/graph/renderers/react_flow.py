@@ -69,7 +69,7 @@ class RFOutputShape:
 
     ``field`` names the output port the shape describes — where the node
     actually WRITES: ``"result"`` for code (AST-extracted) and structured
-    claude-code (``output_schema`` → parsed value in ``result``), ``"response"``
+    agent nodes (``output_schema`` → parsed value in ``result``), ``"response"``
     for structured llm (its parsed value lands in ``response``, never
     ``result``). ``data_type`` is the authored annotation / schema type (None
     when not provable). ``keys`` are the authored keys with best-effort value
@@ -110,10 +110,10 @@ class RFNode:
     is_transform: bool
     # The authored shape of the node's structured output (annotation/schema +
     # keys), extracted fail-closed; `shape.field` names the port it describes
-    # (code/claude-code → "result", structured llm → "response"). Ships for ALL
+    # (code/agent → "result", structured llm → "response"). Ships for ALL
     # code nodes (D9 — run-validate's annotation is just as true as a
     # transform's; display policy is the frontend's) and for schema'd
-    # claude-code/llm. None whenever nothing is provable.
+    # agent/llm. None whenever nothing is provable.
     output_shape: RFOutputShape | None
     # The node's cached system prefix as authored TEMPLATE text (the model's
     # ``Node.cached_prefix``): per consumed ``## Cache`` chunk, declaration
@@ -277,9 +277,9 @@ class _ReactFlowRenderer:
         # Structured-output nodes: the output_schema IS the authored shape. The
         # FIELD differs per kind — and must match where the node actually
         # writes, or the rows would describe a port that doesn't exist:
-        # claude-code parses into `result` (claude_code.py "Writes:"), llm
+        # agent parses into `result` (agent_node.py "Writes:"), llm
         # into `response` (llm.py "Writes:").
-        if node.kind == "claude-code":
+        if node.kind == "agent":
             return _llm_kind_shape(node, field="result")
         if node.kind == "llm":
             return _llm_kind_shape(node, field="response")
@@ -1232,7 +1232,7 @@ def _literal_dict_keys(assignments: list[ast.AST], scope: _TypeScope) -> list[RF
 
 
 def _shape_from_output_schema(schema: Any, field: str) -> RFOutputShape | None:
-    """The authored shape of a structured-output node (claude-code / llm).
+    """The authored shape of a structured-output node (agent / llm).
 
     The ``output_schema`` is authored truth — no inference; ``field`` is where
     that kind actually writes the parsed value. FAIL-CLOSED: anything but a
@@ -1282,12 +1282,12 @@ def _result_shape_from_code(code: str) -> RFOutputShape | None:
 
 
 def _llm_kind_shape(node: Node, field: str) -> RFOutputShape | None:
-    """The shape of an llm/claude-code node's output port.
+    """The shape of an llm/agent node's output port.
 
     With an output_schema authored, the schema IS the shape (fail-closed
     parse). With NO schema at all, the kind's own contract makes the type
     certain: the node writes free-form text — ``str`` (llm.py /
-    claude_code.py "Writes:" — the ``dict`` arm only occurs WHEN a schema is
+    agent_node.py "Writes:" — the ``dict`` arm only occurs WHEN a schema is
     set). A schema that is present but unreadable (a templated ``${...}``
     string, a non-object schema) ships None, NOT "str" — the runtime value
     there is parsed JSON, so claiming text would be wrong."""

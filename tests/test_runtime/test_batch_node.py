@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
+from pflow.core.diagnostic import Diagnostic
 from pflow.runtime.engine.batch_executor import (
     _detect_empty_output_items,
     _extract_error,
@@ -65,6 +66,7 @@ def _run_batch(
     max_retries: int = 1,
     retry_wait: float = 0.0,
     node_id: str = "test_node",
+    node_type_name: str = "MockNode",
     execute_single_fn=None,
 ) -> tuple[str, list[dict]]:
     """Helper to run execute_batch with convenient defaults.
@@ -86,7 +88,7 @@ def _run_batch(
         max_retries=max_retries,
         retry_wait=retry_wait,
     )
-    config = _make_node_config(node_id=node_id, batch_config=batch_config)
+    config = _make_node_config(node_id=node_id, node_type_name=node_type_name, batch_config=batch_config)
     fn = execute_single_fn or _simple_execute_single_fn
     try:
         action = execute_batch(node, config, shared, fn)
@@ -462,8 +464,8 @@ class TestIsolatedContext:
         # Alias was only in isolated copies
         assert "item" not in shared
 
-    def test_special_keys_shared_across_items(self):
-        """Special dunder keys are shared across items via shallow copy behavior."""
+    def test_item_warning_channels_are_isolated_then_aggregated(self):
+        """Per-item warnings keep provenance instead of racing in one shared dict."""
 
         class TrackingNode:
             def __init__(self, node_id: str):
@@ -482,8 +484,16 @@ class TestIsolatedContext:
 
         _run_batch(inner, shared)
 
-        # All 3 items should have written to the SAME dict (shallow copy shares it)
-        assert len(shared["__warnings__"]) >= 3
+        warning = shared["__warnings__"]["test_node"]
+        assert isinstance(warning, Diagnostic)
+        assert warning.id == "batch.item-warnings"
+        assert warning.context == {
+            "items": [
+                {"index": 0, "kinds": ["runtime.warning"]},
+                {"index": 1, "kinds": ["runtime.warning"]},
+                {"index": 2, "kinds": ["runtime.warning"]},
+            ]
+        }
 
 
 class TestErrorHandling:
@@ -3141,3 +3151,142 @@ class TestEmptyOutputWarnings:
 
         warnings = shared.get("__warnings__", {})
         assert "empty output" not in str(warnings)
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_batch_item_warnings_keep_deterministic_index_provenance(parallel: bool) -> None:
+    class WarningNode:
+        def __init__(self, node_id: str) -> None:
+            self.node_id = node_id
+
+        def _run(self, shared: dict) -> str:
+            index = shared["__index__"]
+            if parallel:
+                time.sleep((2 - index) * 0.01)
+            shared[self.node_id] = {"result": f"raw-{index}", "_schema_error": f"schema-{index}"}
+            shared["__warnings__"][self.node_id] = {
+                "kind": f"agent.schema.item-{index}",
+                "text": f"schema warning {index}",
+            }
+            return "default"
+
+    shared: dict = {"data": ["a", "b", "c"]}
+
+    _, trace_items = _run_batch(
+        WarningNode("test_node"),
+        shared,
+        parallel=parallel,
+        error_handling="continue",
+        max_concurrent=3,
+    )
+
+    parent_warning = shared["__warnings__"]["test_node"]
+    assert isinstance(parent_warning, Diagnostic)
+    assert parent_warning.id == "batch.item-warnings"
+    assert parent_warning.context == {
+        "items": [
+            {"index": 0, "kinds": ["agent.schema.item-0"]},
+            {"index": 1, "kinds": ["agent.schema.item-1"]},
+            {"index": 2, "kinds": ["agent.schema.item-2"]},
+        ]
+    }
+    assert [item["index"] for item in sorted(trace_items, key=lambda item: item["index"])] == [0, 1, 2]
+    assert all(item.get("warnings") for item in trace_items)
+
+
+def test_parallel_fail_fast_signals_running_workers_to_cancel() -> None:
+    class CancelledWork(Exception):
+        cancelled = True
+
+    class CancellationAwareNode:
+        def __init__(self, node_id: str) -> None:
+            self.node_id = node_id
+
+        def _run(self, shared: dict) -> str:
+            if shared["item"] == "fail":
+                time.sleep(0.05)
+                raise ValueError("first item failed")
+            cancel_event = shared["__pflow_cancel_event__"]
+            assert cancel_event.wait(timeout=1), "running worker never received fail-fast cancellation"
+            shared["_cancelled_items"].append(shared["item"])
+            raise CancelledWork("cancelled")
+
+    shared: dict = {"data": ["fail", "long-running"], "_cancelled_items": []}
+    started = time.monotonic()
+
+    with pytest.raises(ValueError, match="first item failed"):
+        _run_batch(
+            CancellationAwareNode("test_node"),
+            shared,
+            parallel=True,
+            error_handling="fail_fast",
+            max_concurrent=2,
+        )
+
+    assert time.monotonic() - started < 0.5
+    assert shared["_cancelled_items"] == ["long-running"]
+
+
+def test_parallel_main_thread_interrupt_signals_running_workers() -> None:
+    worker_started = threading.Event()
+    worker_finished = threading.Event()
+
+    class InterruptibleNode:
+        def __init__(self, node_id: str) -> None:
+            self.node_id = node_id
+
+        def _run(self, shared: dict) -> str:
+            worker_started.set()
+            cancel_event = shared["__pflow_cancel_event__"]
+            assert cancel_event.wait(timeout=1), "worker did not receive interruption cancellation"
+            worker_finished.set()
+            raise RuntimeError("cancelled after interrupt")
+
+    def interrupt_collector(*_args, **_kwargs) -> None:
+        assert worker_started.wait(timeout=1)
+        raise KeyboardInterrupt
+
+    shared: dict = {"data": ["long-running"]}
+    with (
+        patch("pflow.runtime.engine.batch_executor._collect_parallel_results", side_effect=interrupt_collector),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        _run_batch(
+            InterruptibleNode("test_node"),
+            shared,
+            parallel=True,
+            max_concurrent=1,
+        )
+
+    assert worker_finished.wait(timeout=1)
+
+
+def test_agent_batch_items_promote_effective_prompt_and_tools() -> None:
+    class AgentTraceNode:
+        def __init__(self, node_id: str) -> None:
+            self.node_id = node_id
+
+        def _run(self, shared: dict) -> str:
+            value = shared["item"]
+            shared[self.node_id] = {
+                "result": f"reviewed {value}",
+                "_agent_prompt": f"Review {value}",
+                "_agent_tools": [{"name": "read_file", "input_summary": str(value)}],
+                "llm_usage": {"input_tokens": 5, "output_tokens": 2},
+            }
+            return "default"
+
+    shared: dict = {"data": ["a.py", "b.py"]}
+
+    _, trace_items = _run_batch(
+        AgentTraceNode("test_node"),
+        shared,
+        parallel=True,
+        node_type_name="AgentNode",
+        max_concurrent=2,
+    )
+
+    by_index = {item["index"]: item for item in trace_items}
+    assert by_index[0]["llm_prompt"] == "Review a.py"
+    assert by_index[1]["llm_prompt"] == "Review b.py"
+    assert by_index[0]["agent_tools"] == [{"name": "read_file", "input_summary": "a.py"}]

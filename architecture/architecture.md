@@ -205,10 +205,10 @@ Templates use `${variable}` syntax. In `.pflow.md` files, templates appear inlin
 |------|--------|-------------|--------|
 | `shell` | `nodes/shell/` | Execute shell commands | Active |
 | `http` | `nodes/http/` | HTTP requests | Active |
-| `llm` | `nodes/llm/` | LLM API calls (via `llm` library) | Active |
+| `llm` | `nodes/llm/` | LLM API calls via the LiteLLM adapter | Active |
 | `read-file` | `nodes/file/` | Read file contents | Active |
 | `write-file` | `nodes/file/` | Write file contents | Active |
-| `claude-code` | `nodes/claude/` | Claude Code CLI integration | Active |
+| `agent` | `nodes/agent/` | Agentic coding via Claude or Codex | Active |
 | `mcp` | `nodes/mcp/` | Execute MCP tools | Active |
 
 > **Critical:** See `src/pflow/nodes/CLAUDE.md` for the mandatory retry pattern. Nodes that catch exceptions in exec() break automatic retries.
@@ -223,7 +223,7 @@ shell
 read-file
 write-file
 http
-claude-code
+agent
 mcp-<server>-<tool>
 ```
 
@@ -243,7 +243,7 @@ Run `pflow mcp list` to see all available nodes.
 | `llm` | General text processing |
 | `shell` | Execute shell commands |
 | `http` | HTTP requests |
-| `claude-code` | Claude Code CLI for complex tasks |
+| `agent` | Agentic repository work via Claude or Codex |
 
 **Naming Benefits**:
 - **Predictable**: Users can guess node names

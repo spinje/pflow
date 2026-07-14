@@ -297,10 +297,10 @@ def _should_write_cache_metadata(node_type_name: str) -> bool:
     LLM-producing node type that participates requires extending this gate
     alongside the new node type's ``post()`` implementation.
 
-    ``ClaudeCodeNode`` is intentionally NOT in the allowlist: its
+    ``AgentNode`` is intentionally NOT in the allowlist: its
     ``cache_creation_input_tokens`` / ``cache_read_input_tokens`` come from
     the Claude SDK and reflect SDK-side caching (a different cache layer).
-    Adding pflow's memo ``cache_key`` / ``cache_source`` to ClaudeCodeNode's
+    Adding pflow's memo ``cache_key`` / ``cache_source`` to AgentNode's
     ``llm_usage`` would conflate two distinct cache layers and mislead
     agents reading the trace.
     """
@@ -320,7 +320,7 @@ def _log_skipped_cache_metadata(node_type_name: str, sample_output: Any) -> None
     False, they know they need to extend the allowlist.
 
     Debug-level (not warning) so production logs aren't noisy for the
-    common ClaudeCodeNode case (which is intentionally excluded).
+    common AgentNode case (which is intentionally excluded).
     """
     if isinstance(sample_output, dict) and sample_output.get("llm_usage"):
         logger.debug(
@@ -512,6 +512,36 @@ def write_memo_cache(
         if duration_ms is not None:
             output_dict["__pflow_stats__"] = {"duration_ms": float(duration_ms)}
         memo_cache.put(cache_key, node_id, workflow_path, action or "default", output_dict)
+
+
+def write_execution_history(
+    node_id: str,
+    shared: dict,
+    action: str = "default",
+    *,
+    duration_ms: float,
+) -> None:
+    """Persist stats for a cache-disabled execution without creating a memo hit.
+
+    One deterministic history key per workflow/node is overwritten on each run.
+    Real memo keys are MD5 digests, so the reserved prefix can never match a
+    runtime lookup. Only planning telemetry is stored, never reusable output.
+    """
+    if str(action).startswith("error"):
+        return
+    memo_cache = shared.get("__memoization_cache__")
+    if not memo_cache:
+        return
+    node_output = shared.get(node_id)
+    if node_output is None:
+        return
+    workflow_path = shared.get("_pflow_workflow_file")
+    identity = f"{workflow_path or '<inline>'}\0{node_id}".encode()
+    history_key = "__pflow_history__:" + hashlib.sha256(identity).hexdigest()
+    output_dict: dict[str, Any] = {"__pflow_stats__": {"duration_ms": float(duration_ms)}}
+    if isinstance(node_output, dict) and isinstance(node_output.get("llm_usage"), dict):
+        output_dict["llm_usage"] = dict(node_output["llm_usage"])
+    memo_cache.put(history_key, node_id, workflow_path, action or "default", output_dict)
 
 
 # --- Metrics & Tracing ---

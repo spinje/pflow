@@ -63,9 +63,9 @@ graph TD
         run-cycle__implement-and-review-each__in_base_branch --> run-cycle__implement-and-review-each__implement
         run-cycle__implement-and-review-each__in_repo_dir --> run-cycle__implement-and-review-each__implement
         subgraph run-cycle__implement-and-review-each ["implement-and-review-each (parallel x|plan|)"]
-            run-cycle__implement-and-review-each__implement["implement (claude-code)"]:::code
+            run-cycle__implement-and-review-each__implement["implement (agent)"]:::code
             run-cycle__implement-and-review-each__check-commits["check-commits (code)"]:::code
-            run-cycle__implement-and-review-each__review["review (claude-code)"]:::code
+            run-cycle__implement-and-review-each__review["review (agent)"]:::code
             run-cycle__implement-and-review-each__implement --> run-cycle__implement-and-review-each__check-commits
             run-cycle__implement-and-review-each__check-commits -->|review| run-cycle__implement-and-review-each__review
         end
@@ -84,7 +84,7 @@ graph TD
         run-cycle__plan --> run-cycle__implement-and-review-each__in_issue
         run-cycle__find-repo --> run-cycle__implement-and-review-each__in_repo_dir
         run-cycle__in_base_branch --> run-cycle__implement-and-review-each__in_base_branch
-        run-cycle__open-prs["open-prs (claude-code)"]:::code
+        run-cycle__open-prs["open-prs (agent)"]:::code
         run-cycle__find-repo --> run-cycle__fetch-issues
         run-cycle__fetch-issues --> run-cycle__plan
         run-cycle__plan --> run-cycle__gate

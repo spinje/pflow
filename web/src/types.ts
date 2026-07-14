@@ -198,7 +198,7 @@ export interface RFResultKey {
 
 // The authored shape of a node's structured output, extracted FAIL-CLOSED in
 // Python (react_flow.py): `field` names the output port the shape describes —
-// where the node actually WRITES ("result" for code/claude-code, "response"
+// where the node actually WRITES ("result" for code/agent, "response"
 // for structured llm). `data_type` is the authored annotation / schema type;
 // `keys` are authored keys with best-effort types — null whenever not
 // statically certain, never a partial list. A non-null shape with data_type

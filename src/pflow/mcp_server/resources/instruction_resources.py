@@ -213,7 +213,7 @@ Use these MCP tools to discover what you need:
 ## Key Principles (Quick Reference)
 
 1. **Always discover first**: Run `workflow_discover()` before building new
-2. **Use templates for extraction, code nodes for transformation**: For already-structured data, use template paths. For model-derived structured data, use `output_schema` on `llm` or `claude-code`.
+2. **Use templates for extraction, code nodes for transformation**: For already-structured data, use template paths. For model-derived structured data, use `output_schema` on `llm` or `agent`.
 3. **Sequential by default**: Workflows run top-to-bottom; use `on-error:` and code node `next` for conditional branching
 4. **Test MCP nodes**: Always test with `registry_run()` when accessing specific fields
 5. **Templates**: Use `${input}` for workflow inputs, `${node.output}` for node outputs

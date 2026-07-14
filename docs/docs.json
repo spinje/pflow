@@ -98,7 +98,7 @@
               "reference/nodes/http",
               "reference/nodes/shell",
               "reference/nodes/code",
-              "reference/nodes/claude-code",
+              "reference/nodes/agent",
               "reference/nodes/mcp"
             ]
           },

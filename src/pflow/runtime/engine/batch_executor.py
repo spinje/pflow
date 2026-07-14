@@ -12,6 +12,7 @@ Key differences from the old PflowBatchNode:
 import contextlib
 import copy
 import logging
+import threading
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import CompilationError
 from pflow.core.json_utils import try_parse_json
-from pflow.core.node_type_display import is_llm_node_type
+from pflow.core.node_type_display import is_model_node_type
 
 if TYPE_CHECKING:
     from pflow.core.prompt_cache import CacheRenderContext
@@ -323,8 +324,13 @@ def _execute_batch_item(
 
     if item_shared is None:
         item_shared = dict(parent_shared)
+    # Per-item warnings need their own channel. Sharing the parent's nested
+    # dict lets parallel items race on the same node-id key and loses every
+    # warning except the last writer.
+    item_shared["__warnings__"] = {}
 
     for retry in range(batch_config.max_retries):
+        item_shared["__warnings__"] = {}
         try:
             return _run_batch_item_once(
                 idx, item, node, config, parent_shared, execute_single_fn, batch_config, item_shared, start_time
@@ -332,6 +338,9 @@ def _execute_batch_item(
         except CompilationError:
             raise  # Workflow definition is broken — never swallow, never retry
         except Exception as e:
+            if getattr(e, "cancelled", False):
+                last_exception = e
+                break
             if not getattr(e, "retriable", True):
                 raise  # Deterministic/fatal errors should not burn batch retries
             last_exception = e
@@ -627,6 +636,7 @@ def _collect_parallel_results(
     batch_config: BatchConfig,
     callback: Any,
     depth: int,
+    cancel_event: threading.Event | None = None,
     *,
     initial_completed: int = 0,
     total: int | None = None,
@@ -665,6 +675,8 @@ def _collect_parallel_results(
         )
         if had_error and batch_config.error_handling == "fail_fast" and not should_stop:
             should_stop = True
+            if cancel_event is not None:
+                cancel_event.set()
             for f in future_to_idx:
                 f.cancel()
 
@@ -723,6 +735,7 @@ def _execute_parallel(
     results: list[dict[str, Any] | None] = [None] * len(items)
     timings: list[float] = [0.0] * len(items)
     pending_errors: list[dict[str, Any]] = []
+    cancel_event = threading.Event()
 
     callback = shared.get("__progress_callback__")
     depth = shared.get("_pflow_depth", 0)
@@ -751,6 +764,7 @@ def _execute_parallel(
         item_shared[config.node_id] = {}
         item_shared[batch_config.item_alias] = item
         item_shared["__index__"] = idx
+        item_shared["__pflow_cancel_event__"] = cancel_event
 
         # Task 125: a parallel worker cannot host an interactive gate prompt
         # (its progress is buffered below; stdin is not shareable across
@@ -844,10 +858,15 @@ def _execute_parallel(
             batch_config,
             callback,
             depth,
+            cancel_event,
             initial_completed=0,
             total=len(items),
         )
     finally:
+        # Covers fail-fast, collector exceptions, and main-thread Ctrl-C. A
+        # running Codex worker polls this shared event and owns termination of
+        # its process tree before the non-waiting pool shutdown returns.
+        cancel_event.set()
         pool.shutdown(wait=False, cancel_futures=True)
 
     # fail_fast: DO NOT raise here — let execute_batch() call
@@ -906,12 +925,16 @@ def _capture_item_trace(
     if error:
         item_event["error"] = error.get("error", str(error))
 
+    serialized_warnings = _serialize_item_warnings(item_shared)
+    if serialized_warnings:
+        item_event["warnings"] = serialized_warnings
+
     # Capture item's node output
     node_output = item_shared.get(node_id)
     if isinstance(node_output, dict):
         item_event["node_output"] = dict(node_output)
 
-    is_llm_event = is_llm_node_type(node_type_name)
+    is_llm_event = is_model_node_type(node_type_name)
 
     # Template resolutions — received directly, no chain traversal
     if last_resolutions:
@@ -938,6 +961,24 @@ def _capture_item_trace(
         item_event["events"] = child_trace_events
 
     trace_list.append(item_event)  # GIL-protected for parallel
+
+
+def _serialize_item_warnings(item_shared: dict[str, Any]) -> list[dict[str, Any]]:
+    """Convert one item's isolated warning channel into trace-safe dictionaries."""
+    item_warnings = item_shared.get("__warnings__")
+    if not isinstance(item_warnings, dict):
+        return []
+    serialized: list[dict[str, Any]] = []
+    for warning_node_id, warning in item_warnings.items():
+        if isinstance(warning, Diagnostic):
+            payload = warning.to_dict()
+        elif isinstance(warning, dict):
+            payload = dict(warning)
+        else:
+            payload = {"text": str(warning)}
+        payload.setdefault("node_id", warning_node_id)
+        serialized.append(payload)
+    return serialized
 
 
 def _template_resolutions_for_item_trace(last_resolutions: dict[str, Any], is_llm_event: bool) -> dict[str, Any]:
@@ -970,8 +1011,14 @@ def _promote_item_llm_data(item_event: dict[str, Any], node_output: dict[str, An
         return
 
     prompt = node_output.get("prompt")
+    if not isinstance(prompt, str):
+        prompt = node_output.get("_agent_prompt")
     if isinstance(prompt, str):
         item_event["llm_prompt"] = prompt
+
+    agent_tools = node_output.get("_agent_tools")
+    if isinstance(agent_tools, list):
+        item_event["agent_tools"] = agent_tools
 
 
 def _strip_redundant_item_llm_fields(item_event: dict[str, Any]) -> None:
@@ -980,6 +1027,8 @@ def _strip_redundant_item_llm_fields(item_event: dict[str, Any]) -> None:
         stored_output.pop("user_message_blocks", None)
         stored_output.pop("prompt", None)
         stored_output.pop("system", None)
+        stored_output.pop("_agent_prompt", None)
+        stored_output.pop("_agent_tools", None)
 
 
 def build_batch_output(
@@ -1156,6 +1205,7 @@ def _push_batch_warnings(
         return
 
     empty_indices = _detect_empty_output_items(exec_res, errors)
+    item_warning_details = _collect_item_warning_details(shared, node_id)
 
     # Under --only, suppress empty-output warnings workflow-wide. The common
     # case is that the target sub-workflow batch has empty items because the
@@ -1176,8 +1226,57 @@ def _push_batch_warnings(
         if len(empty_indices) > 5:
             indices_str += f" (+{len(empty_indices) - 5} more)"
         warning_parts.append(f"{len(empty_indices)} item(s) produced empty output (items {indices_str})")
+    if item_warning_details:
+        warning_parts.append(_format_item_warning_part(item_warning_details))
 
     if warning_parts:
         if "__warnings__" not in shared:
             shared["__warnings__"] = {}
-        shared["__warnings__"][node_id] = f"Batch '{node_id}': " + "; ".join(warning_parts)
+        _store_batch_warning(shared, node_id, warning_parts, item_warning_details)
+
+
+def _format_item_warning_part(item_warning_details: list[dict[str, Any]]) -> str:
+    item_labels = ", ".join(f"{detail['index']} [{', '.join(detail['kinds'])}]" for detail in item_warning_details)
+    return f"{len(item_warning_details)} item(s) reported warnings (items {item_labels})"
+
+
+def _store_batch_warning(
+    shared: dict[str, Any],
+    node_id: str,
+    warning_parts: list[str],
+    item_warning_details: list[dict[str, Any]],
+) -> None:
+    message = f"Batch '{node_id}': " + "; ".join(warning_parts)
+    if item_warning_details:
+        shared["__warnings__"][node_id] = Diagnostic(
+            severity=Severity.WARNING,
+            title="Batch Item Warnings",
+            message=message,
+            node_id=node_id,
+            source="runtime",
+            id="batch.item-warnings",
+            context={"items": item_warning_details},
+        )
+    else:
+        shared["__warnings__"][node_id] = message
+
+
+def _collect_item_warning_details(shared: dict[str, Any], node_id: str) -> list[dict[str, Any]]:
+    """Return deterministic per-item warning provenance from captured batch traces."""
+    trace_items = shared.get("_batch_trace", {}).get(node_id, [])
+    if not isinstance(trace_items, list):
+        return []
+    details: list[dict[str, Any]] = []
+    for item in sorted(trace_items, key=lambda value: value.get("index", -1)):
+        warnings = item.get("warnings")
+        if not isinstance(warnings, list) or not warnings:
+            continue
+        kinds: list[str] = []
+        for warning in warnings:
+            if not isinstance(warning, dict):
+                continue
+            kind = warning.get("kind") or warning.get("id") or "runtime.warning"
+            if isinstance(kind, str) and kind not in kinds:
+                kinds.append(kind)
+        details.append({"index": item.get("index"), "kinds": kinds or ["runtime.warning"]})
+    return details

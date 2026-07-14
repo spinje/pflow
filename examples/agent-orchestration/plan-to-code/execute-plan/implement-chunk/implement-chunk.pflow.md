@@ -3,7 +3,7 @@
 Per-segment body of the harness: a fresh agent implements one segment's phases and commits, then
 takes a final fresh-eyes self-review pass over its own work (a resumed follow-up) before handoff.
 Segmentation exists ONLY for context-window management — each segment runs in a fresh
-`claude-code` process reading `{plan, spec, progress log}` by path, so context never accumulates
+`agent` process reading `{plan, spec, progress log}` by path, so context never accumulates
 across the implementation of a large plan. There is NO external/multi-lens review here: that
 happens ONCE over the whole codebase after all segments are implemented (at the `execute-plan`
 level).
@@ -61,7 +61,8 @@ phases, commits its work, and writes a progress-log entry — then ENDS its turn
 (the segment's last step), which resumes this same session. The implement fork just implements,
 commits, and logs.
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: ./prompts/implement.prompt.md
 - cwd: ${repo_dir}
 - max_turns: 80
@@ -93,7 +94,8 @@ means the segment produced nothing — a hard failure the parent loop early-exit
 `${implement.llm_usage.session_id}`; if usage is unavailable that resolves empty and this safely
 runs as a fresh self-review (degraded, not broken).
 
-- type: claude-code
+- type: agent
+- backend: claude
 - prompt: ./prompts/happy-check.prompt.md
 - cwd: ${repo_dir}
 - resume: ${implement.llm_usage.session_id}
@@ -120,7 +122,7 @@ required: [commits_made, summary]
 
 ### report-commits
 
-Surface a clean integer commit count for the parent loop, guarding the claude-code schema
+Surface a clean integer commit count for the parent loop, guarding the agent schema
 soft-fail (on non-compliance `result` is a raw string, not a dict → treat as 0 commits = hard
 failure, never crash on `.get`). Reads the `happy-check` follow-up's result — the segment's last
 step and the producer of the consumed `{commits_made, summary}`.

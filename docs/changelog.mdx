@@ -38,7 +38,8 @@ rss: true
 
   ```markdown
   ### approve-release
-  - type: claude-code
+  - type: agent
+  - backend: claude
   - prompt: Audit and approve the compiled changelog
   - approval: required
 
@@ -54,7 +55,7 @@ rss: true
 
   **Highlights**
   - Added human-in-the-loop approval gates via the `approval: required` modifier, pausing execution for interactive YES/NO confirmations.
-  - Added agent-raised escalation gates, allowing `claude-code` or `code` steps to pause execution using `result.escalation` blocks.
+  - Added agent-raised escalation gates, allowing `agent` or `code` steps to pause execution using `result.escalation` blocks.
   - Added the `--auto-approve=<node-id>` repeatable CLI flag and an equivalent MCP `auto_approve` execution option.
   - Implemented the `loop:` node modifier with `while:` and `until:` conditions, backed by a robust engine-reentry compiler pattern.
   - Added the `carry:` state-mapping block (`{ input_key: ${loop-node.output} }`) to thread outputs sequentially across loop iterations.
@@ -82,6 +83,7 @@ rss: true
   - Added prewarm-batch prompt optimization, capturing shared prefixes as cache blocks to prevent duplicate prompt storage.
   - Fixed the `--only` execution flag to restore a frozen snapshot of historical upstream inputs instead of re-firing side-effecting steps.
   - Added support for reporting true input token counts and agent execution calls in output summaries.
+  - Added cache-aware API-equivalent cost estimates for Codex agent calls when workflows declare a LiteLLM-priced `model`.
   - Added best-effort trace writing, allowing runs to execute safely even under disk-full or read-only filesystem environments.
 
   ## LLM Control and Execution Refinements
@@ -97,7 +99,7 @@ rss: true
   - Flipped memoization defaults: only `llm` nodes cache by default; all other node types require explicit `- cache: true`.
   - Added support for JSON literals (`string`, `number`, `boolean`, `null`) inside `??` template coalesce operations.
   - Improved the `??` operator to fall through on absent sub-fields and unexecuted branches without raising validation errors.
-  - Added self-healing schemas to `claude-code` outputs, enabling scalar type coercion and resume-retries on schema soft-failures.
+  - Added self-healing schemas to `agent` outputs, enabling scalar type coercion and resume-retries on schema soft-failures.
   - Added pre-execution validation for LLM model IDs, throwing validation errors before initiating live provider calls.
   - Unified reasoning budget parameter mappings (`reasoning_effort` and `reasoning_max_tokens`) across LLM providers.
   - Added support for shielding `${...}` templates in flow-style YAML, preventing unquoted inline maps from parsing incorrectly.
@@ -115,8 +117,14 @@ rss: true
     ### Storage Mode Removed
     The `storage_mode` parameter has been deleted entirely.
 
-    ### Claude Code Billing
-    Claude Code nodes now default to subscription billing; use the `use_api_key: true` parameter to opt into standard API-key billing.
+    ### Agent API-key opt-in
+    `use_api_key` is now one shared strict permission on `agent` nodes. In false/default mode,
+    Claude blanks `ANTHROPIC_API_KEY`; Codex removes `OPENAI_API_KEY` / `CODEX_API_KEY`, requires
+    recognized account auth from `codex login status`, and pins the OpenAI provider selector.
+    Existing Codex workflows that intentionally use API-key or configured-provider billing must
+    add `use_api_key: true` or they now fail before the model call. This guard controls the named
+    key and ordinary provider paths; account credits, auto-reload, overage, custom proxies/base
+    URLs, and administrator policy remain provider/user controls.
 
     ### MCP Result Access
     MCP nodes no longer copy top-level result fields into `${node.field}` or create a `{server}_{tool}_result` alias. Access tool output through the canonical `${node.result.field}` path instead.
@@ -172,7 +180,8 @@ rss: true
 
   ````markdown
   ### audit-code
-  - type: claude-code
+  - type: agent
+  - backend: claude
   - max_turns: 5
   - prompt: Audit the security of the root directory.
 
@@ -1182,7 +1191,7 @@ rss: true
   - `http` — all methods, auth, request bodies, automatic JSON parsing.
   - `file` — read, write, copy, move, delete.
   - `mcp` — bridge to any MCP server over stdio or HTTP transport.
-  - `claude-code` — delegate agentic subtasks to Claude Code.
+  - `agent` — delegate agentic subtasks to Claude Code or Codex.
   - `git` / `github` — common operations without shell scripting.
 
   ## MCP server

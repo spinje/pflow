@@ -238,9 +238,9 @@ def test_memo_cache_rehydrates_node_warning(tmp_path: Any) -> None:
 
     cache = MemoizationCache(db_path=tmp_path / "cache.db")
     warning = {
-        "kind": "claude_code.schema_not_satisfied",
+        "kind": "agent.schema_not_satisfied",
         "text": "Model did not return structured output matching the schema.",
-        "context": {"node_type": "claude-code"},
+        "context": {"node_type": "agent"},
     }
     shared = {
         "__memoization_cache__": cache,
@@ -253,7 +253,7 @@ def test_memo_cache_rehydrates_node_warning(tmp_path: Any) -> None:
         "review",
         shared,
         "cache-key",
-        node_type_name="ClaudeCodeNode",
+        node_type_name="AgentNode",
     )
     cached = cache.get("cache-key")
     assert cached is not None
@@ -266,7 +266,7 @@ def test_memo_cache_rehydrates_node_warning(tmp_path: Any) -> None:
         cached_action,
         cached_output,
         "config-hash",
-        node_type_name="ClaudeCodeNode",
+        node_type_name="AgentNode",
     )
 
     assert replay_shared["review"] == {"result": "raw text", "_schema_error": warning["text"]}

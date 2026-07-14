@@ -209,7 +209,7 @@ When the diff adds or modifies a capability on one node or subsystem, dynamicall
 Don't just check a static list. Read the diff to understand what capability was added, then search: which other nodes/subsystems do something similar? Do they have it too?
 
 Known historical parity gap:
-- LLM node was the ONLY external-calling node without a timeout. All others (shell, HTTP, MCP, code, claude-code) had configurable timeouts. (Task 131)
+- LLM node was the ONLY external-calling node without a timeout. All others (shell, HTTP, MCP, code, agent) had configurable timeouts. (Task 131)
 
 ### New Node Type Checklist
 
@@ -228,7 +228,7 @@ When a new node type is added, it must interact correctly with the full feature 
 
 - **Statically impossible combinations.** `loop:` × `batch:` is mutually exclusive, enforced at two points — cite the enforcement in Verified Combinations instead of demanding a runtime interaction test for a state that can't exist.
 - **Combinations whose intersection code is untouched by the diff AND has an existing interaction test** — name the test in Verified Combinations; that's the finding's resolved form.
-- **Parity "gaps" that are recorded decisions** (e.g. ClaudeCodeNode intentionally excluded from cache-metadata, documented allowlist in `runtime/engine/CLAUDE.md`). Check for the "INTENTIONALLY" note before flagging.
+- **Parity "gaps" that are recorded decisions** (e.g. `AgentNode` intentionally excluded from cache metadata, documented allowlist in `runtime/engine/CLAUDE.md`). Check for the "INTENTIONALLY" note before flagging.
 - **Exhaustive triple enumeration.** Don't file every theoretically-possible triple — only triples where you found the pair interacting AND can name the third feature's concrete involvement.
 
 ## Output Format
