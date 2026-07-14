@@ -112,7 +112,7 @@ Keep the closing note-to-next-agent line intact (read fully → summarize → pr
 ## 4. Propose process evolution (never silent)
 
 If the session changed how this role operates — a new failure mode hit, a mechanism worth
-standardizing, a rule the user stated — **propose** the edit to `/start-orchestration` (the role
+standardizing, a rule the user stated — **propose** the edit to `start-orchestration` (the role
 prompt) or `ORCHESTRATION.md` and let the user rule. Editing your own role definition is never a
 unilateral act. (A skill/tooling gap you can fix in-repo — a script hardening, a stale agent def —
 is normal work, not this. Remember the mirror sync: `uv run python

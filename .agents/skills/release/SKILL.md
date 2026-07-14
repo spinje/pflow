@@ -1,6 +1,6 @@
 ---
 name: "release"
-description: "Run the pflow release process \u2014 generate changelog, bump version, commit, and create GitHub Release"
+description: "Run the pflow release process — generate changelog, bump version, commit, and create GitHub Release"
 ---
 
 # Release Process

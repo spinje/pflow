@@ -18,7 +18,7 @@ Show this to the user, then immediately proceed to Step 2. The user reads and th
 
 ### 2. Spawn sub-agents
 
-Spawn as many sub-agents as needed (up to 8) in parallel using the Agent tool — fork yourself (omit `subagent_type`) so each agent inherits the conversation context. Don't hold back. Each must produce a **radically different** interface for the deepened module. Verify all assumptions and ambiguity — if something is unclear, the agent should investigate, not guess.
+Spawn as many subagents as needed (up to 8 total) using the runner's subagent tool. Launch only as many as the runner has child slots (Codex has four total slots, so an orchestrator can run at most three children at once), wait for that batch, then launch the remainder. Fork the current context rather than selecting a custom agent (`subagent_type` omitted in Claude; `fork_turns="all"` in Codex). Each must produce a **radically different** interface for the deepened module. Verify all assumptions and ambiguity — if something is unclear, the agent should investigate, not guess.
 
 Prompt each sub-agent with a separate technical brief (file paths, coupling details, dependency category from [DEEPENING.md](DEEPENING.md), what sits behind the seam). The brief is independent of the user-facing problem-space explanation in Step 1. Give each agent a different design constraint. Examples:
 

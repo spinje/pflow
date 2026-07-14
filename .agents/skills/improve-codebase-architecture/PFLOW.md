@@ -23,6 +23,6 @@ Repo conventions that carry ADR weight — don't re-litigate or contradict them 
 
 ## Execution handoff for an agreed design
 
-When you and the user are fully aligned ask to capture the design as a task spec (the what and why) — use `/create-task <id>` skill to understand how.
+When you and the user are fully aligned ask to capture the design as a task spec (the what and why) — use the `create-task` skill to understand how.
 
-Then ask the user if they also want to write the implementation plan (the how). If yes, use the `/create-plan` skill to author the plan.
+Then ask the user if they also want to write the implementation plan (the how). If yes, use the `create-plan` skill to author the plan.

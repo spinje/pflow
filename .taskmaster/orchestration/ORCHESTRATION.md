@@ -10,12 +10,12 @@ testing directives, decision ownership, and the epistemic rules all live there.
 
 | Role | Model | Definition | Job |
 |------|-------|-----------|-----|
-| **Main orchestrator** | user's session | `/start-orchestration` command | Cross-task view: pick lane + work, verify spec freshness (fix staleness itself — spec accuracy is its job; implementation detail is not), provision the worktree, launch planners/task-orchestrators with a context packet, handle handbacks/escalations, talk to the user, **merge the PR and reconcile**, keep `CURRENT-STATE.md` + its session file + the ledgers current. **Never writes plans, never reads plans, never runs deep-review — trust the agents' gates** |
-| **Task planner** | **Opus** (Claude enforces; Codex inherits runtime route) | `.claude/agents/task-planner.md` | Investigate ONE task (via searchers) IN the task's worktree + write `implementation/implementation-plan.md`, **self-review it** (plan-mode `/deep-review` — mandatory when the plan touches the engine or the trace format, its judgment otherwise), commit it on the feature branch, then STOP. May offer to implement small tasks itself (see Model routing) |
-| **Task orchestrator** | Opus intent by default; Fable opt-in where the runner exposes routing | `.claude/agents/task-orchestrator.md` | One task end to end in the same worktree: (plan +) delegate phases → per-phase self-checks → when FULLY happy: code-mode `/deep-review` + apply fixes → `/create-task-review` → `/create-pr` → minimal handback |
+| **Main orchestrator** | user's session | `start-orchestration` workflow | Cross-task view: pick lane + work, verify spec freshness (fix staleness itself — spec accuracy is its job; implementation detail is not), provision the worktree, launch planners/task-orchestrators with a context packet, handle handbacks/escalations, talk to the user, **merge the PR and reconcile**, keep `CURRENT-STATE.md` + its session file + the ledgers current. **Never writes plans, never reads plans, never runs deep-review — trust the agents' gates** |
+| **Task planner** | **Opus** | `.claude/agents/task-planner.md` | Investigate ONE task (via searchers) IN the task's worktree + write `implementation/implementation-plan.md`, **self-review it** (plan-mode `deep-review` — mandatory when the plan touches the engine or the trace format, its judgment otherwise), commit it on the feature branch, then STOP. May offer to implement small tasks itself (see Model routing) |
+| **Task orchestrator** | Opus intent by default; Fable opt-in | `.claude/agents/task-orchestrator.md` | One task end to end in the same worktree: (plan +) delegate phases → per-phase self-checks → when FULLY happy: code-mode `deep-review` + apply fixes → `create-task-review` → `create-pr` → minimal handback |
 | **Phase implementer** | per launch (routing table) | `.claude/agents/task-phase-implementer.md` | Implement exactly the assigned phase(s); tests as it goes; substance to the progress-log; minimal handback; stop on ambiguity |
 | **Searcher** | pinned (opus) | `pflow-codebase-searcher` | Read-only investigation, cited findings. Never the generic `Explore` or `general-purpose` |
-| **Review battery** | per lens | `.claude/agents/review-*.md` via the `/deep-review` skill | The pflow specialists (selection rubric in the skill + `REVIEW-PROTOCOL.md`). Plan gate + completion gate (see Review policy) |
+| **Review battery** | per lens | `.claude/agents/review-*.md` via the `deep-review` skill | The pflow specialists (selection rubric in the skill + `REVIEW-PROTOCOL.md`). Plan gate + completion gate (see Review policy) |
 
 **Hierarchy is exactly two levels deep**: only the main orchestrator launches planners and task
 orchestrators; only those launch implementers/searchers/review agents. Implementers never spawn
@@ -36,7 +36,7 @@ B, pick A; between A and C, ask the user.
   become tasks. Write a GH issue if none exists (correct root cause, verified against code), then
   launch ONE subagent end to end in a provisioned worktree — a `task-orchestrator` in issue
   mode: the issue is the spec, it implements directly (no plan file, no implementers), but the
-  Definition of done and UI routing (DECISIONS #8) still govern — implement → `/create-pr` with
+  Definition of done and UI routing (DECISIONS #8) still govern — implement → `create-pr` with
   a `Closes #N` body → CI green → **merge it itself**. **Model by assessed complexity
   (DECISIONS #9): the main orchestrator assesses at pick time; Opus is the floor — never lower
   for an end-to-end agent; genuinely complex issues (hard debugging, subtle root cause) warrant
@@ -48,7 +48,7 @@ B, pick A; between A and C, ask the user.
   will be discovered through iteration with the user, or verification is inherently
   interactive/taste-based. The pre-restructure flow, unchanged: decision session + kickoff brief
   in `scratchpads/<subject>/`, worktree launched WITH the terminal agent (workflow defaults), the
-  user guides it directly. Mechanics live in the `/start-orchestration` command. Expected to get
+  user guides it directly. Mechanics live in the `start-orchestration` workflow. Expected to get
   rarer over time.
 
 ## Artifacts and ownership
@@ -71,7 +71,7 @@ Per task, `.taskmaster/tasks/task_N/`:
   blocking `tests-windows` gate; ADR-0013 governs shell semantics), and how user-facing surfaces
   get exercised (Definition of done).
 - **Log** (`implementation/progress-log.md`) — append-only audit trail and crash recovery (the
-  `/create-progress-log` skill scaffolds it; entry format below). Any successor reads spec →
+  `create-progress-log` skill scaffolds it; entry format below). Any successor reads spec →
   plan → log and knows where reality is.
 - **`starting-context/`** — briefs/braindumps, newest last (tacit layer; the spec is the truth).
 - **Review** (`task-review.md`) — the completion contract, below.
@@ -97,7 +97,7 @@ is updated in the same breath. ADR-bar decisions get an ADR AND a row pointing a
 
 ### task-review.md — the completion contract
 
-Written ONCE by the task orchestrator at full completion via the **`/create-task-review`** skill
+Written ONCE by the task orchestrator at full completion via the **`create-task-review`** skill
 (user-level; format and knowledge-transfer doctrine live there — don't restate them). pflow
 preconditions before running it: all deep-review findings dispositioned, `make check` +
 `make test-all-local` green, user-facing behavior exercised on the real surface (Definition of
@@ -150,7 +150,7 @@ merged PR and point the packet there instead; almost all recent tasks have revie
    vocabulary) — never bypass with `--no-verify`. **PR review marker (DECISIONS #12):** the first
    commit on each PR branch uses a normal message; EVERY later commit on that branch (follow-up,
    review fix, CI fix, or merge-base update) includes the exact marker `[skip review]`.
-5. **PR:** the task orchestrator runs `/create-pr` (which pushes the feature branch —
+5. **PR:** the task orchestrator runs `create-pr` (which pushes the feature branch —
    process-authorized) and hands back minimal. **Merge authority is the main orchestrator's**
    (DECISIONS #4): squash-merge (the repo convention) after CI green.
 6. **The gate must pass on the merged result:** if `main` moved while the task was in flight,
@@ -187,10 +187,10 @@ them**, not in up-front documents.
 |------|---------|------|
 | **Sonnet** | Mechanical phases: scaffolding from an exact spec, config wiring, repetitive table-driven tests. Also grep-shaped searcher lookups | Phase text must contain ZERO ambiguity. A Sonnet phase requiring judgment is a planning bug — fix the plan, not the routing |
 | **Opus** | **The default for everything with real judgment**: task planners, task orchestrators, most implementer phases, searchers (pinned) | Plans state decisions; bounded judgment may be left to the implementer |
-| **Fable** | **ALL web-UI implementation phases — always** (user ruling 2026-07-11, DECISIONS #8): every phase that writes UI (`web/` → `src/pflow/ui`) routes to a Fable `task-phase-implementer` — never implemented inline by the task orchestrator, never a lower tier — and is built with **deliberate design/UX care**: the plan states the phase's use case + look/feel intent, and visual quality/UX are acceptance criteria verified by driving the UI. Otherwise opt-in where runner routing exists, with a one-line justification: hard architecture, subtle seam design (engine, trace, resume/gate semantics), gnarly debugging. Codex records this as intent but inherits the runtime route. Lane C's terminal builder is the historical Fable home and stays one | Never an ambient default for non-UI implementation |
+| **Fable** | **ALL web-UI implementation phases — always** (user ruling 2026-07-11, DECISIONS #8): every phase that writes UI (`web/` → `src/pflow/ui`) routes to a Fable `task-phase-implementer` — never implemented inline by the task orchestrator, never a lower tier — and is built with **deliberate design/UX care**: the plan states the phase's use case + look/feel intent, and visual quality/UX are acceptance criteria verified by driving the UI. Otherwise opt-in with a one-line justification: hard architecture, subtle seam design (engine, trace, resume/gate semantics), gnarly debugging. Lane C's terminal builder is the historical Fable home and stays one | Never an ambient default for non-UI implementation |
 
 Runner model names are an execution detail; plans continue to use the tier names above. The
-Codex names below apply to generated static agent configuration, not dynamic-launch overrides:
+names below apply to generated configuration defaults and explicit dynamic-launch overrides:
 
 | Contract tier | Claude launch model | Codex launch model |
 |---------------|---------------------|--------------------|
@@ -203,21 +203,20 @@ Claude agent `effort` maps directly to the same Codex reasoning level: `low` →
 `scripts/sync_claude_assets.py` applies the same model and effort mapping to generated
 `.codex/agents/*.toml`; an unknown source value is a generation error.
 
-- **Claude dynamic launches:** pass the explicit `model` param on EVERY launch — agent
-  frontmatter is cached per session; the param is the live lever.
-- **Codex dynamic launches:** NEVER pass model or reasoning-effort overrides; the API does not
-  expose them. Children inherit the runtime route. Keep the plan's tier label as intent and make
-  the inability to enforce it visible; never claim a tier was selected.
+- **Dynamic launches:** pass the runner-specific `model` on EVERY launch; it is the live routing
+  control rather than the generated/frontmatter default. On Codex also pass `reasoning_effort`
+  explicitly. Codex accepts both fields even though the displayed `spawn_agent` schema omits them;
+  persisted child `turn_context` records the applied values.
 - **Lane B**: Opus floor, never lower; Fable for complex/hard-debugging issues only with the
   user's per-launch approval (DECISIONS #9).
 - **Planner-implements exception:** when a planner finds the implementation small, it may offer in
   its handback to implement directly (itself, in-context — NOT by spawning implementers). The main
   orchestrator decides using the handback's token-usage report: ample headroom → resume the
   planner to implement (it keeps its investigation context, and the task-orchestrator close-out —
-  self-checks, code-mode review, `/create-task-review`, `/create-pr` — becomes its); tight →
+  self-checks, code-mode review, `create-task-review`, `create-pr` — becomes its); tight →
   launch an Opus task orchestrator on the finished plan.
 - **Limit recovery** (empirical, inherited from the Nora system's Fable exhaustion): NEVER
-  SendMessage-resume an agent whose model tier is exhausted — it re-dies on its next inference
+  resume an agent whose model tier is exhausted — it re-dies on its next inference
   call. Recovery = a REPLACEMENT at an available tier launched into the SAME worktree (absolute
   path, no isolation flag), explicitly RESUMING from spec + plan + progress log. Tier capped with
   a lower option → re-route the plan down; capped with none → the task waits. **Never `fork` to
@@ -232,7 +231,8 @@ implementer pays a real context-rebuild tax. The plan's agent assignment default
 - **Bundle** consecutive same-tier phases into one launch when the next builds on the previous.
   A lower-tier phase may ride in a higher-tier dispatch only when genuinely small (low LOC); never
   route a phase DOWN a tier because its neighbors are cheap.
-- **Resume the same implementer** (SendMessage) with its next phase after verifying the handback.
+- **Resume the same implementer** with its next phase after verifying the handback (SendMessage
+  in Claude, followup_task in Codex).
 - **Bundle-vs-resume litmus:** stop between phases ONLY when the gate's outcome can change the next
   instruction. If you'd send "continue as planned" regardless, the stop is overhead — bundle.
 - **Fresh launch** only for a stated reason: tier change, parallel disjoint work, a huge/degrading
@@ -243,20 +243,20 @@ implementer pays a real context-rebuild tax. The plan's agent assignment default
 
 ## Review policy (the pflow battery, two gates)
 
-The `review-*` specialists + `/deep-review` skill (selection rubric, tiers, severity — in the
+The `review-*` specialists + `deep-review` skill (selection rubric, tiers, severity — in the
 skill and `REVIEW-PROTOCOL.md`). **The main orchestrator never runs deep-review and never reads
 plans — the agents own their own quality:**
 
 - **Plan self-review — the PLAN AUTHOR's duty** (the planner in the split shape; the task
   orchestrator itself when it plans-and-implements) on its own finished plan (plan-mode
-  `/deep-review`, scaled to the plan): **mandatory when the plan touches `runtime/engine/`/
+  `deep-review`, scaled to the plan): **mandatory when the plan touches `runtime/engine/`/
   `workflow_executor` or the trace format** — pflow's highest-risk seams; the author's judgment
   otherwise (big/risky plans get the battery; small ones skip). The author verifies Critical
   findings against code itself and folds confirmed fixes in before building on the plan. (If the
-  Skill tool is unavailable in a subagent context, read `.claude/skills/deep-review/SKILL.md` and
-  follow it — it is instructions + Agent launches.)
+  skill is unavailable in a subagent context, read `.claude/skills/deep-review/SKILL.md` and
+  follow it — it is instructions + subagent launches.)
 - **Completion gate — run by the TASK orchestrator** when it is FULLY happy, before
-  `/create-task-review`: code-mode `/deep-review` on the full branch diff. It applies the correct
+  `create-task-review`: code-mode `deep-review` on the full branch diff. It applies the correct
   fixes and logs EVERY finding with disposition — fixed, or skipped with a reason.
 - **Mid-task phase review** at the task orchestrator's judgment after an especially risky phase
   (engine contact, trace-format change, resume/gate semantics — anything later phases build upon):
@@ -281,7 +281,7 @@ test surface; never mock what you can test directly). Process additions:
 - **"Verified" means you exercised the real surface**: CLI/behavior changes → run a real workflow
   (`uv run pflow ...`) and observe the output. **Web-UI changes ALWAYS invoke the
   `screenshot-pflow-web-ui` skill and verify EVERYTHING changed** (screenshot/measure every
-  affected surface; if the Skill tool is unavailable, read
+  affected surface; if the skill is unavailable, read
   `.claude/skills/screenshot-pflow-web-ui/SKILL.md` and follow it) — green component tests alone
   never close UI work. Kill stale `pflow ui` servers first (the reuse-if-up probe serves old
   code — recorded gotcha).
@@ -304,8 +304,8 @@ Subagents cannot talk to the user — the main orchestrator is the channel.
 - **User checkpoint** ("Show Before You Code", design forks, anything the spec marks): the task
   orchestrator/planner pauses at a clean point, writes a progress-log entry capturing state +
   exact resume point, and hands back with the artifacts/options + its recommendation. The main
-  orchestrator surfaces it to the user, then **resumes the SAME agent via SendMessage** with the
-  ruling — context intact.
+  orchestrator surfaces it to the user, then **resumes the SAME agent** with the ruling
+  (SendMessage in Claude, followup_task in Codex) — context intact.
 - **Checkpoint artifacts travel by file path** — the user works locally and can open files, run
   the CLI, or use the worktree's `pflow ui` directly. For comparisons the main orchestrator may
   publish an Artifact page; **publishing and user conversation never delegate down.**
@@ -317,7 +317,8 @@ Subagents cannot talk to the user — the main orchestrator is the channel.
   it is the disaster-recovery record if the session is lost while parked. Finish
   decision-independent work first; bundle pending questions into ONE handback.
 - **Never launch a fresh agent to "continue" a parked task** — it re-derives everything and
-  drifts. Sole exception: the parked agent is unrecoverable (SendMessage fails, no transcript) —
+  drifts. Sole exception: the parked agent is unrecoverable (the runner's resume mechanism fails,
+  no transcript) —
   launch a REPLACEMENT into the SAME worktree, explicitly resuming from spec + plan + progress log.
 - A task parked on the user doesn't block other lanes.
 
@@ -333,8 +334,8 @@ Subagents cannot talk to the user — the main orchestrator is the channel.
   `.claude/skills/improve-codebase-architecture/LANGUAGE.md`.
 - One paragraph from the main orchestrator: current repo state, what neighboring merges just
   changed, collision/serialization notes, anything the spec doesn't know yet.
-- The runner reminder: Claude passes the explicit `model`; Codex omits model/reasoning overrides
-  and inherits the runtime route.
+- The runner reminder: pass the explicit runner-specific `model` every launch; on Codex also pass
+  the explicit `reasoning_effort`.
 
 ## Write discipline (all logs)
 
@@ -352,7 +353,7 @@ The task list is not frozen: a new task enters when the **user asks**, **changed
 invalidate a plan, or an orchestrator **notices** a real gap (a carve-out, a "done task with an
 unmet DoD"). Always a **suggestion to the user first — never self-approved**, gated on
 `CLAUDE.md`'s observed-problems rule: what/why, where it slots (dependencies), rough size. On
-approval the main orchestrator writes the spec (`/create-task` conventions) and updates the
+approval the main orchestrator writes the spec (`create-task` conventions) and updates the
 CLAUDE.md roadmap (short task names only). Small/bug-shaped work goes to lane B instead.
 
 ## Living documentation

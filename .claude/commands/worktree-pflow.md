@@ -48,7 +48,7 @@ task_description=88 base_branch=main copy_folder=scratchpads/notes open_cursor=f
 |------|--------------------|
 | `work_type=issue` | refers to a GitHub issue — a number, an issue URL, or says "issue" — so the number isn't taken as a task id (default `task`) |
 | `agent=codex` | wants Codex instead of Claude Code (default `claude`) |
-| `mode=implement` | says "implement directly" / a plan already exists → points the agent at `/implement-plan` instead of the default `explore` → `/start-work`. Pass the bare task/issue number as `task_description` so the plan resolves |
+| `mode=implement` | says "implement directly" / a plan already exists → points the agent at the `implement-plan` workflow instead of the default `explore` → `start-work`. Pass the bare task/issue number as `task_description` so the plan resolves |
 | `phases=<spec>` | scopes the work to phases (**requires** `mode=implement`). Spoken phases → digits: "phase 1 and 2" → `phases=1-2`, "just phase 3" → `phases=3` |
 | `model=<model>` | names a model — an alias (`opus`, `sonnet`) or a full id (`claude-opus-4-8`). Omit for the agent's own default |
 | `copy_folder=<path>` | wants a folder/scratchpad copied into the fresh worktree (repo-root-relative, e.g. `scratchpads/notes`) |
