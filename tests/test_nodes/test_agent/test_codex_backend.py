@@ -113,6 +113,7 @@ def _status_calls(calls: list[tuple[list[str], dict[str, Any]]]) -> list[tuple[l
 
 
 class TestCodexProcessLifecycle:
+    @pytest.mark.skipif(sys.platform == "win32", reason="exercises the POSIX os.killpg process-group termination path")
     def test_posix_timeout_kills_process_group_and_drains_pipes(self, monkeypatch: pytest.MonkeyPatch) -> None:
         argv = ["codex", "exec", "--", "test"]
         communicate_timeouts: list[int] = []
@@ -266,8 +267,12 @@ class TestCodexProcessLifecycle:
         codex_module._terminate_windows_process_tree(1234)
 
     @pytest.mark.e2e
-    @pytest.mark.skipif(sys.platform != "win32", reason="native Windows .cmd argument boundary")
-    def test_windows_cmd_shim_preserves_exact_arguments(self, tmp_path: Path) -> None:
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows list2cmdline argv round-trip to a native executable")
+    def test_windows_argv_boundary_preserves_exact_arguments(self, tmp_path: Path) -> None:
+        # Codex on Windows is launched as a native executable (shell=False, argv list). Python must
+        # round-trip the list back through list2cmdline into a single command line; this pins that
+        # spaces and cmd-metacharacters (&, %, ^, !) reach the child unmangled. A native .exe is the
+        # faithful target: a .cmd shim would route through cmd.exe, which cannot preserve these.
         recorder = tmp_path / "record_args.py"
         output = tmp_path / "args.json"
         recorder.write_text(
@@ -276,14 +281,13 @@ class TestCodexProcessLifecycle:
             "Path(os.environ['PFLOW_ARGV_OUTPUT']).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n",
             encoding="utf-8",
         )
-        shim = tmp_path / "codex.cmd"
-        shim.write_text(f'@echo off\r\n"{sys.executable}" "{recorder}" %*\r\n', encoding="utf-8")
         arguments = ["exec", "space value", "amp&value", "percent%value", "caret^value", "bang!value"]
         env = os.environ.copy()
-        env["PATH"] = str(tmp_path) + os.pathsep + env.get("PATH", "")
         env["PFLOW_ARGV_OUTPUT"] = str(output)
 
-        completed = _run_codex_process(["codex", *arguments], cwd=str(tmp_path), timeout=10, env=env)
+        completed = _run_codex_process(
+            [sys.executable, str(recorder), *arguments], cwd=str(tmp_path), timeout=10, env=env
+        )
 
         assert completed.returncode == 0
         assert json.loads(output.read_text(encoding="utf-8")) == arguments

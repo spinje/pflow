@@ -333,7 +333,7 @@ class _WindowsKillJob:
         try:
             import ctypes
 
-            closed = bool(ctypes.windll.kernel32.CloseHandle(self.handle))  # type: ignore[attr-defined]
+            closed = bool(ctypes.windll.kernel32.CloseHandle(self.handle))  # type: ignore[attr-defined, unused-ignore]
         except (AttributeError, OSError):
             closed = False
         self.handle = None
@@ -384,7 +384,7 @@ def _create_windows_kill_job(proc: subprocess.Popen[str]) -> _WindowsKillJob | N
                 ("PeakJobMemoryUsed", ctypes.c_size_t),
             ]
 
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined, unused-ignore]
         create_job = kernel32.CreateJobObjectW
         create_job.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
         create_job.restype = wintypes.HANDLE
