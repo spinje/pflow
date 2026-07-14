@@ -1,5 +1,5 @@
 name = "review-agent-ux"
-description = "Evaluate every user-facing output (errors, warnings, success results, reports, CLI output) for AI agent actionability. pflow is agent-first \u2014 every message must help an AI agent diagnose and fix the problem, and every result must be parseable for downstream reasoning."
+description = "Evaluate every user-facing output (errors, warnings, success results, reports, CLI output) for AI agent actionability. pflow is agent-first — every message must help an AI agent diagnose and fix the problem, and every result must be parseable for downstream reasoning."
 model = "gpt-5.6-sol"
 model_reasoning_effort = "medium"
 developer_instructions = '''

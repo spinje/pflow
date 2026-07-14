@@ -207,9 +207,9 @@ Historical examples where manual testing caught what unit tests missed:
 
 #### Code Review and Review Checkpoints
 
-All plans of significant scope should include code review phase at the end of the implementation, and include instructions for invoking the `/deep-review` skill at the beginning of the code review phase.
+All plans of significant scope should include a code review phase at the end of the implementation, and include instructions for invoking the `deep-review` skill at the beginning of the code review phase.
 
-For implementations where an individual phase is significant in scope, the plan should include code review checkpoint using the `/deep-review` skill — not just at the end, but at key phase boundaries. Think hard about if this is necessary or not. Only suggest if you think the phase is likely to introduce significant new bugs that will be difficult to catch later or compound as the implementation progresses.
+For implementations where an individual phase is significant in scope, the plan should include a code review checkpoint using the `deep-review` skill — not just at the end, but at key phase boundaries. Think hard about if this is necessary or not. Only suggest if you think the phase is likely to introduce significant new bugs that will be difficult to catch later or compound as the implementation progresses.
 
 Consider review points after phases that:
 - Complete a major feature boundary (e.g., "core implementation done, before integration")

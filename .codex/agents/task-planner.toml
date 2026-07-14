@@ -50,7 +50,7 @@ First acts: verify the base ref (`git log -1` vs `origin/main`) and `make instal
    When in doubt: what would the top 10% of codebases similar to this one build? (Not
    over-engineering — simpler final code, optimized for AI agents to understand and extend.)
 4. **Self-review the plan — you own its quality; nobody above you reads it.**
-   **Mandatory when the plan touches the engine or the trace format** (plan-mode `/deep-review`
+   **Mandatory when the plan touches the engine or the trace format** (plan-mode `deep-review`
    — pflow's highest-risk seams). Otherwise your judgment: big/risky plans get a scaled battery;
    genuinely small plans skip. Verify Critical findings against code yourself; fold confirmed
    fixes into the plan before committing.
@@ -63,7 +63,7 @@ First acts: verify the base ref (`git log -1` vs `origin/main`) and `make instal
    genuinely small, say so and offer to implement it yourself — you're already in the worktree;
    the main orchestrator decides using your reported token usage and may resume you with the
    go-ahead (you then implement directly, no spawned implementers, and the task-orchestrator
-   close-out — self-checks, code-mode review, `/create-task-review`, `/create-pr` — becomes
+   close-out — self-checks, code-mode review, `create-task-review`, `create-pr` — becomes
    yours).
 
 ## Standing rules

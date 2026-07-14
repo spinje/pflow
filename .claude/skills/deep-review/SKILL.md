@@ -1,6 +1,6 @@
 ---
 name: deep-review
-description: "Deploy specialized review agents to find bugs that general code review misses. Handles both plan review (before implementation) and code review (after implementation). Deploys 1-8 focused agents in parallel, scaled to plan/diff complexity, each targeting a specific blindspot category."
+description: "Deploy specialized review agents to find bugs that general code review misses. Handles both plan review (before implementation) and code review (after implementation). Deploys 1-8 focused agents in capacity-aware parallel batches, scaled to plan/diff complexity, each targeting a specific blindspot category."
 argument-hint: "[N or N-M] [plan|staged|unstaged|branch]"
 ---
 
@@ -43,7 +43,7 @@ Tell the agents the chosen scope explicitly in their prompts — per REVIEW-PROT
 
 ## Deploy Agents
 
-Launch all selected agents in a SINGLE message (parallel execution). Keep prompts minimal — the agents have detailed built-in instructions and know the pflow codebase.
+Launch selected agents in capacity-aware parallel batches. Never exceed the runner's available child slots (Codex has four total slots, so an orchestrator can run at most three children at once). Fill the available slots in one parallel launch, wait for that batch, then launch any remainder. Keep prompts minimal — the agents have detailed built-in instructions and know the pflow codebase.
 
 Include the standing noise rule in each prompt: `uv.lock` is not a review target — a lockfile change is a signal of a dependency change, not code to critique.
 
@@ -53,7 +53,7 @@ Include the standing noise rule in each prompt: `uv.lock` is not a review target
 
 Pick by what the scope actually touches — every selected agent must earn its slot. The tier sets the ceiling; relevance sets the count:
 
-| subagent_type | Pick when the scope involves... |
+| Agent type | Pick when the scope involves... |
 |---|---|
 | `review-plan` | **Always slot 1 in plan mode** (plans only) |
 | `review-silent-failures` | Empty/null guards, exception handling, ignored returns, dropped data — strong default for most scopes |

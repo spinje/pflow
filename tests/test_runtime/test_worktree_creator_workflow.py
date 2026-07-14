@@ -122,7 +122,7 @@ def test_implement_mode_without_phases_tells_agent_to_proceed_on_whole_plan() ->
 def test_codex_sandbox_hint_is_skill_neutral_in_implement_mode() -> None:
     result = run_parse_result(BRANCH_RESPONSE, mode="implement", issue_number="177", agent="codex")
 
-    assert "pflow-sandbox-testing" in result["agent_hint"]
+    assert "sandbox-testing" in result["agent_hint"]
     assert "start-work" not in result["agent_hint"]
 
 

@@ -8,6 +8,10 @@ Architecture decision record for how pflow stores execution data: how node outpu
 
 done
 
+## Completed
+
+2026-06-21
+
 ## Priority
 
 low (the observed disk pain is owned by #382; the remainder is gated behind the live-UI line)

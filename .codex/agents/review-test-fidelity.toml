@@ -1,5 +1,5 @@
 name = "review-test-fidelity"
-description = "Check that tests actually test the right thing \u2014 correct assertions, production-matching fixtures, behavior not implementation. Catches: tests encoding wrong behavior, fixtures with wrong data shapes, comparisons that aren't assertions, tests testing implementation details, test bloat, missing regression tests for bug fixes."
+description = "Check that tests actually test the right thing — correct assertions, production-matching fixtures, behavior not implementation. Catches: tests encoding wrong behavior, fixtures with wrong data shapes, comparisons that aren't assertions, tests testing implementation details, test bloat, missing regression tests for bug fixes."
 model = "gpt-5.6-sol"
 model_reasoning_effort = "medium"
 developer_instructions = '''

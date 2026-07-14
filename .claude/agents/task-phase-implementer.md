@@ -41,7 +41,7 @@ you with your next phase(s) — treat each resumed assignment as a new contract 
   (`uv run pflow ...`) and observe the output. **UI phases (`web/`): ALWAYS invoke the
   `screenshot-pflow-web-ui` skill and verify EVERYTHING you changed** — screenshot/measure every
   affected surface (read `.claude/skills/screenshot-pflow-web-ui/SKILL.md` and follow it if the
-  Skill tool is unavailable). You run on Fable for UI phases by design (DECISIONS #8): visual
+  skill is unavailable). You run on Fable for UI phases by design (DECISIONS #8): visual
   quality and UX are acceptance criteria, not niceties — the plan states the look/feel intent;
   meet it. Green component tests alone never close a UI phase. A flawed tool gets reported,
   never worked around silently.

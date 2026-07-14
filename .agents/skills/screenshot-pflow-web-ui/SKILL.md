@@ -1,6 +1,6 @@
 ---
 name: "screenshot-pflow-web-ui"
-description: "Screenshot or measure the running pflow web UI (the React Flow canvas; web/ \u2192 src/pflow/ui) to verify frontend changes. Use after changing web/ UI code."
+description: "Screenshot or measure the running pflow web UI (the React Flow canvas; web/ → src/pflow/ui) to verify frontend changes. Use after changing web/ UI code."
 ---
 
 # pflow web UI: screenshot + inspect

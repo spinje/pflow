@@ -1,6 +1,6 @@
 ---
 name: "start-orchestration"
-description: "Boot the pflow MAIN ORCHESTRATOR \u2014 verify state, pick lane and work, launch and shepherd the agent hierarchy, merge, reconcile."
+description: "Boot the pflow MAIN ORCHESTRATOR — verify state, pick lane and work, launch and shepherd the agent hierarchy, merge, reconcile."
 ---
 
 # pflow Main Orchestrator — Kickoff
@@ -58,11 +58,12 @@ body's, the state file's — decays. Verification is the job, not overhead.
    check: hard to reverse + surprising + real trade-off → write it now (`context/adr/`).
 4. **Provision + launch** per ORCHESTRATION's worktree flow: docs commit to `main` first,
    agents-suppressed worktree, collision analysis before any parallel launch, context packet,
-   and runner-correct routing (Claude: explicit model; Codex: no model/reasoning override).
+   and runner-correct routing: pass the runner-specific model every launch; on Codex also pass
+   explicit reasoning effort.
    Verify the packet/brief landed in the worktree.
 5. **Handle handbacks**:
    - *Checkpoint* → present artifacts (by path; publish an Artifact page for comparisons), get
-     the ruling, **SendMessage-resume the SAME agent**.
+     the ruling, **resume the SAME agent** (SendMessage in Claude, followup_task in Codex).
    - *Escalation* → resolve importance 1–2 visibly in the log; 3+ → the user. Update
      `DECISIONS.md`/the ADR in the same breath, then resume the agent with the ruling.
    - *Completion* → read `task-review.md` (**no review file = not done — reject**). Then: **merge**
@@ -72,7 +73,7 @@ body's, the state file's — decays. Verification is the job, not overhead.
      and wrong at the seams).
 6. **Reconcile on merge**: spawned follow-ups slotted into lanes; CLAUDE.md roadmap (move shipped
    to ✅ — short task names only, no fluff); task Status lines; specs whose ground just moved;
-   `CURRENT-STATE.md` + a session-file entry. **Braindump at handoff moments** (`/braindump`):
+   `CURRENT-STATE.md` + a session-file entry. **Braindump at handoff moments** (`braindump`):
    tacit layer only — verbatim user words, rejected options and why, traps.
 
 ## The manual lane (lane C — you run it yourself)

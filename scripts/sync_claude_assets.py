@@ -15,6 +15,7 @@ TRIPLE_LITERAL_QUOTE = "'''"
 CLAUDE_COMMAND_INPUT = "$ARGUMENTS"
 CLAUDE_COMMAND_AGENT = re.compile(r"@agent-([A-Za-z0-9_-]+)")
 CLAUDE_COMMAND_AUTORUN = re.compile(r"^!`(?P<command>[^`]+)`$", re.MULTILINE)
+NON_AGENT_FILES = frozenset({"README.md", "REVIEW-PROTOCOL.md"})
 CLAUDE_AGENT_MODEL_TO_CODEX = {
     "fable": "gpt-5.6-sol",
     "opus": "gpt-5.6-sol",
@@ -29,7 +30,12 @@ CLAUDE_AGENT_EFFORT_TO_CODEX = {
 # Skills that live under .agents/skills but are hand-authored for Codex only — they have no
 # Claude source by design, so the orphan sweep must NOT treat them as stale mirrors. Consumers:
 # AGENTS.md and examples/real-workflows/git-worktree-task-creator/workflow.pflow.md.
-CODEX_ONLY_SKILLS = frozenset({"pflow-sandbox-testing"})
+CODEX_ONLY_SKILLS = frozenset({"sandbox-testing"})
+
+
+def quote_string(value: str) -> str:
+    """Return a YAML/TOML-compatible quoted string without ASCII escaping."""
+    return json.dumps(value, ensure_ascii=False)
 
 
 @dataclass
@@ -86,7 +92,7 @@ def render_skill(source: Path, name: str | None = None) -> str:
     metadata, body = split_frontmatter(source.read_text(encoding="utf-8"), source)
     skill_name = name or metadata_value(metadata, "name", source)
     description = metadata_value(metadata, "description", source)
-    return f"---\nname: {json.dumps(skill_name)}\ndescription: {json.dumps(description)}\n---\n{body}"
+    return f"---\nname: {quote_string(skill_name)}\ndescription: {quote_string(description)}\n---\n{body}"
 
 
 def render_command_skill(source: Path) -> str:
@@ -100,11 +106,12 @@ def render_command_skill(source: Path) -> str:
         body,
     )
     description = metadata_value(metadata, "description", source)
-    return f"---\nname: {json.dumps(source.stem)}\ndescription: {json.dumps(description)}\n---\n{body}"
+    return f"---\nname: {quote_string(source.stem)}\ndescription: {quote_string(description)}\n---\n{body}"
 
 
 def translate_command_arguments(body: str) -> str:
     """Replace Claude's argument macro while preserving prose and shell intent."""
+    body = body.replace("Task ID: **$ARGUMENTS**", "Task ID: derive it from the user's request.")
     body = body.replace("task_description='$ARGUMENTS'", "task_description='THE TASK DESCRIPTION'")
     body = body.replace("If `$ARGUMENTS` is empty", "If the user has not supplied a task description")
     body = body.replace(
@@ -125,11 +132,13 @@ def render_agent(source: Path) -> str:
     description = metadata_value(metadata, "description", source)
     model = mapped_agent_metadata(metadata, "model", CLAUDE_AGENT_MODEL_TO_CODEX, source)
     effort = mapped_agent_metadata(metadata, "effort", CLAUDE_AGENT_EFFORT_TO_CODEX, source)
-    lines = [f"name = {json.dumps(name)}", f"description = {json.dumps(description)}"]
-    if model is not None:
-        lines.append(f"model = {json.dumps(model)}")
-    if effort is not None:
-        lines.append(f"model_reasoning_effort = {json.dumps(effort)}")
+    if model is None:
+        raise ValueError(f"{source}: frontmatter is missing 'model'")
+    if effort is None:
+        raise ValueError(f"{source}: frontmatter is missing 'effort'")
+    lines = [f"name = {quote_string(name)}", f"description = {quote_string(description)}"]
+    lines.append(f"model = {quote_string(model)}")
+    lines.append(f"model_reasoning_effort = {quote_string(effort)}")
     lines.extend((
         f"developer_instructions = {TRIPLE_LITERAL_QUOTE}",
         f"{body}{TRIPLE_LITERAL_QUOTE}",
@@ -153,7 +162,7 @@ def synchronize_skill(source_dir: Path, target_dir: Path, write: bool, result: S
     if Path("SKILL.md") not in source_files:
         raise ValueError(f"{source_dir}: expected SKILL.md")
 
-    for relative_path in source_files:
+    for relative_path in sorted(source_files):
         source = source_dir / relative_path
         target = target_dir / relative_path
         expected = render_skill(source) if relative_path == Path("SKILL.md") else source.read_text(encoding="utf-8")
@@ -162,7 +171,7 @@ def synchronize_skill(source_dir: Path, target_dir: Path, write: bool, result: S
     if not target_dir.exists():
         return
     target_files = {path.relative_to(target_dir) for path in target_dir.rglob("*") if path.is_file()}
-    for relative_path in target_files - source_files:
+    for relative_path in sorted(target_files - source_files):
         target = target_dir / relative_path
         if not write:
             result.errors.append(f"Generated asset no longer exists in Claude source: {target}")
@@ -202,6 +211,20 @@ def sweep_orphan_skills(skills_target: Path, expected_names: set[str], write: bo
         target_dir.rmdir()
 
 
+def sweep_orphan_agents(agents_target: Path, expected_names: set[str], write: bool, result: SyncResult) -> None:
+    """Remove generated agent TOMLs whose canonical Claude source no longer exists."""
+    if not agents_target.exists():
+        return
+    for target in sorted(agents_target.glob("*.toml")):
+        if target.stem in expected_names:
+            continue
+        if not write:
+            result.errors.append(f"Generated agent has no Claude source: {target}")
+            continue
+        target.unlink()
+        result.changed.append(target)
+
+
 def synchronize(root: Path, write: bool) -> SyncResult:
     result = SyncResult()
 
@@ -227,9 +250,8 @@ def synchronize(root: Path, write: bool) -> SyncResult:
         write,
         result,
     )
-    for source in sorted(agents_source.glob("*.md")):
-        if source == protocol_source:
-            continue
+    agent_sources = sorted(path for path in agents_source.glob("*.md") if path.name not in NON_AGENT_FILES)
+    for source in agent_sources:
         ensure_content(root / ".codex/agents" / f"{source.stem}.toml", render_agent(source), write, result)
 
     for source in commands:
@@ -238,6 +260,7 @@ def synchronize(root: Path, write: bool) -> SyncResult:
 
     expected_names = {source_dir.name for source_dir in skill_dirs} | {source.stem for source in commands}
     sweep_orphan_skills(root / ".agents/skills", expected_names, write, result)
+    sweep_orphan_agents(root / ".codex/agents", {source.stem for source in agent_sources}, write, result)
 
     return result
 
@@ -253,7 +276,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     root = Path(__file__).resolve().parent.parent
-    result = synchronize(root, write=args.write)
+    try:
+        result = synchronize(root, write=args.write)
+    except (OSError, ValueError) as error:
+        print(f"Claude/Codex asset synchronization failed:\n{error}", file=sys.stderr)
+        return 1
     if result.errors:
         print("Claude/Codex asset synchronization failed:", file=sys.stderr)
         print(*result.errors, sep="\n", file=sys.stderr)

@@ -6,6 +6,11 @@ from pathlib import Path
 
 import pytest
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised by the Python 3.10 CI leg
+    import tomli as tomllib
+
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts/sync_claude_assets.py"
 SPEC = importlib.util.spec_from_file_location("sync_claude_assets", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
@@ -34,6 +39,7 @@ def make_root(tmp_path: Path) -> Path:
 
     write_file(tmp_path / ".claude/skills/demo-skill/SKILL.md", skill)
     write_file(tmp_path / ".claude/skills/demo-skill/reference.md", "Reference with café text.\n")
+    write_file(tmp_path / ".claude/agents/README.md", "Maintainer notes without frontmatter.\n")
     write_file(tmp_path / ".claude/agents/REVIEW-PROTOCOL.md", "Protocol.\n")
     write_file(tmp_path / ".claude/agents/demo-agent.md", agent)
     write_file(tmp_path / ".claude/commands/demo-command.md", command)
@@ -54,17 +60,18 @@ def test_write_generates_codex_assets(tmp_path: Path) -> None:
         '---\nname: "demo-command"\ndescription: "Demo command"\n---\n'
     )
     agent = read_file(root / ".codex/agents/demo-agent.toml")
+    parsed_agent = tomllib.loads(agent)
     assert agent.startswith('name = "demo-agent"\n')
     assert 'description = "Demo agent"' in agent
-    assert 'model = "gpt-5.6-sol"' in agent
-    assert 'model_reasoning_effort = "high"' in agent
-    assert "developer_instructions = '''" in agent
-    assert "Do the work. 🔍" in agent
+    assert parsed_agent["model"] == "gpt-5.6-sol"
+    assert parsed_agent["model_reasoning_effort"] == "high"
+    assert "Do the work. 🔍" in parsed_agent["developer_instructions"]
+    assert not (root / ".codex/agents/README.toml").exists()
     assert "● TIGHT dependency." in read_file(root / ".agents/skills/demo-skill/SKILL.md")
     assert "Preserve “smart quotes”." in read_file(root / ".agents/skills/demo-command/SKILL.md")
 
 
-def test_render_agent_maps_models_and_preserves_unpinned_settings(tmp_path: Path) -> None:
+def test_render_agent_maps_models(tmp_path: Path) -> None:
     source = tmp_path / "agent.md"
     cases = (
         ("fable", "medium", 'model = "gpt-5.6-sol"', 'model_reasoning_effort = "medium"'),
@@ -79,11 +86,6 @@ def test_render_agent_maps_models_and_preserves_unpinned_settings(tmp_path: Path
         assert expected_model in rendered
         assert expected_effort in rendered
 
-    write_file(source, "---\nname: demo\ndescription: Demo\n---\nInstructions.\n")
-    rendered = sync_claude_assets.render_agent(source)
-    assert "model =" not in rendered
-    assert "model_reasoning_effort =" not in rendered
-
 
 @pytest.mark.parametrize(("key", "value"), (("model", "unknown"), ("effort", "extreme")))
 def test_render_agent_rejects_unmapped_routing_metadata(tmp_path: Path, key: str, value: str) -> None:
@@ -92,6 +94,36 @@ def test_render_agent_rejects_unmapped_routing_metadata(tmp_path: Path, key: str
 
     with pytest.raises(ValueError, match=rf"unsupported agent {key} {value!r}"):
         sync_claude_assets.render_agent(source)
+
+
+@pytest.mark.parametrize("missing_key", ("model", "effort"))
+def test_render_agent_requires_routing_metadata(tmp_path: Path, missing_key: str) -> None:
+    metadata = {"model": "opus", "effort": "high"}
+    del metadata[missing_key]
+    source = tmp_path / "agent.md"
+    routing = "".join(f"{key}: {value}\n" for key, value in metadata.items())
+    write_file(source, f"---\nname: demo\ndescription: Demo\n{routing}---\nInstructions.\n")
+
+    with pytest.raises(ValueError, match=rf"frontmatter is missing '{missing_key}'"):
+        sync_claude_assets.render_agent(source)
+
+
+def test_generated_metadata_preserves_readable_unicode(tmp_path: Path) -> None:
+    skill = tmp_path / "SKILL.md"
+    write_file(skill, "---\nname: demo\ndescription: pflow — readable\n---\nBody.\n")
+    agent = tmp_path / "agent.md"
+    write_file(
+        agent,
+        "---\nname: demo\ndescription: pflow — readable\nmodel: opus\neffort: high\n---\nInstructions.\n",
+    )
+
+    rendered_skill = sync_claude_assets.render_skill(skill)
+    rendered_agent = sync_claude_assets.render_agent(agent)
+
+    assert "pflow — readable" in rendered_skill
+    assert "pflow — readable" in rendered_agent
+    assert r"\u2014" not in rendered_skill
+    assert r"\u2014" not in rendered_agent
 
 
 def test_check_reports_generated_asset_drift(tmp_path: Path) -> None:
@@ -111,7 +143,8 @@ def test_write_translates_claude_only_command_syntax(tmp_path: Path) -> None:
     command.write_text(
         read_file(command).replace(
             "Do the command.",
-            "Inputs: $ARGUMENTS\ntask_description='$ARGUMENTS'\n!`git branch --show-current`\n@agent-demo\n{{task_id}}",
+            "Task ID: **$ARGUMENTS**\nInputs: $ARGUMENTS\ntask_description='$ARGUMENTS'\n"
+            "!`git branch --show-current`\n@agent-demo\n{{task_id}}",
         ),
         encoding="utf-8",
     )
@@ -124,6 +157,7 @@ def test_write_translates_claude_only_command_syntax(tmp_path: Path) -> None:
     assert "@agent-demo" not in rendered
     assert "{{task_id}}" not in rendered
     assert "Inputs: derive them from the user's request." in rendered
+    assert "Task ID: derive it from the user's request." in rendered
     assert "task_description='THE TASK DESCRIPTION'" in rendered
     assert "Run this command before proceeding:\n\n```bash\ngit branch --show-current\n```" in rendered
     assert "demo\n<task_id>" in rendered
@@ -163,6 +197,37 @@ def test_sweep_preserves_hand_authored_codex_only_skill(tmp_path: Path) -> None:
     result = sync_claude_assets.synchronize(root, write=True)
     assert result.errors == []
     assert kept.exists()
+
+
+def test_sweeps_generated_agent_with_no_claude_source(tmp_path: Path) -> None:
+    root = make_root(tmp_path)
+    sync_claude_assets.synchronize(root, write=True)
+    orphan = root / ".codex/agents/orphan-agent.toml"
+    write_file(orphan, 'name = "orphan-agent"\n')
+
+    check = sync_claude_assets.synchronize(root, write=False)
+    assert check.errors == ["Generated agent has no Claude source: " + str(orphan)]
+
+    result = sync_claude_assets.synchronize(root, write=True)
+    assert result.errors == []
+    assert not orphan.exists()
+
+
+def test_cli_reports_invalid_source_without_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail_synchronization(_root: Path, write: bool) -> sync_claude_assets.SyncResult:
+        del write
+        raise ValueError("invalid source")
+
+    monkeypatch.setattr(sync_claude_assets, "parse_args", lambda: sync_claude_assets.argparse.Namespace(write=False))
+    monkeypatch.setattr(sync_claude_assets, "synchronize", fail_synchronization)
+
+    assert sync_claude_assets.main() == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "Claude/Codex asset synchronization failed:\ninvalid source\n"
 
 
 def test_rejects_skill_command_name_collision(tmp_path: Path) -> None:

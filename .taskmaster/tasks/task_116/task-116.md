@@ -3,6 +3,10 @@
 ## Status
 done
 
+## Completed
+
+2026-07-09
+
 ## Priority: Committed (was: Low)
 
 ## Summary
