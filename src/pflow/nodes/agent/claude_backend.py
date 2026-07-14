@@ -8,7 +8,15 @@ from collections.abc import Mapping
 from typing import Any
 
 from pflow.nodes.agent.backend import AgentResult
-from pflow.nodes.agent.schema_validation import CLAUDE_PARAMS, SHARED_PARAMS, is_compiler_source_line_sidecar
+from pflow.nodes.agent.schema_validation import (
+    CLAUDE_PARAMS,
+    SHARED_PARAMS,
+    is_compiler_source_line_sidecar,
+    validate_claude_max_thinking_tokens,
+    validate_claude_max_turns,
+    validate_claude_sandbox,
+    validate_claude_tool_list,
+)
 
 try:
     from claude_agent_sdk import ClaudeAgentOptions, query
@@ -77,99 +85,12 @@ class ClaudeBackend:
     default_model: str | None = "claude-sonnet-4-5"
     max_retries = 2
 
-    def _validate_optional_tool_list(self, value: list | None, param_name: str) -> list | None:
-        """Validate a tool-list parameter.
-
-        Empty / falsy → ``None`` (SDK default applies — meaning differs by
-        caller: ``allowed_tools=None`` opens all tools, ``disallowed_tools=None``
-        blocks none). Non-list raises ``TypeError``; otherwise pass through and
-        let the SDK reject unknown tool names / patterns.
-        """
-        if not value:
-            return None
-        if not isinstance(value, list):
-            raise TypeError(f"{param_name} must be a list, got {type(value).__name__}")
-        return value
-
-    def _validate_tools(self, allowed_tools: list | None) -> list | None:
-        return self._validate_optional_tool_list(allowed_tools, "allowed_tools")
-
-    def _validate_disallowed_tools(self, disallowed_tools: list | None) -> list | None:
-        return self._validate_optional_tool_list(disallowed_tools, "disallowed_tools")
-
-    def _validate_max_turns(self, max_turns: Any) -> int:
-        """Validate and convert max_turns parameter."""
-        default_max_turns = 50
-        if max_turns is None:
-            return default_max_turns
-        try:
-            max_turns_int = int(max_turns)
-            if max_turns_int < 1 or max_turns_int > 100:
-                raise ValueError
-            return max_turns_int
-        except (ValueError, TypeError):
-            raise ValueError(f"Invalid max_turns: {max_turns}. Must be integer between 1 and 100.") from None
-
-    def _validate_max_thinking_tokens(self, max_thinking_tokens: Any) -> int:
-        """Validate and convert max_thinking_tokens parameter."""
-        default_tokens = 8000
-        if max_thinking_tokens is None:
-            return default_tokens
-        try:
-            tokens = int(max_thinking_tokens)
-            if tokens < 1000 or tokens > 100000:
-                raise ValueError
-            return tokens
-        except (ValueError, TypeError):
-            raise ValueError(
-                f"Invalid max_thinking_tokens: {max_thinking_tokens}. Must be integer between 1000 and 100000."
-            ) from None
-
-    def _validate_sandbox(self, sandbox: Any) -> dict | None:
-        """Validate sandbox configuration parameter.
-
-        Sandbox settings control command execution isolation via the Claude Agent SDK.
-        See: https://platform.claude.com/docs/en/agent-sdk/python#sandbox-configuration
-
-        Args:
-            sandbox: Sandbox configuration dict or None
-
-        Returns:
-            Validated sandbox dict or None
-
-        Raises:
-            TypeError: If sandbox or nested values have wrong types
-        """
-        if not sandbox:
-            return None
-        if not isinstance(sandbox, dict):
-            raise TypeError(f"sandbox must be a dict, got {type(sandbox).__name__}")
-
-        # Type validation for known keys (pass through unknown for SDK forward compatibility)
-        # Boolean fields
-        bool_fields = ["enabled", "autoAllowBashIfSandboxed", "allowUnsandboxedCommands", "enableWeakerNestedSandbox"]
-        for field in bool_fields:
-            if field in sandbox and not isinstance(sandbox[field], bool):
-                raise TypeError(f"sandbox['{field}'] must be bool")
-
-        # Dict fields
-        dict_fields = ["network", "ignoreViolations"]
-        for field in dict_fields:
-            if field in sandbox and not isinstance(sandbox[field], dict):
-                raise TypeError(f"sandbox['{field}'] must be a dict")
-
-        # List fields
-        if "excludedCommands" in sandbox and not isinstance(sandbox["excludedCommands"], list):
-            raise TypeError("sandbox['excludedCommands'] must be a list")
-
-        return sandbox
-
     def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
         authored_params = {key for key in params if not is_compiler_source_line_sidecar(key, params)}
         invalid = sorted(authored_params - (SHARED_PARAMS | CLAUDE_PARAMS))
         if invalid:
             raise ValueError(f"{invalid[0]!r} is not valid for backend 'claude'")
-        max_turns = self._validate_max_turns(params.get("max_turns", 50))
+        max_turns = validate_claude_max_turns(params.get("max_turns"))
         if params.get("output_schema") is not None and max_turns < 2:
             raise ValueError(
                 f"max_turns must be >= 2 when output_schema is set (got {max_turns}). "
@@ -177,11 +98,11 @@ class ClaudeBackend:
                 "the final response. Set max_turns to 2 or higher (default is typically sufficient)."
             )
         return {
-            "allowed_tools": self._validate_tools(params.get("allowed_tools")),
-            "disallowed_tools": self._validate_disallowed_tools(params.get("disallowed_tools")),
+            "allowed_tools": validate_claude_tool_list(params.get("allowed_tools"), "allowed_tools"),
+            "disallowed_tools": validate_claude_tool_list(params.get("disallowed_tools"), "disallowed_tools"),
             "max_turns": max_turns,
-            "max_thinking_tokens": self._validate_max_thinking_tokens(params.get("max_thinking_tokens", 8000)),
-            "sandbox": self._validate_sandbox(params.get("sandbox")),
+            "max_thinking_tokens": validate_claude_max_thinking_tokens(params.get("max_thinking_tokens")),
+            "sandbox": validate_claude_sandbox(params.get("sandbox")),
         }
 
     def run(self, prompt: str, options: dict[str, Any]) -> AgentResult:

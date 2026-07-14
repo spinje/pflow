@@ -67,7 +67,127 @@ PYTHON_ALIAS_TYPES: Final[frozenset[str]] = frozenset({"str", "int", "bool", "li
 TOP_LEVEL_COMBINATORS: Final[tuple[str, ...]] = ("oneOf", "anyOf", "allOf", "enum", "const")
 """JSON Schema combinator keys that the Anthropic API rejects at the schema root."""
 
+CODEX_SANDBOX_MODES: Final[tuple[str, ...]] = ("read-only", "workspace-write", "full-access")
+"""User-facing Codex sandbox modes (mapped to CLI ``-s`` flags in ``codex_backend``)."""
+
+CODEX_APPROVAL_POLICIES: Final[frozenset[str]] = frozenset({"untrusted", "on-request", "never"})
+"""Accepted values for the codex-only ``approval_policy`` parameter."""
+
 _SOURCE_LINE_SUFFIX: Final[str] = "_source_line"
+
+
+def validate_schema_retries(value: Any) -> int:
+    """Resolve the shared ``schema_retries`` count (default 1; range 0-5).
+
+    Shared by ``AgentNode.prep`` and the static validator so ``--validate-only``
+    rejects an out-of-range value the same way runtime ``prep`` does. Raises
+    ``ValueError`` on a non-integer or out-of-range value.
+    """
+    if value is None:
+        return 1
+    try:
+        retries = int(value)
+    except (ValueError, TypeError):
+        raise ValueError(f"Invalid schema_retries: {value!r}. Must be an integer between 0 and 5.") from None
+    if retries < 0:
+        raise ValueError(f"schema_retries cannot be negative (got {retries}).")
+    if retries > 5:
+        raise ValueError(f"schema_retries cannot exceed 5 (cap to prevent runaway costs; got {retries}).")
+    return retries
+
+
+def validate_claude_sandbox(sandbox: Any) -> dict | None:
+    """Validate the Claude ``sandbox`` config dict shape (empty/falsy → ``None``).
+
+    Claude's sandbox is an SDK ``SandboxSettings`` dict — NOT a codex string
+    mode. Known keys are type-checked; unknown keys pass through for SDK
+    forward-compatibility. Raises ``TypeError`` on a wrong-shaped value.
+    """
+    if not sandbox:
+        return None
+    if not isinstance(sandbox, dict):
+        raise TypeError(f"sandbox must be a dict, got {type(sandbox).__name__}")
+    bool_fields = ("enabled", "autoAllowBashIfSandboxed", "allowUnsandboxedCommands", "enableWeakerNestedSandbox")
+    for field in bool_fields:
+        if field in sandbox and not isinstance(sandbox[field], bool):
+            raise TypeError(f"sandbox['{field}'] must be bool")
+    for field in ("network", "ignoreViolations"):
+        if field in sandbox and not isinstance(sandbox[field], dict):
+            raise TypeError(f"sandbox['{field}'] must be a dict")
+    if "excludedCommands" in sandbox and not isinstance(sandbox["excludedCommands"], list):
+        raise TypeError("sandbox['excludedCommands'] must be a list")
+    return sandbox
+
+
+def validate_claude_max_turns(max_turns: Any) -> int:
+    """Validate the Claude ``max_turns`` (default 50; range 1-100)."""
+    if max_turns is None:
+        return 50
+    try:
+        turns = int(max_turns)
+        if turns < 1 or turns > 100:
+            raise ValueError
+        return turns
+    except (ValueError, TypeError):
+        raise ValueError(f"Invalid max_turns: {max_turns}. Must be integer between 1 and 100.") from None
+
+
+def validate_claude_max_thinking_tokens(max_thinking_tokens: Any) -> int:
+    """Validate the Claude ``max_thinking_tokens`` (default 8000; range 1000-100000)."""
+    if max_thinking_tokens is None:
+        return 8000
+    try:
+        tokens = int(max_thinking_tokens)
+        if tokens < 1000 or tokens > 100000:
+            raise ValueError
+        return tokens
+    except (ValueError, TypeError):
+        raise ValueError(
+            f"Invalid max_thinking_tokens: {max_thinking_tokens}. Must be integer between 1000 and 100000."
+        ) from None
+
+
+def validate_claude_tool_list(value: Any, param_name: str) -> list | None:
+    """Validate a Claude tool-list parameter (empty/falsy → ``None``; non-list raises)."""
+    if not value:
+        return None
+    if not isinstance(value, list):
+        raise TypeError(f"{param_name} must be a list, got {type(value).__name__}")
+    return value
+
+
+def validate_codex_sandbox(value: Any) -> str:
+    """Validate the Codex ``sandbox`` string mode (default ``workspace-write``)."""
+    if value is None:
+        return "workspace-write"
+    if not isinstance(value, str) or value not in CODEX_SANDBOX_MODES:
+        choices = ", ".join(CODEX_SANDBOX_MODES)
+        raise ValueError(f"sandbox must be one of: {choices}; got {value!r}")
+    return value
+
+
+def validate_codex_approval_policy(value: Any) -> str | None:
+    """Validate the codex-only ``approval_policy`` enum (optional)."""
+    if value is not None and (not isinstance(value, str) or value not in CODEX_APPROVAL_POLICIES):
+        choices = ", ".join(sorted(CODEX_APPROVAL_POLICIES))
+        raise ValueError(f"approval_policy must be one of: {choices}; got {value!r}")
+    return value
+
+
+def validate_codex_add_dirs(value: Any) -> list[str]:
+    """Validate the codex-only ``add_dir`` list of non-empty directory strings."""
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(path, str) or not path.strip() for path in value):
+        raise TypeError("add_dir must be a list of non-empty directory strings")
+    return value.copy()
+
+
+def validate_codex_profile(value: Any) -> str | None:
+    """Validate the codex-only ``profile`` (optional non-empty string)."""
+    if value is not None and (not isinstance(value, str) or not value.strip()):
+        raise TypeError("profile must be a non-empty string")
+    return value
 
 
 class TopLevelObjectViolation(NamedTuple):

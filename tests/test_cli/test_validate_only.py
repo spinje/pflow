@@ -360,6 +360,55 @@ class TestValidateOnlyAgentBackendParams:
         assert result.exit_code != 0
         assert "'approval_policy' is not valid for backend 'claude'" in result.output
 
+    def test_validate_only_rejects_claude_string_sandbox(self, tmp_path: Path) -> None:
+        # A codex-style string sandbox on claude fails at runtime prep; --validate-only must match.
+        workflow = make_agent_workflow(output_schema=None)
+        workflow["nodes"][0]["params"]["sandbox"] = "workspace-write"
+        workflow_path = tmp_path / "agent-claude-str-sandbox.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code != 0
+        assert "sandbox must be a dict" in result.output
+
+    def test_validate_only_rejects_codex_dict_sandbox(self, tmp_path: Path) -> None:
+        workflow = make_agent_workflow(output_schema=None)
+        workflow["nodes"][0]["params"]["backend"] = "codex"
+        workflow["nodes"][0]["params"].pop("max_turns")
+        workflow["nodes"][0]["params"]["sandbox"] = {"enabled": True}
+        workflow_path = tmp_path / "agent-codex-dict-sandbox.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code != 0
+        assert "sandbox must be one of: read-only, workspace-write, full-access" in result.output
+
+    def test_validate_only_rejects_schema_retries_out_of_range(self, tmp_path: Path) -> None:
+        workflow = make_agent_workflow(output_schema=None)
+        workflow["nodes"][0]["params"]["schema_retries"] = 99
+        workflow_path = tmp_path / "agent-schema-retries-oob.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code != 0
+        assert "schema_retries cannot exceed 5" in result.output
+
+    def test_validate_only_accepts_valid_codex_shapes(self, tmp_path: Path) -> None:
+        # Regression: the shape checks must not over-reject a well-formed codex node.
+        workflow = make_agent_workflow(output_schema=None)
+        workflow["nodes"][0]["params"]["backend"] = "codex"
+        workflow["nodes"][0]["params"].pop("max_turns")
+        workflow["nodes"][0]["params"].update({"sandbox": "read-only", "approval_policy": "never"})
+        workflow_path = tmp_path / "agent-codex-valid.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code == 0
+
 
 class TestValidateOnlyAgentStructuredOutput:
     """Validation-only must catch agent schema contracts before execution."""

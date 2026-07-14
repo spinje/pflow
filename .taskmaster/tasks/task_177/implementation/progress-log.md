@@ -440,3 +440,64 @@
   passed, and the isolated loopback UI files passed outside the restricted socket sandbox. The non-paid
   E2E selection passed except for one unrelated `uv run pflow` test whose temporary working directory
   could not resolve this worktree's executable. No provider call was made; the paid smoke stayed deselected.
+
+## 2026-07-14 — Adversarial pflow-user verification: two real Codex bugs found + fixed
+
+- Verification specialist pass driving the node end-to-end through the real `pflow` CLI against **live**
+  Claude (subscription) and Codex (ChatGPT) backends — the mocked suite was treated as context, not proof.
+  Confirmed working live: Claude/Codex text, Claude structured output, cross-process Codex resume (recalled
+  a secret across two separate `pflow` processes), `llm_usage` normalization (Codex `total_includes_cache`
+  vs Claude `split_cache_fields`; `reasoning_output_tokens` present only for Codex; `session_id`/`num_turns`
+  populated; `model→cost` gating), the Phase 6 safe-mode guard (poisoned `OPENAI_API_KEY`/`CODEX_API_KEY`
+  scrubbed, run still succeeded via ChatGPT), batch+Codex parallel fan-out, and the static-validation battery
+  (missing/invalid backend, cross-backend params, array-root schema, claude `max_turns>=2`, unknown-param).
+- **Bug 1 (High) — Codex structured output was broken for ordinary schemas.** `codex_backend.py` wrote the
+  user's `output_schema` verbatim to `--output-schema`; OpenAI's strict `response_format` (which Codex
+  enforces) rejects any object schema lacking `additionalProperties: false` and any object whose `required`
+  omits a property. The SAME schema succeeded on Claude and 400'd on Codex — breaking the unified node's
+  shared-parameter contract, including the shipped guide's Codex `output_schema` example. The entire Codex
+  test suite missed it because every test feeds canned JSONL and never exercises OpenAI's real strict rules.
+  Fix: `_strictify_schema()` returns a deep copy with `additionalProperties: false` on every object and
+  `required` filled with all property keys (recursively, through `properties`/`items`/`$defs`/combinators),
+  applied at the `--output-schema` write. Non-nullable required (not nullable) so the result still validates
+  against the caller's *original* schema in `AgentNode.post()`. The caller's dict is never mutated. Verified
+  live: the previously-failing schema and a nested+optional schema both now return parsed objects.
+- **Bug 2 (Medium) — Codex failures were undiagnosable.** `translate_error` reported only "N failure
+  event(s). Run the same Codex command directly" and discarded the real reason even from the debug trace.
+  Fix: `_readable_failure_detail()` surfaces `code: message` from **structured** provider-error payloads only
+  (a JSON object carrying an `error` object), de-duplicated across the `error`/`turn.failed` events. Free
+  text, raw stdout/stderr, and tool `aggregated_output` are never surfaced, so the Phase 6/deep-review
+  secret-safe guard (`test_failed_jsonl_and_tool_output_never_reach_public_error_or_logs`) still passes
+  unchanged. Verified live with an invalid model: now reports `invalid_request_error: The '<model>' model is
+  not supported when using Codex with a ChatGPT account.`
+- Tests: updated the schema-write assertion to expect the normalized form (and pinned that the caller's dict
+  is untouched); added `TestStrictifySchema` (5) and `TestReadableFailureDetail` (5, incl. a free-text/tool
+  secret NOT surfaced + a structured message IS surfaced). Focused Codex/schema suite 86 passed; full agent
+  dir 298; broader sweep (agent + trace_report + unknown_param + guide_example) 519 passed. Ruff + mypy clean.
+## 2026-07-14 — Finding 3: `--validate-only` now matches runtime for agent param shapes
+
+- Owner principle: validate should catch whatever a run catches. The validator already committed to this
+  (its docstring: predicates live in the SDK-free `schema_validation` "so runtime prep and this static
+  preflight cannot drift"), but sandbox-shape and `schema_retries` validators still lived in the backends,
+  so `--validate-only` false-greened configs that fail at runtime prep.
+- Fix (single source of truth, no duplicated logic): moved the pure param-shape validators into
+  `schema_validation.py` — `validate_schema_retries`, `validate_claude_sandbox`/`_max_turns`/
+  `_max_thinking_tokens`/`_tool_list`, `validate_codex_sandbox`/`_approval_policy`/`_add_dirs`/`_profile`
+  (plus shared `CODEX_SANDBOX_MODES`/`CODEX_APPROVAL_POLICIES` constants). The backends' `validate_params`
+  and `AgentNode.prep` now call these directly (the thin `_validate_*` wrapper methods were deleted, not
+  kept as indirection — simplest final code, per owner steer). `WorkflowValidator._validate_agent_param_shapes`
+  runs the SAME validators, converting a raised `ValueError`/`TypeError` into a Diagnostic; it runs before
+  the `output_schema is None` early-return and defers templated values. So validate == run by construction.
+- Verified: `--validate-only` now rejects a claude string sandbox, a codex dict sandbox, and
+  `schema_retries: 99` with the exact runtime messages; valid codex shapes still pass; a live codex run
+  confirms the refactored runtime `validate_params` still executes (`MANGO`). Tests: added 5 validate-only
+  parity tests; agent dir 298, validate_only + agent + unknown_param 343, broad sweep (agent + validate_only
+  + trace_report + example/guide validation) 554 — all green. Ruff + mypy clean.
+- One deliberate remaining gap (noted, not a false green risk): codex `config` shape validation stays in
+  `CodexBackend._validate_config` because it is coupled to the codex TOML serializer (`_toml_value`); a
+  malformed `config` still surfaces at runtime prep. Moving the TOML serializer into the shared module for
+  this rare/advanced case would be disproportionate.
+
+- Finding 4 (raw `ValueError`/`TypeError` from agent param validation instead of `PflowError` subclasses):
+  pre-existing and pervasive (inherited verbatim from `claude-code`; the plan preserved Claude behavior
+  identically). Deferred by owner decision to GitHub issue #592 rather than a scope-expanding sweep this session.

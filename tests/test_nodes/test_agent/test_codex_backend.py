@@ -27,7 +27,9 @@ from pflow.nodes.agent.codex_backend import (
     _AuthClass,
     _build_child_env,
     _classify_login_status,
+    _readable_failure_detail,
     _run_codex_process,
+    _strictify_schema,
     _toml_value,
 )
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
@@ -465,7 +467,18 @@ class TestCodexArgvAndParsing:
 
         result = CodexBackend().run("Return JSON", _options(tmp_path, output_schema=schema))
 
-        assert inspected_schema == [schema]
+        # The schema written to Codex is normalized for OpenAI strict structured
+        # output: every object gets additionalProperties: false and lists all its
+        # properties in `required`. The caller's original dict is not mutated.
+        assert inspected_schema == [
+            {
+                "type": "object",
+                "properties": {"answer": {"type": "string"}},
+                "required": ["answer"],
+                "additionalProperties": False,
+            }
+        ]
+        assert schema == {"type": "object", "properties": {"answer": {"type": "string"}}, "required": ["answer"]}
         assert result.result_text == '{"answer":"from-file"}'
         assert result.structured_output == {"answer": "from-file"}
 
@@ -1185,6 +1198,102 @@ class TestCodexErrors:
         continuation = backend.continuation_options(AgentResult(metadata={"session_id": THREAD_ID}), options)
         assert continuation is not None
         assert continuation["resume"] == THREAD_ID
+
+
+class TestStrictifySchema:
+    """OpenAI strict structured output (which Codex's --output-schema enforces) requires
+    every object to set additionalProperties: false and list all properties in required."""
+
+    def test_adds_additional_properties_false_and_fills_required(self) -> None:
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+        assert _strictify_schema(schema) == {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+            "additionalProperties": False,
+        }
+
+    def test_optional_property_is_promoted_to_required(self) -> None:
+        # An optional property (color) becomes required so strict mode accepts it; the
+        # value stays non-nullable so the result still validates against the caller's
+        # original (optional) schema in AgentNode.
+        schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}, "color": {"type": "string"}},
+            "required": ["name"],
+        }
+        result = _strictify_schema(schema)
+        assert set(result["required"]) == {"name", "color"}
+        assert result["properties"]["color"] == {"type": "string"}
+
+    def test_recurses_into_nested_objects_and_array_items(self) -> None:
+        schema = {
+            "type": "object",
+            "properties": {
+                "detail": {"type": "object", "properties": {"color": {"type": "string"}}},
+                "tags": {"type": "array", "items": {"type": "object", "properties": {"k": {"type": "string"}}}},
+            },
+            "required": ["detail", "tags"],
+        }
+        result = _strictify_schema(schema)
+        assert result["properties"]["detail"]["additionalProperties"] is False
+        assert result["properties"]["detail"]["required"] == ["color"]
+        assert result["properties"]["tags"]["items"]["additionalProperties"] is False
+        assert result["properties"]["tags"]["items"]["required"] == ["k"]
+
+    def test_does_not_mutate_caller_schema(self) -> None:
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+        _strictify_schema(schema)
+        assert "additionalProperties" not in schema
+
+    def test_non_object_schema_is_untouched(self) -> None:
+        schema = {"type": "string"}
+        assert _strictify_schema(schema) == {"type": "string"}
+
+
+class TestReadableFailureDetail:
+    """Fix 2: structured provider errors are surfaced for actionability; unstructured
+    failure text (free text, tool output) is never surfaced — the secret-safe boundary."""
+
+    def test_structured_provider_error_is_surfaced(self) -> None:
+        payload = json.dumps({
+            "type": "error",
+            "error": {"code": "invalid_json_schema", "message": "additionalProperties required"},
+            "status": 400,
+        })
+        # Both the `error` and `turn.failed` events carry the same payload → de-duplicated.
+        detail = _readable_failure_detail([payload, payload])
+        assert detail == "invalid_json_schema: additionalProperties required"
+
+    def test_error_nested_as_json_string_under_message(self) -> None:
+        inner = json.dumps({"error": {"code": "rate_limit_exceeded", "message": "slow down"}})
+        outer = json.dumps({"type": "error", "message": inner})
+        assert _readable_failure_detail([outer]) == "rate_limit_exceeded: slow down"
+
+    def test_free_text_failure_is_not_surfaced(self) -> None:
+        secret = "tool-output-secret"  # noqa: S105 - redaction sentinel
+        assert _readable_failure_detail([f"turn failed with {secret}"]) == ""
+
+    def test_tool_output_json_without_error_object_is_not_surfaced(self) -> None:
+        secret = "aggregated-secret"  # noqa: S105 - redaction sentinel
+        payload = json.dumps({"type": "item.completed", "item": {"aggregated_output": secret}})
+        assert _readable_failure_detail([payload]) == ""
+
+    def test_translate_error_surfaces_schema_message_but_not_free_text_secret(self, tmp_path: Path) -> None:
+        secret = "free-text-secret"  # noqa: S105 - redaction sentinel
+        schema_payload = json.dumps({
+            "error": {"code": "invalid_json_schema", "message": "schema must set additionalProperties"}
+        })
+        exc = CodexProcessError(
+            argv=["codex", "exec"],
+            returncode=1,
+            stdout="",
+            stderr=f"raw stderr with {secret}",
+            failure_messages=[schema_payload, f"free text with {secret}"],
+        )
+        translated = CodexBackend().translate_error(exc, _options(tmp_path))
+        assert "invalid_json_schema: schema must set additionalProperties" in str(translated)
+        assert secret not in str(translated)
 
 
 @pytest.mark.e2e

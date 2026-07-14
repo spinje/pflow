@@ -22,7 +22,15 @@ from typing import Any
 from pflow.core.exceptions import PflowError
 from pflow.core.litellm_runtime import estimate_completion_cost_usd
 from pflow.nodes.agent.backend import AgentResult
-from pflow.nodes.agent.schema_validation import CODEX_PARAMS, SHARED_PARAMS, is_compiler_source_line_sidecar
+from pflow.nodes.agent.schema_validation import (
+    CODEX_PARAMS,
+    SHARED_PARAMS,
+    is_compiler_source_line_sidecar,
+    validate_codex_add_dirs,
+    validate_codex_approval_policy,
+    validate_codex_profile,
+    validate_codex_sandbox,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +39,6 @@ _SANDBOX_MODES = {
     "workspace-write": "workspace-write",
     "full-access": "danger-full-access",
 }
-_APPROVAL_POLICIES = frozenset({"untrusted", "on-request", "never"})
 _AUTH_FAILURE_PATTERN = re.compile(
     r"(?:\b401\s+unauthorized\b|\bhttp(?: status)?\s*[:=]?\s*401\b|"
     r"\bapi_error_status\s*[:=\[]\s*401\b|\bmissing bearer\b|"
@@ -184,6 +191,117 @@ def _event_error_text(value: Any) -> str:
                 return str(value[key])
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
     return str(value) if value is not None else "Codex turn failed without error details"
+
+
+# JSON Schema keywords that hold nested subschemas, grouped by container shape.
+_SCHEMA_MAP_KEYWORDS = ("properties", "$defs", "definitions", "patternProperties")
+_SCHEMA_LIST_KEYWORDS = ("allOf", "anyOf", "oneOf", "prefixItems")
+_SCHEMA_NODE_KEYWORDS = ("items", "additionalItems", "not", "if", "then", "else", "contains")
+
+
+def _recurse_into_subschemas(node: dict[str, Any]) -> None:
+    """Strictify every nested subschema a JSON Schema node holds, in place."""
+    for keyword in _SCHEMA_MAP_KEYWORDS:
+        subschemas = node.get(keyword)
+        if isinstance(subschemas, dict):
+            node[keyword] = {name: _strictify_schema(value) for name, value in subschemas.items()}
+    for keyword in _SCHEMA_LIST_KEYWORDS:
+        subschemas = node.get(keyword)
+        if isinstance(subschemas, list):
+            node[keyword] = [_strictify_schema(value) for value in subschemas]
+    for keyword in _SCHEMA_NODE_KEYWORDS:
+        if keyword in node:
+            node[keyword] = _strictify_schema(node[keyword])
+
+
+def _strictify_schema(schema: Any) -> Any:
+    """Return a deep copy of ``schema`` satisfying OpenAI strict structured-output rules.
+
+    Codex's ``--output-schema`` forwards the schema to OpenAI's strict
+    ``response_format``, which rejects any object schema that does not set
+    ``additionalProperties: false`` and list *every* property in ``required``.
+    Claude's SDK applies equivalent normalization internally, so this keeps the
+    shared ``output_schema`` parameter behaving identically on both backends.
+
+    Previously-optional properties become always-emitted rather than nullable, so
+    the model's output still validates against the caller's *original* schema in
+    ``AgentNode`` (a nullable value would fail that post-validation instead). The
+    caller's schema dict is never mutated.
+    """
+    if isinstance(schema, list):
+        return [_strictify_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    result = dict(schema)
+    _recurse_into_subschemas(result)
+    properties = result.get("properties")
+    if result.get("type") == "object" or isinstance(properties, dict):
+        result["additionalProperties"] = False
+        if isinstance(properties, dict):
+            result["required"] = list(properties.keys())
+    return result
+
+
+_MAX_FAILURE_DETAIL_CHARS = 500
+
+
+def _parse_provider_error(raw: str) -> tuple[str, str] | None:
+    """Return ``(code, message)`` from a *structured* provider-error payload, else ``None``.
+
+    A Codex ``turn.failed``/``error`` event carries the model API's error as a JSON
+    object with an ``error`` sub-object (``{"error": {"code": ..., "message": ...}}``),
+    sometimes nested as a JSON string under ``message``. Only that structured shape is
+    parsed. Free text, raw stdout/stderr, and tool ``aggregated_output`` are NOT
+    structured provider errors and return ``None`` — they are never surfaced, preserving
+    the secret-safe boundary the auth path already enforces upstream.
+    """
+    text = raw.strip()
+    if not text:
+        return None
+    try:
+        payload = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    nested = payload.get("message")
+    if isinstance(nested, str):
+        inner = _parse_provider_error(nested)
+        if inner is not None:
+            return inner
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    code = str(error.get("code") or error.get("type") or "").strip()
+    message = str(error.get("message") or "").strip()
+    if not code and not message:
+        return None
+    return code, message
+
+
+def _readable_failure_detail(messages: list[str]) -> str:
+    """Summarize Codex turn failures from their *structured* provider-error payloads only.
+
+    Surfaces ``code: message`` for real API/protocol failures (e.g. ``invalid_json_schema``,
+    ``rate_limit_exceeded``) so a caller can fix the workflow, while ignoring any
+    unstructured failure text. The ``error`` and ``turn.failed`` events carry the same
+    payload, so identical entries are de-duplicated. Returns ``""`` when nothing
+    structured is present.
+    """
+    parts: list[str] = []
+    for raw in messages:
+        parsed = _parse_provider_error(raw)
+        if parsed is None:
+            continue
+        code, message = parsed
+        detail = f"{code}: {message}" if code and message else (code or message)
+        if detail:
+            parts.append(detail)
+    combined = "; ".join(dict.fromkeys(parts))
+    if len(combined) > _MAX_FAILURE_DETAIL_CHARS:
+        combined = combined[:_MAX_FAILURE_DETAIL_CHARS].rstrip() + "…"
+    return combined
 
 
 def _terminate_windows_process_tree(pid: int) -> None:
@@ -410,33 +528,12 @@ class CodexBackend:
             raise ValueError(f"{invalid[0]!r} is not valid for backend 'codex'")
 
         return {
-            "approval_policy": self._validate_approval_policy(params.get("approval_policy")),
-            "add_dir": self._validate_add_dirs(params.get("add_dir")),
-            "profile": self._validate_profile(params.get("profile")),
+            "approval_policy": validate_codex_approval_policy(params.get("approval_policy")),
+            "add_dir": validate_codex_add_dirs(params.get("add_dir")),
+            "profile": validate_codex_profile(params.get("profile")),
             "config": self._validate_config(params.get("config")),
-            "sandbox": self._validate_sandbox(params.get("sandbox")),
+            "sandbox": validate_codex_sandbox(params.get("sandbox")),
         }
-
-    @staticmethod
-    def _validate_approval_policy(value: Any) -> str | None:
-        if value is not None and (not isinstance(value, str) or value not in _APPROVAL_POLICIES):
-            choices = ", ".join(sorted(_APPROVAL_POLICIES))
-            raise ValueError(f"approval_policy must be one of: {choices}; got {value!r}")
-        return value
-
-    @staticmethod
-    def _validate_add_dirs(value: Any) -> list[str]:
-        if value is None:
-            return []
-        if not isinstance(value, list) or any(not isinstance(path, str) or not path.strip() for path in value):
-            raise TypeError("add_dir must be a list of non-empty directory strings")
-        return value.copy()
-
-    @staticmethod
-    def _validate_profile(value: Any) -> str | None:
-        if value is not None and (not isinstance(value, str) or not value.strip()):
-            raise TypeError("profile must be a non-empty string")
-        return value
 
     @staticmethod
     def _validate_config(value: Any) -> dict[str, Any]:
@@ -451,15 +548,6 @@ class CodexBackend:
             _toml_value(item)
         return config_values
 
-    @staticmethod
-    def _validate_sandbox(value: Any) -> str:
-        if value is None:
-            return "workspace-write"
-        if not isinstance(value, str) or value not in _SANDBOX_MODES:
-            choices = ", ".join(_SANDBOX_MODES)
-            raise ValueError(f"sandbox must be one of: {choices}; got {value!r}")
-        return value
-
     def run(self, prompt: str, options: dict[str, Any]) -> AgentResult:
         use_api_key = bool(options.get("use_api_key"))
         env = _build_child_env(use_api_key)
@@ -473,7 +561,7 @@ class CodexBackend:
             if options.get("output_schema") is not None:
                 schema_path = temp_path / "output-schema.json"
                 schema_path.write_text(
-                    json.dumps(options["output_schema"], ensure_ascii=False),
+                    json.dumps(_strictify_schema(options["output_schema"]), ensure_ascii=False),
                     encoding="utf-8",
                 )
 
@@ -823,10 +911,11 @@ class CodexBackend:
                 )
             return CodexNonRetriableError("Codex authentication failed. Run `codex login` and retry.")
         if isinstance(exc, CodexProcessError):
-            failure_count = len(exc.failure_messages)
-            failure_note = f" Codex reported {failure_count} failure event(s)." if failure_count else ""
+            detail = _readable_failure_detail(exc.failure_messages)
+            if detail:
+                return ValueError(f"Codex CLI failed with exit code {exc.returncode}. Codex reported: {detail}")
             return ValueError(
-                f"Codex CLI failed with exit code {exc.returncode}.{failure_note} "
+                f"Codex CLI failed with exit code {exc.returncode}. "
                 "Run the same Codex command directly to inspect provider diagnostics."
             )
         if isinstance(exc, CodexEventParseError):

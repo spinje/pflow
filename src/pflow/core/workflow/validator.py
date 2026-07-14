@@ -932,6 +932,56 @@ class WorkflowValidator:
         ]
 
     @staticmethod
+    def _validate_agent_param_shapes(
+        node_id: str, params: dict[str, Any], valid_backend: str | None
+    ) -> list[Diagnostic]:
+        """Run the same per-backend param-shape validators as runtime ``prep``.
+
+        This is what makes ``--validate-only`` reject a mis-shaped ``sandbox`` or an
+        out-of-range ``schema_retries`` exactly as a real run would — the validators
+        are the single source of truth in ``schema_validation``, so the two paths
+        cannot drift. Templated values (and a templated/unknown ``backend``) defer
+        their checks to runtime resolution.
+        """
+        from collections.abc import Callable
+
+        from pflow.nodes.agent import schema_validation as sv
+
+        checks: list[tuple[str, Callable[[Any], object]]] = [("schema_retries", sv.validate_schema_retries)]
+        if valid_backend == "claude":
+            checks += [
+                ("sandbox", sv.validate_claude_sandbox),
+                ("max_turns", sv.validate_claude_max_turns),
+                ("max_thinking_tokens", sv.validate_claude_max_thinking_tokens),
+                ("allowed_tools", lambda v: sv.validate_claude_tool_list(v, "allowed_tools")),
+                ("disallowed_tools", lambda v: sv.validate_claude_tool_list(v, "disallowed_tools")),
+            ]
+        elif valid_backend == "codex":
+            checks += [
+                ("sandbox", sv.validate_codex_sandbox),
+                ("approval_policy", sv.validate_codex_approval_policy),
+                ("add_dir", sv.validate_codex_add_dirs),
+                ("profile", sv.validate_codex_profile),
+            ]
+
+        diagnostics: list[Diagnostic] = []
+        for name, validate in checks:
+            if name not in params or TemplateResolver.has_templates(params[name]):
+                continue
+            try:
+                validate(params[name])
+            except (ValueError, TypeError) as exc:
+                diagnostics.append(
+                    WorkflowValidator._agent_param_error(
+                        node_id=node_id,
+                        message=str(exc),
+                        path=f"nodes[id={node_id}].params.{name}",
+                        suggestions=[f"Fix `{name}` to match the shape shown, or remove it."],
+                    )
+                )
+        return diagnostics
+
+    @staticmethod
     def _validate_agent_params(node_id: str, params: dict[str, Any]) -> list[Diagnostic]:
         """Validate agent backend and structured-output constraints without backend calls.
 
@@ -945,6 +995,7 @@ class WorkflowValidator:
         )
 
         diagnostics, valid_backend = WorkflowValidator._validate_agent_backend_params(node_id, params)
+        diagnostics.extend(WorkflowValidator._validate_agent_param_shapes(node_id, params, valid_backend))
 
         output_schema = params.get("output_schema")
         if output_schema is None:

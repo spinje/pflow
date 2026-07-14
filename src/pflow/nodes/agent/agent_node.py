@@ -15,6 +15,7 @@ from pflow.nodes.agent.schema_validation import (
     TopLevelObjectViolation,
     is_legacy_python_alias_schema,
     top_level_object_violation,
+    validate_schema_retries,
     validate_use_api_key,
 )
 
@@ -224,44 +225,6 @@ class AgentNode(Node):
             raise TypeError(f"resume must be a string (session ID), got {type(resume).__name__}")
         return resume
 
-    def _validate_schema_retries(self, schema_retries: Any) -> int:
-        """Validate and convert the schema_retries parameter.
-
-        Only the int() conversion is wrapped in try/except; the range checks live
-        OUTSIDE it. The previous version re-classified its own ValueErrors by
-        substring-matching their messages ("cannot"/"requires"), which silently
-        misfires the moment a message is reworded.
-
-        It also deliberately does NOT couple schema_retries to max_turns. The retry
-        loop only runs when an output_schema is set, and prep() already enforces
-        max_turns >= 2 in that case — so a max_turns check here was redundant for the
-        schema path and wrongly rejected valid no-schema nodes that intentionally cap
-        an agent to one turn (where the retry would never fire).
-
-        Args:
-            schema_retries: Schema retry attempts parameter (None → default of 1)
-
-        Returns:
-            Validated schema_retries count (0-5)
-
-        Raises:
-            ValueError: If not an integer in the range 0-5
-        """
-        default_schema_retries = 1
-        if schema_retries is None:
-            return default_schema_retries
-        try:
-            retries_int = int(schema_retries)
-        except (ValueError, TypeError):
-            raise ValueError(
-                f"Invalid schema_retries: {schema_retries!r}. Must be an integer between 0 and 5."
-            ) from None
-        if retries_int < 0:
-            raise ValueError(f"schema_retries cannot be negative (got {retries_int}).")
-        if retries_int > 5:
-            raise ValueError(f"schema_retries cannot exceed 5 (cap to prevent runaway costs; got {retries_int}).")
-        return retries_int
-
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         backend_name = self._validate_backend(self.params.get("backend"))
         backend = self._load_backend(backend_name)
@@ -282,7 +245,7 @@ class AgentNode(Node):
             "system_prompt": self.params.get("system_prompt", ""),
             "resume": self._validate_resume(self.params.get("resume")),
             "timeout": self._validate_timeout(self.params.get("timeout")),
-            "schema_retries": self._validate_schema_retries(self.params.get("schema_retries")),
+            "schema_retries": validate_schema_retries(self.params.get("schema_retries")),
             "use_api_key": validate_use_api_key(self.params.get("use_api_key")),
             "_cancel_event": shared.get("__pflow_cancel_event__"),
             "_backend": backend,
