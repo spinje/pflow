@@ -393,6 +393,9 @@ def _format_llm_call_metadata(
     if isinstance(session_id, str) and session_id:
         lines.append(f"- {session_label}: {session_id}")
     lines.append(f"- Paid this run: {_format_cost(paid_cost)}")
+    api_equivalent_cost = llm_call.get("api_equivalent_cost_usd")
+    if isinstance(api_equivalent_cost, (int, float)) and not isinstance(api_equivalent_cost, bool):
+        lines.append(f"- API-equivalent estimate: ${api_equivalent_cost:.4f}")
 
     historical_cost = llm_call.get("cost_usd")
     if cached and historical_cost is not None and historical_cost != paid_cost:
@@ -784,6 +787,9 @@ def _build_summary(
                 lines.append(f"- Total cost: — (pricing unavailable for {models_phrase}; partial cost ${partial:.4f})")
             else:
                 lines.append(f"- Total cost: — (pricing unavailable for {models_phrase})")
+        api_equivalent_cost = llm.get("total_api_equivalent_cost_usd")
+        if isinstance(api_equivalent_cost, (int, float)) and not isinstance(api_equivalent_cost, bool):
+            lines.append(f"- API-equivalent estimate: ${api_equivalent_cost:.4f}")
         models = llm.get("models_used", [])
         if models:
             lines.append(f"- Models: {', '.join(models)}")
@@ -1222,6 +1228,21 @@ def _format_cache_telemetry(event: dict[str, Any], lines: list[str]) -> None:
     lines.append("")
 
 
+def _format_agent_tools(event: dict[str, Any], lines: list[str]) -> None:
+    """Render the bounded agent tool summaries promoted into the trace."""
+    agent_tools = event.get("agent_tools")
+    if not isinstance(agent_tools, list) or not agent_tools:
+        return
+    lines.extend(["## Tools", ""])
+    for tool in agent_tools:
+        if not isinstance(tool, dict):
+            continue
+        name = tool.get("name", "unknown")
+        summary = tool.get("input_summary")
+        lines.append(f"- `{name}`" + (f": {summary}" if summary else ""))
+    lines.append("")
+
+
 def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
     """Render template resolutions and static params as markdown sections.
 
@@ -1243,6 +1264,8 @@ def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
         lines.extend(["## Prompt", ""])
         _append_str_or_blocks(llm_prompt, lines)
         lines.append("")
+
+    _format_agent_tools(event, lines)
 
     if "command" in resolutions:
         lines.extend(["## Command", "", f"```bash\n{resolutions['command'].get('resolved', '')}\n```", ""])

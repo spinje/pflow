@@ -381,3 +381,62 @@
   subprocess file passed all 56 tests outside the restricted socket sandbox. The complete
   `make check` gate also passed: lock and asset synchronization, all hooks, Ruff, mypy (253 source
   files), and deptry (254 files).
+
+## 2026-07-13 — Deep-review items 1–4 implemented
+
+- Replaced the structured-output scalar checker with JSON Schema validation as the conformance
+  oracle. Valid values are preserved, coercion is attempted only for invalid direct scalar fields,
+  candidates must satisfy their field schema, and the complete result must validate. Regression
+  coverage now includes union ordering, object/array/null mismatches, enum equality, and nested
+  constraints.
+- Corrected AgentNode error signaling. A backend `is_error` result in free-form mode retains its
+  text but emits an `agent.backend_error_free_form` warning and `_agent_error`, producing DEGRADED
+  status. Corrective schema calls continue to degrade for retriable failures but now translate and
+  propagate non-retriable failures such as authentication rejection.
+- Hardened Codex's public diagnostic boundary. Model timeouts use a sanitized exception without a
+  secret-bearing argv/cause, process failures no longer expose raw stdout/stderr or JSONL through
+  messages/logs, and authentication detection uses narrow patterns over failure diagnostics rather
+  than broad searches across model/tool output. Sentinel tests cover prompt/config timeout leakage,
+  failed JSONL/tool output, and incidental auth words/token counts.
+- Separated cost provenance for both agent backends. Canonical `cost_usd` remains unavailable,
+  SDK/LiteLLM comparisons use `api_equivalent_cost_usd`, missing Codex usage is never priced, retry
+  aggregation keeps the channels independent, and trace reports label the comparison estimate
+  separately from paid cost. Public architecture, guide, reference, template-variable, and example
+  documentation now describe the distinction.
+- Verification: 26 schema tests, 134 AgentNode tests, 75 non-e2e Codex tests, 300 trace/report/usage
+  tests, and the complete 284-test non-e2e agent package passed. The broad sandbox run passed 8,860
+  effective tests after the two expected generated-guide/contract updates; the 3 socket-only cases and
+  the separate 90-test interaction-server file passed outside the restricted loopback sandbox. Focused
+  Ruff and mypy checks passed. The paid Codex smoke remained explicitly deselected; no provider call
+  was made.
+
+## 2026-07-14 — Deep-review items 5–8 implemented
+
+- Added batch-scoped cancellation for external Agent work. Parallel fail-fast and `_execute_parallel`
+  cleanup set a shared event that propagates through nested workflows into AgentNode options. Codex
+  polls the event while communicating, terminates the process tree, and exits without consuming batch
+  retries. Tests cover fail-fast cancellation and main-thread `KeyboardInterrupt` cleanup.
+- Hardened Windows process ownership with a kill-on-close Job Object. If Job assignment is unavailable,
+  the existing `taskkill /T /F` fallback now has a fixed timeout. The parent-exits-first pipe-holder test
+  now runs on Windows as well as POSIX, and a Windows-only, non-network `.cmd` shim test pins exact argv
+  handling for spaces and shell metacharacters.
+- Registered a `paid` pytest marker and marked the live Codex smoke explicitly. `test`, `test-e2e`,
+  `test-debug`, `test-all-local`, and `test-with-skipped` each exclude `paid` in their own marker
+  expression; static Makefile contract tests prevent an environment variable or future target edit from
+  silently collecting the smoke.
+- Changed static Agent schema validation to defer recursively templated schemas until runtime resolution,
+  while still enforcing Claude's statically knowable `max_turns >= 2` rule. Migrated the core guide, both
+  MCP instruction resources, and the core implementation guidance away from stale Claude Code wording;
+  a scoped regression test rejects its return.
+- Decoupled planning history from memo-hit eligibility. Successful cache-disabled executions persist only
+  `llm_usage` and duration under a deterministic reserved history key, never reusable node output. A
+  default Agent run now seeds dry-run duration/API-equivalent cost history and still executes on every run.
+- Promoted effective Agent prompts and bounded tool summaries into canonical single/batch trace fields and
+  report sections. Isolated each batch item's warning channel, retained warnings in per-item traces, and
+  deterministically aggregated indices and kinds into `batch.item-warnings` so parallel schema soft-fails
+  cannot overwrite one another.
+- Validation used the direct virtualenv with the sandbox-safe HOME. Focused Agent, batch, history, trace,
+  report, guide, MCP, Ruff, format, mypy, and asset-sync checks passed. The broad non-e2e/non-paid suite
+  passed, and the isolated loopback UI files passed outside the restricted socket sandbox. The non-paid
+  E2E selection passed except for one unrelated `uv run pflow` test whose temporary working directory
+  could not resolve this worktree's executable. No provider call was made; the paid smoke stayed deselected.

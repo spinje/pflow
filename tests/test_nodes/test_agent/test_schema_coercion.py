@@ -130,8 +130,8 @@ class TestSchemaCoercion:
         assert conforming is False
         assert coerced["continue"] == "maybe"  # Unchanged
 
-    def test_nested_fields_not_coerced(self):
-        """Test that nested object/array fields are NOT coerced (v1 scope limit)."""
+    def test_nested_fields_not_coerced_but_are_validated(self):
+        """Nested fields are not coerced, but whole-schema validation still rejects mismatches."""
         schema = {
             "type": "object",
             "properties": {
@@ -149,12 +149,13 @@ class TestSchemaCoercion:
             "top_level": "true",
             "nested": {"inner": "false"},  # Nested, should NOT be coerced
         }
-        coerced, _conforming, coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
+        coerced, conforming, coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
         assert coerced["top_level"] is True  # Top-level coerced
         assert coerced["nested"]["inner"] == "false"  # Nested NOT coerced
         assert "top_level" in coerced_fields
         assert "nested" not in coerced_fields
+        assert conforming is False
 
     def test_extra_fields_ignored(self):
         """Test that extra fields (not in schema) are ignored."""
@@ -277,6 +278,78 @@ class TestSchemaCoercion:
         assert conforming is True
         assert "flexible_field" in coerced_fields
 
+    @pytest.mark.parametrize(
+        ("field_schema", "value"),
+        [
+            ({"type": "object"}, "not-an-object"),
+            ({"type": "array"}, {"not": "an-array"}),
+            ({"type": "null"}, "not-null"),
+        ],
+    )
+    def test_non_scalar_type_mismatches_are_non_conforming(self, field_schema, value):
+        schema = {"type": "object", "properties": {"value": field_schema}, "required": ["value"]}
+
+        coerced, conforming, fields = AgentNode._coerce_structured_output({"value": value}, schema)
+
+        assert coerced == {"value": value}
+        assert conforming is False
+        assert fields == []
+
+    @pytest.mark.parametrize("declared_types", [["integer", "string"], ["string", "integer"]])
+    def test_valid_union_value_is_preserved_independent_of_order(self, declared_types):
+        schema = {
+            "type": "object",
+            "properties": {"code": {"type": declared_types, "enum": ["03"]}},
+            "required": ["code"],
+        }
+
+        coerced, conforming, fields = AgentNode._coerce_structured_output({"code": "03"}, schema)
+
+        assert coerced == {"code": "03"}
+        assert conforming is True
+        assert fields == []
+
+    def test_union_accepts_valid_object_branch(self):
+        schema = {
+            "type": "object",
+            "properties": {"value": {"type": ["object", "string"]}},
+            "required": ["value"],
+        }
+
+        coerced, conforming, fields = AgentNode._coerce_structured_output({"value": {"ok": True}}, schema)
+
+        assert coerced == {"value": {"ok": True}}
+        assert conforming is True
+        assert fields == []
+
+    def test_enum_uses_json_schema_boolean_number_equality(self):
+        schema = {
+            "type": "object",
+            "properties": {"value": {"enum": [1]}},
+            "required": ["value"],
+        }
+
+        _, conforming, _ = AgentNode._coerce_structured_output({"value": True}, schema)
+
+        assert conforming is False
+
+    def test_whole_schema_validates_nested_required_fields(self):
+        schema = {
+            "type": "object",
+            "properties": {
+                "nested": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                }
+            },
+            "required": ["nested"],
+        }
+
+        _, conforming, _ = AgentNode._coerce_structured_output({"nested": {}}, schema)
+
+        assert conforming is False
+
     def test_mutation_safety(self):
         """Test that coercion returns a new dict, doesn't mutate input."""
         schema = {
@@ -299,14 +372,12 @@ class TestSchemaCoercion:
         assert coerced["field"] is True
         assert coerced is not original  # New dict
 
-    def test_coerce_python_float_to_int(self):
-        """Regression test for float-to-int coercion bug.
+    def test_preserve_schema_valid_integral_float(self):
+        """JSON Schema treats an integral float as an integer-valued number.
 
-        When the SDK returns a Python float (5.0) but schema expects integer,
-        it should coerce. The original implementation only handled STRING "5.0"
-        → int coercion, not actual float 5.0 → int.
-
-        Bug found during verification adversarial testing on 2026-06-03.
+        Recovery coercion must not rewrite values that already satisfy the
+        authored schema; doing so makes unions and enum constraints dependent
+        on Python representation rather than JSON Schema semantics.
         """
         schema = {
             "type": "object",
@@ -315,14 +386,13 @@ class TestSchemaCoercion:
             },
         }
 
-        # Test Python float → int (the bug case)
         structured_output = {"count": 5.0}
         coerced, conforming, coerced_fields = AgentNode._coerce_structured_output(structured_output, schema)
 
-        assert coerced["count"] == 5
-        assert isinstance(coerced["count"], int)
+        assert coerced["count"] == 5.0
+        assert isinstance(coerced["count"], float)
         assert conforming is True
-        assert "count" in coerced_fields
+        assert coerced_fields == []
 
         # Test float with non-integer value (should NOT coerce)
         structured_output = {"count": 5.5}

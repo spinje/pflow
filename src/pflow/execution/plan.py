@@ -2339,17 +2339,20 @@ def _read_stats_from_output(output: Any) -> tuple[float | None, float | None]:
 
 
 def _extract_cost_from_llm_usage(llm_usage: Any) -> float | None:
-    """Read `cost_usd` out of an `llm_usage` dict (if that's its shape).
+    """Read planning cost from an ``llm_usage`` dict.
 
-    Filters out `NaN`/`Inf` — those emit non-standard JSON (`NaN`,
+    Paid ``cost_usd`` wins. Agent transports cannot observe provider billing,
+    so their historical planning estimate lives in
+    ``api_equivalent_cost_usd``. Filters out `NaN`/`Inf` — those emit non-standard JSON (`NaN`,
     `Infinity`) that strict parsers like `jq` reject, silently breaking
     agent cost-gating scripts.
     """
     if not isinstance(llm_usage, dict):
         return None
-    raw = llm_usage.get("cost_usd")
-    if isinstance(raw, (int, float)) and math.isfinite(raw):
-        return float(raw)
+    for cost_key in ("cost_usd", "api_equivalent_cost_usd"):
+        raw = llm_usage.get(cost_key)
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool) and math.isfinite(raw):
+            return float(raw)
     return None
 
 

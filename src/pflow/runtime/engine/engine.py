@@ -61,6 +61,7 @@ from .instrumentation import (
     initialize_execution_state,
     invalidate_cache,
     record_trace,
+    write_execution_history,
     write_memo_cache,
 )
 from .loop_control import evaluate_loop_condition, is_carry_iteration, loop_runtime_scope, resolve_loop_cap
@@ -1371,6 +1372,13 @@ class WorkflowEngine:
                     action,
                     duration_ms=duration_ms,
                     node_type_name=config.node_type_name,
+                )
+            elif escalation is None:
+                write_execution_history(
+                    config.node_id,
+                    shared,
+                    action,
+                    duration_ms=duration_ms,
                 )
 
             # 14. Metrics

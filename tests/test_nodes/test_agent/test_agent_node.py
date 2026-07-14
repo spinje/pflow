@@ -40,6 +40,7 @@ from unittest.mock import patch
 import pytest
 
 from pflow.core.diagnostic import Severity
+from pflow.core.exceptions import PflowError
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.nodes.agent.agent_node import AgentNode
 from pflow.nodes.agent.backend import AgentResult
@@ -741,6 +742,28 @@ def test_sdk_is_error_branch(agent_node):
         assert "Claude CLI reported an error" in shared["_schema_error"]
         assert shared["__warnings__"]["review"]["kind"] == "agent.sdk_error_no_structured_output"
         assert shared["__warnings__"]["review"]["context"]["sdk_exception"]
+
+
+def test_sdk_is_error_without_schema_degrades_free_form_result(agent_node):
+    """Free-form SDK soft-errors retain text but cannot report workflow success."""
+    agent_node.params = {"backend": "claude", "prompt": "Analyze code"}
+    agent_node.node_id = "review"
+    shared: dict[str, Any] = {}
+
+    async def mock_response(*args, **kwargs):
+        yield ResultMessage(result="partial error context", is_error=True)
+        raise ProcessError(exit_code=1, stderr="Claude Code returned an error result")
+
+    with patch("pflow.nodes.agent.claude_backend.query") as mock_query:
+        mock_query.return_value = mock_response()
+        prep_res = agent_node.prep(shared)
+        result = agent_node.exec(prep_res)
+        agent_node.post(shared, prep_res, result)
+
+    assert shared["result"] == "partial error context"
+    assert "free-form response" in shared["_agent_error"]
+    assert "_schema_error" not in shared
+    assert shared["__warnings__"]["review"]["kind"] == "agent.backend_error_free_form"
 
 
 # Test Criteria 22: No response content → Empty result stored
@@ -1583,6 +1606,106 @@ def test_node_retry_lifecycle_raises_backend_translated_error(monkeypatch) -> No
     assert backend.translate_calls == 1
 
 
+def test_schema_retry_propagates_translated_non_retriable_error() -> None:
+    """A deterministic correction failure must not masquerade as a schema miss."""
+
+    class NonRetriableCorrectionError(PflowError):
+        retriable = False
+
+    class Backend:
+        default_model: str | None = "test-model"
+
+        def __init__(self) -> None:
+            self.run_calls = 0
+
+        def run(self, prompt: str, options: dict[str, Any]) -> AgentResult:
+            self.run_calls += 1
+            if self.run_calls == 1:
+                return AgentResult(
+                    result_text='{"continue":"maybe"}',
+                    structured_output={"continue": "maybe"},
+                    metadata={"session_id": "s1", "usage_available": False},
+                )
+            raise RuntimeError("stored account is no longer permitted")
+
+        def continuation_options(self, previous: AgentResult, options: dict[str, Any]) -> dict[str, Any]:
+            return options.copy()
+
+        def translate_error(self, exc: Exception, options: dict[str, Any]) -> Exception:
+            return NonRetriableCorrectionError("account auth rejected")
+
+        def build_warning_context(self, options: dict[str, Any], result: AgentResult) -> dict[str, Any]:
+            return {"backend": "test"}
+
+    backend = Backend()
+    node = AgentNode()
+    prepared = {
+        "_backend": backend,
+        "prompt": "decide",
+        "model": "test-model",
+        "output_schema": {
+            "type": "object",
+            "properties": {"continue": {"type": "boolean"}},
+            "required": ["continue"],
+        },
+        "schema_retries": 1,
+    }
+
+    with pytest.raises(NonRetriableCorrectionError, match="account auth rejected"):
+        node.exec(prepared)
+
+    assert backend.run_calls == 2
+
+
+def test_schema_retry_keeps_prior_result_for_retriable_error() -> None:
+    """Ordinary correction failures retain the inherited DEGRADED fallback."""
+
+    class Backend:
+        default_model: str | None = "test-model"
+
+        def __init__(self) -> None:
+            self.run_calls = 0
+
+        def run(self, prompt: str, options: dict[str, Any]) -> AgentResult:
+            self.run_calls += 1
+            if self.run_calls == 1:
+                return AgentResult(
+                    result_text='{"continue":"maybe"}',
+                    structured_output={"continue": "maybe"},
+                    metadata={"session_id": "s1", "usage_available": False},
+                )
+            raise RuntimeError("temporary transport failure")
+
+        def continuation_options(self, previous: AgentResult, options: dict[str, Any]) -> dict[str, Any]:
+            return options.copy()
+
+        def translate_error(self, exc: Exception, options: dict[str, Any]) -> Exception:
+            return ValueError("temporary provider failure")
+
+        def build_warning_context(self, options: dict[str, Any], result: AgentResult) -> dict[str, Any]:
+            return {"backend": "test", "backend_display": "Test backend"}
+
+    backend = Backend()
+    node = AgentNode()
+    prepared = {
+        "_backend": backend,
+        "prompt": "decide",
+        "model": "test-model",
+        "output_schema": {
+            "type": "object",
+            "properties": {"continue": {"type": "boolean"}},
+            "required": ["continue"],
+        },
+        "schema_retries": 1,
+    }
+
+    result = node.exec(prepared)
+
+    assert backend.run_calls == 2
+    assert result["result_text"] == '{"continue":"maybe"}'
+    assert result["retry_metadata"] == {"attempts": 1, "coerced_fields": [], "conforming": False}
+
+
 def test_runtime_and_validator_agree_on_max_turns_with_schema(agent_node: Any) -> None:
     """The cross-rule ``max_turns >= 2 when output_schema is set`` is enforced
     on both surfaces. Runtime checks happen in ``prep()`` (not ``_validate_schema``),
@@ -1677,6 +1800,41 @@ def test_static_validator_accepts_shared_use_api_key_param(backend: str) -> None
     )
 
     assert diagnostics == []
+
+
+@pytest.mark.parametrize("backend", ["claude", "codex"])
+def test_static_validator_defers_schema_with_nested_template_type(backend: str) -> None:
+    params: dict[str, Any] = {
+        "backend": backend,
+        "prompt": "test",
+        "output_schema": {
+            "type": "${schema.type}",
+            "properties": {"result": {"type": "string"}},
+        },
+    }
+    if backend == "claude":
+        params["max_turns"] = 2
+    diagnostics = WorkflowValidator._validate_agent_params(
+        "review",
+        params,
+    )
+
+    assert diagnostics == []
+
+
+def test_nested_templated_schema_still_enforces_claude_turn_floor() -> None:
+    diagnostics = WorkflowValidator._validate_agent_params(
+        "review",
+        {
+            "backend": "claude",
+            "prompt": "test",
+            "max_turns": 1,
+            "output_schema": {"type": "${schema.type}"},
+        },
+    )
+
+    assert len(diagnostics) == 1
+    assert "max_turns must be >= 2" in diagnostics[0].message
 
 
 def test_runtime_validator_accepts_shared_inputs_param(agent_node: Any) -> None:
@@ -2031,7 +2189,8 @@ def test_schema_retry_records_superseded_attempt_for_cost(agent_node):
     assert agg["input_tokens"] == 300
     assert agg["output_tokens"] == 30
     assert agg["num_turns"] == 5
-    assert agg["cost_usd"] == pytest.approx(0.03)
+    assert agg["cost_usd"] is None
+    assert agg["api_equivalent_cost_usd"] == pytest.approx(0.03)
 
 
 def test_schema_retry_without_session_id_keeps_first_result(agent_node) -> None:
@@ -2169,6 +2328,7 @@ def test_post_emits_inclusive_input_tokens_with_cache(agent_node):
         "cache_read_input_tokens",
         "input_token_accounting",
         "cost_usd",
+        "api_equivalent_cost_usd",
         "duration_ms",
         "num_turns",
         "session_id",

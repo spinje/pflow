@@ -1127,7 +1127,7 @@ Works with or without template variables. Handles nested objects and arrays.
 **Before adding processing steps:**
 
 1. **Can the source produce cleaner output?**
-   - LLM or Claude Code: Use `output_schema` (JSON Schema in a `yaml output_schema` code block) to produce model-derived structured data at the source. Claude Code requires top-level `type: object` and `max_turns >= 2`.
+   - LLM or Agent: Use `output_schema` (JSON Schema in a `yaml output_schema` code block) to produce model-derived structured data at the source. Agent backends require top-level `type: object`; Claude additionally requires `max_turns >= 2`.
    - HTTP: Check if API has a `format=json` parameter
    - **If yes → Fix at source instead of adding nodes**
 
@@ -2116,7 +2116,7 @@ Extract nested field? → Template variable ${node.path.to.field}
 Transform/compute?    → code node
 Combine/concatenate?  → code node or templates
 Parse existing text deterministically → structured? → code node
-Need model judgment as structured data? → LLM/Claude Code with output_schema
+Need model judgment as structured data? → LLM/Agent with output_schema
 Need meaning/reasoning? → LLM (only if creative decisions needed)
 Run external tool?    → shell node (git, curl, docker, ffmpeg)
 File download?        → shell+curl
@@ -2151,7 +2151,7 @@ Format: `verb-noun-qualifier`
 2. **Understand step order vs templates** - Execution order vs data access
 3. **Test only when needed** - Skip if passing whole `${node.result}`
 4. **Phase complex workflows** - Build incrementally
-5. **Use templates for extraction, code node for transformation** - use `output_schema` on LLM/Claude Code for model-derived structured data
+5. **Use templates for extraction, code node for transformation** - use `output_schema` on LLM/Agent for model-derived structured data
 6. **Every value becomes input** - Unless explicitly "always"
 7. **Format user-facing output** - Never show raw JSON
 8. **Document actual structures** - Not what docs claim

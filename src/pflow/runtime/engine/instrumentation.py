@@ -514,6 +514,36 @@ def write_memo_cache(
         memo_cache.put(cache_key, node_id, workflow_path, action or "default", output_dict)
 
 
+def write_execution_history(
+    node_id: str,
+    shared: dict,
+    action: str = "default",
+    *,
+    duration_ms: float,
+) -> None:
+    """Persist stats for a cache-disabled execution without creating a memo hit.
+
+    One deterministic history key per workflow/node is overwritten on each run.
+    Real memo keys are MD5 digests, so the reserved prefix can never match a
+    runtime lookup. Only planning telemetry is stored, never reusable output.
+    """
+    if str(action).startswith("error"):
+        return
+    memo_cache = shared.get("__memoization_cache__")
+    if not memo_cache:
+        return
+    node_output = shared.get(node_id)
+    if node_output is None:
+        return
+    workflow_path = shared.get("_pflow_workflow_file")
+    identity = f"{workflow_path or '<inline>'}\0{node_id}".encode()
+    history_key = "__pflow_history__:" + hashlib.sha256(identity).hexdigest()
+    output_dict: dict[str, Any] = {"__pflow_stats__": {"duration_ms": float(duration_ms)}}
+    if isinstance(node_output, dict) and isinstance(node_output.get("llm_usage"), dict):
+        output_dict["llm_usage"] = dict(node_output["llm_usage"])
+    memo_cache.put(history_key, node_id, workflow_path, action or "default", output_dict)
+
+
 # --- Metrics & Tracing ---
 
 

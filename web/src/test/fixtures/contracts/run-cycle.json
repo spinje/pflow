@@ -1674,6 +1674,7 @@
     "agent": {
       "result": "str|dict",
       "_schema_error": "str",
+      "_agent_error": "str",
       "llm_usage": "dict"
     },
     "code": {

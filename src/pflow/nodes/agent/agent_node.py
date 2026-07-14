@@ -7,6 +7,8 @@ import logging
 import os
 from typing import Any
 
+from jsonschema.validators import validator_for
+
 from pflow.core.node import Node
 from pflow.nodes.agent.backend import AgentBackend, AgentResult
 from pflow.nodes.agent.schema_validation import (
@@ -18,6 +20,7 @@ from pflow.nodes.agent.schema_validation import (
 
 logger = logging.getLogger(__name__)
 RESTRICTED_DIRECTORIES = ["/", "/etc", "/usr", "/bin", "/sbin", "/lib", "/sys", "/proc"]
+_NO_COERCION = object()
 
 
 class AgentNode(Node):
@@ -46,6 +49,7 @@ class AgentNode(Node):
     - Params: sandbox: dict|str  # Claude dict or Codex sandbox mode, depending on backend
     - Writes: shared["result"]: str|dict  # Text or parsed structured output
     - Writes: shared["_schema_error"]: str  # Structured-output soft-failure detail (optional)
+    - Writes: shared["_agent_error"]: str  # Backend soft-error detail outside schema mode (optional)
     - Writes: shared["llm_usage"]: dict  # Normalized token/session metadata
     """
 
@@ -280,6 +284,7 @@ class AgentNode(Node):
             "timeout": self._validate_timeout(self.params.get("timeout")),
             "schema_retries": self._validate_schema_retries(self.params.get("schema_retries")),
             "use_api_key": validate_use_api_key(self.params.get("use_api_key")),
+            "_cancel_event": shared.get("__pflow_cancel_event__"),
             "_backend": backend,
         }
         prepared.update(backend.validate_params(self.params))
@@ -328,7 +333,14 @@ class AgentNode(Node):
                     else:
                         conforming = False
                 except Exception as exc:
-                    logger.warning("Schema retry attempt %d failed: %s. Keeping original result.", attempts, exc)
+                    translated = backend.translate_error(exc, continuation)
+                    if getattr(translated, "retriable", True) is False:
+                        raise translated from None
+                    logger.warning(
+                        "Schema retry attempt %d failed with %s. Keeping original result.",
+                        attempts,
+                        type(translated).__name__,
+                    )
                     conforming = False
                     break
         exec_res = {
@@ -359,6 +371,7 @@ class AgentNode(Node):
             "input_token_accounting": metadata.get("input_token_accounting"),
             "output_tokens": metadata.get("output_tokens", 0) or 0,
             "cost_usd": metadata.get("cost_usd"),
+            "api_equivalent_cost_usd": metadata.get("api_equivalent_cost_usd"),
             "duration_ms": metadata.get("duration_ms"),
             "num_turns": metadata.get("num_turns"),
             "session_id": metadata.get("session_id"),
@@ -377,14 +390,14 @@ class AgentNode(Node):
         raise backend.translate_error(exc, prep_res) from None
 
     @staticmethod
-    def _coerce_structured_output(  # noqa: C901 - Legitimate complexity for multi-type coercion
-        structured_output: Any, schema: dict[str, Any]
-    ) -> tuple[dict[str, Any], bool, list[str]]:
-        """Coerce scalar fields in structured output to match schema types.
+    def _coerce_structured_output(structured_output: Any, schema: dict[str, Any]) -> tuple[Any, bool, list[str]]:
+        """Apply canonical top-level scalar coercions, then validate the result.
 
         This handles Shape B failures where the agent returns structurally-valid
         output but a scalar field has the wrong type (e.g., {"continue": "false"}
-        for a declared boolean). Applies canonical coercion only:
+        for a declared boolean). JSON Schema remains the conformance oracle;
+        coercion never changes a value that already validates. Applies canonical
+        coercion only:
         - boolean: "true"/"false" (case-insensitive, stripped) → True/False
         - integer/number: numeric strings ("3", "3.0") → int/float
         - string: non-string scalar → str()
@@ -396,165 +409,113 @@ class AgentNode(Node):
         Returns:
             Tuple of (coerced_output, conforming, coerced_fields):
             - coerced_output: New dict with coerced scalar values
-            - conforming: True if all top-level scalar types match the schema AND every
-              enum/const constraint is satisfied
+            - conforming: True if the complete coerced result validates against schema
             - coerced_fields: List of field names that were coerced
 
-        Edge cases (defensive — coerce nothing, never raise):
-        - Schema missing 'properties' → unconstrained object: conforming as-is, no coercion
-        - Nested/array fields → not coerced; enum/const on them is still checked
-        - Extra fields (not in schema) → ignore
-        - Missing required fields → mark as non-conforming
-        - enum / const → value must be in the allowed set / equal the const, else non-conforming
-        - type: ["string", "null"] → coerce only if result matches after coercion
+        Nested values are validated but not coerced. Invalid schemas and unsupported
+        coercion shapes fail closed as non-conforming rather than raising from this
+        recovery helper.
         """
-        # Guard: structured_output must be a dict
         if not isinstance(structured_output, dict):
             return structured_output, False, []
 
-        # An object schema without a 'properties' dict is unconstrained (JSON Schema
-        # permits it): there are no declared scalar fields to coerce or judge, so a dict
-        # output conforms as-is. Returning False here would wrongly mark valid generic-object
-        # output non-conforming, trigger a pointless retry, and then drop it to raw text. The
-        # non-dict guard above still rejects a genuinely wrong-shaped (non-dict) output.
+        original = structured_output.copy()
+        if AgentNode._schema_accepts(original, schema):
+            return original, True, []
+
         properties = schema.get("properties")
         if not isinstance(properties, dict):
-            return structured_output, True, []
+            return original, False, []
 
-        required = schema.get("required", [])
-        coerced = structured_output.copy()  # Shallow copy at top level
-        coerced_fields = []
-        all_conform = True
+        coerced = original.copy()
+        coerced_fields: list[str] = []
 
         for field_name, field_schema in properties.items():
-            if not isinstance(field_schema, dict):
+            if not isinstance(field_schema, dict) or field_name not in coerced:
                 continue
 
             runtime_value = coerced.get(field_name)
+            if AgentNode._schema_accepts(runtime_value, field_schema):
+                continue
+
             declared_type = field_schema.get("type")
-
-            # Missing required field → non-conforming (cannot coerce what isn't there)
-            if field_name not in coerced and field_name in required:
-                all_conform = False
-                continue
-
-            # Field not present and not required → skip
-            if field_name not in coerced:
-                continue
-
-            # Handle type as array (e.g., ["string", "null"])
             type_list = (
                 [declared_type]
                 if isinstance(declared_type, str)
                 else (declared_type if isinstance(declared_type, list) else [])
             )
+            # Coercion order is canonical rather than authored-union order so
+            # equivalent schemas cannot produce different Python values.
+            for target_type in ("boolean", "integer", "number", "string"):
+                if target_type not in type_list:
+                    continue
+                candidate = AgentNode._coerce_scalar_candidate(runtime_value, target_type)
+                if candidate is _NO_COERCION or not AgentNode._schema_accepts(candidate, field_schema):
+                    continue
+                coerced[field_name] = candidate
+                coerced_fields.append(field_name)
+                break
 
-            # Only recognized SCALAR types are coerced (v1). A field whose declared type is
-            # array/object/unknown is accepted as-is — we never reject the whole output for a
-            # non-scalar field we don't coerce (a genuine nested mismatch is a Shape-A soft-fail
-            # the retry handles). Without this guard, ANY schema with an array/object field would
-            # be marked non-conforming and the valid output dropped to a raw-string soft-fail.
-            is_scalar_field = any(t in ("boolean", "integer", "number", "string") for t in type_list)
+        return coerced, AgentNode._schema_accepts(coerced, schema), coerced_fields
 
-            # If "null" is in type list and runtime is None, accept as conforming
-            if (None in type_list or "null" in type_list) and runtime_value is None:
-                continue  # Conforming
+    @staticmethod
+    def _schema_accepts(instance: Any, schema: dict[str, Any]) -> bool:
+        """Return JSON Schema conformance without letting recovery validation raise."""
+        try:
+            validator_class = validator_for(schema)
+            return validator_class(schema).is_valid(instance)
+        except Exception:
+            return False
 
-            # Try to coerce for each type in the list
-            coerced_value = runtime_value
-            coercion_succeeded = False
+    @staticmethod
+    def _coerce_scalar_candidate(value: Any, target_type: str) -> Any:
+        """Return one canonical scalar candidate or ``_NO_COERCION``."""
+        coercers = {
+            "boolean": AgentNode._coerce_boolean,
+            "integer": AgentNode._coerce_integer,
+            "number": AgentNode._coerce_number,
+            "string": AgentNode._coerce_string,
+        }
+        coercer = coercers.get(target_type)
+        if coercer is not None:
+            return coercer(value)
+        return _NO_COERCION
 
-            for target_type in type_list:
-                if target_type == "null":
-                    continue  # Already handled above
+    @staticmethod
+    def _coerce_boolean(value: Any) -> Any:
+        if not isinstance(value, str):
+            return _NO_COERCION
+        normalized = value.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+        return _NO_COERCION
 
-                # Boolean coercion
-                if target_type == "boolean":
-                    if isinstance(runtime_value, bool):
-                        coercion_succeeded = True
-                        break
-                    if isinstance(runtime_value, str):
-                        normalized = runtime_value.strip().lower()
-                        if normalized == "true":
-                            coerced_value = True
-                            coercion_succeeded = True
-                            break
-                        elif normalized == "false":
-                            coerced_value = False
-                            coercion_succeeded = True
-                            break
+    @staticmethod
+    def _coerce_integer(value: Any) -> Any:
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        if not isinstance(value, str):
+            return _NO_COERCION
+        try:
+            number = float(value)
+        except (ValueError, OverflowError):
+            return _NO_COERCION
+        return int(number) if number.is_integer() else _NO_COERCION
 
-                # Integer coercion
-                elif target_type == "integer":
-                    if isinstance(runtime_value, int) and not isinstance(runtime_value, bool):
-                        coercion_succeeded = True
-                        break
-                    # Coerce float to int if it's an integer value (e.g., 5.0 → 5)
-                    if isinstance(runtime_value, float) and runtime_value.is_integer():
-                        coerced_value = int(runtime_value)
-                        coercion_succeeded = True
-                        break
-                    if isinstance(runtime_value, str):
-                        try:
-                            # Accept "3" or "3.0" as integers
-                            float_val = float(runtime_value)
-                            if float_val.is_integer():
-                                coerced_value = int(float_val)
-                                coercion_succeeded = True
-                                break
-                        except (ValueError, OverflowError):
-                            pass
+    @staticmethod
+    def _coerce_number(value: Any) -> Any:
+        if not isinstance(value, str):
+            return _NO_COERCION
+        try:
+            return float(value)
+        except (ValueError, OverflowError):
+            return _NO_COERCION
 
-                # Number coercion
-                elif target_type == "number":
-                    if isinstance(runtime_value, (int, float)) and not isinstance(runtime_value, bool):
-                        coercion_succeeded = True
-                        break
-                    if isinstance(runtime_value, str):
-                        try:
-                            coerced_value = float(runtime_value)
-                            coercion_succeeded = True
-                            break
-                        except (ValueError, OverflowError):
-                            pass
-
-                # String coercion
-                elif target_type == "string":
-                    if isinstance(runtime_value, str):
-                        coercion_succeeded = True
-                        break
-                    # Coerce non-string scalars to string (but NOT None - that's non-conforming)
-                    # Converting None to "None" string is silent corruption
-                    if isinstance(runtime_value, (bool, int, float)):
-                        coerced_value = str(runtime_value)
-                        coercion_succeeded = True
-                        break
-
-            # Apply coercion if it succeeded and value/type changed
-            # Note: 5 != 5.0 is False (numerically equal), so also check type
-            if coercion_succeeded:
-                if coerced_value != runtime_value or type(coerced_value) is not type(runtime_value):
-                    coerced[field_name] = coerced_value
-                    coerced_fields.append(field_name)
-            elif is_scalar_field:
-                # A recognized scalar field we could NOT coerce → genuinely non-conforming
-                # (triggers retry). Non-scalar/unknown fields fall through as conforming, since
-                # scalar coercion is the only thing this pass judges in v1.
-                all_conform = False
-
-            # enum / const are the common constrained-string patterns (e.g.
-            # risk_level: {enum: [...]}). Type coercion alone can't judge them: a value of
-            # the right TYPE but outside the allowed set must be non-conforming so the retry
-            # can re-prompt. Checked against the post-coercion value. Scope is deliberately
-            # enum + const ONLY — this is not a general JSON Schema validator.
-            final_value = coerced.get(field_name)
-            field_enum = field_schema.get("enum")
-            if (isinstance(field_enum, list) and field_enum and final_value not in field_enum) or (
-                "const" in field_schema and final_value != field_schema["const"]
-            ):
-                all_conform = False
-
-        return coerced, all_conform, coerced_fields
+    @staticmethod
+    def _coerce_string(value: Any) -> Any:
+        return str(value) if isinstance(value, (bool, int, float)) else _NO_COERCION
 
     def _store_results(
         self,
@@ -605,6 +566,7 @@ class AgentNode(Node):
                 "output_tokens": output_tokens,
                 "total_tokens": metadata.get("total_tokens", input_tokens + output_tokens) or 0,
                 "cost_usd": metadata.get("cost_usd"),
+                "api_equivalent_cost_usd": metadata.get("api_equivalent_cost_usd"),
                 "duration_ms": metadata.get("duration_ms"),
                 "num_turns": metadata.get("num_turns"),
                 "session_id": metadata.get("session_id"),
@@ -616,12 +578,13 @@ class AgentNode(Node):
             if retry_usages:
                 shared["llm_usage"]["retries"] = retry_usages
                 logger.debug("Stored %d schema retry attempts in llm_usage", len(retry_usages))
-            if metadata.get("cost_usd"):
-                logger.info("Agent execution cost: $%s", metadata["cost_usd"])
+            if metadata.get("api_equivalent_cost_usd"):
+                logger.info("Agent API-equivalent cost estimate: $%s", metadata["api_equivalent_cost_usd"])
         else:
             shared["llm_usage"] = {}
 
         # Store tool usage for trace visibility
+        shared["_agent_prompt"] = prep_res["prompt"]
         if tool_uses:
             shared["_agent_tools"] = [
                 {
@@ -635,6 +598,19 @@ class AgentNode(Node):
         # If no schema, store text directly
         if not has_schema:
             shared["result"] = result_text
+            if is_error_from_backend:
+                backend_display = warning_context.get("backend_display", "Agent backend")
+                self._emit_soft_fail_signal(
+                    shared,
+                    node_id,
+                    kind="agent.backend_error_free_form",
+                    msg=(
+                        f"{backend_display} reported an error while producing a free-form response. "
+                        "Raw text was retained in result; check backend error details."
+                    ),
+                    warning_context=warning_context,
+                    fallback_key="_agent_error",
+                )
             return
 
         # Extract retry metadata for soft-fail signaling
@@ -771,10 +747,12 @@ class AgentNode(Node):
         msg: str,
         warning_context: dict[str, Any],
         retry_attempts: int = 0,
+        fallback_key: str = "_schema_error",
     ) -> None:
         """Centralized soft-fail signaling for structured-output mode.
 
-        Writes ``_schema_error`` (via ``setdefault`` so an earlier writer wins)
+        Writes the selected fallback detail key (``_schema_error`` by default,
+        via ``setdefault`` so an earlier writer wins)
         and a structured ``__warnings__[node_id]`` entry when ``node_id`` is
         bound. The ``__warnings__`` entry is what flips workflow status to
         ``DEGRADED``; ``_schema_error`` is the fallback signal that survives
@@ -783,7 +761,7 @@ class AgentNode(Node):
         Args:
             retry_attempts: Number of schema retry attempts made (0 = no retries)
         """
-        shared.setdefault("_schema_error", msg)
+        shared.setdefault(fallback_key, msg)
         if node_id is not None:
             warning_entry: dict[str, Any] = {
                 "kind": kind,

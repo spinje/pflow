@@ -749,6 +749,23 @@ class TestBuildNodeFile:
         assert "- Tokens: 1,000 in / 200 out" in md
         assert "- Paid this run: $0.0420" in md
 
+    def test_agent_estimate_is_not_rendered_as_paid_cost(self) -> None:
+        event = _make_event(
+            llm_call={
+                "model": "gpt-5.5",
+                "input_tokens": 1000,
+                "output_tokens": 200,
+                "cost_usd": None,
+                "api_equivalent_cost_usd": 0.042,
+                "num_turns": 1,
+            }
+        )
+
+        md = _build_node_file(event)
+
+        assert "- Paid this run: —" in md
+        assert "- API-equivalent estimate: $0.0420" in md
+
     def test_llm_metadata_shows_turns_and_session(self) -> None:
         # agent nodes carry num_turns (agent loop effort) and session_id.
         event = _make_event(
@@ -1786,6 +1803,26 @@ class TestCostInTables:
         )
         md = _build_summary(trace, source_path="test")
         assert "Total cost: $0.0847" in md
+
+    def test_summary_header_labels_api_equivalent_estimate(self) -> None:
+        trace = _make_trace(
+            llm_summary={
+                "total_calls": 1,
+                "total_tokens": 5000,
+                "total_cost_usd": None,
+                "pricing_available": False,
+                "unavailable_models": [{"name": "gpt-5.5", "calls": 1}],
+                "unavailable_models_unnamed_count": 0,
+                "total_api_equivalent_cost_usd": 0.0847,
+                "models_used": ["gpt-5.5"],
+            }
+        )
+
+        md = _build_summary(trace, source_path="test")
+
+        assert "Total cost: —" in md
+        assert "API-equivalent estimate: $0.0847" in md
+        assert "Total cost: $0.0847" not in md
 
 
 # --- Error summary ---
@@ -3141,3 +3178,23 @@ def test_resolve_final_status_does_not_flip_stored_failed_without_failed_node_id
     # Authoritative branch: failed_node_ids present → trust the stored final_status.
     modern = {"failed_node_ids": ["a"], "final_status": "failed", "nodes": []}
     assert _resolve_final_status(modern) == "failed"
+
+
+def test_agent_report_renders_promoted_prompt_and_tools() -> None:
+    event = _make_event(
+        node_id="review",
+        node_type="AgentNode",
+        llm_prompt="Inspect repository",
+        agent_tools=[
+            {"name": "shell", "input_summary": "git status"},
+            {"name": "read_file", "input_summary": "src/pflow/app.py"},
+        ],
+        node_output={"result": "done"},
+    )
+
+    markdown = _build_node_file(event)
+
+    assert "## Prompt\n\nInspect repository" in markdown
+    assert "## Tools" in markdown
+    assert "- `shell`: git status" in markdown
+    assert "- `read_file`: src/pflow/app.py" in markdown

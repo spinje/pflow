@@ -161,6 +161,7 @@ Registered in `pyproject.toml`:
 - **`serial`**: Tests that must run sequentially (deselect with `-m "not serial"`)
 - **`integration`**: Cross-component integration tests (rarely used — only 2 spots; subprocess/pipe tests use the `e2e` marker instead)
 - **`e2e`**: Real process, shell-pipe, external CLI boundary, or other slow environment-boundary tests. Excluded from default `make test`; run with `make test-e2e`.
+- **`paid`**: A real provider/model call that can incur charges. Every safe Make target excludes it independently of environment variables; only explicitly paid targets such as `make test-all` may select it.
 - **`trace_files`**: Tests that need real workflow trace JSON files. Without this marker, `save_to_file()` is a no-op under pytest.
 
 Other markers used across the suite:
@@ -172,13 +173,13 @@ Other markers used across the suite:
 
 | Command | Workers | What it excludes |
 |---------|---------|-----------------|
-| `make test` | `-n 4` | `test_llm_integration.py`, `e2e` |
-| `make test-debug` | sequential | Only `test_llm_integration.py` (does NOT exclude `e2e`) |
-| `make test-e2e` | `-n 4 --dist=worksteal` | Non-`e2e`, LLM integration |
-| `make test-all-local` | `-n 4 --dist=worksteal` | `test_llm_integration.py` only |
+| `make test` | `-n 4` | `test_llm_integration.py`, `e2e`, `paid` |
+| `make test-debug` | sequential | `test_llm_integration.py`, `paid` (does NOT exclude non-paid `e2e`) |
+| `make test-e2e` | `-n 4 --dist=worksteal` | Non-`e2e`, LLM integration, `paid` |
+| `make test-all-local` | `-n 4 --dist=worksteal` | `test_llm_integration.py`, `paid` |
 | `make test-llm` | sequential | Only runs LLM-specific tests |
 | `make test-all` | `-n 4` | Nothing — runs everything |
-| `make test-with-skipped` | sequential | LLM integration — shows non-paid skip reasons |
+| `make test-with-skipped` | sequential | LLM integration, `paid` — shows non-paid skip reasons |
 
 All commands include `--doctest-modules`, but `pyproject.toml` sets `testpaths = ["tests"]`, so collection only ever reaches `tests/` — **`src/pflow/` doctests are NOT collected by any `make` target**. They run only when pytest is pointed directly at a source path, e.g. `pytest --doctest-modules src/pflow/runtime/template_validation/type_checker.py`. Keep src doctests runnable anyway: if `testpaths` ever gains `src`, a stale example becomes a build failure.
 

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -18,7 +20,9 @@ from pflow.nodes.agent.backend import AgentResult
 from pflow.nodes.agent.codex_backend import (
     CodexBackend,
     CodexEventParseError,
+    CodexModelTimeoutError,
     CodexNonRetriableError,
+    CodexProcessCancelledError,
     CodexProcessError,
     _AuthClass,
     _build_child_env,
@@ -142,7 +146,7 @@ class TestCodexProcessLifecycle:
             lambda process_group, sig: killed_groups.append((process_group, sig)),
         )
 
-        with pytest.raises(subprocess.TimeoutExpired) as exc_info:
+        with pytest.raises(CodexModelTimeoutError) as exc_info:
             _run_codex_process(argv, cwd="/work", timeout=30, env={"SAFE": "1"})
 
         assert popen_kwargs == {
@@ -158,8 +162,9 @@ class TestCodexProcessLifecycle:
         assert communicate_timeouts == [30, 1]
         assert killed_groups == [(1234, codex_module.signal.SIGKILL)]
         assert process.kill_calls == 1
-        assert exc_info.value.output == "drained stdout"
-        assert exc_info.value.stderr == "drained stderr"
+        assert "test" not in str(exc_info.value)
+        assert exc_info.value.__cause__ is None
+        assert exc_info.value.__context__ is None
 
     def test_windows_timeout_uses_taskkill_for_descendants(self, monkeypatch: pytest.MonkeyPatch) -> None:
         argv = ["codex", "exec", "--", "test"]
@@ -198,7 +203,7 @@ class TestCodexProcessLifecycle:
         monkeypatch.setattr(codex_module.subprocess, "run", fake_run)
         monkeypatch.setattr(codex_module.shutil, "which", lambda executable: f"/bin/{executable}")
 
-        with pytest.raises(subprocess.TimeoutExpired):
+        with pytest.raises(CodexModelTimeoutError):
             _run_codex_process(argv, cwd="C:/work", timeout=30, env={})
 
         assert popen_kwargs["creationflags"] == 512
@@ -206,18 +211,88 @@ class TestCodexProcessLifecycle:
         assert taskkill_calls == [
             (
                 ["/bin/taskkill", "/PID", "2468", "/T", "/F"],
-                {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL, "check": False},
+                {
+                    "stdout": subprocess.DEVNULL,
+                    "stderr": subprocess.DEVNULL,
+                    "check": False,
+                    "timeout": codex_module._WINDOWS_TASKKILL_TIMEOUT_SECONDS,
+                },
             )
         ]
         assert process.kill_calls == 1
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group behavior")
+    def test_batch_cancellation_terminates_process_without_waiting_for_model_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        argv = ["codex", "exec", "--", "secret prompt"]
+        cancel_event = threading.Event()
+        cancel_event.set()
+        terminated: list[int] = []
+
+        class FakeProcess:
+            pid = 9001
+            returncode = -9
+
+            def communicate(self, *, timeout: float) -> tuple[str, str]:
+                return "", ""
+
+            def kill(self) -> None:
+                return None
+
+        monkeypatch.setattr(codex_module, "_IS_WINDOWS", False)
+        monkeypatch.setattr(codex_module.subprocess, "Popen", lambda *_args, **_kwargs: FakeProcess())
+        monkeypatch.setattr(
+            codex_module,
+            "_terminate_codex_process_tree",
+            lambda proc, windows_job=None: terminated.append(proc.pid),
+        )
+
+        with pytest.raises(CodexProcessCancelledError) as exc_info:
+            _run_codex_process(argv, cwd="/work", timeout=300, env={}, cancel_event=cancel_event)
+
+        assert terminated == [9001]
+        assert "secret prompt" not in str(exc_info.value)
+
+    def test_windows_taskkill_timeout_is_bounded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(codex_module.shutil, "which", lambda _name: "taskkill.exe")
+
+        def timeout(*_args: Any, **_kwargs: Any) -> None:
+            raise subprocess.TimeoutExpired("taskkill", codex_module._WINDOWS_TASKKILL_TIMEOUT_SECONDS)
+
+        monkeypatch.setattr(codex_module.subprocess, "run", timeout)
+
+        codex_module._terminate_windows_process_tree(1234)
+
+    @pytest.mark.e2e
+    @pytest.mark.skipif(sys.platform != "win32", reason="native Windows .cmd argument boundary")
+    def test_windows_cmd_shim_preserves_exact_arguments(self, tmp_path: Path) -> None:
+        recorder = tmp_path / "record_args.py"
+        output = tmp_path / "args.json"
+        recorder.write_text(
+            "import json, os, sys\n"
+            "from pathlib import Path\n"
+            "Path(os.environ['PFLOW_ARGV_OUTPUT']).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n",
+            encoding="utf-8",
+        )
+        shim = tmp_path / "codex.cmd"
+        shim.write_text(f'@echo off\r\n"{sys.executable}" "{recorder}" %*\r\n', encoding="utf-8")
+        arguments = ["exec", "space value", "amp&value", "percent%value", "caret^value", "bang!value"]
+        env = os.environ.copy()
+        env["PATH"] = str(tmp_path) + os.pathsep + env.get("PATH", "")
+        env["PFLOW_ARGV_OUTPUT"] = str(output)
+
+        completed = _run_codex_process(["codex", *arguments], cwd=str(tmp_path), timeout=10, env=env)
+
+        assert completed.returncode == 0
+        assert json.loads(output.read_text(encoding="utf-8")) == arguments
+
+    @pytest.mark.e2e
     def test_real_timeout_returns_without_waiting_for_grandchild(self, tmp_path: Path) -> None:
         child_code = "import time; time.sleep(10)"
         parent_code = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child_code!r}])"
         started = time.monotonic()
 
-        with pytest.raises(subprocess.TimeoutExpired):
+        with pytest.raises(CodexModelTimeoutError):
             _run_codex_process(
                 [sys.executable, "-c", parent_code],
                 cwd=str(tmp_path),
@@ -357,6 +432,7 @@ class TestCodexArgvAndParsing:
             "reasoning_output_tokens": 2,
             "total_tokens": 14658,
             "cost_usd": None,
+            "api_equivalent_cost_usd": None,
             "duration_ms": result.metadata["duration_ms"],
             "num_turns": 1,
             "session_id": THREAD_ID,
@@ -431,8 +507,10 @@ class TestCodexArgvAndParsing:
         stdout = "\n".join(SUCCESS_JSONL.splitlines()[1:])
         _install_fake_run(monkeypatch, stdout=stdout)
 
-        with pytest.raises(CodexProcessError, match=r"without a thread\.started thread_id"):
+        with pytest.raises(CodexProcessError) as exc_info:
             CodexBackend().run("Continue", _options(tmp_path, resume=THREAD_ID))
+
+        assert exc_info.value.failure_messages == ["Codex resume completed without a thread.started thread_id"]
 
     def test_parser_aggregates_turns_usage_and_command_items(self) -> None:
         stdout = "\n".join([
@@ -467,6 +545,24 @@ class TestCodexArgvAndParsing:
         assert result.metadata["usage_available"] is False
         assert result.metadata["input_tokens"] == 0
 
+    def test_missing_usage_does_not_create_zero_cost_estimate(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        _install_fake_run(monkeypatch, stdout=f'{{"type":"thread.started","thread_id":"{THREAD_ID}"}}')
+        estimator_calls: list[dict[str, Any]] = []
+        monkeypatch.setattr(
+            codex_module,
+            "estimate_completion_cost_usd",
+            lambda **kwargs: estimator_calls.append(kwargs) or 0.0,
+        )
+
+        result = CodexBackend().run("test", _options(tmp_path, model="gpt-5.2-codex"))
+
+        assert estimator_calls == []
+        assert result.metadata["usage_available"] is False
+        assert result.metadata["cost_usd"] is None
+        assert result.metadata["api_equivalent_cost_usd"] is None
+
     def test_missing_last_message_file_is_an_execution_failure(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -480,8 +576,10 @@ class TestCodexArgvAndParsing:
         monkeypatch.setattr(codex_module.subprocess, "run", fake_status_run)
         monkeypatch.setattr(codex_module, "_run_codex_process", fake_model_run)
 
-        with pytest.raises(CodexProcessError, match="without writing --output-last-message"):
+        with pytest.raises(CodexProcessError) as exc_info:
             CodexBackend().run("test", _options(tmp_path))
+
+        assert exc_info.value.failure_messages == ["Codex completed without writing --output-last-message"]
 
     @pytest.mark.parametrize("stdout", ["not json", "[]"])
     def test_parser_rejects_malformed_jsonl(self, stdout: str) -> None:
@@ -500,8 +598,10 @@ class TestCodexArgvAndParsing:
     ) -> None:
         _install_fake_run(monkeypatch, stdout=failure_event)
 
-        with pytest.raises(CodexProcessError, match=r"schema rejected|transport failed"):
+        with pytest.raises(CodexProcessError) as exc_info:
             CodexBackend().run("test", _options(tmp_path))
+
+        assert len(exc_info.value.failure_messages) == 1
 
 
 class TestCodexAccountAuthGuard:
@@ -728,6 +828,7 @@ class TestCodexAgentLifecycle:
             "reasoning_output_tokens": 2,
             "total_tokens": 14658,
             "cost_usd": None,
+            "api_equivalent_cost_usd": None,
             "duration_ms": shared["llm_usage"]["duration_ms"],
             "num_turns": 1,
             "session_id": THREAD_ID,
@@ -748,7 +849,8 @@ class TestCodexAgentLifecycle:
 
         assert node.run(shared) == "default"
         assert shared["llm_usage"]["model"] == "gpt-5.2-codex"
-        assert shared["llm_usage"]["cost_usd"] == pytest.approx(0.00998795)
+        assert shared["llm_usage"]["cost_usd"] is None
+        assert shared["llm_usage"]["api_equivalent_cost_usd"] == pytest.approx(0.00998795)
 
     def test_structured_output_success_runs_through_agent_node(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -803,12 +905,14 @@ class TestCodexAgentLifecycle:
         assert shared["result"] == "still not json"
         assert shared["__warnings__"]["review"]["kind"] == "agent.schema_not_satisfied_after_retries"
         assert len(shared["llm_usage"]["retries"]) == 1
-        assert shared["llm_usage"]["cost_usd"] == pytest.approx(0.00998795)
-        assert shared["llm_usage"]["retries"][0]["cost_usd"] == pytest.approx(0.00998795)
+        assert shared["llm_usage"]["cost_usd"] is None
+        assert shared["llm_usage"]["api_equivalent_cost_usd"] == pytest.approx(0.00998795)
+        assert shared["llm_usage"]["retries"][0]["api_equivalent_cost_usd"] == pytest.approx(0.00998795)
         aggregated = WorkflowTraceCollector.aggregate_llm_usage_with_retries(shared["llm_usage"])
         assert aggregated["reasoning_output_tokens"] == 4
         assert aggregated["input_tokens"] == 29306
-        assert aggregated["cost_usd"] == pytest.approx(0.0199759)
+        assert aggregated["cost_usd"] is None
+        assert aggregated["api_equivalent_cost_usd"] == pytest.approx(0.0199759)
 
     def test_missing_thread_prevents_schema_retry_and_soft_fails(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -832,7 +936,7 @@ class TestCodexAgentLifecycle:
         assert shared["result"] == "not json"
         assert shared["__warnings__"]["review"]["kind"] == "agent.schema_not_satisfied"
 
-    def test_failed_second_preflight_keeps_first_result_without_resume_exec(
+    def test_failed_second_preflight_propagates_non_retriable_error_without_resume_exec(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         calls: list[tuple[list[str], dict[str, Any]]] = []
@@ -871,16 +975,16 @@ class TestCodexAgentLifecycle:
         })
         shared: dict[str, Any] = {}
 
-        assert node.run(shared) == "default"
+        with pytest.raises(CodexNonRetriableError, match="use_api_key") as exc_info:
+            node.run(shared)
         assert [call[0][:2] for call in calls] == [
             ["codex", "login"],
             ["codex", "exec"],
             ["codex", "login"],
         ]
-        assert shared["result"] == "not json"
-        assert shared["__warnings__"]["review"]["kind"] == "agent.schema_not_satisfied_after_retries"
-        assert "DO-NOT-LEAK" not in shared["_schema_error"]
-        assert "retries" not in shared["llm_usage"]
+        assert "DO-NOT-LEAK" not in str(exc_info.value)
+        assert "result" not in shared
+        assert "_schema_error" not in shared
 
 
 class TestCodexErrors:
@@ -953,8 +1057,11 @@ class TestCodexErrors:
         assert len(_status_calls(calls)) == 1
         assert _model_calls(calls) == []
 
-    def test_nonzero_exit_preserves_stderr(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        _install_fake_run(monkeypatch, returncode=2, stderr="bad config")
+    def test_nonzero_exit_does_not_publish_raw_transport_output(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        secret = "transport-secret-must-not-leak"  # noqa: S105 - redaction sentinel
+        _install_fake_run(monkeypatch, returncode=2, stderr=f"bad config {secret}")
 
         with pytest.raises(CodexProcessError) as exc_info:
             CodexBackend().run("test", _options(tmp_path))
@@ -962,7 +1069,8 @@ class TestCodexErrors:
         translated = CodexBackend().translate_error(exc_info.value, _options(tmp_path))
         assert isinstance(translated, ValueError)
         assert "exit code 2" in str(translated)
-        assert "bad config" in str(translated)
+        assert secret not in str(translated)
+        assert secret not in caplog.text
 
     def test_nonzero_exit_preserves_stderr_when_stdout_is_not_json(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -977,12 +1085,97 @@ class TestCodexErrors:
         assert "codex login" in str(translated)
 
     def test_timeout_translation_names_configured_limit(self, tmp_path: Path) -> None:
-        exc = subprocess.TimeoutExpired(["codex"], 45)
+        exc = CodexModelTimeoutError(45)
 
         translated = CodexBackend().translate_error(exc, _options(tmp_path, timeout=45))
 
         assert isinstance(translated, ValueError)
         assert "timed out after 45 seconds" in str(translated)
+
+    def test_schema_retry_timeout_does_not_log_prompt_or_config(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        secret = "schema-timeout-secret-must-not-leak"  # noqa: S105 - redaction sentinel
+        model_calls = 0
+
+        def fake_status_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="Logged in using ChatGPT")
+
+        def fake_model_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            nonlocal model_calls
+            model_calls += 1
+            if model_calls == 2:
+                raise CodexModelTimeoutError(30)
+            message_path = Path(argv[argv.index("--output-last-message") + 1])
+            message_path.write_text("not json", encoding="utf-8")
+            return subprocess.CompletedProcess(argv, 0, stdout=SUCCESS_JSONL, stderr="")
+
+        monkeypatch.setattr(codex_module.subprocess, "run", fake_status_run)
+        monkeypatch.setattr(codex_module, "_run_codex_process", fake_model_run)
+        node = AgentNode()
+        node.node_id = "review"
+        node.set_params({
+            "backend": "codex",
+            "prompt": "Return JSON",
+            "cwd": str(tmp_path),
+            "timeout": 30,
+            "system_prompt": secret,
+            "config": {"secret_setting": secret},
+            "output_schema": {
+                "type": "object",
+                "properties": {"answer": {"type": "string"}},
+                "required": ["answer"],
+            },
+        })
+        shared: dict[str, Any] = {}
+
+        with caplog.at_level("WARNING"):
+            assert node.run(shared) == "default"
+
+        assert shared["result"] == "not json"
+        assert shared["__warnings__"]["review"]["kind"] == "agent.schema_not_satisfied_after_retries"
+        assert secret not in caplog.text
+
+    @pytest.mark.parametrize(
+        "incidental_text",
+        [
+            "agent discussed authentication documentation",
+            'usage snapshot: {"input_tokens":401}',
+            "tool printed unauthorized as ordinary output",
+        ],
+    )
+    def test_incidental_jsonl_text_does_not_become_auth_failure(self, tmp_path: Path, incidental_text: str) -> None:
+        exc = CodexProcessError(
+            argv=["codex", "exec", "secret prompt"],
+            returncode=1,
+            stdout=incidental_text,
+            stderr="temporary transport failure",
+            failure_messages=["transport interrupted"],
+        )
+
+        translated = CodexBackend().translate_error(exc, _options(tmp_path))
+
+        assert isinstance(translated, ValueError)
+        assert not isinstance(translated, CodexNonRetriableError)
+        assert incidental_text not in str(translated)
+
+    def test_failed_jsonl_and_tool_output_never_reach_public_error_or_logs(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        secret = "command-output-secret-must-not-leak"  # noqa: S105 - redaction sentinel
+        exc = CodexProcessError(
+            argv=["codex", "exec", f"prompt {secret}"],
+            returncode=2,
+            stdout=f'{{"type":"item.completed","item":{{"aggregated_output":"{secret}"}}}}',
+            stderr=f"provider failed after seeing {secret}",
+            failure_messages=[f"turn failed with {secret}"],
+        )
+
+        translated = CodexBackend().translate_error(exc, _options(tmp_path))
+
+        assert secret not in str(exc)
+        assert secret not in str(translated)
+        assert secret not in caplog.text
 
     def test_continuation_requires_session_id(self, tmp_path: Path) -> None:
         backend = CodexBackend()
@@ -995,6 +1188,7 @@ class TestCodexErrors:
 
 
 @pytest.mark.e2e
+@pytest.mark.paid
 @pytest.mark.skipif(shutil.which("codex") is None, reason="Codex CLI is not installed")
 def test_real_codex_cli_smoke(tmp_path: Path) -> None:
     """Paid real-surface smoke: subscription auth, JSONL, final file, and usage."""

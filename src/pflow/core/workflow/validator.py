@@ -950,9 +950,12 @@ class WorkflowValidator:
         if output_schema is None:
             return diagnostics
 
-        # Templated values resolve at runtime. Shared backend/schema validation
-        # still runs for literals while composed values defer to ``prep()``.
-        if isinstance(output_schema, str) and "${" in output_schema:
+        # Templated values resolve at runtime, including templates nested inside
+        # a schema dict (for example ``type: ${schema.type}``). Static shape
+        # checks must defer the whole schema rather than reject the unresolved
+        # placeholder as a literal JSON Schema value.
+        if TemplateResolver.has_templates(output_schema):
+            diagnostics.extend(WorkflowValidator._validate_agent_max_turns(node_id, params, valid_backend))
             return diagnostics
 
         if not isinstance(output_schema, dict):

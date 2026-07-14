@@ -415,7 +415,8 @@ class ClaudeBackend:
             **token_fields,
             "output_tokens": output_tokens,
             "total_tokens": token_fields["input_tokens"] + output_tokens,
-            "cost_usd": getattr(message, "total_cost_usd", None),
+            "cost_usd": None,
+            "api_equivalent_cost_usd": getattr(message, "total_cost_usd", None),
             "duration_ms": getattr(message, "duration_ms", None),
             "num_turns": getattr(message, "num_turns", None),
             "session_id": getattr(message, "session_id", None),
@@ -426,8 +427,8 @@ class ClaudeBackend:
             "sdk_stop_reason": getattr(message, "stop_reason", None),
         }
         logger.info(
-            "Captured metadata: cost=$%s, duration=%sms, turns=%s",
-            metadata["cost_usd"],
+            "Captured metadata: api_equivalent_cost=$%s, duration=%sms, turns=%s",
+            metadata["api_equivalent_cost_usd"],
             metadata["duration_ms"],
             metadata["num_turns"],
         )
@@ -436,7 +437,7 @@ class ClaudeBackend:
     def _create_completion_event(self, metadata: dict[str, Any]) -> dict[str, Any]:
         return {
             "type": "completion",
-            "cost": metadata.get("cost_usd"),
+            "api_equivalent_cost": metadata.get("api_equivalent_cost_usd"),
             "duration_ms": metadata.get("duration_ms"),
             "turns": metadata.get("num_turns"),
         }

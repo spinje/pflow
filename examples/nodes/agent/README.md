@@ -121,13 +121,14 @@ ${node.llm_usage.output_tokens}                 # Output tokens
 ${node.llm_usage.total_tokens}                  # Sum of input + output
 ${node.llm_usage.cache_creation_input_tokens}   # Cache-creation tokens
 ${node.llm_usage.cache_read_input_tokens}       # Cache-read tokens
-${node.llm_usage.cost_usd}                      # Cost in USD
+${node.llm_usage.cost_usd}                      # Paid provider cost (unavailable for agent backends)
+${node.llm_usage.api_equivalent_cost_usd}       # API-equivalent comparison estimate
 ${node.llm_usage.duration_ms}                   # Wall-clock duration
 ${node.llm_usage.num_turns}                     # Conversation turns used
 ${node.llm_usage.session_id}                    # Resumable session ID
 ```
 
-`cost_usd` is the SDK-reported API-equivalent estimated cost. Actual billing depends on auth method; Claude Pro/Max subscription runs may report an API-equivalent cost without a direct per-call charge.
+`api_equivalent_cost_usd` is a comparison estimate, not evidence of provider billing. Agent backends leave `cost_usd` unavailable because account credits, subscriptions, API keys, and provider policy determine the actual charge outside pflow.
 
 ## Authentication
 

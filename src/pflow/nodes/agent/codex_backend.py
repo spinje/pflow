@@ -32,17 +32,18 @@ _SANDBOX_MODES = {
     "full-access": "danger-full-access",
 }
 _APPROVAL_POLICIES = frozenset({"untrusted", "on-request", "never"})
-_AUTH_ERROR_MARKERS = (
-    "401",
-    "authentication",
-    "login required",
-    "missing bearer",
-    "not logged in",
-    "unauthorized",
+_AUTH_FAILURE_PATTERN = re.compile(
+    r"(?:\b401\s+unauthorized\b|\bhttp(?: status)?\s*[:=]?\s*401\b|"
+    r"\bapi_error_status\s*[:=\[]\s*401\b|\bmissing bearer\b|"
+    r"\blogin required\b|\bnot logged in\b|\binvalid api key\b|"
+    r"\bauthentication failed\b)",
+    re.IGNORECASE,
 )
 _BARE_TOML_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
 _LOGIN_STATUS_TIMEOUT_SECONDS = 10
 _PROCESS_DRAIN_TIMEOUT_SECONDS = 1
+_PROCESS_POLL_INTERVAL_SECONDS = 0.1
+_WINDOWS_TASKKILL_TIMEOUT_SECONDS = 5
 _IS_WINDOWS = sys.platform == "win32"
 
 
@@ -64,8 +65,26 @@ class CodexEventParseError(Exception):
     """The CLI emitted a non-JSON line despite running with ``--json``."""
 
 
+class CodexModelTimeoutError(PflowError):
+    """Secret-safe timeout from a Codex model process."""
+
+    def __init__(self, timeout_seconds: int) -> None:
+        self.timeout_seconds = timeout_seconds
+        super().__init__(f"Codex execution timed out after {timeout_seconds} seconds")
+
+
+class CodexProcessCancelledError(PflowError):
+    """Internal signal that a parallel batch cancelled this Codex process."""
+
+    cancelled = True
+    retriable = False
+
+    def __init__(self) -> None:
+        super().__init__("Codex execution cancelled by the batch executor")
+
+
 class CodexProcessError(Exception):
-    """Preserve the complete failed-process surface for actionable translation."""
+    """Preserve failed-process evidence behind a secret-safe string surface."""
 
     def __init__(
         self,
@@ -81,8 +100,7 @@ class CodexProcessError(Exception):
         self.stdout = stdout
         self.stderr = stderr
         self.failure_messages = failure_messages or []
-        detail = "\n".join(part for part in [stderr.strip(), *self.failure_messages] if part)
-        super().__init__(detail or f"codex exited with status {returncode}")
+        super().__init__(f"Codex CLI failed with exit code {returncode}")
 
 
 @dataclass
@@ -177,17 +195,115 @@ def _terminate_windows_process_tree(pid: int) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
+            timeout=_WINDOWS_TASKKILL_TIMEOUT_SECONDS,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return
     if completed.returncode != 0:
         logger.debug("taskkill failed while terminating Codex process tree", extra={"pid": pid})
 
 
-def _terminate_codex_process_tree(proc: subprocess.Popen[str]) -> None:
+class _WindowsKillJob:
+    """A Windows Job Object configured to kill assigned processes on close."""
+
+    def __init__(self, handle: Any) -> None:
+        self.handle = handle
+
+    def close(self) -> bool:
+        if self.handle is None:
+            return True
+        try:
+            import ctypes
+
+            closed = bool(ctypes.windll.kernel32.CloseHandle(self.handle))  # type: ignore[attr-defined]
+        except (AttributeError, OSError):
+            closed = False
+        self.handle = None
+        return closed
+
+
+def _create_windows_kill_job(proc: subprocess.Popen[str]) -> _WindowsKillJob | None:
+    """Assign ``proc`` to a kill-on-close Job Object, falling back safely."""
+    if not _IS_WINDOWS:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _BasicLimitInformation(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_longlong),
+                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class _IoCounters(ctypes.Structure):
+            _fields_ = [
+                (name, ctypes.c_ulonglong)
+                for name in (
+                    "ReadOperationCount",
+                    "WriteOperationCount",
+                    "OtherOperationCount",
+                    "ReadTransferCount",
+                    "WriteTransferCount",
+                    "OtherTransferCount",
+                )
+            ]
+
+        class _ExtendedLimitInformation(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _BasicLimitInformation),
+                ("IoInfo", _IoCounters),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        create_job = kernel32.CreateJobObjectW
+        create_job.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        create_job.restype = wintypes.HANDLE
+        set_information = kernel32.SetInformationJobObject
+        set_information.argtypes = [wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+        set_information.restype = wintypes.BOOL
+        assign_process = kernel32.AssignProcessToJobObject
+        assign_process.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        assign_process.restype = wintypes.BOOL
+
+        handle = create_job(None, None)
+        if not handle:
+            return None
+        job = _WindowsKillJob(handle)
+        information = _ExtendedLimitInformation()
+        information.BasicLimitInformation.LimitFlags = 0x00002000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        configured = set_information(
+            handle,
+            9,  # JobObjectExtendedLimitInformation
+            ctypes.byref(information),
+            ctypes.sizeof(information),
+        )
+        process_handle = getattr(proc, "_handle", None)
+        assigned = process_handle is not None and assign_process(handle, process_handle)
+        if not configured or not assigned:
+            job.close()
+            return None
+        return job
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def _terminate_codex_process_tree(proc: subprocess.Popen[str], windows_job: _WindowsKillJob | None = None) -> None:
     """Forcefully stop the Codex process tree after timeout or interruption."""
     if _IS_WINDOWS:
-        _terminate_windows_process_tree(proc.pid)
+        if windows_job is None or not windows_job.close():
+            _terminate_windows_process_tree(proc.pid)
     else:
         killpg = getattr(os, "killpg", None)
         if killpg is not None:
@@ -206,6 +322,7 @@ def _run_codex_process(
     cwd: str,
     timeout: int,
     env: dict[str, str],
+    cancel_event: Any | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run one Codex model process and clean up its descendants on abort.
 
@@ -231,27 +348,53 @@ def _run_codex_process(
         env=env,
         **platform_kwargs,
     )
+    windows_job = _create_windows_kill_job(proc)
+    timeout_error: CodexModelTimeoutError | None = None
     try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        _terminate_codex_process_tree(proc)
-        try:
-            stdout, stderr = proc.communicate(timeout=_PROCESS_DRAIN_TIMEOUT_SECONDS)
-        except (OSError, subprocess.TimeoutExpired):
-            stdout = exc.output or ""
-            stderr = exc.stderr or ""
-        raise subprocess.TimeoutExpired(
-            argv,
-            timeout,
-            output=stdout or exc.output,
-            stderr=stderr or exc.stderr,
-        ) from exc
+        if cancel_event is None:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        else:
+            stdout, stderr = _communicate_with_cancellation(proc, argv, timeout, cancel_event, windows_job)
+    except subprocess.TimeoutExpired:
+        _terminate_codex_process_tree(proc, windows_job)
+        with suppress(OSError, subprocess.TimeoutExpired):
+            proc.communicate(timeout=_PROCESS_DRAIN_TIMEOUT_SECONDS)
+        timeout_error = CodexModelTimeoutError(timeout)
     except (KeyboardInterrupt, SystemExit):
-        _terminate_codex_process_tree(proc)
+        _terminate_codex_process_tree(proc, windows_job)
         with suppress(OSError, subprocess.TimeoutExpired):
             proc.communicate(timeout=_PROCESS_DRAIN_TIMEOUT_SECONDS)
         raise
+    finally:
+        if windows_job is not None:
+            windows_job.close()
+    if timeout_error is not None:
+        raise timeout_error from None
     return subprocess.CompletedProcess(argv, proc.returncode, stdout=stdout, stderr=stderr)
+
+
+def _communicate_with_cancellation(
+    proc: subprocess.Popen[str],
+    argv: list[str],
+    timeout: int,
+    cancel_event: Any,
+    windows_job: _WindowsKillJob | None,
+) -> tuple[str, str]:
+    """Poll a model process so batch cancellation can stop its process tree."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if cancel_event.is_set():
+            _terminate_codex_process_tree(proc, windows_job)
+            with suppress(OSError, subprocess.TimeoutExpired):
+                proc.communicate(timeout=_PROCESS_DRAIN_TIMEOUT_SECONDS)
+            raise CodexProcessCancelledError from None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(argv, timeout)
+        try:
+            return proc.communicate(timeout=min(_PROCESS_POLL_INTERVAL_SECONDS, remaining))
+        except subprocess.TimeoutExpired:
+            continue
 
 
 class CodexBackend:
@@ -341,6 +484,7 @@ class CodexBackend:
                 cwd=options["cwd"],
                 timeout=options["timeout"],
                 env=env,
+                cancel_event=options.get("_cancel_event"),
             )
             duration_ms = round((time.monotonic() - started) * 1000)
             try:
@@ -395,12 +539,7 @@ class CodexBackend:
             input_tokens = usage.get("input_tokens", 0)
             cache_read = usage.get("cached_input_tokens", 0)
             output_tokens = usage.get("output_tokens", 0)
-            cost_usd = estimate_completion_cost_usd(
-                model=options.get("model"),
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cache_read_input_tokens=cache_read,
-            )
+            api_equivalent_cost_usd = self._estimate_api_equivalent_cost(parsed, options.get("model"))
             metadata = {
                 "input_tokens": input_tokens,
                 "uncached_input_tokens": max(0, input_tokens - cache_read),
@@ -410,7 +549,8 @@ class CodexBackend:
                 "output_tokens": output_tokens,
                 "reasoning_output_tokens": usage.get("reasoning_output_tokens", 0),
                 "total_tokens": input_tokens + output_tokens,
-                "cost_usd": cost_usd,
+                "cost_usd": None,
+                "api_equivalent_cost_usd": api_equivalent_cost_usd,
                 "duration_ms": duration_ms,
                 "num_turns": parsed.num_turns or 1,
                 "session_id": parsed.session_id,
@@ -423,6 +563,18 @@ class CodexBackend:
                 progress_events=parsed.progress_events,
                 structured_output=structured_output,
             )
+
+    @staticmethod
+    def _estimate_api_equivalent_cost(parsed: _ParsedEvents, model: Any) -> float | None:
+        """Estimate API pricing only when Codex emitted usage telemetry."""
+        if not parsed.usage_available:
+            return None
+        return estimate_completion_cost_usd(
+            model=model,
+            input_tokens=parsed.usage.get("input_tokens", 0),
+            output_tokens=parsed.usage.get("output_tokens", 0),
+            cache_read_input_tokens=parsed.usage.get("cached_input_tokens", 0),
+        )
 
     @staticmethod
     def _require_account_auth(options: dict[str, Any], env: dict[str, str]) -> None:
@@ -640,40 +792,51 @@ class CodexBackend:
     def translate_error(self, exc: Exception, options: dict[str, Any]) -> Exception:
         if isinstance(exc, CodexNonRetriableError):
             return exc
-        logger.error("Codex execution failed: %s", exc, exc_info=exc)
+        if isinstance(exc, CodexProcessCancelledError):
+            return exc
         if isinstance(exc, FileNotFoundError):
             return CodexNonRetriableError(
                 "Codex CLI was not found on PATH. Install it with "
                 "`npm install -g @openai/codex`, then authenticate with `codex login`."
             )
-        if isinstance(exc, subprocess.TimeoutExpired):
+        if isinstance(exc, (CodexModelTimeoutError, subprocess.TimeoutExpired)):
             return ValueError(
                 f"Codex execution timed out after {options.get('timeout', 300)} seconds. "
                 "Increase timeout or split the task into smaller steps."
             )
 
-        error_text = str(exc)
-        if isinstance(exc, CodexProcessError):
-            error_text = "\n".join(
-                part for part in [exc.stderr.strip(), exc.stdout.strip(), *exc.failure_messages] if part
-            ) or str(exc)
-        if any(marker in error_text.lower() for marker in _AUTH_ERROR_MARKERS):
+        logger.error(
+            "Codex execution failed",
+            extra={
+                "exception_type": type(exc).__name__,
+                "returncode": exc.returncode if isinstance(exc, CodexProcessError) else None,
+            },
+        )
+        if isinstance(exc, CodexProcessError) and self._is_auth_failure(exc):
             if options.get("use_api_key"):
                 return CodexNonRetriableError(
                     "Codex authentication failed while API-key/provider billing is permitted "
                     "(`use_api_key: true`). Check `OPENAI_API_KEY`, `CODEX_API_KEY`, and any "
                     "configured profile/provider credentials. To use account authentication "
                     "instead, remove `use_api_key: true`, run `codex login`, and verify with "
-                    f"`codex login status`.\nOriginal error: {error_text}"
+                    "`codex login status`."
                 )
-            return CodexNonRetriableError(
-                f"Codex authentication failed. Run `codex login` and retry.\nOriginal error: {error_text}"
-            )
+            return CodexNonRetriableError("Codex authentication failed. Run `codex login` and retry.")
         if isinstance(exc, CodexProcessError):
-            return ValueError(f"Codex CLI failed with exit code {exc.returncode}.\nError output: {error_text}")
+            failure_count = len(exc.failure_messages)
+            failure_note = f" Codex reported {failure_count} failure event(s)." if failure_count else ""
+            return ValueError(
+                f"Codex CLI failed with exit code {exc.returncode}.{failure_note} "
+                "Run the same Codex command directly to inspect provider diagnostics."
+            )
         if isinstance(exc, CodexEventParseError):
             return ValueError(f"Codex CLI returned invalid --json output: {exc}")
-        return ValueError(f"Codex execution failed after {self.max_retries} attempts: {exc}")
+        return ValueError(f"Codex execution failed after {self.max_retries} attempts ({type(exc).__name__}).")
+
+    @staticmethod
+    def _is_auth_failure(exc: CodexProcessError) -> bool:
+        """Classify auth only from process diagnostics, never JSONL item output."""
+        return any(_AUTH_FAILURE_PATTERN.search(text) for text in (exc.stderr, *exc.failure_messages) if text)
 
     def build_warning_context(self, options: dict[str, Any], result: AgentResult) -> dict[str, Any]:
         output_schema = options.get("output_schema") or {}

@@ -81,13 +81,14 @@ Both backends write these fields when usage is available:
   "output_tokens": 25,
   "total_tokens": 14678,
   "cost_usd": null,
+  "api_equivalent_cost_usd": null,
   "duration_ms": 3450,
   "num_turns": 1,
   "session_id": "019f..."
 }
 ```
 
-Claude reports `input_token_accounting: split_cache_fields` and an SDK-reported API-equivalent `cost_usd`. Codex reports `total_includes_cache` and adds `reasoning_output_tokens`. When a workflow declares `model`, pflow estimates the Codex call's API-equivalent `cost_usd` from its LiteLLM pricing catalog and the CLI's cache-aware token usage. The value remains `null` when `model` is omitted or LiteLLM has no pricing for it; pflow does not inspect private Codex session files to infer the CLI-configured model.
+Claude reports `input_token_accounting: split_cache_fields` and exposes the SDK comparison as `api_equivalent_cost_usd`. Codex reports `total_includes_cache` and adds `reasoning_output_tokens`. When a workflow declares `model` and the CLI emitted usage, pflow estimates `api_equivalent_cost_usd` from its LiteLLM pricing catalog and cache-aware token usage. The estimate remains `null` when usage is missing, `model` is omitted, or LiteLLM has no pricing; pflow does not inspect private Codex session files to infer the CLI-configured model. Agent backends leave canonical `cost_usd` as `null` because neither transport proves what the provider actually billed.
 
 API-equivalent cost is an estimate for comparison and planning, not evidence that a subscription-backed call incurred per-token charges.
 

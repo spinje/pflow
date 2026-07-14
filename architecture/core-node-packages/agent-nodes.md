@@ -49,13 +49,13 @@ The boundary matters because the transports are not interchangeable. Claude yiel
 
 `ClaudeBackend` imports `claude_agent_sdk` lazily when `backend: claude` is selected. It uses `ClaudeAgentOptions` with autonomous permission mode, optional tool restrictions, native JSON Schema output, SDK session resume, and the Claude sandbox dict.
 
-Claude defaults to `claude-sonnet-4-5`. It normalizes the SDK's split input/cache fields into pflow's inclusive `input_tokens` contract and carries the SDK's API-equivalent `total_cost_usd` as `cost_usd`.
+Claude defaults to `claude-sonnet-4-5`. It normalizes the SDK's split input/cache fields into pflow's inclusive `input_tokens` contract and carries the SDK's API-equivalent `total_cost_usd` as `api_equivalent_cost_usd`; canonical `cost_usd` remains unavailable because the SDK value does not prove provider billing.
 
 Authentication defaults to Claude account/subscription mode. The backend blanks `ANTHROPIC_API_KEY` in the child environment unless `use_api_key: true`, preventing that named ambient key from silently switching the CLI to Anthropic Console billing.
 
 ### Codex
 
-`CodexBackend` invokes the installed `codex exec` executable with a shell-free argv list, `stdin=DEVNULL`, an execution timeout, and unique temporary files for the final message and optional schema.
+`CodexBackend` invokes the installed `codex exec` executable with a shell-free argv list, `stdin=DEVNULL`, an execution timeout, and unique temporary files for the final message and optional schema. Parallel batches propagate a cancellation event into the backend: fail-fast and main-thread interruption terminate active Codex process trees instead of waiting for their model timeouts. POSIX uses a dedicated process group; Windows prefers a kill-on-close Job Object and keeps a bounded `taskkill /T /F` fallback.
 
 By default, the backend copies the parent environment, removes `OPENAI_API_KEY` and `CODEX_API_KEY`, requires a recognized ChatGPT/account access-token result from `codex login status`, and passes that same child environment to `codex exec`. It also appends `model_provider="openai"` after caller overrides. Each possible model call—including a schema-correction resume—gets a fresh preflight. Deterministic status failures are non-retriable and raw status text is never retained in the exception.
 
@@ -70,21 +70,21 @@ The channels have distinct jobs:
 
 Initial and resume argv are built separately. Initial runs accept CLI `--sandbox`, `--cd`, and `--add-dir`. Resume requires `sandbox_mode` as a config override, places `--profile` before the `resume` subcommand, and relies on Codex's on-disk thread store.
 
-Codex omits a model override when the workflow does not declare one, so the CLI configuration remains authoritative. Its CLI usage exposes no per-run USD amount, but an explicitly declared and LiteLLM-priced `model` lets pflow compute an API-equivalent `cost_usd` from cache-aware token usage. Omitted or unpriced models remain `None`; pflow does not inspect private Codex session files to infer the effective model. `reasoning_output_tokens` remains a separate backend-specific usage field.
+Codex omits a model override when the workflow does not declare one, so the CLI configuration remains authoritative. Its CLI usage exposes no per-run USD amount, but an explicitly declared and LiteLLM-priced `model` lets pflow compute `api_equivalent_cost_usd` from observed cache-aware token usage. Missing usage, omitted models, and unpriced models remain `None`; canonical `cost_usd` stays unavailable, and pflow does not inspect private Codex session files to infer the effective model. `reasoning_output_tokens` remains a separate backend-specific usage field.
 
 ## Structured output contract
 
-Both backends require a top-level `type: object` JSON Schema. `AgentNode` first applies canonical scalar coercions, then uses the backend's session ID for corrective continuation calls up to `schema_retries`.
+Both backends require a top-level `type: object` JSON Schema. Static validation defers schemas containing templates at any nesting depth; `AgentNode.prep()` enforces the contract after resolution. `AgentNode` first applies canonical scalar coercions, then uses the backend's session ID for corrective continuation calls up to `schema_retries`.
 
-If output still does not conform—or no resumable session exists—the node stores raw text in `result`, writes `_schema_error`, emits a structured runtime warning, and returns `default`. This produces a `DEGRADED` workflow instead of error routing. A backend/process failure that exhausts retries still raises through `exec_fallback`, preserving node and batch retry behavior.
+If output still does not conform—or no resumable session exists—the node stores raw text in `result`, writes `_schema_error`, emits a structured runtime warning, and returns `default`. This produces a `DEGRADED` workflow instead of error routing. An ordinary retriable failure during a corrective call preserves that inherited fallback, while a translated non-retriable failure raises instead of masquerading as a schema miss.
 
-`llm_usage` always carries the backend's normalized token fields plus `num_turns` and `session_id` when metadata is available. Corrective calls are stored in `llm_usage.retries`; report/trace aggregation includes them without forcing backend-specific fields onto the other backend.
+`llm_usage` always carries the backend's normalized token fields plus `num_turns` and `session_id` when metadata is available. Corrective calls are stored in `llm_usage.retries`; report/trace aggregation includes them without forcing backend-specific fields onto the other backend. Effective prompts and bounded tool summaries are promoted into canonical trace fields for both single and batch calls. Batch warning channels are isolated per item, then aggregated with deterministic item indices so simultaneous schema soft-failures cannot overwrite one another.
 
 ## Why one node
 
 The lifecycle, schema recovery, result storage, trace markers, and workflow interface are genuinely shared. The two adapters are the real variation point. This keeps a future Codex SDK migration internal: replacing the CLI adapter would not require a new node type or workflow migration.
 
-Use `llm` for ordinary text generation through LiteLLM. Use `agent` only when the task needs repository tools and multi-step autonomous work; its side effects, latency, and session lifecycle make it intentionally non-memoized by default.
+Use `llm` for ordinary text generation through LiteLLM. Use `agent` only when the task needs repository tools and multi-step autonomous work; its side effects, latency, and session lifecycle make it intentionally non-memoized by default. Successful cache-disabled executions write a stats-only history record with a reserved, non-matchable key so later dry-runs can estimate duration/API-equivalent cost without ever reusing the agent result.
 
 ## Example
 

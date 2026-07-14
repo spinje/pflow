@@ -196,6 +196,6 @@ For Codex, choose the narrowest sandbox that can complete the task:
 
 ## Result handling
 
-Downstream nodes read free-form text as `${node.result}` or structured fields such as `${node.result.summary}`. Every successful backend call also writes normalized `llm_usage` fields: token counts, duration, turn count, session ID, and model. Claude supplies an API-equivalent `cost_usd`. Codex additionally reports `reasoning_output_tokens`; when `model` is explicitly declared and pricing is available, pflow estimates an API-equivalent `cost_usd` from the cache-aware token usage. Omitted or unpriced models remain `null`.
+Downstream nodes read free-form text as `${node.result}` or structured fields such as `${node.result.summary}`. Every successful backend call also writes normalized `llm_usage` fields: token counts, duration, turn count, session ID, and model. Agent backends keep paid `cost_usd` unavailable because neither transport proves provider billing. Claude supplies its backend-reported comparison as `api_equivalent_cost_usd`; Codex additionally reports `reasoning_output_tokens` and estimates `api_equivalent_cost_usd` only when usage was observed and `model` is explicit and priced. Missing usage, omitted models, and unpriced models remain `null`.
 
 Run with `--report` while tuning prompts. The report shows the rendered prompt, result, tools, retries, token usage, and available cost data.

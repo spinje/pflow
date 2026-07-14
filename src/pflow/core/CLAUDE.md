@@ -212,7 +212,7 @@ Returns `MarkdownParseResult(ir, title, description, metadata, source)`.
 
 ### shell_integration.py
 
-**FIFO-only pipe detection**: `stdin_has_data()` uses `stat.S_ISFIFO()` (NOT `select()`). Returns True only for real shell pipes. Claude Code stdin is a character device → returns False, preventing hangs.
+**FIFO-only pipe detection**: `stdin_has_data()` uses `stat.S_ISFIFO()` (NOT `select()`). Returns True only for real shell pipes. Interactive external-agent stdin is a character device → returns False, preventing hangs.
 
 **StdinData three modes**:
 - `text_data`: UTF-8 text under 10MB
@@ -233,7 +233,7 @@ See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeli
 
 The pflow-owned LiteLLM adapter — single seam for all LLM calls (LLMNode + 3 discovery callsites). Wraps `litellm.completion`. Owns: messages-list construction, reasoning-kwarg translation (delegating shape detection to `llm_reasoning_map`), `cache_control` placement (Phase B-G), translation of every LiteLLM exception to a typed `LLMCallError` subclass (deterministic → `UnknownModelError`/`MissingApiKeyError`/`InvalidRequestError`; transient → `LLMTransientError`), and response normalization to a stable `AdapterResponse` (with structured `warnings` for empty-content cases that surface to `__warnings__`).
 
-**Cost determination is LiteLLM's responsibility**: the adapter reads `cost_usd` from `response._hidden_params["response_cost"]` (LiteLLM populates this from its built-in pricing data). When LiteLLM doesn't recognize the model (custom endpoints, brand-new releases), `cost_usd` is `None` — consumers handle that case via `.get("cost_usd")`. `AgentNode` preserves the same key at its backend boundary: Claude mirrors the SDK's `total_cost_usd`; Codex calls the shared cache-aware LiteLLM estimator only for an explicitly declared `model`, leaving omitted or unpriced models as `None` rather than inspecting private CLI state.
+**Cost determination is LiteLLM's responsibility**: the adapter reads `cost_usd` from `response._hidden_params["response_cost"]` (LiteLLM populates this from its built-in pricing data). When LiteLLM doesn't recognize the model (custom endpoints, brand-new releases), `cost_usd` is `None` — consumers handle that case via `.get("cost_usd")`. Agent backends cannot observe provider billing, so they keep `cost_usd=None` and expose SDK-reported or LiteLLM-modeled comparisons as `api_equivalent_cost_usd`; this separation is load-bearing because trace/cache-analysis readers treat numeric `cost_usd` as paid cost. Codex estimates only when usage was observed and `model` is explicitly declared and priced, without inspecting private CLI state.
 
 **Litellm is lazy-imported**: `import litellm` costs ~700ms (it eagerly loads handlers and Pydantic types for every provider it supports). To keep CLI invocations that don't need LLM calls fast (`pflow validate`, `--dry-run`, fully-cached runs, the future `analyze-cache`), the import lives inside `complete()` and `_classify_litellm_error()` — not at module top. The first `complete()` call in a process pays the import; subsequent calls resolve from `sys.modules` instantly. Side effect: the first LLM node's recorded duration is inflated by ~700ms (one node out of N per process). Cost predictions are token-based and unaffected; total wall-clock is honest. Tests must patch `litellm.completion` directly (NOT `pflow.core.llm_client.litellm.completion` — that path no longer exists as a module attribute).
 

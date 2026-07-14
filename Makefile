@@ -55,17 +55,17 @@ sync-claude-assets: ## Regenerate Codex assets derived from Claude sources.
 .PHONY: test
 test: ## Test the code with pytest in parallel (excludes LLM tests that require API keys)
 	@echo [test] Running non-e2e tests with $(PYTEST_WORKERS) workers, excluding paid LLM tests
-	@$(PYTEST) -n $(PYTEST_WORKERS) --dist=worksteal $(PYTEST_NON_LLM) -m "not e2e"
+	@$(PYTEST) -n $(PYTEST_WORKERS) --dist=worksteal $(PYTEST_NON_LLM) -m "not e2e and not paid"
 
 .PHONY: test-e2e
 test-e2e: ## Run real subprocess / shell / pipe boundary tests in parallel
 	@echo [test] Running e2e tests with $(PYTEST_WORKERS) workers, excluding paid LLM tests
-	@$(PYTEST) -n $(PYTEST_WORKERS) --dist=worksteal $(PYTEST_NON_LLM) -m e2e
+	@$(PYTEST) -n $(PYTEST_WORKERS) --dist=worksteal $(PYTEST_NON_LLM) -m "e2e and not paid"
 
 .PHONY: test-debug
 test-debug: ## Test the code with pytest sequentially for debugging
 	@echo [test] Running all non-LLM tests sequentially for debugging, including e2e
-	@$(PYTEST) -n 0 -vv --tb=short $(PYTEST_NON_LLM)
+	@$(PYTEST) -n 0 -vv --tb=short $(PYTEST_NON_LLM) -m "not paid"
 
 .PHONY: test-llm
 test-llm: ## Run LLM integration tests with real API calls (requires API keys)
@@ -81,12 +81,12 @@ test-all: ## Run all tests including LLM integration tests in parallel
 .PHONY: test-all-local
 test-all-local: ## Run all non-LLM tests, including e2e, in parallel
 	@echo [test] Running all non-LLM tests, including e2e, with $(PYTEST_WORKERS) workers
-	@$(PYTEST) -n $(PYTEST_WORKERS) --dist=worksteal $(PYTEST_NON_LLM)
+	@$(PYTEST) -n $(PYTEST_WORKERS) --dist=worksteal $(PYTEST_NON_LLM) -m "not paid"
 
 .PHONY: test-with-skipped
 test-with-skipped: ## Run non-paid tests showing skip reasons (useful for debugging)
 	@echo [test] Running all tests without paid API calls and showing skip reasons
-	@$(PYTEST) $(PYTEST_NON_LLM) -v -rs
+	@$(PYTEST) $(PYTEST_NON_LLM) -m "not paid" -v -rs
 
 .PHONY: ui-build
 ui-build: ## Build the web UI bundle into src/pflow/ui/static (requires Node).

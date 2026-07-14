@@ -11,6 +11,7 @@ from pflow.execution.formatters.plan_formatter import format_plan_text
 from pflow.execution.plan import build_plan
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
+from pflow.nodes.agent.backend import AgentResult
 from pflow.registry import Registry
 from pflow.runtime import WorkflowEngine, compile_workflow
 from pflow.runtime.cache import MemoizationCache
@@ -1679,6 +1680,70 @@ def test_plan_cache_disabled_node_carries_historical_stats(tmp_path) -> None:
         "cache_disabled entries must flow through _execute_entry so historical "
         f"duration is attached; got {entry.last_duration_ms}"
     )
+
+
+def test_default_agent_run_seeds_history_without_becoming_memoized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A normal cache-disabled agent run must inform dry-run but still execute again."""
+
+    class HistoryBackend:
+        default_model = "fake-agent-model"
+        calls = 0
+
+        def validate_params(self, params: dict[str, Any]) -> dict[str, Any]:
+            return {}
+
+        def run(self, prompt: str, options: dict[str, Any]) -> AgentResult:
+            self.calls += 1
+            return AgentResult(
+                result_text=f"run-{self.calls}",
+                metadata={
+                    "input_tokens": 10,
+                    "output_tokens": 2,
+                    "api_equivalent_cost_usd": 0.42,
+                    "num_turns": 1,
+                },
+            )
+
+        def translate_error(self, exc: Exception, options: dict[str, Any]) -> Exception:
+            return exc
+
+        def continuation_options(self, result: AgentResult, options: dict[str, Any]) -> dict[str, Any] | None:
+            return None
+
+        def build_warning_context(self, options: dict[str, Any], result: AgentResult) -> dict[str, Any]:
+            return {}
+
+    backend = HistoryBackend()
+    monkeypatch.setattr(
+        "pflow.nodes.agent.agent_node.AgentNode._load_backend",
+        staticmethod(lambda _name: backend),
+    )
+    ir = {
+        "nodes": [
+            {
+                "id": "review",
+                "type": "agent",
+                "params": {"backend": "claude", "prompt": "review repository"},
+            }
+        ],
+        "edges": [],
+    }
+    compiled, registry = _compile(ir)
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+
+    first = _run(compiled, cache)
+    second = _run(compiled, cache)
+    plan = build_plan(compiled, {}, cache, registry, workflow_name="agent-history")
+
+    assert backend.calls == 2
+    assert first["review"]["result"] == "run-1"
+    assert second["review"]["result"] == "run-2"
+    entry = plan.entries[0]
+    assert entry.cause == "cache_disabled"
+    assert entry.last_cost_usd == pytest.approx(0.42)
+    assert entry.last_duration_ms is not None
 
 
 def test_plan_bfs_recurses_into_sub_workflow_carrying_child_stats(tmp_path) -> None:
