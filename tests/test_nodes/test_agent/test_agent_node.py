@@ -3,7 +3,7 @@
 Tests criteria from the specification:
 1. Prompt missing → ValueError with "No prompt provided"
 2. Prompt empty string → ValueError with "Prompt cannot be empty"
-3. Prompt > 10000 chars → ValueError with "Prompt too long"
+3. Large prompts are accepted (no length cap — a coding agent receives file/context content)
 4. Working directory missing/restricted → clear ValueError
 5. Native SDK structured output is wired through ClaudeAgentOptions.output_format
 6. JSON Schema validation catches legacy format, empty schemas, and top-level non-object schemas
@@ -156,15 +156,16 @@ def test_task_empty_string(agent_node):
     assert "cannot be empty" in str(exc_info.value)
 
 
-# Test Criteria 3: Prompt > 10000 chars → ValueError with "Prompt too long"
-def test_task_too_long(agent_node):
-    """Test that prompt over 10000 chars raises ValueError."""
-    agent_node.params = {"backend": "claude", "prompt": "x" * 10001}
-    shared = {"__warnings__": {}}
-    with pytest.raises(ValueError) as exc_info:
-        agent_node.prep(shared)
-    assert "Prompt too long" in str(exc_info.value)
-    assert "10001" in str(exc_info.value)
+# Test Criteria 3: large prompts are accepted (no length cap)
+def test_large_prompt_is_accepted(agent_node):
+    """A prompt far larger than the old 10k cap is accepted, not rejected.
+
+    A coding agent routinely receives file contents / accumulated context via
+    ${node.output}, so an arbitrary char limit would hard-fail valid workflows
+    before the model is ever called.
+    """
+    large_prompt = "x" * 200_000
+    assert agent_node._validate_prompt(large_prompt) == large_prompt
 
 
 # Test Criteria 4: Working directory missing → ValueError with path

@@ -85,8 +85,9 @@ class AgentNode(Node):
             )
         if not isinstance(prompt, str):
             raise TypeError(f"Prompt must be a string, got {type(prompt).__name__}")
-        if len(prompt) > 10000:
-            raise ValueError(f"Prompt too long ({len(prompt)} chars). Maximum 10000 characters allowed.")
+        # No length cap: a coding agent routinely receives file contents and accumulated
+        # context via ${node.output}, well past any fixed char limit. Both backends handle
+        # far larger prompts than a cap would allow, and the plain `llm` node has no cap.
         if not prompt.strip():
             raise ValueError("Prompt cannot be empty or whitespace only.")
         return prompt
