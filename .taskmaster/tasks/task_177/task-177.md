@@ -10,7 +10,11 @@ backend drives the `codex exec` CLI, not the beta Python SDK.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-07-14
 
 ## Priority
 
