@@ -13,6 +13,10 @@ are deliberately later, separate increments.
 
 done
 
+## Completed
+
+2026-06-18
+
 ## Priority
 
 high — leads the "see / understand the agentic harness" track (promoted from medium during the

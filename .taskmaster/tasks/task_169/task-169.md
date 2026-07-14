@@ -12,6 +12,10 @@ the canvas a shared surface for human↔agent conversation about a workflow.
 
 done
 
+## Completed
+
+2026-06-22
+
 ## Priority
 
 medium — the natural next increment of the "see / understand the agentic harness" track after
