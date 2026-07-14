@@ -418,14 +418,14 @@ if model:
         )
     agent_cmd = f'{agent_cmd} --model {model}'
 
-# Codex has a repo-local pflow-sandbox-testing skill for running pflow's test
+# Codex has a repo-local sandbox-testing skill for running pflow's test
 # suite from sandbox mode; point Codex at it (skill-neutral so it applies whether
 # the agent is exploring or implementing). Claude has no such skill, so this is
 # codex-only. Named in plain text (no '$' prefix, no apostrophes/quotes) so it
 # survives the launch step's heredoc + AppleScript + inner-single-quote layers,
 # which agent_hint -- unlike safe_description -- is not escaped through.
 if agent == 'codex':
-    agent_hint += ' Use the pflow-sandbox-testing skill directly when you run pflow tests.'
+    agent_hint += ' Use the sandbox-testing skill directly when you run pflow tests.'
 
 result: dict = {
     'branch_type': branch_type,
@@ -505,7 +505,7 @@ if [ '${open_cursor}' != 'false' ] && [ '${open_cursor}' != 'False' ] && [ '${op
 
 ### launch-cli
 
-Opens a new Terminal window, cd's into the worktree, and starts the selected coding agent (`claude` or `codex`, per the `agent` input) with the description and branch name as initial context. The launch command prefix (`claude --dangerously-skip-permissions` or `codex --sandbox workspace-write --ask-for-approval never`) is derived in `parse-result` as `agent_cmd`; both agents take the context prompt as a positional argument, so only this prefix differs. The absolute worktree path is inlined **directly** into the `do script` command as a resolved `${parse-result.result.worktree_path}` value — NOT passed via a bash variable. This matters: `do script` runs in a brand-new Terminal window whose shell never inherited the workflow's variables, so a `cd $VAR` there would expand to empty and silently land in `$HOME` (the bug that previously launched Claude in the home folder with a stray trust dialog and no project `.claude/` context). A guard refuses to launch (and reports on stderr) if the worktree dir is missing, so it can never fall back to home. `activate` brings Terminal above the Cursor window opened by the prior node, and the window created by `do script` is automatically Terminal's frontmost window — so the Claude session lands on top without any manual window-raising. The description is labelled `Task:` or `GitHub issue:` per `work_type`, and the agent is pointed at its entry skill per `mode` — `/start-work` (explore) or `/implement-plan` (implement) — with issues explicitly told not to create taskmaster scaffolding. When `agent=codex`, the prompt additionally tells Codex to use the repo-local `pflow-sandbox-testing` skill when running pflow tests (Claude has no such skill, so it's added only for codex; named in plain text to stay safe through the quoting layers, which `agent_hint` is not escaped through). The description is pre-escaped by parse-result to handle quotes safely through the AppleScript and shell quoting layers. Skipped when `open_cli` is false.
+Opens a new Terminal window, cd's into the worktree, and starts the selected coding agent (`claude` or `codex`, per the `agent` input) with the description and branch name as initial context. The launch command prefix (`claude --dangerously-skip-permissions` or `codex --sandbox workspace-write --ask-for-approval never`) is derived in `parse-result` as `agent_cmd`; both agents take the context prompt as a positional argument, so only this prefix differs. The absolute worktree path is inlined **directly** into the `do script` command as a resolved `${parse-result.result.worktree_path}` value — NOT passed via a bash variable. This matters: `do script` runs in a brand-new Terminal window whose shell never inherited the workflow's variables, so a `cd $VAR` there would expand to empty and silently land in `$HOME` (the bug that previously launched Claude in the home folder with a stray trust dialog and no project `.claude/` context). A guard refuses to launch (and reports on stderr) if the worktree dir is missing, so it can never fall back to home. `activate` brings Terminal above the Cursor window opened by the prior node, and the window created by `do script` is automatically Terminal's frontmost window — so the Claude session lands on top without any manual window-raising. The description is labelled `Task:` or `GitHub issue:` per `work_type`, and the agent is pointed at its entry skill per `mode` — `/start-work` (explore) or `/implement-plan` (implement) — with issues explicitly told not to create taskmaster scaffolding. When `agent=codex`, the prompt additionally tells Codex to use the repo-local `sandbox-testing` skill when running pflow tests (Claude has no such skill, so it's added only for codex; named in plain text to stay safe through the quoting layers, which `agent_hint` is not escaped through). The description is pre-escaped by parse-result to handle quotes safely through the AppleScript and shell quoting layers. Skipped when `open_cli` is false.
 
 - type: shell
 - ignore_errors: true

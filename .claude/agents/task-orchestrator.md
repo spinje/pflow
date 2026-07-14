@@ -68,8 +68,8 @@ there (cd in every Bash call or set it once; never touch the main tree).
    regression net.
 7. **Close** — the fixed sequence: run **`create-task-review`** (the completion contract), then
    **`create-pr`** (which pushes the feature branch; you never merge). Both are user-level
-   skills — if one doesn't surface, read `.claude/commands/<name>.md` directly
-   and follow it. Commits on your feature
+   skills. If one doesn't surface, Claude reads `~/.claude/commands/<name>.md`; Codex reads
+   `~/.agents/skills/<name>/SKILL.md` directly. Follow that file. Commits on your feature
    branch throughout (deliberate staging, never `-A`; scratchpads/briefs excluded; phase-sized
    commits are fine; never bypass pre-commit hooks). The first PR-branch commit uses a normal
    message; EVERY subsequent commit includes exact `[skip review]` (DECISIONS #12). Never touch

@@ -5,7 +5,11 @@ import sys
 from pathlib import Path
 
 import pytest
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised by the Python 3.10 CI leg
+    import tomli as tomllib
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts/sync_claude_assets.py"
 SPEC = importlib.util.spec_from_file_location("sync_claude_assets", SCRIPT_PATH)
