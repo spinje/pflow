@@ -1,4 +1,4 @@
-# CURRENT-STATE.md (last verified: 2026-07-15)
+# CURRENT-STATE.md (last verified: 2026-07-15 — main @ 573718cb, session-06)
 
 _Living state header — the ONE mandatory session-start read (~80-line budget; state + pointers
 only). Updated when the RESUME PICTURE changes. How-it-got-here: latest `sessions/session-NN.md`.
@@ -8,6 +8,8 @@ Every claim here is a pointer to verify, not a fact._
 
 - **Orchestration restructured 2026-07-11/12** (DECISIONS #1–#14): agent hierarchy with
   `ORCHESTRATION.md` canonical; this file + `sessions/` are the dated state layer.
+- **ROUTING OVERRIDE (2026-07-15, user ruling, DECISIONS #3 amendment): Fable AND Sonnet are
+  banned for all subagents — Opus everywhere, every launch (UI phases included), until lifted.**
 - Hierarchy proven end to end across Codex and Claude lane-B work. Task 177 shipped with the full
   task artifact set; no session record establishes which orchestration lane launched it.
 - **Model routing** (DECISIONS #3, amended through PR #595): every dynamic launch passes the
@@ -18,6 +20,11 @@ Every claim here is a pointer to verify, not a fact._
 
 ## Recently shipped (since session-04; verified 2026-07-15)
 
+- **PR #597** MERGED (`573718cb`, closes **#592**): agent-node param validators now raise
+  `AgentValidationError(PflowError)` (new `src/pflow/nodes/agent/exceptions.py`) instead of vanilla
+  `ValueError`/`TypeError`; static-validator catch narrowed to it (validate==run preserved).
+  Codex-P1 caught + fixed: kept `retriable=True` so a bad param in an `error_handling: continue`
+  batch stays a per-item error, not a whole-batch abort (mutation-verified regression tests).
 - **PR #591** — worktree creator gained implement mode + phase scope.
 - **Task 177** → PR **#593** MERGED (`642b3957`): unified `agent` node with Claude + Codex
   backends; read `task_177/task-review.md` before agent-node/backend work. Spawned **#592**
@@ -37,18 +44,28 @@ Every claim here is a pointer to verify, not a fact._
   Task 142's observed bugs are fixed and explicit dependency edges remain necessary. Task 46's
   planner/wrapper premises were removed by Tasks 92/135; modern runtime parity would duplicate
   the runtime without observed demand. Its spec carries the full stale/parked warning.
-- **Recommended next, not approved or started: #592** — lane B, Opus/high; it closes Task 177's
-  deferred structured-error gap before Task 99 builds on the agent seam. Task 94's provider half
-  already shipped and its remaining model-catalog design is stale/open; reframe before launch.
-  #589 is real but a memory-threshold fix would not stop an infinite pipe without a separate hard-
-  ceiling decision. **Task 99 predates Task 177's `claude-code` → `agent` replacement and must be
-  refreshed against the shipped backend seam before consideration.**
+- **Task 94 spec REWRITTEN + design LOCKED (session-06); not yet started.** Original spec was
+  substantially stale (targeted the removed `registry describe` surface; false "no detection"
+  premise; obsolete `llm`-library). Refreshed `task_94/task-94.md` in place with provenance. Locked
+  v1 design: a new **`pflow settings llm models [KEYWORDS…] [--output-format]`** command (sibling to
+  `settings llm providers`) — enumerates chat-mode models per provider from LiteLLM, key-conditioned,
+  **network-first with offline-bundled fallback (source labeled)**, self-guiding output (multi-
+  provider caps → single-provider full list), no curation, no `--all`/`--filter`; plus a network-
+  free node-describe hint. Design decisions + the PR-#424 `register_model(dict)` landmine are IN the
+  spec. Ready for lane A (single task-orchestrator, plan-and-implement, Opus). Task 99 still predates
+  Task 177's `claude-code`→`agent` replacement; refresh before consideration.
+- **#589** (unbounded text-stdin read) real but a memory-threshold fix alone won't stop an infinite
+  pipe without a separate hard-ceiling decision.
+- **CI hygiene noticed (not filed):** Windows CI installs GNU Make via `choco install make` from
+  the Chocolatey community feed (`main.yml:160-162`) with no retry/cache — a transient feed `499`
+  blocked #597's Windows gate (recovered on its own). Top-10% fix (per user discussion) is removing
+  the feed from the critical path (have Windows CI call the `uv run` commands directly), NOT a
+  retry band-aid — gated on confirming the flake is recurrent, not a one-off.
 
 ## Parallel-lane candidates (open issues, re-scanned 2026-07-15)
 
-- New: **#589** bounded-memory inconsistency in text stdin · **#592** agent param errors should
-  use `PflowError`. Both verified, low severity, lane-B
-  shaped; no priority claim beyond observed correctness/UX.
+- **#589** bounded-memory inconsistency in text stdin — verified, low severity, lane-B shaped; no
+  priority claim beyond observed correctness/UX. (#592 SHIPPED — see Recently shipped.)
 - **#542** trace retention · **#562** resumable inline workflows — both touch trace format;
   serialize.
 - **#546** pinned-run resolve race · **#568** track/cancel detached UI runs (ADR-0008) · **#538**
@@ -68,5 +85,7 @@ Every claim here is a pointer to verify, not a fact._
 - Real-browser verification requires killing stale `pflow ui` servers first.
 - Treat old spec file:line references as stale: Task 177 moved 133 files after the last bulk
   refresh.
-- Worktrees: only `main`; no live subagents. `main == origin/main == 4e946aab`; session-05
-  orchestration state/reconciliation edits are intentionally uncommitted.
+- Worktrees: only `main`; no live subagents. `main == origin/main` at the session-06 close commit
+  (Task 94 spec + DECISIONS #3 Fable/Sonnet-ban amendment + this file + BRAINDUMP + session-06.md);
+  code tip is `573718cb` (#597/#592). Session-06 CLOSED — user-authorized commit+push. Nothing
+  uncommitted.

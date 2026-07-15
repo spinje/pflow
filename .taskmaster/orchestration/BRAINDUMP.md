@@ -2,7 +2,7 @@
 
 _Refreshed in place at each session close (`/close-orchestrator-session`, step 3 — the doctrine
 lives there). Sessions: seeded 2026-07-12; refreshed at the 2026-07-12, 2026-07-13, session-04
-(2026-07-13), and session-05 (2026-07-15) handoffs._
+(2026-07-13), session-05 (2026-07-15), and session-06 (2026-07-15) handoffs._
 
 Predecessor tacit layer: the **Genesis** section at the bottom of this file (2026-07-02) —
 HISTORICAL; its process claims are superseded by ORCHESTRATION.md, its working-style observations
@@ -47,6 +47,39 @@ were absorbed into the command's "Working with the user".
   streams ~MB (redirect to a file, read the tail). It surfaced real flaws my own review missed
   (durable-provenance gap, three-seams-not-N). Local-only: that review + the session's searcher
   outputs live in `scratchpad/` (gitignored) — gone once this machine's temp clears.
+- **Trap — a child agent's "watching in the background" is a lie; the orchestrator owns the wait**
+  (session-06, hit ~3× on one PR). A lane-B/task agent that hands back "CI watch running in the
+  background, I'll merge when green" has actually STOPPED — its watch cannot outlive it. Don't take
+  the claim at face value: run your OWN background CI poll (`gh pr checks` until no `pending`) and
+  resume the agent only for the terminal action (merge). Resuming just to re-watch dies again on the
+  wait.
+- **Transient API death ≠ tier exhaustion → resume the SAME agent, don't replace** (session-06). The
+  limit-recovery rule (never resume an exhausted tier — it re-dies) does NOT apply to a "connection
+  closed mid-response" drop. Check the worktree is clean/uncommitted, then SendMessage the same
+  agent — context intact, cheap. Replacing it re-derives everything.
+- **Trap — a PR review authored by `spinje` is the AGENT under the repo git identity, not the human
+  user** (session-06). I nearly treated an inline review comment as a human review gate. The git
+  user IS `spinje`; children post disposition comments under it. Read the body/author-association
+  before assuming the human weighed in.
+- **User applies the top-10% test to CI/infra, not just product code** (session-06). On a Chocolatey
+  `499` blocking the Windows gate I proposed "add a retry"; they pushed back — "are you sure? what
+  would a top-10% repo do?" — and the honest answer was *remove the flaky external feed from the
+  critical path* (band-aid vs. root cause). Same governing-principle challenge as on product design.
+  Sub-lesson: diagnose CI-infra failures at the seam (read the failing step's log) before assuming
+  flake OR regression; an external-feed outage → wait it out, don't thrash reruns.
+- **Failure mode — dismissing a REAL problem because its ORIGINAL framing went stale** (session-06,
+  Task 94). I leaned "park it, the crash problem is mostly handled" — the user reframed to the live
+  need (agents can't help *choose* a model). Guard both directions: the observed-problems rule stops
+  over-building theorized problems, but a stale spec can also make a real need *look* theoretical.
+  Re-derive the problem from today, not from the spec's old problem statement.
+- **User pressure-tests a new CLI surface hard and iteratively — and demands consistency be VERIFIED,
+  not asserted** (session-06, `pflow settings llm models` design). They serially caught surface
+  incoherences (a status label that read as an imperative, a flag combo that made no sense,
+  positional-vs-flag ambiguity) and asked "is this consistent across the CLI?" The move that
+  satisfied it: grep the existing command conventions FIRST (positional-keyword filtering, no
+  `--filter` anywhere, `--output-format` vs the legacy `--json`, the `mcp sync --all` XOR pattern)
+  and design the new surface to match — don't invent a shape in isolation. Show-before-code with
+  concrete mock output per iteration is how the design converged.
 Note to next agent: read this file fully, summarize it to yourself, then proceed.
 
 ---
