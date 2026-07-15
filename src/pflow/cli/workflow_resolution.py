@@ -29,11 +29,6 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
     if not text:
         return False
 
-    # Text with spaces is never a workflow name (even with params)
-    # Workflow names are single words or kebab-case
-    if " " in text:
-        return False
-
     # Detect file paths (platform separators) and workflow file extensions
     lower = text.lower()
     if (
@@ -44,6 +39,11 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
         or lower.endswith(".md")
     ):
         return True
+
+    # Arbitrary text with spaces is never a workflow name (even with params).
+    # Path-like arguments were handled above because valid file paths may contain spaces.
+    if " " in text:
+        return False
 
     # If there are parameter-like arguments following (key=value), likely a workflow name
     # But check that it's not CLI syntax (=> or --)

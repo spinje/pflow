@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import sys
 
 import click
@@ -10,23 +11,47 @@ from pflow.core.workflow.manager import WorkflowManager
 
 
 @click.command(name="describe")
-@click.argument("name")
+@click.argument("name", metavar="NAME_OR_PATH")
 def describe_cmd(name: str) -> None:
-    """Show workflow interface — inputs, outputs, and example usage.
+    """Show a saved or local workflow's inputs, outputs, and example usage.
 
     \b
     Examples:
       pflow describe my-workflow
-      pflow describe fetch-github-prs
+      pflow describe ./drafts/fetch-github-prs.pflow.md
     """
+    from pflow.core.exceptions import WorkflowNotFoundError
+    from pflow.core.user_errors import UserFriendlyError
     from pflow.execution.formatters.workflow_describe_formatter import format_workflow_interface
+    from pflow.execution.workflow_resolver import resolve_workflow
 
     workflow_manager = WorkflowManager()
-    if not workflow_manager.exists(name):
-        _handle_workflow_not_found(name, workflow_manager)
+    example_name = name
+    if workflow_manager.exists(name):
+        metadata = workflow_manager.load(name)
+    else:
+        try:
+            resolved = resolve_workflow(name, workflow_manager)
+        except WorkflowNotFoundError as e:
+            if e.hint:
+                raise
+            _handle_workflow_not_found(name, workflow_manager)
+        except (OSError, UnicodeError) as e:
+            raise UserFriendlyError(
+                title="Could not read workflow file",
+                explanation=f"pflow could not read '{name}': {e}",
+                suggestions=["Check that the path points to a readable UTF-8 .pflow.md file."],
+                technical_details=repr(e),
+            ) from e
+        if resolved.source != "file":
+            _handle_workflow_not_found(name, workflow_manager)
+        metadata = {"ir": resolved.ir, "description": resolved.description or "No description"}
+        example_name = shlex.quote(name)
 
-    metadata = workflow_manager.load(name)
-    click.echo(format_workflow_interface(name, metadata))
+    formatted = format_workflow_interface(example_name, metadata)
+    if example_name != name:
+        formatted = formatted.replace(f"Workflow: {example_name}", f"Workflow: {name}", 1)
+    click.echo(formatted)
 
 
 def _handle_workflow_not_found(name: str, workflow_manager: WorkflowManager) -> None:
