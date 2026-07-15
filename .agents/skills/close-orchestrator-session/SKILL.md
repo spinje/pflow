@@ -118,13 +118,12 @@ unilateral act. (A skill/tooling gap you can fix in-repo — a script hardening,
 is normal work, not this. Remember the mirror sync: `uv run python
 scripts/sync_claude_assets.py --write` after editing any `.claude/` asset.)
 
-## 5. Commit and hand off
+## 5. Boot-readiness and handoff
 
-- Commit the orchestration docs to `main` (docs-first rule; deliberate staging, never `-A`).
-  **Pushing `main` is user-gated (DECISIONS #5)** — ask; note any unpushed commits in the
-  braindump's local-only list if the user defers.
 - **Boot-readiness check, the final gate:** re-read your last state as a cold successor would —
   ORCHESTRATION → CURRENT-STATE → session file → braindump. If acting correctly would require a
   fact that exists only in your head, it isn't written yet; go back to step 3.
   (Boot stack: ORCHESTRATION + DECISIONS → CURRENT-STATE → session file → BRAINDUMP.)
+- Session close does not authorize a commit. Report the exact uncommitted files; any commit or
+  push follows DECISIONS #5.
 - Tell the user the session is closed and what the successor will pick up first.

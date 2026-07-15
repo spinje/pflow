@@ -123,12 +123,7 @@ merged PR and point the packet there instead; almost all recent tasks have revie
 
 ## Worktree & git flow
 
-1. **Docs commit first:** before a worktree is created, the main orchestrator commits its
-   spec-freshness edits and any orchestration-doc changes to `main` — a worktree is a checkout of
-   `main`; uncommitted docs don't follow. (The PLAN is not in this set — it is authored inside the
-   worktree and rides the feature branch.) DECISIONS #5 scopes this commit authority; pushes of
-   `main` remain user-gated.
-2. **Provision:** the main orchestrator runs the worktree workflow with the terminal agent
+1. **Provision:** the main orchestrator runs the worktree workflow with the terminal agent
    suppressed (that agent is lane C's tool, not this lane's):
    ```
    uv run pflow examples/real-workflows/git-worktree-task-creator/workflow.pflow.md \
@@ -139,29 +134,29 @@ merged PR and point the packet there instead; almost all recent tasks have revie
    → creates `~/projects/pflow-worktrees/<branch-slug>/` on a feature branch. NEVER the Agent
    tool's `isolation: "worktree"` — an unmanaged tree with no packet, whose auto-cleanup fights
    this process. Create worktrees sequentially, never in one parallel shot.
-3. **Launch:** planner and task orchestrator are Agent-tool subagents pointed at the worktree's
+2. **Launch:** planner and task orchestrator are Agent-tool subagents pointed at the worktree's
    ABSOLUTE path; they work only there — **sequentially, never two agents concurrently in one
    worktree**. First acts of each: verify the base ref (`git log -1` vs `origin/main` — a stale
    base misses the newest contracts) and `make install` (fast — uv's cache is shared).
-4. **Commits:** the planner commits its plan (+ spec corrections) on the feature branch; the task
+3. **Commits:** the planner commits its plan (+ spec corrections) on the feature branch; the task
    orchestrator commits as phases complete (deliberate staging, never blanket `-A`;
    scratchpads/briefs are gitignored and stay out). Never to `main`. Task docs merge to `main`
    WITH the code, via the PR. Pre-commit hooks enforce repo conventions (including the task-Status
    vocabulary) — never bypass with `--no-verify`. **PR review marker (DECISIONS #12):** the first
    commit on each PR branch uses a normal message; EVERY later commit on that branch (follow-up,
    review fix, CI fix, or merge-base update) includes the exact marker `[skip review]`.
-5. **PR:** the task orchestrator runs `create-pr` (which pushes the feature branch —
+4. **PR:** the task orchestrator runs `create-pr` (which pushes the feature branch —
    process-authorized) and hands back minimal. **Merge authority is the main orchestrator's**
    (DECISIONS #4): squash-merge (the repo convention) after CI green.
-6. **The gate must pass on the merged result:** if `main` moved while the task was in flight,
+5. **The gate must pass on the merged result:** if `main` moved while the task was in flight,
    merge main into the branch and re-run `make check` + `make test` before the PR — a
    branch-green / merge-red gap is exactly what this catches.
-7. **Teardown:** after merge, the main orchestrator prunes worktree + branch. **Squash merges make
+6. **Teardown:** after merge, the main orchestrator prunes worktree + branch. **Squash merges make
    commit-id checks LIE** (`git branch --merged` / `git cherry` mark merged branches unmerged; this
    trap has bitten twice): the reliable check is `gh pr list --state merged --head <branch>` and
    compare its `headRefOid` to the branch tip — equal + clean tree = safe to prune. Never `-f`
    blind.
-8. **Parallel tasks** require the collision analysis below; at most one in-flight task may need a
+7. **Parallel tasks** require the collision analysis below; at most one in-flight task may need a
    live `pflow ui` server; prefer a no-checkpoint task as the parallel companion (checkpoints
    serialize on the user's attention).
 

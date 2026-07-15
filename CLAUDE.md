@@ -240,13 +240,11 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - ✅ Task 171: Durable Resume Tokens & Non-TTY Gates
 - ✅ Task 116: Windows Compatibility
 - ✅ Task 176: Web-UI Approval Bridge
+- ✅ Task 177: Unified Agent Node (claude | codex)
 
 ### Roadmap
 
 **Next**
-- Task 177: Unified Agent Node (claude | codex)
-- Task 142: Explore Function-Based Code Node Syntax
-- Task 46: Workflow Export to Zero-Dependency Code
 - Task 94: Display Available LLM Models
 - Task 99: Expose pflow Tools to the Agent Node
 - Task 111: Batch Limit for Iteration
@@ -285,6 +283,8 @@ MVP feature-complete. Published to PyPI (initial release v0.8.0; current version
 - Task 113: TypeScript Code Node
 - Task 114: Lightweight Custom Nodes
 - Task 167: LSP Support for `.pflow.md`
+- Task 142: Explore Function-Based Code Node Syntax
+- Task 46: Workflow Export to Zero-Dependency Code
 
 > **Task commands:**
 > ```bash

@@ -1,7 +1,8 @@
 # Braindump — main orchestrator (rolling tacit layer)
 
 _Refreshed in place at each session close (`/close-orchestrator-session`, step 3 — the doctrine
-lives there). Sessions: seeded 2026-07-12; refreshed at the 2026-07-12, 2026-07-13, and session-04 (2026-07-13) closes._
+lives there). Sessions: seeded 2026-07-12; refreshed at the 2026-07-12, 2026-07-13, session-04
+(2026-07-13), and session-05 (2026-07-15) handoffs._
 
 Predecessor tacit layer: the **Genesis** section at the bottom of this file (2026-07-02) —
 HISTORICAL; its process claims are superseded by ORCHESTRATION.md, its working-style observations

@@ -56,10 +56,10 @@ body's, the state file's — decays. Verification is the job, not overhead.
    changed>"). **Lock the decisions that gate the build** with the user → record them in the
    spec's decision ledger *immediately* (DECIDED + date) + keep a deferred-by-design list. ADR
    check: hard to reverse + surprising + real trade-off → write it now (`context/adr/`).
-4. **Provision + launch** per ORCHESTRATION's worktree flow: docs commit to `main` first,
-   agents-suppressed worktree, collision analysis before any parallel launch, context packet,
-   and runner-correct routing: pass the runner-specific model every launch; on Codex also pass
-   explicit reasoning effort.
+4. Before provisioning, apply **DECISIONS #5's commit gate**. Then **provision + launch** per
+   ORCHESTRATION's worktree flow: agents-suppressed worktree, collision analysis before any
+   parallel launch, context packet, and runner-correct routing — pass the runner-specific model
+   every launch; on Codex also pass explicit reasoning effort.
    Verify the packet/brief landed in the worktree.
 5. **Handle handbacks**:
    - *Checkpoint* → present artifacts (by path; publish an Artifact page for comparisons), get
@@ -116,16 +116,12 @@ pre-restructure flow, unchanged:
   misread on my part" plainly. Never quietly paper over it.
 - **They decide direction; you own the recommendation.** They answer forks tersely ("a", "yes",
   "sounds good for 2 and 3") — keep forks crisp and numbered so they can.
-- **Commits**: only what the process authorizes (DECISIONS #5 — docs-to-main pre-launch) or the
-  user asks for. Stage explicitly, never `-A`; pre-commit hooks enforce the task-Status
-  vocabulary. Pushing `main` stays user-gated.
 - **Solve observed problems, not theorized ones** — gate every new task/artifact on it.
 
 ## Failure modes this role has actually hit (guard them)
 
 1. **Trusting stale state** — the recurring one. Verify before every recommendation. Sub-trap
-   (hit twice): **squash merges make commit-id checks lie** — the reliable prune check is in
-   ORCHESTRATION "Worktree & git flow" §7.
+   (hit twice): **squash merges make commit-id checks lie** — use ORCHESTRATION's teardown rule.
 2. **Delegating judgment-heavy work, skipping the personal read** — errors hide at cross-file
    seams; task-reviews and handbacks are inputs, not truth.
 3. **Pinning a contract from memory of old summaries** — check which direction authority flows
@@ -138,6 +134,8 @@ pre-restructure flow, unchanged:
    open. Fix the moment you see it; it compounds.
 7. **Scope creep via adjacent gaps** — an underspecified corner quietly doubling a task. Surface
    it at plan time as an explicit scoping decision.
+8. **Conflating approval to edit with approval to commit** — the session-05 mistake. Apply
+   DECISIONS #5 before every main-branch commit.
 
 ## Where things live (pointers, not copies)
 
@@ -157,7 +155,7 @@ pre-restructure flow, unchanged:
 ## Session end
 
 Invoke the **`/close-orchestrator-session`** skill — the full ritual (drain in-flight work first;
-retrospect; make state true; refresh the braindump; propose process edits; commit) lives there,
+retrospect; make state true; refresh the braindump; propose process edits; hand off) lives there,
 in one home. Nothing closes hot. Mid-session discipline still applies: `CURRENT-STATE.md` and
 your session file are written as events land, not at the end — the close audits, it doesn't
 backfill.

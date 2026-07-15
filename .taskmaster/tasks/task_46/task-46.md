@@ -1,5 +1,11 @@
 # Task 46: Workflow Export to Zero-Dependency Code
 
+> **PARKED / STALE — user ruling 2026-07-15. Do not implement from this spec.** Refreshed against
+> `main` at `e700ae9f`: Task 92 removed the planner dependency; Task 135 replaced the wrapper-chain
+> architecture behind the proposed node-function refactor; current batch/loop/gate/resume/MCP/
+> agent semantics would make faithful export a second runtime; and no observed user demand
+> justifies that final-code burden. Re-open only from observed demand and a fresh scope decision.
+
 ## Description
 Implement the ability to export pflow workflows to standalone, zero-dependency Python code. This feature transforms pflow from a runtime dependency into a pure development-time tool, allowing users to generate human-readable code that runs without pflow installed. Generated code uses plain Python variables for data flow — no PocketFlow classes, no shared dict, no framework abstractions.
 
