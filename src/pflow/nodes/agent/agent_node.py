@@ -11,6 +11,7 @@ from jsonschema.validators import validator_for
 
 from pflow.core.node import Node
 from pflow.nodes.agent.backend import AgentBackend, AgentResult
+from pflow.nodes.agent.exceptions import AgentValidationError
 from pflow.nodes.agent.schema_validation import (
     TopLevelObjectViolation,
     is_legacy_python_alias_schema,
@@ -60,9 +61,9 @@ class AgentNode(Node):
     @staticmethod
     def _validate_backend(value: Any) -> str:
         if value is None:
-            raise ValueError("Agent node requires 'backend'. Valid values: claude, codex.")
+            raise AgentValidationError("Agent node requires 'backend'. Valid values: claude, codex.")
         if not isinstance(value, str) or value not in {"claude", "codex"}:
-            raise ValueError(f"Invalid backend: {value!r}. Valid values: claude, codex.")
+            raise AgentValidationError(f"Invalid backend: {value!r}. Valid values: claude, codex.")
         return value
 
     @staticmethod
@@ -78,18 +79,18 @@ class AgentNode(Node):
     def _validate_prompt(self, prompt: Any) -> str:
         """Validate prompt parameter."""
         if not prompt:
-            raise ValueError(
+            raise AgentValidationError(
                 "Agent node requires a 'prompt' parameter. "
                 "Use template syntax like '- prompt: ${previous_node.output}' "
                 "to wire data from other nodes."
             )
         if not isinstance(prompt, str):
-            raise TypeError(f"Prompt must be a string, got {type(prompt).__name__}")
+            raise AgentValidationError(f"Prompt must be a string, got {type(prompt).__name__}")
         # No length cap: a coding agent routinely receives file contents and accumulated
         # context via ${node.output}, well past any fixed char limit. Both backends handle
         # far larger prompts than a cap would allow, and the plain `llm` node has no cap.
         if not prompt.strip():
-            raise ValueError("Prompt cannot be empty or whitespace only.")
+            raise AgentValidationError("Prompt cannot be empty or whitespace only.")
         return prompt
 
     def _validate_schema(self, output_schema: Any) -> dict | None:
@@ -115,15 +116,17 @@ class AgentNode(Node):
         if output_schema is None:
             return None
         if not isinstance(output_schema, dict):
-            raise TypeError(f"output_schema must be a dict (JSON Schema), got {type(output_schema).__name__}")
+            raise AgentValidationError(
+                f"output_schema must be a dict (JSON Schema), got {type(output_schema).__name__}"
+            )
         if not output_schema:
-            raise ValueError(
+            raise AgentValidationError(
                 "output_schema is an empty dict. Did you forget to populate the schema body? "
                 'Use a real JSON Schema (e.g. {"type": "object", "properties": {...}}) '
                 "or remove the output_schema field entirely."
             )
         if is_legacy_python_alias_schema(output_schema):
-            raise ValueError(
+            raise AgentValidationError(
                 "output_schema appears to use the legacy Python-alias format "
                 '({"field": {"type": "str", ...}}). '
                 'Use JSON Schema instead: {"type": "object", "properties": {...}, "required": [...]}. '
@@ -136,7 +139,7 @@ class AgentNode(Node):
         # without a top-level type).
         violation = top_level_object_violation(output_schema)
         if violation is not None:
-            raise ValueError(self._top_level_object_error(violation))
+            raise AgentValidationError(self._top_level_object_error(violation))
         return output_schema
 
     @staticmethod
@@ -195,14 +198,14 @@ class AgentNode(Node):
         cwd = os.path.abspath(cwd)
 
         if not os.path.exists(cwd):
-            raise ValueError(f"Working directory does not exist: {cwd}")
+            raise AgentValidationError(f"Working directory does not exist: {cwd}")
         if not os.path.isdir(cwd):
-            raise ValueError(f"Working directory is not a directory: {cwd}")
+            raise AgentValidationError(f"Working directory is not a directory: {cwd}")
 
         # Check for restricted directories
         normalized_path = os.path.normpath(cwd)
         if normalized_path in RESTRICTED_DIRECTORIES:
-            raise ValueError(f"Restricted directory: {cwd}")
+            raise AgentValidationError(f"Restricted directory: {cwd}")
         return cwd
 
     def _validate_timeout(self, timeout: Any) -> int:
@@ -216,14 +219,16 @@ class AgentNode(Node):
                 raise ValueError
             return timeout_int
         except (ValueError, TypeError):
-            raise ValueError(f"Invalid timeout: {timeout}. Must be integer between 30 and 3600 seconds.") from None
+            raise AgentValidationError(
+                f"Invalid timeout: {timeout}. Must be integer between 30 and 3600 seconds."
+            ) from None
 
     def _validate_resume(self, resume: Any) -> str | None:
         """Validate resume session ID parameter."""
         if not resume:
             return None
         if not isinstance(resume, str):
-            raise TypeError(f"resume must be a string (session ID), got {type(resume).__name__}")
+            raise AgentValidationError(f"resume must be a string (session ID), got {type(resume).__name__}")
         return resume
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:

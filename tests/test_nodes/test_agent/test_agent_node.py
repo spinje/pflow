@@ -45,6 +45,7 @@ from pflow.core.workflow.validator import WorkflowValidator
 from pflow.nodes.agent.agent_node import AgentNode
 from pflow.nodes.agent.backend import AgentResult
 from pflow.nodes.agent.claude_backend import ClaudeBackend, _claude_token_fields
+from pflow.nodes.agent.exceptions import AgentValidationError
 from pflow.registry.metadata_extractor import PflowMetadataExtractor
 
 # The mock ``claude_agent_sdk`` is installed by this directory's conftest.py (via
@@ -98,7 +99,7 @@ def test_task_missing(agent_node):
     writes markdown — `shared[...]` / `params` are unactionable leaks.
     """
     shared = {"__warnings__": {}}
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     message = str(exc_info.value)
     assert "'prompt'" in message
@@ -112,7 +113,7 @@ def test_backend_is_required() -> None:
     node = AgentNode()
     node.params = {"prompt": "do work"}
 
-    with pytest.raises(ValueError, match=r"requires 'backend'.*claude, codex"):
+    with pytest.raises(AgentValidationError, match=r"requires 'backend'.*claude, codex"):
         node.prep({})
 
 
@@ -123,7 +124,7 @@ def test_claude_rejects_codex_only_param(agent_node) -> None:
         "approval_policy": "never",
     }
 
-    with pytest.raises(ValueError, match="'approval_policy' is not valid for backend 'claude'"):
+    with pytest.raises(AgentValidationError, match="'approval_policy' is not valid for backend 'claude'"):
         agent_node.prep({})
 
 
@@ -131,7 +132,7 @@ def test_codex_rejects_claude_only_param_before_subprocess_launch() -> None:
     node = AgentNode()
     node.params = {"backend": "codex", "prompt": "do work", "max_turns": 5}
 
-    with pytest.raises(ValueError, match="'max_turns' is not valid for backend 'codex'"):
+    with pytest.raises(AgentValidationError, match="'max_turns' is not valid for backend 'codex'"):
         node.prep({})
 
 
@@ -151,7 +152,7 @@ def test_task_empty_string(agent_node):
     """Test that empty string prompt raises ValueError."""
     agent_node.params = {"backend": "claude", "prompt": "   "}  # Whitespace only
     shared = {"__warnings__": {}}
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "cannot be empty" in str(exc_info.value)
 
@@ -174,7 +175,7 @@ def test_working_directory_missing(agent_node):
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "cwd": "/nonexistent/path"}
     shared = {"__warnings__": {}}
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "Working directory does not exist" in str(exc_info.value)
     message = str(exc_info.value).replace("\\", "/")
@@ -192,7 +193,7 @@ def test_working_directory_restricted(agent_node):
     # Test multiple restricted directories
     for restricted in ["/", "/etc", "/usr", "/bin"]:
         agent_node.params = {"backend": "claude", "prompt": "test prompt", "cwd": restricted}
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(AgentValidationError) as exc_info:
             agent_node.prep(shared)
         assert "Restricted directory" in str(exc_info.value)
 
@@ -272,14 +273,14 @@ def test_valid_task_with_schema(agent_node):
 
 def test_legacy_python_alias_schema_rejected(agent_node):
     """Old custom output_schema format raises with migration guidance."""
-    with pytest.raises(ValueError, match="legacy Python-alias format"):
+    with pytest.raises(AgentValidationError, match="legacy Python-alias format"):
         agent_node._validate_schema({"risk_level": {"type": "str", "description": "high/medium/low"}})
 
 
 def test_legacy_format_detection_checks_all_values(agent_node):
     """Legacy detection checks all values, not just the first."""
     schema = {"_meta": "comment", "risk": {"type": "str", "description": "high/medium/low"}}
-    with pytest.raises(ValueError, match="legacy Python-alias format"):
+    with pytest.raises(AgentValidationError, match="legacy Python-alias format"):
         agent_node._validate_schema(schema)
 
 
@@ -287,37 +288,37 @@ def test_top_level_oneOf_schema_rejected(agent_node):
     """Verified via real-API probe: oneOf top-level returns HTTP 400.
     Combinators must live inside an object wrapper.
     """
-    with pytest.raises(ValueError, match="top-level type: object"):
+    with pytest.raises(AgentValidationError, match="top-level type: object"):
         agent_node._validate_schema({"oneOf": [{"type": "string"}, {"type": "integer"}]})
 
 
 def test_top_level_anyOf_schema_rejected(agent_node):
     """anyOf at top level is rejected by the API — same class as oneOf."""
-    with pytest.raises(ValueError, match="top-level type: object"):
+    with pytest.raises(AgentValidationError, match="top-level type: object"):
         agent_node._validate_schema({"anyOf": [{"type": "object"}, {"type": "object"}]})
 
 
 def test_top_level_allOf_schema_rejected(agent_node):
     """allOf at top level is rejected by the API — same class as oneOf."""
-    with pytest.raises(ValueError, match="top-level type: object"):
+    with pytest.raises(AgentValidationError, match="top-level type: object"):
         agent_node._validate_schema({"allOf": [{"type": "object"}, {"type": "object"}]})
 
 
 def test_top_level_missing_type_rejected(agent_node):
     """A dict without top-level `type` is rejected — the API requires `type: object`."""
-    with pytest.raises(ValueError, match="top-level type: object"):
+    with pytest.raises(AgentValidationError, match="top-level type: object"):
         agent_node._validate_schema({"properties": {"x": {"type": "string"}}})
 
 
 def test_top_level_array_schema_rejected(agent_node):
     """The Claude API rejects non-object top-level schemas; prep catches this."""
-    with pytest.raises(ValueError, match="top-level type: object"):
+    with pytest.raises(AgentValidationError, match="top-level type: object"):
         agent_node._validate_schema({"type": "array", "items": {"type": "string"}})
 
 
 def test_top_level_primitive_schema_rejected(agent_node):
     """Primitive top-level schemas must be wrapped in an object."""
-    with pytest.raises(ValueError, match="top-level type: object"):
+    with pytest.raises(AgentValidationError, match="top-level type: object"):
         agent_node._validate_schema({"type": "string", "enum": ["yes", "no"]})
 
 
@@ -333,7 +334,7 @@ def test_top_level_object_with_oneOf_accepted(agent_node):
 
 def test_empty_schema_dict_rejected(agent_node):
     """Empty dict likely means the schema body was omitted."""
-    with pytest.raises(ValueError, match="empty dict"):
+    with pytest.raises(AgentValidationError, match="empty dict"):
         agent_node._validate_schema({})
 
 
@@ -344,7 +345,7 @@ def test_none_schema_returns_none(agent_node):
 
 def test_non_dict_schema_raises_typeerror(agent_node):
     """output_schema must be a JSON Schema dict."""
-    with pytest.raises(TypeError):
+    with pytest.raises(AgentValidationError):
         agent_node._validate_schema(["not", "a", "dict"])
 
 
@@ -595,7 +596,7 @@ def test_resume_parameter(agent_node):
 
     # Invalid type should raise
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "resume": 12345}  # Not a string
-    with pytest.raises(TypeError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "resume must be a string" in str(exc_info.value)
 
@@ -617,13 +618,13 @@ def test_timeout_parameter(agent_node):
 
     # Too short (< 30s)
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "timeout": 10}
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "between 30 and 3600" in str(exc_info.value)
 
     # Too long (> 3600s)
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "timeout": 5000}
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "between 30 and 3600" in str(exc_info.value)
 
@@ -807,13 +808,13 @@ def test_max_thinking_tokens_validation(agent_node):
 
     # Too low
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "max_thinking_tokens": 500}
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "Invalid max_thinking_tokens" in str(exc_info.value)
 
     # Too high
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "max_thinking_tokens": 200000}
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "Invalid max_thinking_tokens" in str(exc_info.value)
 
@@ -829,13 +830,13 @@ def test_max_turns_validation(agent_node):
 
     # Too low
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "max_turns": 0}
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "Invalid max_turns" in str(exc_info.value)
 
     # Too high (now 100 is the max)
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "max_turns": 101}
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "Invalid max_turns" in str(exc_info.value)
 
@@ -848,7 +849,7 @@ def test_max_turns_too_low_with_schema_rejected(agent_node):
         "output_schema": {"type": "object", "properties": {"x": {"type": "string"}}},
         "max_turns": 1,
     }
-    with pytest.raises(ValueError, match="max_turns must be >= 2"):
+    with pytest.raises(AgentValidationError, match="max_turns must be >= 2"):
         agent_node.prep({})
 
 
@@ -1192,7 +1193,7 @@ def test_sandbox_parameter_invalid_type(agent_node):
     """Test sandbox rejects non-dict values."""
     shared = {}
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "sandbox": "not a dict"}
-    with pytest.raises(TypeError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "sandbox must be a dict" in str(exc_info.value)
 
@@ -1201,7 +1202,7 @@ def test_sandbox_parameter_invalid_enabled_type(agent_node):
     """Test sandbox['enabled'] must be bool."""
     shared = {}
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "sandbox": {"enabled": "yes"}}
-    with pytest.raises(TypeError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "sandbox['enabled'] must be bool" in str(exc_info.value)
 
@@ -1210,7 +1211,7 @@ def test_sandbox_parameter_invalid_auto_allow_bash_type(agent_node):
     """Test sandbox['autoAllowBashIfSandboxed'] must be bool."""
     shared = {}
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "sandbox": {"autoAllowBashIfSandboxed": 1}}
-    with pytest.raises(TypeError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "sandbox['autoAllowBashIfSandboxed'] must be bool" in str(exc_info.value)
 
@@ -1219,7 +1220,7 @@ def test_sandbox_parameter_invalid_excluded_commands_type(agent_node):
     """Test sandbox['excludedCommands'] must be list."""
     shared = {}
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "sandbox": {"excludedCommands": "docker"}}
-    with pytest.raises(TypeError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "sandbox['excludedCommands'] must be a list" in str(exc_info.value)
 
@@ -1228,7 +1229,7 @@ def test_sandbox_parameter_invalid_network_type(agent_node):
     """Test sandbox['network'] must be dict."""
     shared = {}
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "sandbox": {"network": "localhost"}}
-    with pytest.raises(TypeError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "sandbox['network'] must be a dict" in str(exc_info.value)
 
@@ -1297,7 +1298,7 @@ def test_disallowed_tools_invalid_type(agent_node):
     """Test disallowed_tools rejects non-list values."""
     shared = {}
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "disallowed_tools": "Bash(pflow:*)"}
-    with pytest.raises(TypeError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep(shared)
     assert "disallowed_tools must be a list" in str(exc_info.value)
 
@@ -1469,7 +1470,7 @@ def _runtime_rejects(node: AgentNode, schema: Any) -> bool:
     try:
         node._validate_schema(schema)
         return False
-    except (ValueError, TypeError):
+    except AgentValidationError:
         return True
 
 
@@ -1722,7 +1723,7 @@ def test_runtime_and_validator_agree_on_max_turns_with_schema(agent_node: Any) -
     runtime_rejected = False
     try:
         agent_node.prep({})
-    except ValueError:
+    except AgentValidationError:
         runtime_rejected = True
 
     assert validator_rejected == runtime_rejected, (
@@ -1933,9 +1934,9 @@ def test_string_true_opts_in(agent_node):
 
 
 def test_use_api_key_invalid_value_raises(agent_node):
-    """A non-bool, non-canonical value fails closed with a TypeError."""
+    """A non-bool, non-canonical value fails closed with an AgentValidationError."""
     agent_node.params = {"backend": "claude", "prompt": "test prompt", "use_api_key": "maybe"}
-    with pytest.raises(TypeError) as exc_info:
+    with pytest.raises(AgentValidationError) as exc_info:
         agent_node.prep({})
     assert "use_api_key must be true or false" in str(exc_info.value)
 
@@ -2492,18 +2493,53 @@ def test_schema_retries_no_schema_one_turn_allowed(agent_node):
 
 
 def test_schema_retries_invalid_value_rejected(agent_node):
-    """A non-integer schema_retries raises a clear ValueError (only int() is wrapped)."""
+    """A non-integer schema_retries raises a clear AgentValidationError (only int() is wrapped)."""
     agent_node.params = {"backend": "claude", "prompt": "hi", "schema_retries": "abc"}
-    with pytest.raises(ValueError, match="Invalid schema_retries"):
+    with pytest.raises(AgentValidationError, match="Invalid schema_retries"):
         agent_node.prep({"__warnings__": {}})
 
 
 def test_schema_retries_out_of_range_rejected(agent_node):
     """Range checks live outside the try and keep their specific messages."""
     agent_node.params = {"backend": "claude", "prompt": "hi", "schema_retries": 9}
-    with pytest.raises(ValueError, match="cannot exceed 5"):
+    with pytest.raises(AgentValidationError, match="cannot exceed 5"):
         agent_node.prep({"__warnings__": {}})
 
     agent_node.params = {"backend": "claude", "prompt": "hi", "schema_retries": -1}
-    with pytest.raises(ValueError, match="cannot be negative"):
+    with pytest.raises(AgentValidationError, match="cannot be negative"):
         agent_node.prep({"__warnings__": {}})
+
+
+@pytest.mark.parametrize(
+    ("params", "match"),
+    [
+        # Was a bare TypeError pre-#592 → rendered a scary "Type: TypeError" line.
+        ({"backend": "codex", "prompt": "hi", "sandbox": "bogus"}, "sandbox must be one of"),
+        # Was a bare ValueError pre-#592 → rendered clean but inconsistently (no Type: line).
+        ({"backend": "bogus", "prompt": "hi"}, "Invalid backend"),
+    ],
+)
+def test_agent_param_errors_render_as_clean_validation_diagnostics(params: dict[str, Any], match: str) -> None:
+    """#592: every agent param error renders identically — a clean validation
+    diagnostic with NO ``Type:`` line, regardless of whether it was formerly a
+    ``ValueError`` or a ``TypeError``. Exercises the real exception → diagnostic
+    → rendered-text path a user/agent sees, not just the raised type.
+    """
+    from pflow.core.diagnostic import exception_to_diagnostics
+    from pflow.core.diagnostic_render import format_diagnostic
+
+    node = AgentNode()
+    node.set_params(params)
+    with pytest.raises(AgentValidationError, match=match) as exc_info:
+        node.prep({})
+
+    diagnostics = exception_to_diagnostics(exc_info.value)
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
+    assert diagnostic.title == "Validation Error"
+    assert diagnostic.context == {"category": "validation"}
+
+    rendered = format_diagnostic(diagnostic)
+    # The regression: a Python exception-type leak ("Type: TypeError") must never
+    # surface for a user-facing param validation error.
+    assert "Type:" not in rendered

@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from pflow.nodes.agent.backend import AgentResult
+from pflow.nodes.agent.exceptions import AgentValidationError
 from pflow.nodes.agent.schema_validation import (
     CLAUDE_PARAMS,
     SHARED_PARAMS,
@@ -89,10 +90,10 @@ class ClaudeBackend:
         authored_params = {key for key in params if not is_compiler_source_line_sidecar(key, params)}
         invalid = sorted(authored_params - (SHARED_PARAMS | CLAUDE_PARAMS))
         if invalid:
-            raise ValueError(f"{invalid[0]!r} is not valid for backend 'claude'")
+            raise AgentValidationError(f"{invalid[0]!r} is not valid for backend 'claude'")
         max_turns = validate_claude_max_turns(params.get("max_turns"))
         if params.get("output_schema") is not None and max_turns < 2:
-            raise ValueError(
+            raise AgentValidationError(
                 f"max_turns must be >= 2 when output_schema is set (got {max_turns}). "
                 "Structured output requires the agent to take at least one turn beyond producing "
                 "the final response. Set max_turns to 2 or higher (default is typically sufficient)."
