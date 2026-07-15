@@ -6,6 +6,7 @@ import dataclasses
 import json
 import logging
 import os
+import shlex
 import sys
 import time
 import warnings
@@ -856,9 +857,10 @@ def _validate_workflow_flags(workflow: tuple[str, ...]) -> None:
 
     # The name/path the user typed, so suggestions are concrete and copy-pasteable.
     # `<workflow>` only when the name was omitted (workflow[0] is itself a dash).
-    # Per-workflow `--help` (not `pflow describe`) is used to list inputs because
-    # it accepts BOTH file paths and saved names; `describe` only takes saved names.
+    # Per-workflow `--help` lists inputs without requiring a separate command.
+    # Quote concrete paths so every suggestion remains copy-pasteable.
     target = workflow[0] if workflow and not workflow[0].startswith("-") else "<workflow>"
+    quoted_target = target if target == "<workflow>" else shlex.quote(target)
 
     misplaced = [arg for arg in stray if arg in _PFLOW_FLAGS]
     if misplaced:
@@ -867,7 +869,7 @@ def _validate_workflow_flags(workflow: tuple[str, ...]) -> None:
             explanation=(
                 f"pflow flags configure the run and must precede the workflow. Found after it: {', '.join(misplaced)}"
             ),
-            suggestions=[f"pflow {misplaced[0]} {target}"],
+            suggestions=[f"pflow {misplaced[0]} {quoted_target}"],
         )
 
     bad = stray[0]
@@ -875,7 +877,7 @@ def _validate_workflow_flags(workflow: tuple[str, ...]) -> None:
         raise UserFriendlyError(
             title="Unknown option '-h'",
             explanation="pflow uses '--help' to show a workflow's inputs and outputs.",
-            suggestions=[f"pflow {target} --help"],
+            suggestions=[f"pflow {quoted_target} --help"],
         )
 
     raise UserFriendlyError(
@@ -886,7 +888,7 @@ def _validate_workflow_flags(workflow: tuple[str, ...]) -> None:
         ),
         suggestions=[
             f"Did you mean '{_suggest_key_value(bad, workflow)}'?",
-            f"See this workflow's inputs: pflow {target} --help",
+            f"See this workflow's inputs: pflow {quoted_target} --help",
         ],
     )
 
@@ -1040,7 +1042,7 @@ def _show_workflow_help(
     source: str | None,
 ) -> None:
     """Display workflow help information."""
-    from pflow.execution.formatters.workflow_describe_formatter import format_workflow_interface
+    from pflow.cli.workflow_interface import format_workflow_interface_for_cli
 
     name = os.path.basename(first_arg) if "/" in first_arg else first_arg
     metadata = {"ir": workflow_ir}
@@ -1055,7 +1057,8 @@ def _show_workflow_help(
         click.echo(f"Source: {first_arg}")
     click.echo()
 
-    formatted = format_workflow_interface(name, metadata)
+    example_name = name if source == "library" else shlex.quote(first_arg)
+    formatted = format_workflow_interface_for_cli(name, metadata, example_name=example_name)
     click.echo(formatted)
 
 

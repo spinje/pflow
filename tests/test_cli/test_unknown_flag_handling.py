@@ -62,10 +62,21 @@ class TestValidateWorkflowFlagsGuard:
         assert err.title == "Unknown option '--scenario'"
         assert "key=value" in err.explanation
         assert any("scenario=fail-mid" in s for s in err.suggestions)
-        # Inputs are listed via per-workflow --help (accepts file paths), using the
-        # concrete name — NOT `pflow describe`, which only resolves saved names.
+        # Inputs are listed via per-workflow --help using the concrete name.
         assert any("pflow wf.pflow.md --help" in s for s in err.suggestions)
         assert not any("describe" in s for s in err.suggestions)
+
+    def test_spaced_workflow_path_is_quoted_in_suggestions(self):
+        """Commands emitted for spaced paths must remain copy-pasteable."""
+        target = "./draft files/wf.pflow.md"
+
+        with pytest.raises(UserFriendlyError) as misplaced:
+            _validate_workflow_flags((target, "--verbose"))
+        assert misplaced.value.suggestions == [f"pflow --verbose '{target}'"]
+
+        with pytest.raises(UserFriendlyError) as unknown:
+            _validate_workflow_flags((target, "--scenario"))
+        assert any(f"pflow '{target}' --help" in suggestion for suggestion in unknown.value.suggestions)
 
     def test_unknown_flag_pairs_its_following_value(self):
         """An unknown flag pairs with the token that follows it for the hint."""

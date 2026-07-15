@@ -3,8 +3,13 @@
 import json
 import sys
 from io import StringIO
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+
+import pytest
+
+from tests.shared.markdown_utils import write_workflow_file
 
 
 def invoke_cli(args: list[str]) -> Any:
@@ -406,6 +411,74 @@ class TestWorkflowDescribeCommand:
             assert "Example Usage:" in result.output
             assert "pflow data-processor input_file=<value>" in result.output
 
+    def test_describe_saved_workflow_preserves_execution_history(self) -> None:
+        """Saved workflows retain their library metadata and history section."""
+        mock_metadata = {
+            "description": "A saved workflow",
+            "execution_count": 2,
+            "last_execution_timestamp": "2026-07-15T08:00:00Z",
+            "last_execution_success": True,
+            "ir": {"nodes": []},
+        }
+
+        with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
+            mock_wm = MockWM.return_value
+            mock_wm.exists.return_value = True
+            mock_wm.load.return_value = mock_metadata
+
+            result = invoke_cli(["describe", "saved-workflow"])
+
+        assert result.exit_code == 0
+        assert "Workflow: saved-workflow" in result.output
+        assert "Execution History:" in result.output
+        assert "Runs: 2 times" in result.output
+        mock_wm.load.assert_called_once_with("saved-workflow")
+
+    def test_describe_local_file_preserves_typed_path_without_history_hint(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Unsaved files use the typed path for both display and copyable usage."""
+        workflow_path = tmp_path / "draft files" / "local-workflow.pflow.md"
+        workflow_path.parent.mkdir()
+        write_workflow_file(
+            {
+                "inputs": {"subject": {"required": True, "description": "Subject to greet"}},
+                "outputs": {"message": {"description": "Greeting text"}},
+                "nodes": [
+                    {
+                        "id": "greet",
+                        "type": "shell",
+                        "purpose": "Create the greeting",
+                        "params": {"command": "echo hello"},
+                    }
+                ],
+            },
+            workflow_path,
+            title="Local Workflow",
+            description="A local draft",
+        )
+        typed_path = "./draft files/local-workflow.pflow.md"
+        monkeypatch.chdir(tmp_path)
+
+        with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
+            MockWM.return_value.exists.return_value = False
+            result = invoke_cli(["describe", typed_path])
+
+        assert result.exit_code == 0
+        assert result.output == (
+            f"Workflow: {typed_path}\n"
+            "Description: A local draft\n"
+            "\n"
+            "Inputs:\n"
+            "  - subject (required): Subject to greet\n"
+            "\n"
+            "Outputs:\n"
+            "  - message: Greeting text\n"
+            "\n"
+            "Example Usage:\n"
+            f"  pflow '{typed_path}' subject=<value>\n"
+        )
+
     def test_describe_workflow_no_inputs_outputs(self) -> None:
         """Test describing a workflow with no inputs or outputs."""
         mock_metadata = {
@@ -502,6 +575,60 @@ class TestWorkflowDescribeCommand:
             assert result.exit_code == 1
             assert "Error: Workflow 'xyz-task' not found." in result.stderr
             assert "Did you mean:" not in result.stderr
+
+    def test_describe_missing_file_does_not_fall_back_to_saved_workflow(self) -> None:
+        """A path-like argument must resolve to a file, not a stripped library name."""
+        with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
+            mock_wm = MockWM.return_value
+            mock_wm.exists.side_effect = lambda name: name == "report"
+            mock_wm.get_path.return_value = "/missing/library/report.pflow.md"
+            mock_wm.load_ir.return_value = {"nodes": []}
+            mock_wm.list_names.return_value = ["report"]
+
+            result = invoke_cli(["describe", "report.pflow.md"])
+
+        assert result.exit_code == 1
+        assert "Error: Workflow 'report.pflow.md' not found." in result.stderr
+        assert "Did you mean:" not in result.stderr
+        mock_wm.load.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("typed_name", "expected_hint"),
+        [
+            ("draft.md", "Did you mean"),
+            ("legacy.json", "JSON workflow format is no longer supported"),
+        ],
+    )
+    def test_describe_preserves_format_specific_resolution_hint(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, typed_name: str, expected_hint: str
+    ) -> None:
+        """Local-file format guidance must not be replaced by generic name suggestions."""
+        if typed_name.endswith(".md"):
+            write_workflow_file({"nodes": []}, tmp_path / "draft.pflow.md")
+        monkeypatch.chdir(tmp_path)
+
+        result = invoke_cli(["describe", typed_name])
+
+        assert result.exit_code == 1
+        assert expected_hint in result.stderr
+        assert "Use 'pflow list'" not in result.stderr
+
+    @pytest.mark.parametrize("failure", ["directory", "invalid_utf8"])
+    def test_describe_file_read_failure_is_actionable(self, tmp_path: Path, failure: str) -> None:
+        """Unreadable workflow paths render diagnostics instead of tracebacks."""
+        workflow_path = tmp_path / f"{failure}.pflow.md"
+        if failure == "directory":
+            workflow_path.mkdir()
+        else:
+            workflow_path.write_bytes(b"\xff")
+
+        result = invoke_cli(["describe", str(workflow_path)])
+
+        assert result.exit_code == 1
+        assert "Error: Could not read workflow file" in result.stderr
+        assert f"pflow could not read '{workflow_path}'" in result.stderr
+        assert "Check that the path points to a readable UTF-8 .pflow.md file." in result.stderr
+        assert "Traceback" not in result.stderr
 
     def test_describe_workflow_case_insensitive_suggestions(self) -> None:
         """Test that suggestions are case-insensitive."""

@@ -465,11 +465,19 @@ class TestIsLikelyWorkflowName:
         assert is_likely_workflow_name("github-sync", ())
 
     def test_text_with_spaces_not_workflow_name(self):
-        """Test that text with spaces is never a workflow name."""
+        """Ordinary natural language with spaces is not a workflow name."""
         from pflow.cli.workflow_resolution import is_likely_workflow_name
 
         assert not is_likely_workflow_name("analyze this text", ())
         assert not is_likely_workflow_name("process my data", ("param=value",))
+
+    def test_file_path_with_spaces_is_workflow_name(self):
+        """Quoted paths remain one argument and must reach workflow resolution."""
+        from pflow.cli.workflow_resolution import is_likely_workflow_name
+
+        assert is_likely_workflow_name("./workflow drafts/test.pflow.md", ())
+        # The separator makes this intentionally path-like despite the prose prefix.
+        assert is_likely_workflow_name("explain docs/readme.md", ())
 
     def test_file_paths_are_workflow_names(self):
         """Test that file paths are recognized as workflow references."""
@@ -518,6 +526,21 @@ class TestEdgeCases:
 
         assert result.exit_code == 1
         assert "not found" in result.output.lower()
+
+    def test_spaced_workflow_path_help_has_copyable_example(self, tmp_path):
+        """Per-workflow help quotes the full typed path in its usage example."""
+        runner = click.testing.CliRunner()
+        workflow_path = tmp_path / "draft files" / "help workflow.pflow.md"
+        workflow_path.parent.mkdir()
+        write_workflow_file(
+            {"nodes": [{"id": "emit", "type": "shell", "params": {"command": "echo ok"}}]},
+            workflow_path,
+        )
+
+        result = runner.invoke(main, [str(workflow_path), "--help"])
+
+        assert result.exit_code == 0
+        assert f"  pflow '{workflow_path}'" in result.output
 
     def test_invalid_markdown_in_file(self):
         """Test error handling for invalid markdown in workflow file."""

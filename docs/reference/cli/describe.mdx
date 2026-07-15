@@ -1,13 +1,19 @@
 ---
 title: "pflow describe"
-description: "Show a saved workflow's interface"
+description: "Show a saved workflow or local workflow file's interface"
 icon: "file-search"
 ---
 
 ## Usage
 
 ```bash
-pflow describe <WORKFLOW>
+pflow describe <NAME_OR_PATH>
 ```
 
-Shows inputs, outputs, history summary, and example usage for a saved workflow.
+Shows inputs, outputs, and a copyable example command. Saved workflows also include their execution history; unsaved files omit history.
+
+```bash
+pflow describe my-saved-workflow
+pflow describe ./drafts/release-notes.pflow.md
+pflow describe './draft workflows/release notes.pflow.md'
+```
