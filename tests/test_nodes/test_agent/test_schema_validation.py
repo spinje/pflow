@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from pflow.nodes.agent.exceptions import AgentValidationError
 from pflow.nodes.agent.schema_validation import (
     is_compiler_source_line_sidecar,
     is_legacy_python_alias_schema,
@@ -54,7 +55,7 @@ class TestValidateUseApiKey:
         ["", "maybe", "on", "off", 2, -1, 42, [], {}, {"enabled": True}, object()],
     )
     def test_rejects_ambiguous_values_with_backend_neutral_guidance(self, value: Any) -> None:
-        with pytest.raises(TypeError, match="use_api_key must be true or false") as exc_info:
+        with pytest.raises(AgentValidationError, match="use_api_key must be true or false") as exc_info:
             validate_use_api_key(value)
 
         message = str(exc_info.value)
@@ -67,7 +68,7 @@ class TestValidateUseApiKey:
     def test_rejected_string_value_is_not_echoed(self) -> None:
         secret_like_value = "sk-secret-value-that-must-not-leak"  # noqa: S105 - redaction sentinel
 
-        with pytest.raises(TypeError) as exc_info:
+        with pytest.raises(AgentValidationError) as exc_info:
             validate_use_api_key(secret_like_value)
 
         assert secret_like_value not in str(exc_info.value)

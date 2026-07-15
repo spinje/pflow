@@ -22,6 +22,7 @@ from typing import Any
 from pflow.core.exceptions import PflowError
 from pflow.core.litellm_runtime import estimate_completion_cost_usd
 from pflow.nodes.agent.backend import AgentResult
+from pflow.nodes.agent.exceptions import AgentValidationError
 from pflow.nodes.agent.schema_validation import (
     CODEX_PARAMS,
     SHARED_PARAMS,
@@ -165,7 +166,7 @@ def _toml_value(value: Any) -> str:
         return str(value)
     if isinstance(value, float):
         if not math.isfinite(value):
-            raise TypeError("Codex config float values must be finite")
+            raise AgentValidationError("Codex config float values must be finite")
         return repr(value)
     if isinstance(value, list):
         return "[" + ", ".join(_toml_value(item) for item in value) + "]"
@@ -173,10 +174,10 @@ def _toml_value(value: Any) -> str:
         entries: list[str] = []
         for key, item in value.items():
             if not isinstance(key, str) or not key:
-                raise TypeError("Codex config inline-table keys must be non-empty strings")
+                raise AgentValidationError("Codex config inline-table keys must be non-empty strings")
             entries.append(f"{_toml_key(key)} = {_toml_value(item)}")
         return "{ " + ", ".join(entries) + " }"
-    raise TypeError(
+    raise AgentValidationError(
         "Codex config values must be TOML-compatible strings, booleans, numbers, lists, or dicts; "
         f"got {type(value).__name__}"
     )
@@ -525,7 +526,7 @@ class CodexBackend:
         authored_params = {key for key in params if not is_compiler_source_line_sidecar(key, params)}
         invalid = sorted(authored_params - (SHARED_PARAMS | CODEX_PARAMS))
         if invalid:
-            raise ValueError(f"{invalid[0]!r} is not valid for backend 'codex'")
+            raise AgentValidationError(f"{invalid[0]!r} is not valid for backend 'codex'")
 
         return {
             "approval_policy": validate_codex_approval_policy(params.get("approval_policy")),
@@ -540,11 +541,11 @@ class CodexBackend:
         if value is None:
             return {}
         if not isinstance(value, dict):
-            raise TypeError(f"config must be a dict, got {type(value).__name__}")
+            raise AgentValidationError(f"config must be a dict, got {type(value).__name__}")
         config_values = value.copy()
         for key, item in config_values.items():
             if not isinstance(key, str) or not key.strip():
-                raise TypeError("Codex config keys must be non-empty strings")
+                raise AgentValidationError("Codex config keys must be non-empty strings")
             _toml_value(item)
         return config_values
 

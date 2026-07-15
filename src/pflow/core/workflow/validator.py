@@ -946,6 +946,7 @@ class WorkflowValidator:
         from collections.abc import Callable
 
         from pflow.nodes.agent import schema_validation as sv
+        from pflow.nodes.agent.exceptions import AgentValidationError
 
         checks: list[tuple[str, Callable[[Any], object]]] = [("schema_retries", sv.validate_schema_retries)]
         if valid_backend == "claude":
@@ -970,7 +971,7 @@ class WorkflowValidator:
                 continue
             try:
                 validate(params[name])
-            except (ValueError, TypeError) as exc:
+            except AgentValidationError as exc:
                 diagnostics.append(
                     WorkflowValidator._agent_param_error(
                         node_id=node_id,

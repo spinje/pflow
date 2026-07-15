@@ -32,6 +32,7 @@ from pflow.nodes.agent.codex_backend import (
     _strictify_schema,
     _toml_value,
 )
+from pflow.nodes.agent.exceptions import AgentValidationError
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
 THREAD_ID = "019f5bba-9c03-7220-88ac-4c8cc0e63e1d"
@@ -335,12 +336,12 @@ class TestCodexParamValidation:
         assert prepared["use_api_key"] is False
 
     def test_rejects_claude_only_param_before_cli_availability(self) -> None:
-        with pytest.raises(ValueError, match="'max_turns' is not valid for backend 'codex'"):
+        with pytest.raises(AgentValidationError, match="'max_turns' is not valid for backend 'codex'"):
             CodexBackend().validate_params({"backend": "codex", "prompt": "test", "max_turns": 2})
 
     @pytest.mark.parametrize("value", ["on-failure", "always", 1, {"granular": {}}])
     def test_rejects_unsupported_approval_policy(self, value: Any) -> None:
-        with pytest.raises(ValueError, match="approval_policy must be one of"):
+        with pytest.raises(AgentValidationError, match="approval_policy must be one of"):
             CodexBackend().validate_params({"backend": "codex", "prompt": "test", "approval_policy": value})
 
     @pytest.mark.parametrize("value", ["danger-full-access", "readonly", {}, None])
@@ -350,7 +351,7 @@ class TestCodexParamValidation:
             # Explicit null resolves to the documented backend default.
             assert CodexBackend().validate_params(params)["sandbox"] == "workspace-write"
         else:
-            with pytest.raises(ValueError, match="sandbox must be one of"):
+            with pytest.raises(AgentValidationError, match="sandbox must be one of"):
                 CodexBackend().validate_params(params)
 
     @pytest.mark.parametrize(
@@ -364,7 +365,7 @@ class TestCodexParamValidation:
         ],
     )
     def test_rejects_invalid_backend_param_shapes(self, params: dict[str, Any], error: str) -> None:
-        with pytest.raises((TypeError, ValueError), match=error):
+        with pytest.raises(AgentValidationError, match=error):
             CodexBackend().validate_params({"backend": "codex", "prompt": "test", **params})
 
     def test_toml_serializer_handles_nested_cli_values_without_shell_quoting(self) -> None:

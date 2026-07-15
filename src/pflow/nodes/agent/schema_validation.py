@@ -6,15 +6,18 @@ These helpers are shared between the runtime path
 prevents drift between ``--validate-only`` / ``--dry-run`` and runtime
 ``prep()``.
 
-Error message *framing* (``ValueError`` vs ``Diagnostic``, wrapper-example
-text, suggestion lists) intentionally stays at the call site so each caller
-can shape the surface appropriately. Issue #398 may consolidate further once
-LLM-side validation is added.
+Shape/value failures raise ``AgentValidationError`` (a self-framing
+``PflowError`` — see ``exceptions.py``) so the runtime path and the static
+validator surface them identically. Additional message *framing* (wrapper-example
+text, suggestion lists) still stays at the call site so each caller can shape
+its surface. Issue #398 may consolidate further once LLM-side validation is added.
 """
 
 from __future__ import annotations
 
 from typing import Any, Final, Literal, NamedTuple
+
+from pflow.nodes.agent.exceptions import AgentValidationError
 
 SHARED_PARAMS: Final[frozenset[str]] = frozenset({
     "backend",
@@ -88,11 +91,11 @@ def validate_schema_retries(value: Any) -> int:
     try:
         retries = int(value)
     except (ValueError, TypeError):
-        raise ValueError(f"Invalid schema_retries: {value!r}. Must be an integer between 0 and 5.") from None
+        raise AgentValidationError(f"Invalid schema_retries: {value!r}. Must be an integer between 0 and 5.") from None
     if retries < 0:
-        raise ValueError(f"schema_retries cannot be negative (got {retries}).")
+        raise AgentValidationError(f"schema_retries cannot be negative (got {retries}).")
     if retries > 5:
-        raise ValueError(f"schema_retries cannot exceed 5 (cap to prevent runaway costs; got {retries}).")
+        raise AgentValidationError(f"schema_retries cannot exceed 5 (cap to prevent runaway costs; got {retries}).")
     return retries
 
 
@@ -106,16 +109,16 @@ def validate_claude_sandbox(sandbox: Any) -> dict | None:
     if not sandbox:
         return None
     if not isinstance(sandbox, dict):
-        raise TypeError(f"sandbox must be a dict, got {type(sandbox).__name__}")
+        raise AgentValidationError(f"sandbox must be a dict, got {type(sandbox).__name__}")
     bool_fields = ("enabled", "autoAllowBashIfSandboxed", "allowUnsandboxedCommands", "enableWeakerNestedSandbox")
     for field in bool_fields:
         if field in sandbox and not isinstance(sandbox[field], bool):
-            raise TypeError(f"sandbox['{field}'] must be bool")
+            raise AgentValidationError(f"sandbox['{field}'] must be bool")
     for field in ("network", "ignoreViolations"):
         if field in sandbox and not isinstance(sandbox[field], dict):
-            raise TypeError(f"sandbox['{field}'] must be a dict")
+            raise AgentValidationError(f"sandbox['{field}'] must be a dict")
     if "excludedCommands" in sandbox and not isinstance(sandbox["excludedCommands"], list):
-        raise TypeError("sandbox['excludedCommands'] must be a list")
+        raise AgentValidationError("sandbox['excludedCommands'] must be a list")
     return sandbox
 
 
@@ -129,7 +132,7 @@ def validate_claude_max_turns(max_turns: Any) -> int:
             raise ValueError
         return turns
     except (ValueError, TypeError):
-        raise ValueError(f"Invalid max_turns: {max_turns}. Must be integer between 1 and 100.") from None
+        raise AgentValidationError(f"Invalid max_turns: {max_turns}. Must be integer between 1 and 100.") from None
 
 
 def validate_claude_max_thinking_tokens(max_thinking_tokens: Any) -> int:
@@ -142,7 +145,7 @@ def validate_claude_max_thinking_tokens(max_thinking_tokens: Any) -> int:
             raise ValueError
         return tokens
     except (ValueError, TypeError):
-        raise ValueError(
+        raise AgentValidationError(
             f"Invalid max_thinking_tokens: {max_thinking_tokens}. Must be integer between 1000 and 100000."
         ) from None
 
@@ -152,7 +155,7 @@ def validate_claude_tool_list(value: Any, param_name: str) -> list | None:
     if not value:
         return None
     if not isinstance(value, list):
-        raise TypeError(f"{param_name} must be a list, got {type(value).__name__}")
+        raise AgentValidationError(f"{param_name} must be a list, got {type(value).__name__}")
     return value
 
 
@@ -162,7 +165,7 @@ def validate_codex_sandbox(value: Any) -> str:
         return "workspace-write"
     if not isinstance(value, str) or value not in CODEX_SANDBOX_MODES:
         choices = ", ".join(CODEX_SANDBOX_MODES)
-        raise ValueError(f"sandbox must be one of: {choices}; got {value!r}")
+        raise AgentValidationError(f"sandbox must be one of: {choices}; got {value!r}")
     return value
 
 
@@ -170,7 +173,7 @@ def validate_codex_approval_policy(value: Any) -> str | None:
     """Validate the codex-only ``approval_policy`` enum (optional)."""
     if value is not None and (not isinstance(value, str) or value not in CODEX_APPROVAL_POLICIES):
         choices = ", ".join(sorted(CODEX_APPROVAL_POLICIES))
-        raise ValueError(f"approval_policy must be one of: {choices}; got {value!r}")
+        raise AgentValidationError(f"approval_policy must be one of: {choices}; got {value!r}")
     return value
 
 
@@ -179,14 +182,14 @@ def validate_codex_add_dirs(value: Any) -> list[str]:
     if value is None:
         return []
     if not isinstance(value, list) or any(not isinstance(path, str) or not path.strip() for path in value):
-        raise TypeError("add_dir must be a list of non-empty directory strings")
+        raise AgentValidationError("add_dir must be a list of non-empty directory strings")
     return value.copy()
 
 
 def validate_codex_profile(value: Any) -> str | None:
     """Validate the codex-only ``profile`` (optional non-empty string)."""
     if value is not None and (not isinstance(value, str) or not value.strip()):
-        raise TypeError("profile must be a non-empty string")
+        raise AgentValidationError("profile must be a non-empty string")
     return value
 
 
@@ -236,7 +239,7 @@ def validate_use_api_key(value: Any) -> bool:
             return True
         if normalized in ("false", "0", "no"):
             return False
-    raise TypeError(
+    raise AgentValidationError(
         f"use_api_key must be true or false, got {type(value).__name__}. Set it to true only when "
         "you intend to permit API-key or configured-provider billing; otherwise omit "
         "it or set it to false."
