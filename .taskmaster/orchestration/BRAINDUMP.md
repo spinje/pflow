@@ -29,8 +29,9 @@ were absorbed into the command's "Working with the user".
   this to do that, you are an orchestrator."* Main relays review work to the same implementer;
   it verifies PR/CI/merge seams, not implementation comments.
 - **Codex approval seam:** relayed user approval may be rejected in child transcripts for external
-  writes. The working mechanism is root performs only the exact directly authorized push/PR/
-  rerun/merge action, then resumes the same child for ownership and monitoring.
+  writes. The working mechanism is the child hands back the exact files/message/head/action; root
+  performs only that directly authorized commit/push/PR-comment/merge action, then resumes the
+  same child for ownership and monitoring.
 - **User challenge pattern — "step back / are we solving the right thing" (session-04, twice).**
   They caught me pattern-matching both times: proposing a file-perm "consistency fix" (traces/cache
   aren't credential stores — locking them is arguably wrong) and asserting "#516's premise is wrong"

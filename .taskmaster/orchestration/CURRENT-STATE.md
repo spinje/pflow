@@ -18,35 +18,36 @@ Every claim here is a pointer to verify, not a fact._
 
 ## Recently shipped (since session-04; verified 2026-07-15)
 
-- **PR #591** — worktree creator gained implement mode + phase scope; related open issue **#590**
-  tracks `pflow describe` being unable to inspect an unsaved workflow file.
+- **PR #591** — worktree creator gained implement mode + phase scope.
 - **Task 177** → PR **#593** MERGED (`642b3957`): unified `agent` node with Claude + Codex
   backends; read `task_177/task-review.md` before agent-node/backend work. Spawned **#592**
   (parameter validators still raise vanilla `ValueError`/`TypeError`).
 - **PR #595** MERGED (`81ccb547`): hardened Codex agent generation, model/effort routing, asset
   synchronization, sandbox-testing naming, and task-status validation.
+- **PR #596** MERGED (`4e946aab`, closes #590): `pflow describe` supports local workflow files;
+  typed paths remain visible and copyable, including paths with spaces. Mandatory manual
+  verification exposed and closed the shared run-routing/copyability seam; no follow-ups.
 
 ## Current arc
 
 - Resume/HITL remains closed: 125 ✅ → 164 ✅ → 174 ✅ → 171 ✅ → 176 ✅. Read
   `task_171/task-review.md` + `task_176/task-review.md` before resume/gate/trace work.
-- No task or PR is in flight. **Tasks 142 and 46 are parked in Later by user ruling 2026-07-15.**
+- No task, issue, PR, or child agent is in flight. **Tasks 142 and 46 are parked in Later by user
+  ruling 2026-07-15.**
   Task 142's observed bugs are fixed and explicit dependency edges remain necessary. Task 46's
   planner/wrapper premises were removed by Tasks 92/135; modern runtime parity would duplicate
   the runtime without observed demand. Its spec carries the full stale/parked warning.
-- **Approved next, not started: #590** — lane B, one Opus/high issue-mode orchestrator. Locked UX:
-  preserve the typed file path in heading + copyable example; omit history silently for unsaved
-  files; saved-workflow history/output and unknown-name suggestions stay unchanged; no formatter
-  interface expansion. No worktree or agent exists. Apply DECISIONS #5 at the commit gate before
-  provisioning; do not re-litigate the approved output unless new evidence contradicts it.
-- After #590, Task 94 is the next feature to freshness/design-check; #592 is the next small cleanup.
-  **Task 99 predates Task 177's `claude-code` → `agent` replacement and must be refreshed against
-  the shipped backend seam before consideration.**
+- **Recommended next, not approved or started: #592** — lane B, Opus/high; it closes Task 177's
+  deferred structured-error gap before Task 99 builds on the agent seam. Task 94's provider half
+  already shipped and its remaining model-catalog design is stale/open; reframe before launch.
+  #589 is real but a memory-threshold fix would not stop an infinite pipe without a separate hard-
+  ceiling decision. **Task 99 predates Task 177's `claude-code` → `agent` replacement and must be
+  refreshed against the shipped backend seam before consideration.**
 
 ## Parallel-lane candidates (open issues, re-scanned 2026-07-15)
 
-- New: **#589** bounded-memory inconsistency in text stdin · **#590** describe local workflow
-  files · **#592** agent param errors should use `PflowError`. All verified, low severity, lane-B
+- New: **#589** bounded-memory inconsistency in text stdin · **#592** agent param errors should
+  use `PflowError`. Both verified, low severity, lane-B
   shaped; no priority claim beyond observed correctness/UX.
 - **#542** trace retention · **#562** resumable inline workflows — both touch trace format;
   serialize.
@@ -67,5 +68,5 @@ Every claim here is a pointer to verify, not a fact._
 - Real-browser verification requires killing stale `pflow ui` servers first.
 - Treat old spec file:line references as stale: Task 177 moved 133 files after the last bulk
   refresh.
-- Worktrees: only `main`; no live subagents. After handover review, the user explicitly authorized
-  committing the full staged session-05 reconciliation/process set and pushing it to `main`.
+- Worktrees: only `main`; no live subagents. `main == origin/main == 4e946aab`; session-05
+  orchestration state/reconciliation edits are intentionally uncommitted.
