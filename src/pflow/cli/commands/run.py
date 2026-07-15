@@ -1042,7 +1042,7 @@ def _show_workflow_help(
     source: str | None,
 ) -> None:
     """Display workflow help information."""
-    from pflow.execution.formatters.workflow_describe_formatter import format_workflow_interface
+    from pflow.cli.workflow_interface import format_workflow_interface_for_cli
 
     name = os.path.basename(first_arg) if "/" in first_arg else first_arg
     metadata = {"ir": workflow_ir}
@@ -1058,9 +1058,7 @@ def _show_workflow_help(
     click.echo()
 
     example_name = name if source == "library" else shlex.quote(first_arg)
-    formatted = format_workflow_interface(example_name, metadata)
-    if example_name != name:
-        formatted = formatted.replace(f"Workflow: {example_name}", f"Workflow: {name}", 1)
+    formatted = format_workflow_interface_for_cli(name, metadata, example_name=example_name)
     click.echo(formatted)
 
 

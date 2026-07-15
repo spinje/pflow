@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shlex
 import sys
+from typing import NoReturn
 
 import click
 
@@ -20,9 +21,9 @@ def describe_cmd(name: str) -> None:
       pflow describe my-workflow
       pflow describe ./drafts/fetch-github-prs.pflow.md
     """
+    from pflow.cli.workflow_interface import format_workflow_interface_for_cli
     from pflow.core.exceptions import WorkflowNotFoundError
     from pflow.core.user_errors import UserFriendlyError
-    from pflow.execution.formatters.workflow_describe_formatter import format_workflow_interface
     from pflow.execution.workflow_resolver import resolve_workflow
 
     workflow_manager = WorkflowManager()
@@ -48,13 +49,11 @@ def describe_cmd(name: str) -> None:
         metadata = {"ir": resolved.ir, "description": resolved.description or "No description"}
         example_name = shlex.quote(name)
 
-    formatted = format_workflow_interface(example_name, metadata)
-    if example_name != name:
-        formatted = formatted.replace(f"Workflow: {example_name}", f"Workflow: {name}", 1)
+    formatted = format_workflow_interface_for_cli(name, metadata, example_name=example_name)
     click.echo(formatted)
 
 
-def _handle_workflow_not_found(name: str, workflow_manager: WorkflowManager) -> None:
+def _handle_workflow_not_found(name: str, workflow_manager: WorkflowManager) -> NoReturn:
     all_names = workflow_manager.list_names()
     similar = [n for n in all_names if name.lower() in n.lower()][:3]
     click.echo(f"Error: Workflow '{name}' not found.", err=True)
