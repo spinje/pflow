@@ -2513,17 +2513,23 @@ def test_schema_retries_out_of_range_rejected(agent_node):
 @pytest.mark.parametrize(
     ("params", "match"),
     [
-        # Was a bare TypeError pre-#592 → rendered a scary "Type: TypeError" line.
-        ({"backend": "codex", "prompt": "hi", "sandbox": "bogus"}, "sandbox must be one of"),
-        # Was a bare ValueError pre-#592 → rendered clean but inconsistently (no Type: line).
+        # Formerly a bare TypeError (validate_claude_sandbox non-dict) — pre-#592 this
+        # fell through the diagnostic converter's generic branch and leaked a scary
+        # "Type: TypeError" line. THIS is the exact regression #592 fixed: swapping it
+        # back to a raw TypeError makes this assertion fail.
+        ({"backend": "claude", "prompt": "hi", "sandbox": "not a dict"}, "sandbox must be a dict"),
+        # Formerly a bare ValueError (_validate_backend) — rendered clean already, but
+        # inconsistently vs the TypeError paths. Pins that both now render identically.
         ({"backend": "bogus", "prompt": "hi"}, "Invalid backend"),
     ],
 )
 def test_agent_param_errors_render_as_clean_validation_diagnostics(params: dict[str, Any], match: str) -> None:
     """#592: every agent param error renders identically — a clean validation
-    diagnostic with NO ``Type:`` line, regardless of whether it was formerly a
-    ``ValueError`` or a ``TypeError``. Exercises the real exception → diagnostic
-    → rendered-text path a user/agent sees, not just the raised type.
+    diagnostic with NO ``Type:`` line, whether it was formerly a ``ValueError`` or a
+    ``TypeError``. Exercises the real exception → diagnostic → rendered-text path a
+    user/agent sees, not just the raised type. The TypeError case reproduces the
+    literal #592 symptom; both cases also guard the ``to_diagnostics`` override
+    (dropping it re-introduces the ``Type:`` line and a wrong title).
     """
     from pflow.core.diagnostic import exception_to_diagnostics
     from pflow.core.diagnostic_render import format_diagnostic
@@ -2538,6 +2544,8 @@ def test_agent_param_errors_render_as_clean_validation_diagnostics(params: dict[
     diagnostic = diagnostics[0]
     assert diagnostic.title == "Validation Error"
     assert diagnostic.context == {"category": "validation"}
+    # Runtime-only params get the same guide pointer the static validator emits.
+    assert diagnostic.see_also == ["agent"]
 
     rendered = format_diagnostic(diagnostic)
     # The regression: a Python exception-type leak ("Type: TypeError") must never

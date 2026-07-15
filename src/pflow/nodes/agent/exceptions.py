@@ -31,6 +31,12 @@ class AgentValidationError(PflowError):
                 message=str(self),
                 title="Validation Error",
                 source="validation",
+                # ``see_also`` mirrors the static validator's diagnostic
+                # (``_agent_param_error`` emits ``["agent"]``) so a runtime-only
+                # param error (cwd/prompt/timeout/resume/output_schema/use_api_key/
+                # codex config — none pre-checked statically) still points the
+                # user at ``pflow guide agent``.
+                see_also=["agent"],
                 context={"category": "validation"},
             )
         ]
