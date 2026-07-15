@@ -19,6 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from pflow.core.diagnostic import Diagnostic
+from pflow.nodes.agent.exceptions import AgentValidationError
 from pflow.runtime.engine.batch_executor import (
     _detect_empty_output_items,
     _extract_error,
@@ -655,6 +656,67 @@ class TestErrorHandling:
         assert attempts == 1
         assert "test_node" not in shared
         sleep.assert_not_called()
+
+    def test_agent_validation_error_is_per_item_not_fatal_in_continue_mode(self):
+        """Regression (#592): an ``agent`` param error in one item must NOT abort a
+        continue-mode batch.
+
+        ``AgentValidationError`` inherits ``retriable=True`` on purpose. If it were
+        marked ``retriable=False`` it would hit the fatal branch pinned by
+        ``test_non_retriable_exception_is_fatal_without_batch_retries`` and take the
+        whole batch down — regressing the pre-#592 ``ValueError``/``TypeError``
+        behavior where a bad ``${item.sandbox}``/``${item.prompt}`` for a single
+        item was recorded as a per-item error while the rest completed.
+        """
+
+        def execute_single_fn(node, config, item_shared):
+            item = item_shared.get("item")
+            if item == "bad":
+                raise AgentValidationError("sandbox must be a dict, got str")
+            item_shared[config.node_id] = {"response": item}
+            return ("default", {}, [])
+
+        shared: dict = {"data": ["ok1", "bad", "ok2"]}
+
+        # The batch must NOT raise — a fatal (retriable=False) error would propagate here.
+        _run_batch(
+            MockInnerNode("test_node"),
+            shared,
+            error_handling="continue",
+            execute_single_fn=execute_single_fn,
+        )
+
+        results = shared["test_node"]["results"]
+        errors = shared["test_node"]["errors"]
+        assert [r["response"] for r in results] == ["ok1", "ok2"]
+        assert len(errors) == 1
+        assert "sandbox must be a dict" in errors[0]["error"]
+
+    def test_parallel_agent_validation_error_is_per_item_not_fatal_in_continue_mode(self):
+        """Parallel twin of the regression above (#592): retriable=True keeps a bad
+        item from aborting the parallel continue-mode batch."""
+
+        def execute_single_fn(node, config, item_shared):
+            item = item_shared.get("item")
+            if item == "bad":
+                raise AgentValidationError("approval_policy must be one of: ...")
+            item_shared[config.node_id] = {"response": item}
+            return ("default", {}, [])
+
+        shared: dict = {"data": ["ok1", "bad", "ok2"]}
+
+        _run_batch(
+            MockInnerNode("test_node"),
+            shared,
+            error_handling="continue",
+            parallel=True,
+            execute_single_fn=execute_single_fn,
+        )
+
+        results = [r for r in shared["test_node"]["results"] if r is not None]
+        errors = shared["test_node"]["errors"]
+        assert sorted(r["response"] for r in results) == ["ok1", "ok2"]
+        assert len(errors) == 1
 
     def test_parallel_executor_error_records_item_summary_and_full_item(self):
         """Parallel future-level exceptions use the same batch error shape."""
