@@ -1,35 +1,123 @@
-pflow includes the following third-party software:
+pflow includes the following third-party software.
 
-llm (https://github.com/simonw/llm)
-Copyright (c) Simon Willison
-Licensed under Apache License 2.0
+This inventory covers direct runtime dependencies declared in pyproject.toml,
+and direct dependencies bundled into the web UI from web/package.json.
+Development-only dependencies are not distributed with pflow and are not
+listed here.
 
-llm-anthropic (https://github.com/simonw/llm-anthropic)
-Copyright (c) Simon Willison
-Licensed under Apache License 2.0
+Python runtime dependencies
+===========================
 
-click (https://github.com/pallets/click)
-Copyright (c) Pallets
-Licensed under BSD-3-Clause
+Python package: click
+Source: https://github.com/pallets/click
+Copyright: 2014 Pallets
+License: BSD-3-Clause
 
-pydantic (https://github.com/pydantic/pydantic)
-Copyright (c) Samuel Colvin
-Licensed under MIT License
+Python package: jsonschema
+Source: https://github.com/python-jsonschema/jsonschema
+Copyright: 2013 Julian Berman
+License: MIT
 
-jsonschema (https://github.com/python-jsonschema/jsonschema)
-Copyright (c) Julian Berman
-Licensed under MIT License
+Python package: pydantic
+Source: https://github.com/pydantic/pydantic
+Copyright: 2017-present Pydantic Services Inc. and individual contributors
+License: MIT
 
-mcp (https://github.com/modelcontextprotocol/python-sdk)
-Copyright (c) Anthropic, PBC
-Licensed under MIT License
+Python package: mcp
+Source: https://github.com/modelcontextprotocol/python-sdk
+Copyright: 2024 Anthropic, PBC
+License: MIT
 
-requests (https://github.com/psf/requests)
-Copyright (c) Kenneth Reitz
-Licensed under Apache License 2.0
+Python package: requests
+Source: https://github.com/psf/requests
+Copyright: Kenneth Reitz
+License: Apache-2.0
 
-claude-agent-sdk (https://github.com/anthropics/claude-agent-sdk-python)
-Copyright (c) Anthropic, PBC
-Licensed under MIT License
+Python package: claude-agent-sdk
+Source: https://github.com/anthropics/claude-agent-sdk-python
+Copyright: 2025 Anthropic, PBC
+License: MIT
 
-For full license texts, see the respective project repositories.
+Python package: PyYAML
+Source: https://github.com/yaml/pyyaml
+Copyright: 2017-2021 Ingy döt Net; 2006-2016 Kirill Simonov
+License: MIT
+
+Python package: litellm
+Source: https://github.com/BerriAI/litellm
+Copyright: 2023 Berri AI
+License: MIT
+
+Python package: openai
+Source: https://github.com/openai/openai-python
+License: Apache-2.0
+
+Python package: httpx
+Source: https://github.com/encode/httpx
+Copyright: 2019 Encode OSS Ltd
+License: BSD-3-Clause
+
+Python package: starlette
+Source: https://github.com/encode/starlette
+Copyright: 2018 Encode OSS Ltd
+License: BSD-3-Clause
+
+Python package: uvicorn
+Source: https://github.com/encode/uvicorn
+Copyright: 2017-present Encode OSS Ltd
+License: BSD-3-Clause
+
+Bundled web UI dependencies
+===========================
+
+Web package: @shikijs/langs
+Source: https://github.com/shikijs/shiki/tree/main/packages/langs
+Copyright: 2021 Pine Wu; 2023 Anthony Fu
+License: MIT
+
+Web package: @shikijs/themes
+Source: https://github.com/shikijs/shiki/tree/main/packages/themes
+Copyright: 2021 Pine Wu; 2023 Anthony Fu
+License: MIT
+
+Web package: @xyflow/react
+Source: https://github.com/xyflow/xyflow/tree/main/packages/react
+Copyright: 2019-2025 webkid GmbH
+License: MIT
+
+Web package: elkjs
+Source: https://github.com/kieler/elkjs
+License: EPL-2.0
+
+Web package: hast-util-to-jsx-runtime
+Source: https://github.com/syntax-tree/hast-util-to-jsx-runtime
+Copyright: Titus Wormer
+License: MIT
+
+Web package: react
+Source: https://github.com/facebook/react/tree/main/packages/react
+Copyright: Facebook, Inc. and its affiliates
+License: MIT
+
+Web package: react-dom
+Source: https://github.com/facebook/react/tree/main/packages/react-dom
+Copyright: Facebook, Inc. and its affiliates
+License: MIT
+
+Web package: react-markdown
+Source: https://github.com/remarkjs/react-markdown
+Copyright: Espen Hovlandsdal
+License: MIT
+
+Web package: remark-gfm
+Source: https://github.com/remarkjs/remark-gfm
+Copyright: Titus Wormer
+License: MIT
+
+Web package: shiki
+Source: https://github.com/shikijs/shiki/tree/main/packages/shiki
+Copyright: 2021 Pine Wu; 2023 Anthony Fu
+License: MIT
+
+Full license texts are available from the source repositories and package
+distributions identified above.
