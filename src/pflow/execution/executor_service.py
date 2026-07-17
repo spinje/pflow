@@ -105,12 +105,17 @@ def build_error_list(success: bool, action_result: str | None, shared_store: dic
             context["category"] = _map_failure_category_to_diagnostic(str(failure["category"]))
 
     category = str(context["category"])
+    diagnostic_title = None
+    if failed_node:
+        node_output = get_node_output(shared_store, failed_node) or {}
+        if isinstance(node_output, dict) and isinstance(node_output.get("_diagnostic_title"), str):
+            diagnostic_title = node_output["_diagnostic_title"]
 
     return [
         Diagnostic(
             severity=Severity.ERROR,
             message=error_info["message"] or "Workflow execution failed",
-            title=CATEGORY_TITLES.get(category, "Execution Failed"),
+            title=diagnostic_title or CATEGORY_TITLES.get(category, "Execution Failed"),
             node_id=failed_node,
             source="runtime",
             context=context,

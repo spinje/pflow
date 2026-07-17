@@ -27,6 +27,7 @@ classifiers = [
 dependencies = [
     "click>=8.1,<8.2", # CLI framework (more flexible than Typer). Self-pinned to 8.1.x to DECOUPLE the click 8.x migration from the litellm bump: litellm 1.86.1 relaxed its transitive click constraint to <9.0, so without this ceiling uv would resolve click to 8.3.x — which removed CliRunner's mix_stderr kwarg, flipped stream-merging defaults (breaking ~128 mix_stderr=False sites + ~160 bare CliRunner() output assertions), and changed subgroup empty-invocation exit codes (0→2). Removing this ceiling is the job of GH #426 (click 8.x migration). <8.2 not <8.3 because 8.1.x is the only line empirically confirmed green.
     "jsonschema>=4.20.0", # JSON Schema validation for workflow IR
+    "referencing>=0.28.4", # Offline JSON Schema reference registry for self-contained LLM output_schema validation
     "pydantic", # IR/metadata validation
     "mcp[cli]>=1.17.0", # Model Context Protocol for MCP server support
     "requests>=2.32.5", # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression). Slated for removal in favor of httpx — see GH #422.

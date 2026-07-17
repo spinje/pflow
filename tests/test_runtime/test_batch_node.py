@@ -19,6 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from pflow.core.diagnostic import Diagnostic
+from pflow.core.exceptions import LLMOutputSchemaError
 from pflow.nodes.agent.exceptions import AgentValidationError
 from pflow.runtime.engine.batch_executor import (
     _detect_empty_output_items,
@@ -656,6 +657,57 @@ class TestErrorHandling:
         assert attempts == 1
         assert "test_node" not in shared
         sleep.assert_not_called()
+
+    @pytest.mark.parametrize("parallel", [False, True])
+    def test_nonfatal_llm_schema_error_is_per_item_in_continue_mode(self, parallel):
+        attempts: list[str] = []
+
+        def execute_single_fn(node, config, item_shared):
+            item = item_shared["item"]
+            attempts.append(item)
+            if item == "bad":
+                raise LLMOutputSchemaError("invalid resolved output_schema", schema_path="$.type")
+            item_shared[config.node_id] = {"response": item}
+            return ("default", {}, [])
+
+        shared: dict = {"data": ["ok1", "bad", "ok2"]}
+
+        _run_batch(
+            MockInnerNode("test_node"),
+            shared,
+            error_handling="continue",
+            parallel=parallel,
+            max_retries=3,
+            execute_single_fn=execute_single_fn,
+        )
+
+        assert [result["response"] for result in shared["test_node"]["results"]] == ["ok1", "ok2"]
+        assert shared["test_node"]["error_count"] == 1
+        assert isinstance(shared["test_node"]["errors"][0]["exception"], LLMOutputSchemaError)
+        assert attempts.count("bad") == 1
+
+    def test_nonfatal_llm_schema_error_fail_fast_raises_original_without_retry(self):
+        attempts = 0
+        error = LLMOutputSchemaError("invalid resolved output_schema", schema_path="$.type")
+
+        def execute_single_fn(node, config, item_shared):
+            nonlocal attempts
+            attempts += 1
+            raise error
+
+        shared: dict = {"data": ["bad", "unreached"]}
+
+        with pytest.raises(LLMOutputSchemaError) as exc_info:
+            _run_batch(
+                MockInnerNode("test_node"),
+                shared,
+                error_handling="fail_fast",
+                max_retries=3,
+                execute_single_fn=execute_single_fn,
+            )
+
+        assert exc_info.value is error
+        assert attempts == 1
 
     def test_agent_validation_error_is_per_item_not_fatal_in_continue_mode(self):
         """Regression (#592): an ``agent`` param error in one item must NOT abort a

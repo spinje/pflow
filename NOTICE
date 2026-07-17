@@ -18,6 +18,11 @@ Source: https://github.com/python-jsonschema/jsonschema
 Copyright: 2013 Julian Berman
 License: MIT
 
+Python package: referencing
+Source: https://github.com/python-jsonschema/referencing
+Copyright: 2022 Julian Berman
+License: MIT
+
 Python package: pydantic
 Source: https://github.com/pydantic/pydantic
 Copyright: 2017-present Pydantic Services Inc. and individual contributors

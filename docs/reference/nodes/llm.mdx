@@ -52,7 +52,7 @@ The same `reasoning_effort` value maps to provider-specific knobs under the hood
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `response` | str or dict | Text response (str), or parsed JSON (dict) when `output_schema` is set |
+| `response` | any | Text response (str), any parsed JSON value when `output_schema` is set, or the original raw text when structured-output validation fails |
 | `llm_usage` | dict | Token usage metrics |
 | `error` | str | Error message (only present on failure) |
 
@@ -180,7 +180,7 @@ Translate the input text to Spanish.
 
 ### Structured output
 
-Use `output_schema` to get guaranteed JSON matching a schema. The schema is passed to the model's constrained decoding API — the model literally cannot produce non-conforming output.
+Use `output_schema` to request JSON matching a schema. Provider mechanisms vary: some use constrained decoding, while others use tool calls with best-effort arguments. pflow validates the returned JSON locally before publishing it, so a non-conforming value fails at the LLM step instead of breaking a downstream template.
 
 `````markdown
 ### extract
@@ -208,7 +208,13 @@ required:
 ```
 `````
 
-When `output_schema` is set, `response` is a dict — downstream templates access fields directly: `${extract.response.people}`.
+For an object schema, `response` is a dict and downstream templates access fields directly: `${extract.response.people}`. Array and primitive schemas produce their corresponding parsed JSON values. JSON numbers must be finite; `NaN`, infinities, and overflow-to-infinity values are rejected as invalid JSON. If the provider returns invalid JSON or a value that does not match the schema, pflow keeps the original response text, sets `error`, and follows the step's error edge.
+
+Schemas may use references that resolve within the authored schema, including local fragments, anchors, nested IDs, and same-document absolute references. Missing or external references are rejected before the provider call; pflow never retrieves schemas from the network.
+
+For compatibility with providers that implement structured output through an internal tool, pflow also repairs one narrowly defined transport artifact: an otherwise invalid response shaped exactly as `{"json_tool_call": { ...valid result... }}`. A valid schema-authored object containing `json_tool_call` is never rewritten.
+
+After upgrading from a version without local schema validation, a pre-existing memo-cache entry can replay its old output until the default 24-hour TTL expires. Run with `--no-cache` to bypass that stale read and force a fresh validated call.
 
 Without `output_schema`, you can still get JSON by prompting for it. The template system auto-parses JSON strings when you use dot notation: `${extract.response.people}`. But the model may not always comply — `output_schema` is the reliable approach.
 

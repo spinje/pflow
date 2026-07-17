@@ -2,6 +2,7 @@
 
 import json
 import logging
+import math
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
@@ -9,10 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from jsonschema.protocols import Validator
+from referencing.exceptions import Unresolvable
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 from pflow.core.cache_ttl import is_cache_ttl_supported_by_provider, parse_cache_ttl
-from pflow.core.exceptions import LLMCallError, LLMTransientError, UnsupportedCacheTTLError
+from pflow.core.exceptions import LLMCallError, LLMResponseParseError, LLMTransientError, UnsupportedCacheTTLError
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.llm_client import Attachment, TraceHook, complete
 from pflow.core.llm_providers import detect_provider
@@ -38,8 +42,11 @@ from pflow.core.prompt_cache_analysis.below_min_tokens_detector import (
 )
 from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 from pflow.core.prompt_refs import first_per_item_position
+from pflow.nodes.llm.schema_validation import prepare_output_schema_validator
 
 logger = logging.getLogger(__name__)
+
+_LITELLM_RESPONSE_FORMAT_TOOL_NAME = "json_tool_call"
 
 # Re-exported for backward compatibility with code that imported these names
 # from pflow.nodes.llm.llm. The canonical home is pflow.core.llm_reasoning_map.
@@ -68,7 +75,7 @@ def _error_dict_from_exception(exc: LLMCallError) -> dict[str, Any]:
     message = diagnostic.message
     if diagnostic.suggestions:
         message = message + "\n\n" + "\n".join(diagnostic.suggestions)
-    return {
+    result: dict[str, Any] = {
         "response": "",
         "error": message,
         "error_class": type(exc).__name__,
@@ -77,6 +84,9 @@ def _error_dict_from_exception(exc: LLMCallError) -> dict[str, Any]:
         "status": "error",
         "_diagnostic_context": dict(diagnostic.context or {}),
     }
+    if isinstance(exc, LLMResponseParseError):
+        result["_diagnostic_title"] = diagnostic.title
+    return result
 
 
 def _error_dict_for_timeout(model: str, message: str) -> dict[str, Any]:
@@ -154,6 +164,74 @@ def _error_dict_for_generic_failure(model: str, exc: Exception, attempts: int) -
             "kind": kind,
         },
     }
+
+
+def _finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"non-finite JSON number {value!r}")
+    return parsed
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant {value!r}")
+
+
+def _parse_and_validate_structured_response(
+    raw_response: str,
+    validator: Validator,
+    *,
+    model: str | None,
+) -> tuple[Any, bool]:
+    """Parse and validate structured output, recovering one LiteLLM wrapper.
+
+    Returns ``(accepted_value, recovered_wrapper)``. The outer JSON value is
+    authoritative whenever it validates. The compatibility unwrap is allowed
+    only for the exact observed ``{"json_tool_call": <dict>}`` shape when the
+    outer value fails and the inner dict validates.
+    """
+    try:
+        parsed = json.loads(
+            raw_response,
+            parse_float=_finite_json_float,
+            parse_constant=_reject_json_constant,
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise LLMResponseParseError(
+            f"Structured output JSON parse failed: {exc}",
+            model=model,
+            kind="invalid_json",
+        ) from exc
+
+    try:
+        outer_error = next(validator.iter_errors(parsed), None)
+        if outer_error is None:
+            return parsed, False
+
+        if (
+            isinstance(parsed, dict)
+            and len(parsed) == 1
+            and _LITELLM_RESPONSE_FORMAT_TOOL_NAME in parsed
+            and isinstance(parsed[_LITELLM_RESPONSE_FORMAT_TOOL_NAME], dict)
+        ):
+            inner = parsed[_LITELLM_RESPONSE_FORMAT_TOOL_NAME]
+            if next(validator.iter_errors(inner), None) is None:
+                return inner, True
+    except (Unresolvable, RecursionError) as exc:
+        raise LLMResponseParseError(
+            f"Structured output validation could not resolve output_schema reference: {exc}",
+            model=model,
+            kind="schema_mismatch",
+            path="$",
+        ) from exc
+
+    location = outer_error.json_path or "$"
+    raise LLMResponseParseError(
+        f"Structured output does not match output_schema at {location}: {outer_error.message}",
+        model=model,
+        kind="schema_mismatch",
+        path=location,
+    )
 
 
 def _read_prompt_cache_context(shared: dict[str, Any], node_id: str | None) -> CacheRenderContext | None:
@@ -926,8 +1004,8 @@ class LLMNode(Node):
     - Params: reasoning_effort: str  # Reasoning depth: xhigh/high/medium/low/minimal/none (optional, mapped to provider-specific params). Sets reasoning depth; max_tokens only caps the budget, never raises it.
     - Params: reasoning_max_tokens: int  # Direct reasoning token budget, mutually exclusive with reasoning_effort (optional). Still capped to stay under max_tokens when both are set.
     - Params: model_options: dict  # Additional provider-specific model options passed as kwargs (optional; reasoning keys must use reasoning_effort/reasoning_max_tokens)
-    - Writes: shared["response"]: str|dict  # Text (str), parsed JSON (dict) when output_schema is set, or raw text on parse failure
-    - Writes: shared["error"]: str  # Error message if LLM call or JSON parsing failed
+    - Writes: shared["response"]: any  # Parsed JSON root with output_schema, raw response text on validation failure, or text without a schema
+    - Writes: shared["error"]: str  # Error message if LLM call or structured-output validation failed
     - Writes: shared["prompt"]: str  # Rendered prompt actually sent to the model (populated for tracing/audit, including per-item batch traces)
     - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
         - model: str  # Model identifier used
@@ -1061,6 +1139,13 @@ class LLMNode(Node):
                 "'model' explicitly via node.set_params({'model': '<provider>/<model>'})."
             )
 
+        # Validate the effective (already template-resolved) authored schema in
+        # prep, before cache rendering and before ``complete()`` can dispatch a
+        # paid provider call. The validator is reused in post() so draft
+        # selection and schema validity cannot drift between the two seams.
+        output_schema = self.params.get("output_schema")
+        output_schema_validator = prepare_output_schema_validator(output_schema)
+
         # Cache rendering (Task 159 C1.2 + C3) — build structured
         # ``system_blocks`` with per-provider ``cache_control`` markers, plus
         # OpenAI-specific ``prompt_cache_key`` / ``prompt_cache_retention``
@@ -1110,7 +1195,8 @@ class LLMNode(Node):
             "__prewarm_disabled_reason__": prewarm_disabled_reason,
             "max_tokens": self.params.get("max_tokens"),
             "attachments": attachments,
-            "output_schema": self.params.get("output_schema"),
+            "output_schema": output_schema,
+            "_output_schema_validator": output_schema_validator,
             "reasoning_effort": reasoning_effort,
             "reasoning_max_tokens": self.params.get("reasoning_max_tokens"),
             "model_options": merged_model_options,
@@ -1201,7 +1287,6 @@ class LLMNode(Node):
             "response": adapter_response.text,
             "usage": adapter_response.usage,
             "model": adapter_response.model,
-            "has_schema": adapter_response.has_schema,
             # Pass adapter warnings through to post() so they can be lifted
             # into shared["__warnings__"] for JSON-output visibility.
             "warnings": adapter_response.warnings,
@@ -1334,26 +1419,29 @@ class LLMNode(Node):
             # future case needs multiple, change the contract to a list value.
             shared.setdefault("__warnings__", {})[node_id] = warnings_list[0]
 
-        # Parse response — schema mode or plain text. Schema mode goes
-        # through json.loads first (today's contract); LLMResponseParseError
-        # would also be raisable here in a future version that uses
-        # parse_structured_response, but right now LLMNode's schema path is
-        # the inline json.loads. We catch the typed exception to surface
-        # error_class consistently with the _call_llm path.
-        if exec_res["has_schema"]:
+        # Parse and authoritatively validate structured output. The prepared
+        # validator is the schema-mode discriminator: it was created from the
+        # effective schema before dispatch and is therefore present for every
+        # structured call, including the valid empty-schema case.
+        output_schema_validator = prep_res.get("_output_schema_validator")
+        if output_schema_validator is not None:
             try:
-                shared["response"] = json.loads(raw_response)
-            except json.JSONDecodeError as e:
-                # Build the same error dict shape as _call_llm so the runtime
-                # path produces the same structured Diagnostic. Use
-                # LLMResponseParseError so the override produces the right
-                # remediation suggestions.
-                from pflow.core.exceptions import LLMResponseParseError
-
-                err = LLMResponseParseError(
-                    f"Structured output JSON parse failed: {e}",
+                accepted_response, recovered_wrapper = _parse_and_validate_structured_response(
+                    raw_response,
+                    output_schema_validator,
                     model=exec_res.get("model"),
                 )
+                shared["response"] = accepted_response
+                if recovered_wrapper:
+                    logger.warning(
+                        "Recovered structured output from LiteLLM's %s wrapper",
+                        _LITELLM_RESPONSE_FORMAT_TOOL_NAME,
+                        extra={"node_id": node_id, "model": exec_res.get("model")},
+                    )
+            except LLMResponseParseError as err:
+                # Build the same error dict shape as _call_llm so the runtime
+                # path produces the same structured Diagnostic for JSON syntax
+                # and schema-conformance failures.
                 error_dict = _error_dict_from_exception(err)
                 # Task 159 C1.2 cross-layer co-edit (cache_chunks_skipped) —
                 # wrap at the caller. ``prep_res`` is this method's arg.
@@ -1412,6 +1500,9 @@ class LLMNode(Node):
         diagnostic_context = exec_res.get("_diagnostic_context")
         if diagnostic_context:
             shared["_diagnostic_context"] = diagnostic_context
+        diagnostic_title = exec_res.get("_diagnostic_title")
+        if diagnostic_title:
+            shared["_diagnostic_title"] = diagnostic_title
         if not response_already_set:
             shared["response"] = ""
         if not preserve_usage:

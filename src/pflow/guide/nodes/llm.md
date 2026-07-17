@@ -6,7 +6,7 @@
 
 **The test**: Can you write a deterministic algorithm for it? YES → `code` node. NO → LLM.
 
-Use `output_schema` for structured responses (guarantees valid JSON via constrained decoding).
+Use `output_schema` for structured responses. Providers use different structured-output mechanisms; pflow validates the returned JSON locally before publishing it. Schemas may use self-contained references, but pflow does not fetch external schemas. Structured responses use strict JSON numbers, so `NaN` and infinities fail validation.
 
 **Prompt format**: Put multi-line prompts in a ` ```prompt ` block — real line breaks, no `\n` escapes and no quote/colon escaping hazards. Reserve inline `- prompt: "..."` for genuinely single-line prompts.
 

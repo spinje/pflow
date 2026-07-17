@@ -190,7 +190,7 @@ Common models (always include the provider prefix — bare names route via Verte
 
 ## Structured Output
 
-Use `output_schema` to get guaranteed JSON responses matching a JSON Schema. The schema is passed to the model's constrained decoding API (supported by Anthropic, Google, OpenAI).
+Use `output_schema` to request JSON matching a JSON Schema. Provider mechanisms vary between constrained decoding and tool-based structured output, so pflow validates the returned JSON locally before publishing it.
 
 ### In a workflow (.pflow.md):
 
@@ -221,12 +221,18 @@ required:
 ````
 
 When `output_schema` is set:
-- The response is guaranteed valid JSON matching the schema
-- `shared["response"]` is a `dict` (not a string)
-- Downstream templates access fields directly: `${extract.response.people}`
+- A conforming response is parsed to its JSON value (object, array, or primitive)
+- JSON numbers must be finite; `NaN`, infinities, and overflow-to-infinity values are invalid JSON
+- Object schemas produce a `dict`, and downstream templates access fields directly: `${extract.response.people}`
+- Invalid JSON or a schema mismatch preserves the original text in the node's `response` output (`shared["<node-id>"]["response"]` with namespacing), sets `error`, and follows the error edge
+- An exact invalid outer `{"json_tool_call": <valid dict>}` transport wrapper is repaired; valid authored wrappers are preserved
 - Code block stripping is skipped (the API returns clean JSON)
 
-Without `output_schema`, behavior is unchanged — `shared["response"]` is always a string.
+Schema references must resolve within the authored schema (local fragments, anchors, nested IDs, and same-document absolute references are supported). Missing or external references fail before the provider call; schemas are never fetched from the network.
+
+Without `output_schema`, behavior is unchanged — the node's `response` output is always a string.
+
+After upgrading from a version without local schema validation, an old memo-cache entry may replay for up to the default 24-hour TTL. Use `--no-cache` to bypass the stale read and force a fresh validated call.
 
 ## Token Usage Tracking
 

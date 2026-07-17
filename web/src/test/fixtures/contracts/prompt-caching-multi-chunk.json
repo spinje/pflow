@@ -538,7 +538,6 @@
   ],
   "kind_output_types": {
     "llm": {
-      "response": "str|dict",
       "error": "str",
       "prompt": "str",
       "llm_usage": "dict"

@@ -363,6 +363,15 @@ class TestRegistryNodeRetrieval:
         assert types["shell"]["exit_code"] == "int"
         assert all("any" not in fields.values() for fields in types.values())
 
+    def test_real_llm_response_metadata_is_truthful_any(self):
+        registry = Registry()
+
+        metadata = registry.get_nodes_metadata(["llm"])["llm"]
+        response = next(output for output in metadata["interface"]["outputs"] if output["key"] == "response")
+
+        assert response["type"] == "any"
+        assert "response" not in registry.output_types_by_kind()["llm"]
+
     def test_filters_invalid_node_names(self):
         """Test that invalid node names are filtered out."""
         with tempfile.TemporaryDirectory() as tmpdir:

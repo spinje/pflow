@@ -6,7 +6,7 @@ from dataclasses import replace
 from typing import Any, Literal
 
 from pflow.core.cache_ttl import build_unsupported_cache_ttl_diagnostic, unsupported_cache_ttl_message
-from pflow.core.diagnostic import LLM_FAILURE_CATEGORY, Diagnostic, Severity
+from pflow.core.diagnostic import LLM_FAILURE_CATEGORY, LLM_VALIDATION_CATEGORY, Diagnostic, Severity
 from pflow.core.gate import GATE_KIND_APPROVAL, GateRequest
 from pflow.core.llm_providers import detect_provider, extract_provider_prefix
 
@@ -16,6 +16,7 @@ from pflow.core.llm_providers import detect_provider, extract_provider_prefix
 UnknownModelReason = Literal["unknown_name", "missing_prefix"]
 MissingApiKeyKind = Literal["missing_key", "lacks_permission"]
 LLMTransientKind = Literal["timeout", "rate_limit", "server_error", "connection"]
+LLMResponseParseKind = Literal["invalid_json", "schema_mismatch"]
 
 # Canonical list of dynamic attributes the engine/runner attach to exceptions
 # for cross-boundary context threading.  Used by copy_pflow_annotations() and
@@ -589,6 +590,39 @@ class MissingSdkError(LLMCallError):
         ]
 
 
+class LLMOutputSchemaError(PflowError):
+    """An LLM ``output_schema`` is not safe or valid for execution."""
+
+    retriable = False
+    batch_fatal = False
+
+    def __init__(self, message: str, *, schema_path: str | None = None) -> None:
+        super().__init__(message)
+        self.schema_path = schema_path
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        context: dict[str, Any] = {
+            "category": LLM_VALIDATION_CATEGORY,
+            "error_class": type(self).__name__,
+        }
+        if self.schema_path is not None:
+            context["schema_path"] = self.schema_path
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="LLM Configuration",
+                suggestions=[
+                    "Fix `output_schema` so it is a self-contained valid JSON Schema.",
+                    "Use only references resolvable within the authored schema; external schema retrieval is disabled.",
+                ],
+                source="runtime",
+                context=context,
+                see_also=["llm"],
+            )
+        ]
+
+
 class LLMResponseParseError(LLMCallError):
     """Model response could not be parsed against the requested schema.
 
@@ -598,20 +632,35 @@ class LLMResponseParseError(LLMCallError):
     likely to produce the same bad response.
     """
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        model: str | None = None,
+        provider_message: str | None = None,
+        kind: LLMResponseParseKind | None = None,
+        path: str | None = None,
+    ) -> None:
+        super().__init__(message, model=model, provider_message=provider_message)
+        self.kind = kind
+        self.path = path
+
     def to_diagnostics(self) -> list[Diagnostic]:
         # Returns single-element list (PflowError convention).
         return [
             Diagnostic(
                 severity=Severity.ERROR,
                 message=str(self),
-                title="Response Parse Failed",
+                title=(
+                    "Structured Output Validation Failed" if self.kind == "schema_mismatch" else "Response Parse Failed"
+                ),
                 suggestions=[
                     "Verify the requested 'output_schema' matches what the model can produce.",
                     "Check the raw response in the trace JSON to see what the model actually returned.",
                     "Consider simplifying the schema if the model consistently fails to match it.",
                 ],
                 source="runtime",
-                context=self.diagnostic_context(),
+                context=self.diagnostic_context(kind=self.kind, path=self.path),
                 see_also=["llm"],
             )
         ]

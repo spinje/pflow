@@ -342,7 +342,10 @@ def _execute_batch_item(
                 last_exception = e
                 break
             if not getattr(e, "retriable", True):
-                raise  # Deterministic/fatal errors should not burn batch retries
+                if getattr(e, "batch_fatal", True):
+                    raise  # Deterministic/fatal errors should not burn batch retries
+                last_exception = e
+                break
             last_exception = e
             if retry < batch_config.max_retries - 1:
                 if batch_config.retry_wait > 0:
