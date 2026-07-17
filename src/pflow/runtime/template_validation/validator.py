@@ -950,6 +950,7 @@ def extract_node_outputs(
                 registry,
                 error_handling=batch_config.get("error_handling", "fail_fast"),
                 code_annotations=code_annotations,
+                node_params=node.get("params"),
             )
             _register_batch_item_variables(node_outputs, node_id, node_type, batch_config)
         else:
@@ -961,6 +962,7 @@ def extract_node_outputs(
                 enable_namespacing,
                 registry,
                 code_annotations=code_annotations,
+                node_params=node.get("params"),
             )
 
     _register_loop_node_outputs(node_outputs, workflow_ir, enable_namespacing)
@@ -1201,6 +1203,61 @@ def _get_inner_outputs_from_registry(node_type: str, registry: Registry) -> dict
     return inner_outputs
 
 
+_LLM_SCHEMA_TYPE_TO_TEMPLATE_TYPE = {
+    "array": "list",
+    "boolean": "bool",
+    "integer": "int",
+    "number": "number",
+    "object": "dict",
+    "string": "str",
+}
+_LLM_ROOT_COMBINATORS = frozenset({"allOf", "anyOf", "oneOf", "not", "if", "then", "else"})
+
+
+def _llm_response_type(node_params: dict[str, Any] | None) -> str:
+    """Infer only an LLM schema's explicit root type; remain permissive otherwise."""
+    if not isinstance(node_params, dict) or node_params.get("output_schema") is None:
+        return "str"
+    schema = node_params["output_schema"]
+    if TemplateResolver.has_templates(schema) or not isinstance(schema, dict) or not schema:
+        return "any"
+    if "$ref" in schema or _LLM_ROOT_COMBINATORS.intersection(schema):
+        return "any"
+
+    declared_type = schema.get("type")
+    if isinstance(declared_type, str):
+        return _LLM_SCHEMA_TYPE_TO_TEMPLATE_TYPE.get(declared_type, "any")
+    if not isinstance(declared_type, list) or not declared_type:
+        return "any"
+
+    resolved: list[str] = []
+    for member in declared_type:
+        if not isinstance(member, str) or member == "null":
+            return "any"
+        mapped = _LLM_SCHEMA_TYPE_TO_TEMPLATE_TYPE.get(member)
+        if mapped is None:
+            return "any"
+        if mapped not in resolved:
+            resolved.append(mapped)
+    return "|".join(resolved) if resolved else "any"
+
+
+def _specialize_llm_response_output(
+    inner_outputs: dict[str, Any],
+    node_type: str,
+    node_params: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if node_type != "llm" or "response" not in inner_outputs:
+        return inner_outputs
+    return {
+        **inner_outputs,
+        "response": {
+            **inner_outputs["response"],
+            "type": _llm_response_type(node_params),
+        },
+    }
+
+
 def _enrich_code_result_output_type(
     output_key: str,
     output_info: dict[str, Any],
@@ -1233,6 +1290,7 @@ def _register_batch_outputs(
     skip_results_structure: bool = False,
     error_handling: str = "fail_fast",
     code_annotations: dict[str, str] | None = None,
+    node_params: dict[str, Any] | None = None,
 ) -> None:
     """Register batch-specific outputs for a node with batch configuration.
 
@@ -1259,6 +1317,8 @@ def _register_batch_outputs(
         inner_outputs_structure = inner_outputs_override
     else:
         inner_outputs_structure = _get_inner_outputs_from_registry(node_type, registry)
+
+    inner_outputs_structure = _specialize_llm_response_output(inner_outputs_structure, node_type, node_params)
 
     if code_annotations and node_type == "code" and "result" in inner_outputs_structure:
         inner_outputs_structure = {
@@ -1310,6 +1370,7 @@ def _register_node_outputs_from_registry(
     enable_namespacing: bool,
     registry: Registry,
     code_annotations: dict[str, str] | None = None,
+    node_params: dict[str, Any] | None = None,
 ) -> None:
     """Register outputs from registry interface metadata for non-batch nodes.
 
@@ -1344,6 +1405,8 @@ def _register_node_outputs_from_registry(
             }
 
         output_info = _enrich_code_result_output_type(key, output_info, code_annotations)
+        if node_type == "llm" and key == "response":
+            output_info = {**output_info, "type": _llm_response_type(node_params)}
 
         node_outputs[key] = output_info
 

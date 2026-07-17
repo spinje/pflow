@@ -12,8 +12,15 @@ from typing import ClassVar
 from unittest.mock import patch
 
 import pytest
+from jsonschema import Draft202012Validator
 
-from pflow.core.exceptions import InvalidRequestError, LLMTransientError, MissingApiKeyError, UnknownModelError
+from pflow.core.exceptions import (
+    InvalidRequestError,
+    LLMOutputSchemaError,
+    LLMTransientError,
+    MissingApiKeyError,
+    UnknownModelError,
+)
 from pflow.core.llm_client import AdapterResponse
 from pflow.nodes.llm import LLMNode
 
@@ -872,6 +879,33 @@ class TestStructuredOutput:
         "required": ["name", "age"],
     }
 
+    @staticmethod
+    def _run_raw_structured_response(monkeypatch, schema, raw_response):
+        calls = []
+
+        def custom_complete(**kwargs):
+            calls.append(kwargs)
+            model = kwargs.get("model", "test")
+            return AdapterResponse(
+                text=raw_response,
+                usage={
+                    "model": model,
+                    "input_tokens": 20,
+                    "output_tokens": 10,
+                    "total_tokens": 30,
+                    "cost_usd": 0.001,
+                },
+                model=model,
+                has_schema=True,
+            )
+
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", custom_complete)
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Extract", "output_schema": schema, "model": "openai/gpt-4o-mini"})
+        shared = {}
+        action = node.run(shared)
+        return action, shared, calls
+
     def test_output_schema_passed_to_model_prompt(self, mock_llm_client):
         """output_schema in params → schema=<dict> recorded in adapter call."""
         # Mock returns valid JSON for the schema (default fallback would be
@@ -917,7 +951,7 @@ class TestStructuredOutput:
 
     def test_structured_output_skips_strip_code_block(self, mock_llm_client):
         """output_schema set → _strip_code_block is NOT called."""
-        mock_llm_client.set_response("*", self.SIMPLE_SCHEMA, {"name": "Bob"})
+        mock_llm_client.set_response("*", self.SIMPLE_SCHEMA, {"name": "Bob", "age": 42})
 
         node = LLMNode()
         node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA, "model": "openai/gpt-4o-mini"})
@@ -989,7 +1023,7 @@ class TestStructuredOutput:
 
         def custom_complete(**kwargs):
             return AdapterResponse(
-                text='{"name": "Alice"}',
+                text='{"name": "Alice", "age": 30}',
                 usage={
                     "model": kwargs.get("model", "test"),
                     "input_tokens": 100,
@@ -1051,7 +1085,7 @@ class TestStructuredOutput:
 
     def test_action_returns_default_with_schema(self, mock_llm_client):
         """run() returns 'default' when output_schema is set."""
-        mock_llm_client.set_response("*", self.SIMPLE_SCHEMA, {"name": "Alice"})
+        mock_llm_client.set_response("*", self.SIMPLE_SCHEMA, {"name": "Alice", "age": 30})
 
         node = LLMNode()
         node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA, "model": "openai/gpt-4o-mini"})
@@ -1128,10 +1162,15 @@ class TestStructuredOutput:
 
     def test_valid_json_with_schema_unchanged(self, mock_llm_client):
         """Regression: valid JSON with output_schema still parses to dict, no error."""
-        mock_llm_client.set_response("*", self.SIMPLE_SCHEMA, {"score": 5})
+        score_schema = {
+            "type": "object",
+            "properties": {"score": {"type": "integer"}},
+            "required": ["score"],
+        }
+        mock_llm_client.set_response("*", score_schema, {"score": 5})
 
         node = LLMNode(wait=0)
-        node.set_params({"prompt": "Rate it", "output_schema": self.SIMPLE_SCHEMA, "model": "openai/gpt-4o-mini"})
+        node.set_params({"prompt": "Rate it", "output_schema": score_schema, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
         action = node.run(shared)
@@ -1140,6 +1179,325 @@ class TestStructuredOutput:
         assert shared["response"] == {"score": 5}
         assert isinstance(shared["response"], dict)
         assert "error" not in shared
+
+    def test_exact_litellm_wrapper_unwraps_when_only_inner_valid(self, monkeypatch, caplog):
+        raw_response = '{"json_tool_call":{"name":"Alice","age":30}}'
+        caplog.set_level("WARNING", logger="pflow.nodes.llm.llm")
+
+        action, shared, calls = self._run_raw_structured_response(
+            monkeypatch,
+            self.SIMPLE_SCHEMA,
+            raw_response,
+        )
+
+        assert action == "default"
+        assert shared["response"] == {"name": "Alice", "age": 30}
+        assert "error" not in shared
+        assert shared["llm_usage"]["input_tokens"] == 20
+        assert len(calls) == 1
+        assert "Recovered structured output from LiteLLM's json_tool_call wrapper" in caplog.text
+
+    def test_valid_authored_json_tool_call_wrapper_is_preserved(self, monkeypatch):
+        wrapper_schema = {
+            "type": "object",
+            "properties": {
+                "json_tool_call": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                }
+            },
+            "required": ["json_tool_call"],
+            "additionalProperties": False,
+        }
+        raw_response = '{"json_tool_call":{"name":"authored"}}'
+
+        action, shared, calls = self._run_raw_structured_response(monkeypatch, wrapper_schema, raw_response)
+
+        assert action == "default"
+        assert shared["response"] == {"json_tool_call": {"name": "authored"}}
+        assert len(calls) == 1
+
+    def test_permissive_outer_schema_is_not_unwrapped(self, monkeypatch):
+        raw_response = '{"json_tool_call":{"name":"authored"}}'
+
+        action, shared, _calls = self._run_raw_structured_response(
+            monkeypatch,
+            {"type": "object"},
+            raw_response,
+        )
+
+        assert action == "default"
+        assert shared["response"] == {"json_tool_call": {"name": "authored"}}
+
+    @pytest.mark.parametrize(
+        "raw_response",
+        [
+            '{"other":{"name":"Alice","age":30}}',
+            '{"json_tool_call":{"name":"Alice","age":30},"extra":true}',
+            '{"json_tool_call":"not an object"}',
+            '{"json_tool_call":{"name":"Alice"}}',
+        ],
+    )
+    def test_wrapper_near_misses_fail_without_retry(self, monkeypatch, raw_response):
+        action, shared, calls = self._run_raw_structured_response(
+            monkeypatch,
+            self.SIMPLE_SCHEMA,
+            raw_response,
+        )
+
+        assert action == "error"
+        assert shared["response"] == raw_response
+        assert shared["error_class"] == "LLMResponseParseError"
+        assert shared["llm_usage"]["cost_usd"] == 0.001
+        assert len(calls) == 1
+
+    @pytest.mark.parametrize(
+        ("schema", "raw_response"),
+        [
+            (
+                {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "required": ["name"],
+                },
+                "{}",
+            ),
+            (
+                {
+                    "type": "object",
+                    "properties": {
+                        "profile": {
+                            "type": "object",
+                            "properties": {"age": {"type": "integer"}},
+                            "required": ["age"],
+                        }
+                    },
+                    "required": ["profile"],
+                },
+                '{"profile":{"age":"old"}}',
+            ),
+            ({"type": "string", "enum": ["yes", "no"]}, '"maybe"'),
+            (
+                {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                    "additionalProperties": False,
+                },
+                '{  "name" : "Alice", "age" : 30  }\n',
+            ),
+        ],
+    )
+    def test_schema_violations_preserve_raw_response_and_usage(self, monkeypatch, schema, raw_response):
+        action, shared, calls = self._run_raw_structured_response(monkeypatch, schema, raw_response)
+
+        assert action == "error"
+        assert shared["response"] == raw_response
+        assert shared["error_class"] == "LLMResponseParseError"
+        assert "does not match output_schema" in shared["error"]
+        assert shared["llm_usage"]["total_tokens"] == 30
+        assert len(calls) == 1
+
+    @pytest.mark.parametrize(
+        ("schema", "raw_response", "expected"),
+        [
+            ({}, '{"anything":true}', {"anything": True}),
+            ({"type": "object"}, '{"ok":true}', {"ok": True}),
+            ({"type": "array", "items": {"type": "integer"}}, "[1,2]", [1, 2]),
+            ({"type": "string"}, '"hello"', "hello"),
+            ({"type": "number"}, "1.5", 1.5),
+            ({"type": "boolean"}, "true", True),
+            ({"type": "null"}, "null", None),
+        ],
+    )
+    def test_valid_json_root_types_are_preserved(self, monkeypatch, schema, raw_response, expected):
+        action, shared, _calls = self._run_raw_structured_response(monkeypatch, schema, raw_response)
+
+        assert action == "default"
+        assert shared["response"] == expected
+
+    @pytest.mark.parametrize("raw_response", ["NaN", "Infinity", "-Infinity", "1e999"])
+    def test_non_finite_numbers_are_invalid_json_without_retry(self, monkeypatch, raw_response):
+        action, shared, calls = self._run_raw_structured_response(monkeypatch, {"type": "number"}, raw_response)
+
+        assert action == "error"
+        assert shared["response"] == raw_response
+        assert shared["error_class"] == "LLMResponseParseError"
+        assert shared["_diagnostic_context"]["kind"] == "invalid_json"
+        assert shared["llm_usage"]["total_tokens"] == 30
+        assert len(calls) == 1
+
+    def test_non_finite_name_is_valid_as_a_string(self, monkeypatch):
+        action, shared, calls = self._run_raw_structured_response(monkeypatch, {"type": "string"}, '"NaN"')
+
+        assert action == "default"
+        assert shared["response"] == "NaN"
+        assert len(calls) == 1
+
+    def test_explicit_draft_is_used_for_validation(self, monkeypatch):
+        draft4_schema = {
+            "$schema": "http://json-schema.org/draft-04/schema#",
+            "type": "number",
+            "minimum": 5,
+            "exclusiveMinimum": True,
+        }
+
+        action, shared, calls = self._run_raw_structured_response(monkeypatch, draft4_schema, "5")
+
+        assert action == "error"
+        assert shared["response"] == "5"
+        assert len(calls) == 1
+
+    @pytest.mark.parametrize(
+        "schema",
+        [
+            {"$defs": {"value": {"type": "string"}}, "$ref": "#/$defs/value"},
+            {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "$defs": {"value": {"$anchor": "value", "type": "string"}},
+                "$ref": "#value",
+            },
+            {
+                "$id": "https://schemas.example/root",
+                "$defs": {"value": {"$id": "value", "type": "string"}},
+                "$ref": "value",
+            },
+            {
+                "$id": "https://schemas.example/root",
+                "$defs": {"value": {"type": "string"}},
+                "$ref": "https://schemas.example/root#/$defs/value",
+            },
+        ],
+    )
+    def test_self_contained_schema_references_are_supported(self, monkeypatch, schema):
+        action, shared, calls = self._run_raw_structured_response(monkeypatch, schema, '"ok"')
+
+        assert action == "default"
+        assert shared["response"] == "ok"
+        assert len(calls) == 1
+
+    def test_ref_looking_const_data_is_not_preflighted(self, monkeypatch):
+        schema = {"const": {"$ref": "https://schemas.example/not-a-schema-reference"}}
+        raw_response = '{"$ref":"https://schemas.example/not-a-schema-reference"}'
+
+        action, shared, calls = self._run_raw_structured_response(monkeypatch, schema, raw_response)
+
+        assert action == "default"
+        assert shared["response"] == {"$ref": "https://schemas.example/not-a-schema-reference"}
+        assert len(calls) == 1
+
+    @pytest.mark.parametrize(
+        ("schema", "message", "schema_path"),
+        [
+            (
+                {"$schema": "https://example.invalid/unknown-schema", "type": "object"},
+                r"unsupported \$schema",
+                "$.$schema",
+            ),
+            ({"type": "intger"}, "Invalid output_schema", "$.type"),
+            (["not", "a", "schema"], "expected a JSON Schema dict", "$"),
+            ({"$ref": "#/$defs/missing"}, "cannot be resolved within the authored schema", "$.$ref"),
+            (
+                {"$ref": "https://schemas.example/external"},
+                "cannot be resolved within the authored schema",
+                "$.$ref",
+            ),
+            (
+                {"type": "object", "properties": {"result": {"$ref": "#/$defs/missing"}}},
+                r"Invalid output_schema at \$\.properties\.result\.\$ref",
+                "$.properties.result.$ref",
+            ),
+            (
+                {"allOf": [{"$ref": "https://schemas.example/external"}]},
+                r"Invalid output_schema at \$\.allOf\[0\]\.\$ref",
+                "$.allOf[0].$ref",
+            ),
+        ],
+    )
+    def test_invalid_authored_schema_fails_before_provider_call(self, mock_llm_client, schema, message, schema_path):
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Extract", "output_schema": schema, "model": "openai/gpt-4o-mini"})
+        calls_before = len(mock_llm_client.call_history)
+
+        with pytest.raises(LLMOutputSchemaError, match=message) as exc_info:
+            node.run({})
+
+        assert len(mock_llm_client.call_history) == calls_before
+        diagnostic = exc_info.value.to_diagnostics()[0]
+        assert diagnostic.title == "LLM Configuration"
+        assert diagnostic.context["category"] == "llm_validation"
+        assert diagnostic.context["schema_path"] == schema_path
+
+    @pytest.mark.parametrize(
+        "schema",
+        [
+            {"$ref": "#"},
+            {
+                "$defs": {
+                    "left": {"$ref": "#/$defs/right"},
+                    "right": {"$ref": "#/$defs/left"},
+                },
+                "$ref": "#/$defs/left",
+            },
+        ],
+    )
+    def test_reference_only_cycles_are_soft_errors_without_retry(self, monkeypatch, schema):
+        raw_response = '{"value":"finite"}'
+
+        action, shared, calls = self._run_raw_structured_response(monkeypatch, schema, raw_response)
+
+        assert action == "error"
+        assert shared["response"] == raw_response
+        assert shared["error_class"] == "LLMResponseParseError"
+        assert shared["_diagnostic_context"]["kind"] == "schema_mismatch"
+        assert shared["llm_usage"]["total_tokens"] == 30
+        assert len(calls) == 1
+
+    def test_recursive_object_schema_accepts_a_finite_instance(self, monkeypatch):
+        schema = {
+            "type": "object",
+            "properties": {
+                "value": {"type": "string"},
+                "child": {"$ref": "#"},
+            },
+            "required": ["value"],
+        }
+        raw_response = '{"value":"root","child":{"value":"leaf"}}'
+
+        action, shared, calls = self._run_raw_structured_response(monkeypatch, schema, raw_response)
+
+        assert action == "default"
+        assert shared["response"] == {"value": "root", "child": {"value": "leaf"}}
+        assert len(calls) == 1
+
+    def test_runtime_reference_resolution_failure_is_a_soft_error(self, monkeypatch):
+        unresolved_validator = Draft202012Validator({"$ref": "https://schemas.example/missing"})
+        monkeypatch.setattr(
+            "pflow.nodes.llm.llm.prepare_output_schema_validator",
+            lambda _schema: unresolved_validator,
+        )
+
+        action, shared, calls = self._run_raw_structured_response(
+            monkeypatch,
+            {"type": "object"},
+            '{"answer":"ok"}',
+        )
+
+        assert action == "error"
+        assert shared["response"] == '{"answer":"ok"}'
+        assert shared["error_class"] == "LLMResponseParseError"
+        assert shared["_diagnostic_context"]["kind"] == "schema_mismatch"
+        assert shared["_diagnostic_context"]["path"] == "$"
+        assert shared["llm_usage"]["total_tokens"] == 30
+        assert len(calls) == 1
+
+    def test_format_is_annotation_only(self, monkeypatch):
+        schema = {"type": "string", "format": "email"}
+
+        action, shared, _calls = self._run_raw_structured_response(monkeypatch, schema, '"not-an-email"')
+
+        assert action == "default"
+        assert shared["response"] == "not-an-email"
 
 
 class TestTimeout:

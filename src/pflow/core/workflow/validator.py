@@ -816,6 +816,7 @@ class WorkflowValidator:
             if node_type == "agent":
                 diagnostics.extend(WorkflowValidator._validate_agent_params(node_id, params))
             elif node_type == "llm":
+                diagnostics.extend(WorkflowValidator._validate_llm_output_schema(node_id, params))
                 llm_diags, display_model, provider_name, forms = WorkflowValidator._validate_llm_model_id_lite(
                     node_id, params
                 )
@@ -1102,6 +1103,36 @@ class WorkflowValidator:
     # =========================================================================
     # LLM Model-Id Static Validation (Step 9 — LLM branch)
     # =========================================================================
+
+    @staticmethod
+    def _validate_llm_output_schema(node_id: str, params: dict[str, Any]) -> list[Diagnostic]:
+        """Apply runtime's schema check to literal LLM schemas at validate time."""
+        import dataclasses
+
+        from pflow.core.exceptions import LLMOutputSchemaError
+        from pflow.nodes.llm.schema_validation import prepare_output_schema_validator
+
+        if "output_schema" not in params or params["output_schema"] is None:
+            return []
+        output_schema = params["output_schema"]
+        if TemplateResolver.has_templates(output_schema):
+            return []
+
+        try:
+            prepare_output_schema_validator(output_schema)
+        except LLMOutputSchemaError as exc:
+            diagnostic = exc.to_diagnostics()[0]
+            context = dict(diagnostic.context or {})
+            context["path"] = f"nodes[id={node_id}].params.output_schema"
+            return [
+                dataclasses.replace(
+                    diagnostic,
+                    source="validator",
+                    node_id=node_id,
+                    context=context,
+                )
+            ]
+        return []
 
     @staticmethod
     def _strip_provider_prefix_case_preserving(model: str, provider_prefix: str) -> str:

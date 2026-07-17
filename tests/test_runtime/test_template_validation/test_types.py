@@ -56,7 +56,7 @@ def test_registry(tmp_path):
             "class_name": "LLMNode",
             "module": "test",
             "interface": {
-                "outputs": [{"key": "response", "type": "dict|str", "description": "LLM response"}],
+                "outputs": [{"key": "response", "type": "any", "description": "LLM response"}],
                 "params": [
                     {"key": "prompt", "type": "str", "description": "Prompt text"},
                     {"key": "max_tokens", "type": "int", "description": "Max tokens"},
@@ -81,6 +81,38 @@ def test_registry(tmp_path):
                 "params": [
                     {"key": "count", "type": "int", "description": "Count value"},
                 ],
+            },
+        },
+        "list-consumer": {
+            "class_name": "ListConsumer",
+            "module": "test",
+            "interface": {
+                "outputs": [],
+                "params": [{"key": "items", "type": "list", "description": "Items"}],
+            },
+        },
+        "bool-consumer": {
+            "class_name": "BoolConsumer",
+            "module": "test",
+            "interface": {
+                "outputs": [],
+                "params": [{"key": "enabled", "type": "bool", "description": "Flag"}],
+            },
+        },
+        "dict-consumer": {
+            "class_name": "DictConsumer",
+            "module": "test",
+            "interface": {
+                "outputs": [],
+                "params": [{"key": "value", "type": "dict", "description": "Object"}],
+            },
+        },
+        "number-consumer": {
+            "class_name": "NumberConsumer",
+            "module": "test",
+            "interface": {
+                "outputs": [],
+                "params": [{"key": "value", "type": "number", "description": "Number"}],
             },
         },
         "shell": {
@@ -318,8 +350,8 @@ class TestTypeValidationIntegration:
         type_errors = [d for d in errors if "Type mismatch" in d.message]
         assert len(type_errors) == 0
 
-    def test_union_type_compatibility(self, test_registry):
-        """Union types should work correctly."""
+    def test_llm_any_output_accepts_string_consumer(self, test_registry):
+        """A schema-less LLM response is correctly specialized to string."""
         workflow_ir = {
             "enable_namespacing": True,
             "inputs": {},
@@ -328,7 +360,7 @@ class TestTypeValidationIntegration:
                 {
                     "id": "consumer",
                     "type": "string-consumer",
-                    "params": {"text": "${llm.response}"},  # dict|str → str (both now compatible)
+                    "params": {"text": "${llm.response}"},
                 },
             ],
             "edges": [{"from": "llm", "to": "consumer"}],
@@ -337,20 +369,52 @@ class TestTypeValidationIntegration:
         errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
         type_errors = [d for d in errors if "Type mismatch" in d.message]
-        # dict|str → str now passes because both dict and str can serialize to str
         assert len(type_errors) == 0
 
-    def test_union_type_incompatibility(self, test_registry):
-        """Union types with incompatible members should fail."""
+    def test_schema_less_llm_response_rejects_integer_consumer(self, test_registry):
         workflow_ir = {
             "enable_namespacing": True,
             "inputs": {},
             "nodes": [
-                {"id": "llm", "type": "llm", "params": {"prompt": "test", "max_tokens": 100}},
+                {"id": "llm", "type": "llm", "params": {"prompt": "test"}},
+                {"id": "consumer", "type": "int-consumer", "params": {"count": "${llm.response}"}},
+            ],
+            "edges": [{"from": "llm", "to": "consumer"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+
+        type_errors = [d for d in errors if "Type mismatch" in d.message]
+        assert len(type_errors) == 1
+        assert type_errors[0].context["inferred_type"] == "str"
+
+    @pytest.mark.parametrize(
+        ("schema", "consumer_type", "param_name"),
+        [
+            ({"type": "array"}, "list-consumer", "items"),
+            ({"type": "integer"}, "int-consumer", "count"),
+            ({"type": "number"}, "number-consumer", "value"),
+            ({"type": "boolean"}, "bool-consumer", "enabled"),
+            ({"type": "object"}, "dict-consumer", "value"),
+            ({"type": "string"}, "string-consumer", "text"),
+            ({"type": ["integer", "string"]}, "string-consumer", "text"),
+        ],
+    )
+    def test_llm_json_root_types_reach_typed_consumers(self, test_registry, schema, consumer_type, param_name):
+        """Recognized direct schema roots specialize the per-node response type."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {
+                    "id": "llm",
+                    "type": "llm",
+                    "params": {"prompt": "test", "max_tokens": 100, "output_schema": schema},
+                },
                 {
                     "id": "consumer",
-                    "type": "int-consumer",
-                    "params": {"count": "${llm.response}"},  # dict|str → int (incompatible)
+                    "type": consumer_type,
+                    "params": {param_name: "${llm.response}"},
                 },
             ],
             "edges": [{"from": "llm", "to": "consumer"}],
@@ -359,8 +423,125 @@ class TestTypeValidationIntegration:
         errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
         type_errors = [d for d in errors if "Type mismatch" in d.message]
-        # dict|str → int should fail because neither dict nor str can convert to int
+        assert len(type_errors) == 0
+
+    @pytest.mark.parametrize(
+        ("schema", "consumer_type", "param_name", "inferred_type"),
+        [
+            ({"type": "array"}, "int-consumer", "count", "list"),
+            ({"type": "integer"}, "bool-consumer", "enabled", "int"),
+            ({"type": "number"}, "bool-consumer", "enabled", "number"),
+            ({"type": "boolean"}, "int-consumer", "count", "bool"),
+            ({"type": "object"}, "list-consumer", "items", "dict"),
+            ({"type": "string"}, "bool-consumer", "enabled", "str"),
+            ({"type": ["integer", "string"]}, "bool-consumer", "enabled", "int|str"),
+        ],
+    )
+    def test_llm_json_root_types_reject_incompatible_consumers(
+        self, test_registry, schema, consumer_type, param_name, inferred_type
+    ):
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "llm", "type": "llm", "params": {"prompt": "test", "output_schema": schema}},
+                {
+                    "id": "consumer",
+                    "type": consumer_type,
+                    "params": {param_name: "${llm.response}"},
+                },
+            ],
+            "edges": [{"from": "llm", "to": "consumer"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+
+        type_errors = [d for d in errors if "Type mismatch" in d.message]
         assert len(type_errors) == 1
+        assert type_errors[0].context["inferred_type"] == inferred_type
+
+    def test_llm_object_output_allows_object_path_traversal(self, test_registry):
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {
+                    "id": "llm",
+                    "type": "llm",
+                    "params": {"prompt": "test", "output_schema": {"type": "object"}},
+                },
+                {
+                    "id": "consumer",
+                    "type": "string-consumer",
+                    "params": {"text": "${llm.response.name}"},
+                },
+            ],
+            "edges": [{"from": "llm", "to": "consumer"}],
+        }
+
+        errors, warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+
+        assert errors == []
+        assert warnings == []
+
+    @pytest.mark.parametrize(
+        "schema",
+        [
+            {},
+            {"anyOf": [{"type": "integer"}, {"type": "string"}]},
+            {"$ref": "#/$defs/value", "$defs": {"value": {"type": "integer"}}},
+            {"type": "${schema_type}"},
+            {"type": "intger"},
+        ],
+    )
+    def test_ambiguous_llm_schemas_remain_permissive(self, test_registry, schema):
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {"schema_type": {"type": "string", "required": False}},
+            "nodes": [
+                {"id": "llm", "type": "llm", "params": {"prompt": "test", "output_schema": schema}},
+                {"id": "consumer", "type": "bool-consumer", "params": {"enabled": "${llm.response}"}},
+            ],
+            "edges": [{"from": "llm", "to": "consumer"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"schema_type": "boolean"}, test_registry)
+
+        assert [d for d in errors if "Type mismatch" in d.message] == []
+
+    def test_batch_llm_response_uses_schema_specialization(self, test_registry):
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {
+                    "id": "llm",
+                    "type": "llm",
+                    "params": {"prompt": "test", "output_schema": {"type": "array"}},
+                    "batch": {"items": ["a"], "as": "item"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "list-consumer",
+                    "params": {"items": "${llm.results[0].response}"},
+                },
+                {
+                    "id": "incompatible-consumer",
+                    "type": "int-consumer",
+                    "params": {"count": "${llm.results[0].response}"},
+                },
+            ],
+            "edges": [
+                {"from": "llm", "to": "consumer"},
+                {"from": "llm", "to": "incompatible-consumer"},
+            ],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
+
+        type_errors = [d for d in errors if "Type mismatch" in d.message]
+        assert len(type_errors) == 1
+        assert type_errors[0].context["inferred_type"] == "list"
 
     def test_any_type_skips_validation(self, test_registry):
         """Parameters with type 'any' should skip type checking."""
@@ -611,22 +792,15 @@ class TestTypeValidationIntegration:
         assert len(shell_errors) == 0
 
     def test_shell_command_allows_union_with_str(self, test_registry):
-        """Union type containing str should be ALLOWED in shell command (Tier 1).
-
-        dict|str contains a safe type (str), so it's auto-allowed.
-        Runtime coercion will handle dict → JSON string if needed.
-        Uses the LLM node from test_registry which has output type dict|str.
-        """
+        """The LLM's ``any`` response is shell-safe because its root varies."""
         workflow_ir = {
             "enable_namespacing": True,
             "inputs": {},
             "nodes": [
-                # LLM node has output type "dict|str" - contains str, so allowed
                 {"id": "llm-node", "type": "llm", "params": {"prompt": "test", "max_tokens": 100}},
                 {
                     "id": "shell-node",
                     "type": "shell",
-                    # Note: even without quotes, dict|str is allowed due to Tier 1
                     "params": {"command": "echo ${llm-node.response}"},
                 },
             ],
@@ -635,7 +809,6 @@ class TestTypeValidationIntegration:
 
         errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        # Should pass - dict|str contains str, which is a safe type
         shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 0
 

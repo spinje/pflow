@@ -225,6 +225,31 @@ def test_dry_run_rejects_agent_invalid_schema_before_plan(tmp_path) -> None:
     assert "top-level type: object" in result.stderr
 
 
+@pytest.mark.parametrize("mode", [["--dry-run"], ["--validate-only"]])
+def test_validation_modes_reject_literal_invalid_llm_schema_before_dispatch(tmp_path, mode) -> None:
+    workflow_path = tmp_path / "llm-invalid-schema.pflow.md"
+    write_workflow_file(
+        {
+            "nodes": [
+                {
+                    "id": "ask",
+                    "type": "llm",
+                    "params": {"prompt": "answer", "output_schema": {"type": "intger"}},
+                }
+            ],
+            "edges": [],
+        },
+        workflow_path,
+    )
+
+    with patch("pflow.nodes.llm.llm.complete") as mock_complete:
+        result = invoke_cli([*mode, str(workflow_path)])
+
+    assert result.exit_code == 1
+    assert "Invalid output_schema" in result.output + result.stderr
+    mock_complete.assert_not_called()
+
+
 def test_dry_run_classifies_agent_for_cost_and_display(tmp_path) -> None:
     """AgentNode keeps the former agentic cost/duration planning behavior."""
     workflow_path = tmp_path / "agent-plan.pflow.md"
