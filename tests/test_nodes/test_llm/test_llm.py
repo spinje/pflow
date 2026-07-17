@@ -915,6 +915,32 @@ class TestStructuredOutput:
         assert isinstance(shared["response"], dict)
         assert shared["response"] == {"name": "Alice", "age": 30}
 
+    def test_structured_response_unwraps_litellm_tool_name(self, monkeypatch):
+        """A schema-valid value nested under LiteLLM's internal tool name is recovered."""
+
+        def custom_complete(**kwargs):
+            return AdapterResponse(
+                text='{"json_tool_call":{"name":"Alice","age":30}}',
+                usage={},
+                model=kwargs.get("model", "test"),
+                has_schema=True,
+            )
+
+        monkeypatch.setattr("pflow.nodes.llm.llm.complete", custom_complete)
+
+        node = LLMNode()
+        node.set_params({
+            "prompt": "Extract",
+            "output_schema": self.SIMPLE_SCHEMA,
+            "model": "anthropic/claude-sonnet-5",
+        })
+        shared: dict = {}
+
+        action = node.run(shared)
+
+        assert action == "default"
+        assert shared["response"] == {"name": "Alice", "age": 30}
+
     def test_structured_output_skips_strip_code_block(self, mock_llm_client):
         """output_schema set → _strip_code_block is NOT called."""
         mock_llm_client.set_response("*", self.SIMPLE_SCHEMA, {"name": "Bob"})

@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from jsonschema.validators import validator_for
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 from pflow.core.cache_ttl import is_cache_ttl_supported_by_provider, parse_cache_ttl
@@ -1342,7 +1344,20 @@ class LLMNode(Node):
         # error_class consistently with the _call_llm path.
         if exec_res["has_schema"]:
             try:
-                shared["response"] = json.loads(raw_response)
+                parsed_response = json.loads(raw_response)
+                output_schema = prep_res.get("output_schema")
+                if (
+                    isinstance(parsed_response, dict)
+                    and set(parsed_response) == {"json_tool_call"}
+                    and isinstance(parsed_response["json_tool_call"], dict)
+                    and isinstance(output_schema, dict)
+                ):
+                    validator = validator_for(output_schema)(output_schema)
+                    inner_response = parsed_response["json_tool_call"]
+                    if not validator.is_valid(parsed_response) and validator.is_valid(inner_response):
+                        logger.warning("Unwrapped structured output nested under LiteLLM's internal tool name")
+                        parsed_response = inner_response
+                shared["response"] = parsed_response
             except json.JSONDecodeError as e:
                 # Build the same error dict shape as _call_llm so the runtime
                 # path produces the same structured Diagnostic. Use
