@@ -5,6 +5,119 @@ icon: "clock"
 rss: true
 ---
 
+<Update label="July 2026" description="v0.15.0" tags={["New releases", "Improvements", "Breaking changes"]}>
+  ## Durable Workflow Resumption and Non-TTY Gates
+
+  We introduced a workflow resumption engine that continues failed or interrupted runs from the failed top-level step while restoring completed upstream outputs. Human approval gates now work in non-interactive (non-TTY) environments by saving execution state to the streamable trace file and issuing durable tokens that can be answered later.
+
+  ```bash
+  # List all pending, unanswered paused gates across your execution traces
+  pflow resume list
+
+  # Continue a failed run or answer a paused gate by its token ID
+  pflow resume 7a9e4afb-2095-447e-8043-0660438104f9 --approve yes
+  pflow resume 7a9e4afb-2095-447e-8043-0660438104f9 --choose "deploy-production"
+  ```
+
+  <Note>
+    Completed upstream steps are restored rather than rerun. The failed step itself starts again, so a partially completed side effect may fire twice; interactive resumes ask for confirmation and non-interactive resumes require `--force`. Resuming by execution ID is independent of the current directory, but the original workflow file must still exist at its recorded path and match the saved content hash.
+  </Note>
+
+  **Highlights**
+  - Added the `pflow resume` CLI command to continue failed or interrupted runs (such as those halted by Ctrl+C or SIGKILL) from the failed node.
+  - Added durable pause state tracking that outputs a resume token and writes paused execution parameters cleanly to the trace file when a gate triggers in non-TTY environments.
+  - Implemented the `pflow resume list` sub-command to scan and display pending unanswered gates awaiting response.
+  - Added direct option mapping for the `--choose` parameter, converting numeric selections or label strings into structured gate resolutions inside the execution loader.
+  - Fixed attempt-chain tracking to prevent dead or interrupted runs from wedging resumption sequences when running `pflow resume` against a workflow path.
+  - Fixed candidate execution scans to ensure only attempts that successfully executed novel work supersede older resumable runs.
+
+  ## Unified Agent Nodes and AI-Assisted Development
+
+  We unified our autonomous coding nodes into a single, cohesive execution block. The legacy `claude-code` node has been replaced by a unified `agent` node that supports both Anthropic Claude and OpenAI Codex backends via a clean parameter contract, reducing compilation overhead and aligning schema definitions.
+
+  ```markdown
+  ### refactor-helpers
+  - type: agent
+  - backend: codex
+  - prompt: Modernize standard utility modules in src/core/
+  - sandbox: workspace-write
+  - approval_policy: never
+  ```
+
+  **Highlights**
+  - Introduced the unified `agent` node, allowing workflows to toggle between Claude and Codex behaviors using the `backend: claude|codex` parameter.
+  - Implemented strict parameter-shape checking inside `schema_validation.py` to enforce shared parameters and catch configuration anomalies before runtime.
+  - Improved the `agent` node to raise a structured `PflowError` for parameter validation issues, ensuring failed setups abort early during execution preparation.
+  - Added support for inspecting local workflow files inside `pflow describe`, letting developers review structural parameters without loading or generating execution history.
+
+  ## Interactive Web UI, Approval Bridges, and Voice Narration
+
+  The browser visualizer is now a full control center. You can answer paused gates or trigger workflow resumptions directly from the browser canvas. We also launched agent voice narration, bringing stateful point-and-say commentary and automated walkthrough pacing to the UI.
+
+  ```bash
+  # Direct the UI viewer to highlight a node and speak detailed instructions
+  pflow ui focus my-workflow.pflow.md extract-entities --say "We are analyzing this text block."
+  ```
+
+  <Tip>
+    To bypass aggressive browser autoplay blocks that silent walkthroughs encounter, our voice narration engine implements a stateful "hold" loop. CLI pacing automatically pauses execution at blocked narration windows and prompts the user with a playback button in the web UI before continuing.
+  </Tip>
+
+  **Highlights**
+  - Added the Web-UI Approval Bridge: rendering interactive Yes/No callout panels on paused nodes and Resume controls on failed nodes inside `pflow ui`.
+  - Added playback beacons (`started`, `blocked`, and `ended` events) that report real-time audio playback state from the browser back to the UI server.
+  - Added Agent Voice Narration, enabling workflows to synthesize voice messages via Gemini TTS using a custom `[bracket]` tag format.
+  - Implemented a closed-loop CLI pacing system (`_await_narration_turn`) that polls the UI server's playback queues to align text narration with physical speech pacing.
+  - Added `pflow settings llm set-tts-model` and `pflow settings llm set-tts-voice` commands to configure global text-to-speech preferences.
+  - Added visual trace indicators to the UI selector, displaying the execution path lineage (`⤷ resumed from <id>`) under resumed attempts.
+
+  ## Windows Compatibility and Execution Robustness
+
+  We added Windows support while preserving one portable shell contract: shell steps use POSIX `sh` semantics on every platform, with Git Bash supplying the runtime on Windows. This release also strengthens schema validation, MCP guidance, and trace handling across platforms.
+
+  ```yaml
+  # Local schema validation prevents invalid trace caching
+  type: object
+  properties:
+    validated_output: { type: string }
+  required: [validated_output]
+  ```
+
+  **Highlights**
+  - Added Windows compatibility support, establishing Git Bash as the native POSIX shell emulator across win32 environments.
+  - Added Win32-specific pipe detection using Windows file-type handles to support UTF-8 CLI inputs in non-TTY terminals.
+  - Added automatic stdio stream re-encoding, forcing Windows consoles to communicate using byte-exact UTF-8 pathways.
+  - Fixed trace corruption at the LiteLLM integration boundary by deep-copying messages before sending requests to remote providers.
+  - Fixed local LLM schema validation, throwing immediate validation errors and following error-routing paths instead of caching invalid JSON outputs.
+  - Fixed MCP tool output guidance to expose declared nested paths under the canonical `result.*` namespace.
+  - Fixed transient Windows file locks while saving MCP server configuration by retrying atomic replacements.
+  - Fixed the MCP node to strip system sidecar tracking fields (`_source_line` and `_prompt_source_line`) from forwarded tool parameters.
+
+  <Accordion title="Breaking changes">
+    ### Claude Code Node Removed
+    The `claude-code` node has been completely removed from the registry. All workflows employing autonomous development agents must migrate to the new `agent` node and declare their target backend:
+
+    <CodeGroup>
+    ```markdown Legacy Workflow
+    ### edit-utilities
+    - type: claude-code
+    - prompt: Fix the broken unit test.
+    ```
+
+    ```markdown Unified Workflow
+    ### edit-utilities
+    - type: agent
+    - backend: claude
+    - prompt: Fix the broken unit test.
+    ```
+    </CodeGroup>
+
+    When using the new Codex backend, API-key or custom-provider billing is an explicit opt-in: set `use_api_key: true`. The default fails closed unless Codex has recognized account authentication.
+  </Accordion>
+
+  [View the full v0.15.0 changelog with PR references on GitHub →](https://github.com/spinje/pflow/blob/main/CHANGELOG.md#v0150-2026-07-18)
+</Update>
+
 <Update label="July 2026" description="v0.14.0" tags={["New releases", "Improvements", "Breaking changes"]}>
   ## Interactive Web UI and Live Overlay
 

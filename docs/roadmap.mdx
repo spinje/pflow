@@ -6,7 +6,7 @@ icon: "map"
 
 ## <Icon icon="circuit-board" size={24} color="#f97316" /> Current status
 
-Where pflow is today (v0.14.0):
+Where pflow is today (v0.15.0):
 
 - **Standalone orchestration engine** with compile-once batch optimization (~7x speedup for large parallel workflows)
 - **Markdown workflows** — `.pflow.md` files that agents read and write naturally
@@ -16,8 +16,8 @@ Where pflow is today (v0.14.0):
 - **Memoization cache** — unchanged nodes serve cached results across re-runs, with `--only`, `--no-cache`, and per-node `cache: false` controls
 - **Execution reports** — `--report` generates navigable markdown directories with rendered prompts, responses, token breakdowns, and cost data per node
 - **Dry-run execution plans** — `--dry-run` previews cost, duration, and cache boundaries before execution
-- **Workflow visualization** — `pflow mermaid` generates Mermaid flowcharts of workflow topology, and `pflow ui` serves an interactive React Flow canvas with a live execution overlay and run-from-browser controls
-- **Human-in-the-loop approval gates** — pause a workflow before a step with `approval: required`, plus agent-raised escalations and a `--auto-approve` pre-approval flag
+- **Workflow visualization** — `pflow mermaid` generates Mermaid flowcharts of workflow topology, and `pflow ui` serves an interactive React Flow canvas with a live execution overlay, run controls, agent-directed focus, and voice narration
+- **Human-in-the-loop approval gates** — pause a workflow before a step with `approval: required`, answer paused gates from the CLI or browser canvas, and handle agent-raised escalations with auditable decisions
 - **Resume and durable gate pause** — `pflow resume` continues a failed, interrupted, or gate-paused run from where it stopped without re-running completed steps; a gate hit in a non-interactive run (CI, MCP, pipe, browser) pauses durably — exit 4 with a resume token — and resumes hours later with `--approve`/`--choose`, with `pflow resume list` showing pending pauses
 - **Stateful loops** — the `loop:` modifier runs a node repeatedly with `while:`/`until:` conditions and a `carry:` block to thread state across iterations
 - **Streamable traces** — execution traces stream to disk as JSONL for crash-tail resilience, with per-node retry/backoff via the `retry:` block
@@ -34,12 +34,9 @@ Where pflow is today (v0.14.0):
 - **Settings management** — API keys, node filtering
 - **Unified model support** — 100+ providers (OpenAI, Anthropic, Google, OpenRouter, Ollama, ...) via LiteLLM
 - **Published on PyPI** — `uv tool install pflow-cli`
+- **Cross-platform execution** — macOS, Linux, and Windows support
 
 ## <Icon icon="hammer" size={24} color="#f97316" /> Now
-
-**Approval gates in the browser** — answer a paused gate from the `pflow ui` canvas instead of the CLI, so human-in-the-loop review works without leaving the run view. Builds on the durable pause tokens above.
-
-## <Icon icon="lightbulb" size={24} color="#f97316" /> Next
 
 **Iteration speed and workflow quality**
 
@@ -71,7 +68,6 @@ The longer-term direction:
 - **Code node dependency management** — install packages on demand for code nodes
 - **TypeScript code node** — for teams that think in TypeScript
 - **Reduce/fold for batch** — aggregate batch results incrementally instead of collecting all at once
-- **Windows compatibility** — run on Windows without WSL
 
 pflow improves through a direct loop: agents build workflows, we find where they struggle, we fix it. Because the surface area is finite — node types, template syntax, error messages — each fix is targeted and compounds. A year from now pflow will be meaningfully better at helping agents build workflows, not because of some grand vision but because each friction point gets filed down one at a time.
 

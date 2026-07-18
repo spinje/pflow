@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.15.0 (2026-07-18)
+
+- Changed autonomous agent execution by replacing the `claude-code` node with a unified `agent` node. Workflows must now declare `backend: claude` or `backend: codex`; both backends share structured output, session resume, and usage metadata. [#593](https://github.com/spinje/pflow/pull/593) ([Task 177](.taskmaster/tasks/task_177/task-review.md))
+- Added a web UI approval bridge in `pflow ui` that allows users to answer paused gates (Approve, Deny, or select escalation options) and trigger run resumption directly from the browser. [#579](https://github.com/spinje/pflow/pull/579) ([Task 176](.taskmaster/tasks/task_176/task-review.md))
+- Added Windows compatibility support, ensuring proper Git Bash resolution for POSIX shell steps, correct UTF-8 console and file I/O, detached UI-spawned runs, appropriate Win32 settings permission handling, and robust stdin redirection on Windows. [#564](https://github.com/spinje/pflow/pull/564) ([Task 116](.taskmaster/tasks/task_116/task-review.md))
+- Added durable resume tokens and non-TTY gate support, causing non-interactive runs with unapproved gates to pause durably (exit code 4) and output a token that can be listed with `pflow resume list` and answered with `pflow resume <token> --approve yes|no` or `--choose "<answer>"`. [#563](https://github.com/spinje/pflow/pull/563) ([Task 171](.taskmaster/tasks/task_171/task-review.md))
+- Added agent voice narration features in `pflow ui`, featuring "point & say" visual target focus, persistent caption overlays, self-pacing walkthroughs driven by browser playback telemetry beacons, and configuration management commands (`pflow settings llm set-tts-model` and `set-tts-voice`). [#560](https://github.com/spinje/pflow/pull/560) ([Task 174](.taskmaster/tasks/task_174/task-review.md))
+- Added the `pflow resume` CLI command to continue a failed or interrupted run (including Ctrl+C/SIGKILL) from its failed step without re-executing completed upstream nodes, while verifying workflow drift and caching outputs. [#559](https://github.com/spinje/pflow/pull/559) ([Task 164](.taskmaster/tasks/task_164/task-review.md))
+- Fixed `agent` parameter validation to raise structured `PflowError` diagnostics instead of leaking standard Python exceptions. [#597](https://github.com/spinje/pflow/pull/597)
+- Fixed the `llm` node to perform local validation of structured outputs against the defined `output_schema` before continuing, correctly falling back to error edges if validation fails. [#600](https://github.com/spinje/pflow/pull/600)
+- Fixed MCP tool output guidance to show declared nested paths under the canonical `result.*` namespace. [#583](https://github.com/spinje/pflow/pull/583)
+- Fixed transient Windows file locks when saving MCP server configuration by retrying atomic replacements. [#586](https://github.com/spinje/pflow/pull/586)
+- Fixed the `mcp` node to strip `_*_source_line` sidecar parameters from forwarded tool arguments. [#588](https://github.com/spinje/pflow/pull/588)
+- Fixed trace corruption at the LiteLLM boundary by deep-copying messages to prevent in-place modification. [#587](https://github.com/spinje/pflow/pull/587)
+- Improved the `pflow describe` CLI command to support describing local workflow files (e.g., `./drafts/workflow.pflow.md`) in addition to saved workflows. [#596](https://github.com/spinje/pflow/pull/596)
+
 ## v0.14.0 (2026-07-03)
 
 - Removed the obsolete `storage_mode` parameter. [#523](https://github.com/spinje/pflow/pull/523)
