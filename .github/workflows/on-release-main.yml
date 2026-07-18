@@ -37,6 +37,8 @@ jobs:
 
       - name: Run tests
         run: uv run pytest -x -q
+        env:
+          PYTHONWARNDEFAULTENCODING: "1"
 
   publish:
     runs-on: ubuntu-latest
