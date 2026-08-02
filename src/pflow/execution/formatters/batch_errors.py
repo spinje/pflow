@@ -29,6 +29,9 @@ def format_batch_errors_section(steps: list[dict[str, Any]]) -> list[str]:
             idx = err.get("index", "?")
             msg = _truncate_error_message(str(err.get("error", "Unknown error")))
             lines.append(f"  [{idx}] {msg}")
+            provider_message = format_batch_provider_message(err)
+            if provider_message:
+                lines.append(f"      provider: {provider_message}")
             item_summary = format_batch_item_summary(err)
             if item_summary:
                 lines.append(f"      item: {item_summary}")
@@ -53,12 +56,34 @@ def format_batch_item_summary(error_detail: Mapping[str, Any]) -> str | None:
     return _truncate_text(text, MAX_ITEM_SUMMARY_CHARS)
 
 
+def format_batch_provider_message(error_detail: Mapping[str, Any]) -> str | None:
+    """Return the upstream provider diagnosis for one batch error, if present.
+
+    ``provider_message`` is the raw provider text captured by the LLM adapter
+    (masked for key material at capture). For a batched LLM failure it is often
+    the only text naming the real cause — the item's ``error`` string carries
+    pflow's wrapped framing. Rendered as the headline only, capped like every
+    other batch error line.
+    """
+    provider_message = error_detail.get("provider_message")
+    if not isinstance(provider_message, str) or not provider_message.strip():
+        return None
+    return _truncate_error_message(provider_message)
+
+
 def compact_batch_error_detail(error_detail: Mapping[str, Any]) -> dict[str, Any]:
     """Return a JSON/API-safe batch error detail without raw item data."""
     compact: dict[str, Any] = {
         "index": error_detail.get("index", "?"),
         "error": _truncate_error_message(str(error_detail.get("error", "Unknown error"))),
     }
+
+    # Keep the provider diagnosis on the JSON/API surface too — it is plain,
+    # masked text (never raw item data), and it is the field an agent needs to
+    # tell "model retired" from "quota exceeded" inside one error class.
+    provider_message = format_batch_provider_message(error_detail)
+    if provider_message:
+        compact["provider_message"] = provider_message
 
     summary = error_detail.get("item_summary")
     if isinstance(summary, Mapping):

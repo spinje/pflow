@@ -192,7 +192,7 @@ class TestDetectDefaultModel:
             result = _detect_default_model()
 
             # Should return Anthropic (first in priority)
-            assert result == "anthropic/claude-sonnet-4-5"
+            assert result == "anthropic/claude-sonnet-5"
             # Should have checked Anthropic first
             assert mock_has_key.call_args_list[0][0][0] == "anthropic"
 
@@ -207,4 +207,4 @@ class TestDetectDefaultModel:
             result = _detect_default_model()
 
             # Provider prefix is required — LiteLLM rejects bare model names
-            assert result == "openai/gpt-5.2"
+            assert result == "openai/gpt-5.6-luna"

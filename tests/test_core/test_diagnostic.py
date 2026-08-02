@@ -558,3 +558,87 @@ def test_warning_degrades_status_honors_source_dimension() -> None:
 
     # Legacy/untyped shapes (no severity) fail closed — degrade.
     assert warning_degrades_status("plain string warning") is True
+
+
+def test_format_diagnostic_renders_provider_message() -> None:
+    """The provider's raw error text renders — it's the only line that
+    distinguishes a bad model name from a key/entitlement problem."""
+    diagnostic = Diagnostic(
+        severity=Severity.ERROR,
+        source="runtime",
+        message="Unknown model: gemini/gemini-2.5-flash",
+        context={"provider_message": "NotFoundError: models/gemini-2.5-flash is not found for API version v1beta"},
+    )
+
+    rendered = format_diagnostic(diagnostic)
+
+    assert "Provider response: NotFoundError: models/gemini-2.5-flash is not found" in rendered
+
+
+def test_format_diagnostic_renders_multiline_provider_message_indented() -> None:
+    diagnostic = Diagnostic(
+        severity=Severity.ERROR,
+        source="runtime",
+        message="boom",
+        context={"provider_message": "line one\nline two"},
+    )
+
+    rendered = format_diagnostic(diagnostic)
+
+    assert "  Provider response: line one" in rendered
+    assert "    line two" in rendered
+    # A short message is never decorated with the truncation tail.
+    assert "... (truncated" not in rendered
+
+
+def test_format_diagnostic_truncates_long_provider_message() -> None:
+    """Multi-KB LiteLLM error strings are capped like every other context
+    block — 5 lines, each clipped to 300 chars, plus a truncation tail
+    pointing at the trace for the full text."""
+    provider_message = "\n".join(f"{index}" + "x" * 399 for index in range(8))
+    diagnostic = Diagnostic(
+        severity=Severity.ERROR,
+        source="runtime",
+        message="boom",
+        context={"provider_message": provider_message},
+    )
+
+    rendered = format_diagnostic(diagnostic)
+    lines = rendered.splitlines()
+
+    first_index = next(i for i, line in enumerate(lines) if line.startswith("  Provider response: "))
+    content_lines = lines[first_index : first_index + 5]
+    assert content_lines[0] == "  Provider response: " + ("0" + "x" * 399)[:300]
+    for offset, line in enumerate(content_lines[1:], start=1):
+        assert line == "    " + (f"{offset}" + "x" * 399)[:300]
+
+    # Only 5 of the 8 source lines survive, and the tail says so.
+    assert lines[first_index + 5] == "    ... (truncated — full text in the trace)"
+    assert "5xxx" not in rendered
+
+
+def test_unknown_model_error_renders_provider_response_and_honest_suggestions() -> None:
+    """End-to-end: a provider 404 wrapped as UnknownModelError surfaces the
+    provider's own text and keeps the key/entitlement reading open, instead
+    of the old exclusive-capability hint ("Your configured API key supports")
+    that misdirected debugging when multiple provider keys were set."""
+    from pflow.core.exceptions import UnknownModelError
+
+    exc = UnknownModelError(
+        "Unknown model: gemini/gemini-2.5-flash",
+        model="gemini/gemini-2.5-flash",
+        reason="unknown_name",
+        provider_message="NotFoundError: models/gemini-2.5-flash is not found for API version v1beta",
+    )
+
+    (diagnostic,) = exception_to_diagnostics(exc)
+    rendered = format_diagnostic(diagnostic)
+
+    # Suggestions are short and action-shaped, and stay position-independent
+    # ("shown with this error", not "above") because batch item errors render
+    # the provider block in a different place.
+    assert "Provider response: NotFoundError:" in rendered
+    assert "A 404 can also mean your API key or project lacks access to this model" in rendered
+    assert "Your configured API key supports" not in rendered
+    # The known-working-fallback suggestion is env-dependent (it only appears
+    # when a default model is detectable), so it is deliberately unasserted.

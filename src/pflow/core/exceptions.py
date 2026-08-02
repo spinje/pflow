@@ -323,20 +323,24 @@ class UnknownModelError(LLMCallError):
         if self.reason == "missing_prefix":
             suggestions = [
                 f"Add a provider prefix to the model identifier "
-                f"(e.g. 'openai/{self.model}', 'anthropic/claude-sonnet-4-5', "
+                f"(e.g. 'openai/{self.model}', 'anthropic/claude-sonnet-5', "
                 f"'gemini/gemini-2.5-flash').",
                 "See https://docs.litellm.ai/docs/providers for the full list of supported providers.",
                 "Run 'pflow settings llm show' to see your configured defaults.",
             ]
         else:
-            # unknown_name: prefix is recognized; the model name doesn't exist there.
+            # unknown_name: the provider itself returned 404 for this model.
+            # That is NOT proof the name is wrong — providers also 404 when
+            # the API key or project lacks access to the model — so the
+            # suggestions must keep both readings open and point at the
+            # provider's own text (rendered as the "Provider response:" block).
             suggestions = [
-                "Check the model name against the provider's current model catalogue.",
+                "Check the exact model name against the provider's current catalogue.",
+                "A 404 can also mean your API key or project lacks access to this "
+                "model — see the provider response shown with this error.",
                 "Run 'pflow settings llm show' to see your configured defaults.",
                 "See https://docs.litellm.ai/docs/providers for supported models.",
             ]
-            # Append "your key supports X" hint when a default is detected.
-            # Lazy import keeps llm_config off the exceptions import graph.
             import contextlib
 
             with contextlib.suppress(Exception):
@@ -348,7 +352,10 @@ class UnknownModelError(LLMCallError):
 
                 detected = get_default_llm_model()
                 if detected:
-                    suggestions.append(f"Your configured API key supports '{detected}'.")
+                    suggestions.append(
+                        f"To isolate model-vs-key, retry with '{detected}' "
+                        "(a model your configured keys already reach)."
+                    )
 
         return [
             Diagnostic(

@@ -210,7 +210,7 @@ class TestGetModelForFeature:
             ):
                 result = get_model_for_feature("discovery")
 
-                assert result == "anthropic/claude-sonnet-4-5"
+                assert result == "anthropic/claude-sonnet-5"
 
     def test_feature_specific_takes_priority_over_default(self):
         """Feature-specific model takes priority over default_model."""

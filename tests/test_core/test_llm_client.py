@@ -1519,3 +1519,226 @@ class TestNormalizeEmptyResponseWarning:
         assert response.warnings
         assert response.warnings[0]["kind"] == "llm_empty_response_max_tokens"
         assert "0 tokens consumed" in response.warnings[0]["text"]
+
+
+# --------------------------------------------------------------------------
+# complete() — explicit API key resolution (issue: GOOGLE_API_KEY shadowing
+# a valid GEMINI_API_KEY via LiteLLM's reversed env-var precedence)
+# --------------------------------------------------------------------------
+
+_PROVIDER_KEY_ENV_VARS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")
+
+
+class TestCompleteExplicitApiKey:
+    """complete() resolves the key canonical-first and passes it explicitly.
+
+    LiteLLM's own env lookup checks GOOGLE_API_KEY before GEMINI_API_KEY —
+    the reverse of pflow's canonical order — so without the explicit
+    ``api_key`` kwarg a stray GOOGLE_API_KEY silently shadows the key
+    pflow's validation checked, turning a validate-green workflow into a
+    provider 404/401 at runtime.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_provider_env(self, monkeypatch):
+        # Deterministic regardless of the developer machine's shell env.
+        for var in _PROVIDER_KEY_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+    @patch("litellm.completion")
+    def test_canonical_key_wins_over_litellm_precedence(self, mock_completion, monkeypatch):
+        """Regression: both Gemini vars set with different values → GEMINI_API_KEY is sent."""
+        monkeypatch.setenv("GEMINI_API_KEY", "gemini-key-user-tested")
+        monkeypatch.setenv("GOOGLE_API_KEY", "unrelated-gcp-key")
+        mock_completion.return_value = make_litellm_response()
+
+        complete(model="gemini/gemini-2.5-flash", prompt="Hi")
+
+        assert mock_completion.call_args.kwargs["api_key"] == "gemini-key-user-tested"
+
+    @patch("litellm.completion")
+    def test_alias_var_used_as_fallback(self, mock_completion, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "google-only-key")
+        mock_completion.return_value = make_litellm_response()
+
+        complete(model="gemini/gemini-2.5-flash", prompt="Hi")
+
+        assert mock_completion.call_args.kwargs["api_key"] == "google-only-key"
+
+    @patch("litellm.completion")
+    def test_no_key_configured_omits_kwarg(self, mock_completion):
+        """No key anywhere → delegate to LiteLLM so its AuthenticationError path is unchanged."""
+        mock_completion.return_value = make_litellm_response()
+
+        complete(model="gemini/gemini-2.5-flash", prompt="Hi")
+
+        assert "api_key" not in mock_completion.call_args.kwargs
+
+    @patch("litellm.completion")
+    def test_settings_stored_key_resolves_without_env(self, mock_completion):
+        """Non-CLI callers get the key even when inject_settings_env_vars() hasn't run."""
+        from pflow.core.settings import SettingsManager
+
+        SettingsManager().set_env("GEMINI_API_KEY", "settings-stored-key")
+        mock_completion.return_value = make_litellm_response()
+
+        complete(model="gemini/gemini-2.5-flash", prompt="Hi")
+
+        assert mock_completion.call_args.kwargs["api_key"] == "settings-stored-key"
+
+    @patch("litellm.completion")
+    def test_caller_supplied_api_key_wins(self, mock_completion, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "env-key")
+        mock_completion.return_value = make_litellm_response()
+
+        complete(
+            model="gemini/gemini-2.5-flash",
+            prompt="Hi",
+            model_options={"api_key": "caller-key"},
+        )
+
+        assert mock_completion.call_args.kwargs["api_key"] == "caller-key"
+
+    @patch("litellm.completion")
+    def test_unregistered_provider_keeps_delegation(self, mock_completion, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "env-key")
+        mock_completion.return_value = make_litellm_response()
+
+        complete(model="openrouter/mistralai/mistral-7b", prompt="Hi")
+
+        assert "api_key" not in mock_completion.call_args.kwargs
+
+
+# --------------------------------------------------------------------------
+# provider_message sanitization — key material must not survive capture
+# --------------------------------------------------------------------------
+
+
+class TestProviderMessageMasking:
+    """Key material echoed in provider error text is masked at the seam.
+
+    ``provider_message`` renders to the terminal and lands in traces and
+    JSON output, so a provider echoing the request URL (Google's REST
+    surface carries the key as a ``?key=`` query param) must not leak the
+    credential.
+    """
+
+    def test_mask_key_material_unit(self):
+        from pflow.core.llm_client import _mask_key_material
+
+        text = (
+            "NotFoundError calling https://generativelanguage.googleapis.com/"
+            "v1beta/models/x:generateContent?key=AIzaSyD4abc123XYZ890qrs "
+            "— bare AIzaSyDlonebarekey1234567 and sk-ant-api03-longsecret456789"
+        )
+        masked = _mask_key_material(text)
+
+        assert "key=***" in masked
+        assert "AIzaSyD4abc123XYZ890qrs" not in masked
+        assert "AIzaSyDlonebarekey1234567" not in masked
+        assert "sk-ant-api03-longsecret456789" not in masked
+        assert "generateContent" in masked  # benign text survives
+
+    @patch("litellm.completion")
+    def test_provider_message_is_masked_through_classifier(self, mock_completion):
+        mock_completion.side_effect = litellm.exceptions.NotFoundError(
+            message="404 from https://generativelanguage.googleapis.com/v1beta/models?key=AIzaSyDsecretsecret",
+            model="gemini/gemini-2.5-flash",
+            llm_provider="gemini",
+        )
+
+        with pytest.raises(UnknownModelError) as exc_info:
+            complete(model="gemini/gemini-2.5-flash", prompt="Hi")
+
+        assert exc_info.value.provider_message is not None
+        assert "AIzaSyDsecretsecret" not in exc_info.value.provider_message
+        assert "key=***" in exc_info.value.provider_message
+
+
+class TestCompleteEffectiveModelKeyResolution:
+    """The key must match the model actually sent — model_options can override it."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_provider_env(self, monkeypatch):
+        for var in _PROVIDER_KEY_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+    @patch("litellm.completion")
+    def test_model_override_governs_key_choice(self, mock_completion, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key")
+        mock_completion.return_value = make_litellm_response()
+
+        complete(
+            model="gemini/gemini-2.5-flash",
+            prompt="Hi",
+            model_options={"model": "anthropic/claude-sonnet-4-5"},
+        )
+
+        call_kwargs = mock_completion.call_args.kwargs
+        assert call_kwargs["model"] == "anthropic/claude-sonnet-4-5"
+        assert call_kwargs["api_key"] == "anthropic-key"
+
+    @patch("litellm.completion")
+    def test_model_override_to_unregistered_provider_omits_key(self, mock_completion, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+        mock_completion.return_value = make_litellm_response()
+
+        complete(
+            model="gemini/gemini-2.5-flash",
+            prompt="Hi",
+            model_options={"model": "openrouter/mistralai/mistral-7b"},
+        )
+
+        assert "api_key" not in mock_completion.call_args.kwargs
+
+
+class TestKeyMaterialMaskingCoverage:
+    """Labelled credentials and exact wire secrets are masked, on every error branch."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_provider_env(self, monkeypatch):
+        for var in _PROVIDER_KEY_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+    def test_masks_api_key_labelled_credential(self):
+        from pflow.core.llm_client import _mask_key_material
+
+        masked = _mask_key_material("401 Unauthorized: api_key=custom-corporate-token-123456 rejected")
+
+        assert "custom-corporate-token-123456" not in masked
+        assert "api_key=***" in masked
+
+    def test_exact_secret_masked_regardless_of_shape(self):
+        from pflow.core.llm_client import _mask_key_material
+
+        masked = _mask_key_material(
+            "provider said: credential zorp8f2k1q is not valid",
+            secret="zorp8f2k1q",  # noqa: S106
+        )
+
+        assert "zorp8f2k1q" not in masked
+
+    def test_short_secret_not_replaced(self):
+        """A <8-char secret is skipped — replacing e.g. 'abc' would shred the text."""
+        from pflow.core.llm_client import _mask_key_material
+
+        assert _mask_key_material("abc is in many words: abcdef", secret="abc") == "abc is in many words: abcdef"  # noqa: S106
+
+    @patch("litellm.completion")
+    def test_auth_error_masks_exact_wire_secret(self, mock_completion, monkeypatch):
+        """The auth path — where providers most likely echo the credential — masks
+        the exact key complete() put on the wire, whatever its shape."""
+        monkeypatch.setenv("GEMINI_API_KEY", "weird-shape-secret-123456")
+        mock_completion.side_effect = _make_auth(
+            msg="Invalid credential: weird-shape-secret-123456",
+            model="gemini/gemini-2.5-flash",
+            provider="gemini",
+        )
+
+        with pytest.raises(MissingApiKeyError) as exc_info:
+            complete(model="gemini/gemini-2.5-flash", prompt="Hi")
+
+        assert exc_info.value.provider_message is not None
+        assert "weird-shape-secret-123456" not in exc_info.value.provider_message
+        assert "***" in exc_info.value.provider_message

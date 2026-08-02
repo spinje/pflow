@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from pflow.core.llm_capabilities import anthropic_models_at_threshold
+from pflow.core.llm_config import _DEFAULT_FALLBACK_MODEL
 
 from ..stages.row_builder import _static_excerpt
 from ..types import (
@@ -96,7 +97,7 @@ def format_grouped_body_block(
             f"→ Switch model: replace the `- model:` line in {_workflow_basename(group.child_workflow)} with one of:"
         )
         for model in alternatives:
-            suffix = " (recommended — pflow's default)" if model == "claude-sonnet-4-5" else ""
+            suffix = " (recommended — pflow's default)" if f"anthropic/{model}" == _DEFAULT_FALLBACK_MODEL else ""
             lines.append(f"    anthropic/{model}{suffix}")
         lines.append(
             "  These cache at ≥1,024 tokens. `prompt_cache:` declarations transfer unchanged. "
