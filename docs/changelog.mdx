@@ -5,6 +5,35 @@ icon: "clock"
 rss: true
 ---
 
+<Update label="August 2026" description="v0.15.1" tags={["Improvements", "Bug fixes"]}>
+  ## LLM Key Propagation and Diagnostics
+
+  We resolved an issue in the LLM client layer where validated API keys were not being passed correctly to LiteLLM. Diagnostics have also been improved to surface sanitized provider error details when an API call fails.
+
+  ```bash
+  # Diagnostic output now includes sanitized provider details on failure
+  pflow workflow.pflow.md
+  ```
+
+  <Note>
+    When an LLM provider call fails, diagnostic rendering now displays the provider's underlying error details with API-key material masked.
+  </Note>
+
+  **Highlights**
+  - Fixed API key handling to ensure the validated key is reliably forwarded to LiteLLM during model invocations.
+  - Enhanced error handling to surface explicit provider error text in diagnostic failure outputs.
+
+  ## Updated Default Models
+
+  pflow's existing automatic model selection now targets newer released models for each supported provider.
+
+  **Highlights**
+  - Updated the Anthropic default from `anthropic/claude-sonnet-4-5` to `anthropic/claude-sonnet-5`.
+  - Updated the Google default from `gemini/gemini-3-flash-preview` to `gemini/gemini-3.5-flash-lite`.
+  - Updated the OpenAI default from `openai/gpt-5.2` to `openai/gpt-5.6-luna`.
+  - Updated the discovery and filtering fallback from Sonnet 4.5 to Sonnet 5.
+</Update>
+
 <Update label="July 2026" description="v0.15.0" tags={["New releases", "Improvements", "Breaking changes"]}>
   ## Durable Workflow Resumption and Non-TTY Gates
 

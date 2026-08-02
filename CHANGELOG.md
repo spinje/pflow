@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.15.1 (2026-08-02)
+
+- Improved pflow's auto-selected models by updating Anthropic from `anthropic/claude-sonnet-4-5` to `anthropic/claude-sonnet-5`, Google from `gemini/gemini-3-flash-preview` to `gemini/gemini-3.5-flash-lite`, and OpenAI from `openai/gpt-5.2` to `openai/gpt-5.6-luna`. The discovery and filtering fallback now also uses Sonnet 5. [#605](https://github.com/spinje/pflow/pull/605)
+- Fixed passing the validated API key to LiteLLM and surfaced provider error text [#605](https://github.com/spinje/pflow/pull/605)
+
 ## v0.15.0 (2026-07-18)
 
 - Changed autonomous agent execution by replacing the `claude-code` node with a unified `agent` node. Workflows must now declare `backend: claude` or `backend: codex`; both backends share structured output, session resume, and usage metadata. [#593](https://github.com/spinje/pflow/pull/593) ([Task 177](.taskmaster/tasks/task_177/task-review.md))
