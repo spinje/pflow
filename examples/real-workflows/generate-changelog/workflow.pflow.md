@@ -111,15 +111,6 @@ task reviews, docs diff, and raw draft entries for pre-release auditing.
 - required: false
 - default: releases
 
-### slack_channel
-
-Slack channel for release notification. Posts a summary and the rendered
-changelog entries after all files are written.
-
-- type: string
-- required: false
-- default: releases
-
 ### is_major_release
 
 Explicit decision on whether this is a major release. Required — the
@@ -348,7 +339,7 @@ Sonnet and Gemini Flash; the rubric clears it on both) and is a no-op
 otherwise.
 
 - type: llm
-- model: gemini/gemini-2.5-flash
+- model: gemini/gemini-3.5-flash-lite
 - prewarm: true
 - prompt: ./prompts/classify-commit.prompt.md
 
@@ -659,7 +650,7 @@ more files grouped by the `get-docs-diff` chunking logic. The release
 context file and format LLMs consume the joined output.
 
 - type: llm
-- model: gemini/gemini-2.5-flash
+- model: gemini/gemini-3.5-flash-lite
 - prompt: ./prompts/summarize-docs-diff.prompt.md
 
 ```yaml batch
@@ -723,7 +714,7 @@ standardizes terminology. The markdown format includes PR and task
 links; the Mintlify format groups entries into themes without links.
 
 - type: llm
-- model: gemini/gemini-3.5-flash
+- model: gemini/gemini-3.6-flash
 
 ```yaml batch
 items:
@@ -972,58 +963,6 @@ else:
 result: str = msg
 ```
 
-### check-slack
-
-Route to Slack notification or skip directly to summary based on
-whether a Slack channel is configured.
-
-- type: code
-- inputs:
-    slack_channel: ${slack_channel}
-
-```python code
-slack_channel: str
-if slack_channel.strip():
-    next: str = "format-slack-message"
-else:
-    next: str = "create-summary"
-```
-
-### format-slack-message
-
-Build the Slack notification combining a release header with the rendered
-changelog entries.
-
-- type: code
-- next: notify-slack
-- inputs:
-    next_version: ${compute-version.result.next_version}
-    bump_type: ${compute-version.result.bump_type}
-    date_iso: ${compute-version.result.date_iso}
-    changelog: ${render-changelogs.results[0].response}
-    entries: ${enrich-drafts.result}
-
-```python code
-next_version: str
-bump_type: str
-date_iso: str
-changelog: str
-entries: list
-
-header = f"# pflow {next_version}\n\n*{bump_type} bump · {date_iso} · {len(entries)} entries*\n\n---"
-result: str = f"{header}\n\n{changelog}"
-```
-
-### notify-slack
-
-Post the changelog to Slack. Uses Composio's markdown formatting for
-clean rendering in the channel.
-
-- type: mcp-composio-slack-SLACK_SEND_MESSAGE
-- next: create-summary
-- channel: ${slack_channel}
-- markdown_text: ${format-slack-message.result}
-
 ### create-summary
 
 Build the CLI output summary showing the version, bump type, and
@@ -1042,7 +981,6 @@ created files with descriptions.
     changelog_path: ${update-changelog-file.result}
     mintlify_path: ${update-mintlify-file.result}
     context_path: ${save-release-context.result}
-    slack_channel: ${slack_channel}
 
 ```python code
 entries: list
@@ -1055,7 +993,6 @@ warnings: list
 changelog_path: str
 mintlify_path: str
 context_path: str
-slack_channel: str
 
 lines = []
 
@@ -1079,11 +1016,6 @@ if mintlify_path:
 
 lines.append(f'  {context_path}')
 lines.append(f'    {len(skipped)} skipped changes, {len(task_reviews)} — review before committing')
-
-if slack_channel:
-    lines.append('')
-    lines.append(f'Changelog posted to Slack channel #{slack_channel}')
-    lines.append('')
 
 result: str = '\n'.join(lines)
 ```

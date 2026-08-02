@@ -14,7 +14,6 @@ graph LR
         input_changelog_file[/"changelog_file (string)"/]:::input
         input_mintlify_file[/"mintlify_file (string)"/]:::input
         input_releases_dir[/"releases_dir (string)"/]:::input
-        input_slack_channel[/"slack_channel (string)"/]:::input
         input_is_major_release[/"is_major_release (boolean, required)"/]:::input
     end
     style workflow-inputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
@@ -42,9 +41,6 @@ graph LR
     save-release-context["save-release-context (code)"]:::code
     update-changelog-file["update-changelog-file (code)"]:::code
     update-mintlify-file["update-mintlify-file (code)"]:::code
-    check-slack{"check-slack (code)"}:::decision
-    format-slack-message["format-slack-message (code)"]:::code
-    notify-slack{{"notify-slack (mcp:<br/>composio-slack-SLACK_SEND_MESSAGE)"}}:::mcp
     create-summary["create-summary (code)"]:::code
     input_since_tag --> resolve-tag
     input_to_ref --> gather-commit-data
@@ -57,9 +53,6 @@ graph LR
     input_releases_dir --> save-release-context
     input_changelog_file --> update-changelog-file
     input_mintlify_file --> update-mintlify-file
-    input_slack_channel --> check-slack
-    input_slack_channel --> create-summary
-    input_slack_channel --> notify-slack
     subgraph workflow-outputs ["workflow outputs"]
         out_summary(["summary"]):::output
         out_suggested_version(["suggested_version"]):::output
@@ -93,9 +86,5 @@ graph LR
     check-warnings --> save-release-context
     save-release-context --> update-changelog-file
     update-changelog-file --> update-mintlify-file
-    update-mintlify-file --> check-slack
-    check-slack -->|format-slack-message| format-slack-message
-    check-slack -->|create-summary| create-summary
-    format-slack-message --> notify-slack
-    notify-slack --> create-summary
+    update-mintlify-file --> create-summary
     create-summary --> pflow_end

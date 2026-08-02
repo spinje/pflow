@@ -14,7 +14,6 @@ Run the full pflow release cycle. This skill walks through each step, pausing fo
 - CI builds the package from the git tag — it overrides `pyproject.toml` version via sed from the tag name
 - PyPI package name is `pflow-cli` (not `pflow`)
 - The `pflow` command runs the dev version locally (zsh alias), not the PyPI-installed version
-- The Slack notification step requires Composio MCP to be configured. Pass `slack_channel=""` to skip it.
 
 ## Steps
 
@@ -62,12 +61,6 @@ Run the workflow:
 
 ```bash
 uv run pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=<tag> is_major_release=<true|false>
-```
-
-To skip the Slack notification, pass an empty channel (the workflow uses conditional branching to skip Slack steps automatically):
-
-```bash
-uv run pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=<tag> is_major_release=<true|false> slack_channel=""
 ```
 
 This produces three file outputs:
