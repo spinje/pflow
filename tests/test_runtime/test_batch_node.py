@@ -19,7 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from pflow.core.diagnostic import Diagnostic
-from pflow.core.exceptions import LLMOutputSchemaError
+from pflow.core.exceptions import LLMOutputSchemaError, UnknownModelError
 from pflow.nodes.agent.exceptions import AgentValidationError
 from pflow.runtime.engine.batch_executor import (
     _detect_empty_output_items,
@@ -818,6 +818,122 @@ class TestErrorHandling:
         assert shared["test_node"]["error_count"] == 1
         assert shared["test_node"]["errors"][0]["index"] == 1
         assert shared["test_node"]["errors"][0]["error"] == "Error: Processing failed for item b"
+        assert "provider_message" not in shared["test_node"]["errors"][0]
+
+
+class TestProviderMessagePropagation:
+    """The upstream provider diagnosis must survive the batch error reduction.
+
+    Batch flattens an item failure to a message string; ``provider_message``
+    (captured by the LLM adapter) is often the only text naming the real cause,
+    so it rides the error record as its own structured key.
+    """
+
+    def test_raised_llm_error_provider_message_reaches_error_record(self):
+        """Exception path: retries exhausted with an LLMCallError subclass."""
+
+        def execute_single_fn(node, config, item_shared):
+            if item_shared["item"] == "bad":
+                raise UnknownModelError(
+                    "Unknown model 'gemini/gemini-2.5-flash'",
+                    model="gemini/gemini-2.5-flash",
+                    provider_message="This model models/gemini-2.5-flash is no longer available to new users",
+                )
+            item_shared[config.node_id] = {"response": item_shared["item"]}
+            return ("default", {}, [])
+
+        shared: dict = {"data": ["ok", "bad"]}
+        _run_batch(
+            MockInnerNode("test_node"),
+            shared,
+            error_handling="continue",
+            execute_single_fn=execute_single_fn,
+        )
+
+        error = shared["test_node"]["errors"][0]
+        assert error["index"] == 1
+        assert error["provider_message"] == "This model models/gemini-2.5-flash is no longer available to new users"
+
+    def test_parallel_raised_llm_error_provider_message_reaches_error_record(self):
+        """Same contract on the parallel path (separate error-record producer)."""
+
+        def execute_single_fn(node, config, item_shared):
+            if item_shared["item"] == "bad":
+                raise UnknownModelError(
+                    "Unknown model 'gemini/gemini-2.5-flash'",
+                    model="gemini/gemini-2.5-flash",
+                    provider_message="This model is no longer available to new users",
+                )
+            item_shared[config.node_id] = {"response": item_shared["item"]}
+            return ("default", {}, [])
+
+        shared: dict = {"data": ["ok", "bad"]}
+        _run_batch(
+            MockInnerNode("test_node"),
+            shared,
+            error_handling="continue",
+            parallel=True,
+            execute_single_fn=execute_single_fn,
+        )
+
+        error = shared["test_node"]["errors"][0]
+        assert error["index"] == 1
+        assert error["provider_message"] == "This model is no longer available to new users"
+
+    def test_llm_error_result_provider_message_reaches_error_record(self):
+        """Result-dict path: LLMNode converts deterministic provider errors to an error dict.
+
+        This — not the exception path — is how a batched LLM failure normally
+        arrives, so the provider text is read from ``_diagnostic_context``.
+        """
+
+        def execute_single_fn(node, config, item_shared):
+            if item_shared["item"] == "bad":
+                item_shared[config.node_id] = {
+                    "response": "",
+                    "error": "LLM Call Failed: unknown model 'gemini/gemini-2.5-flash'",
+                    "error_class": "UnknownModelError",
+                    "_diagnostic_context": {
+                        "error_class": "UnknownModelError",
+                        "model": "gemini/gemini-2.5-flash",
+                        "provider_message": "This model models/gemini-2.5-flash is no longer available",
+                    },
+                }
+                return ("error", {}, [])
+            item_shared[config.node_id] = {"response": item_shared["item"]}
+            return ("default", {}, [])
+
+        shared: dict = {"data": ["ok", "bad"]}
+        _run_batch(
+            MockInnerNode("test_node"),
+            shared,
+            error_handling="continue",
+            execute_single_fn=execute_single_fn,
+        )
+
+        error = shared["test_node"]["errors"][0]
+        assert error["index"] == 1
+        assert error["provider_message"] == "This model models/gemini-2.5-flash is no longer available"
+
+    def test_error_result_without_provider_message_adds_no_key(self):
+        """A non-LLM item failure keeps the record shape it always had."""
+
+        def execute_single_fn(node, config, item_shared):
+            if item_shared["item"] == "bad":
+                item_shared[config.node_id] = {"error": "command failed", "_diagnostic_context": {"model": None}}
+                return ("error", {}, [])
+            item_shared[config.node_id] = {"response": item_shared["item"]}
+            return ("default", {}, [])
+
+        shared: dict = {"data": ["ok", "bad"]}
+        _run_batch(
+            MockInnerNode("test_node"),
+            shared,
+            error_handling="continue",
+            execute_single_fn=execute_single_fn,
+        )
+
+        assert "provider_message" not in shared["test_node"]["errors"][0]
 
 
 class TestResultStructure:

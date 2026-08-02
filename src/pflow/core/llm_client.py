@@ -321,7 +321,9 @@ def complete(
     # different key than the one pflow's validation checked — turning a
     # validate-green workflow into a provider 404/401 at runtime.
     # Unregistered providers (e.g. openrouter/...) keep full delegation.
-    if "api_key" not in kwargs and (provider := detect_provider(model)) is not None:
+    # Detect from kwargs["model"] — model_options may have overridden the
+    # model, and the key must match what's actually sent.
+    if "api_key" not in kwargs and (provider := detect_provider(kwargs["model"])) is not None:
         # Lazy import — keeps llm_config (and its SettingsManager import)
         # off this module's import graph for non-LLM code paths.
         from pflow.core.llm_config import resolve_provider_api_key
@@ -398,7 +400,7 @@ def complete(
         # boundary (preventing the Node retry loop from burning three
         # attempts on a permanent failure); LLMTransientError is re-raised
         # by LLMNode so the retry loop fires.
-        typed = _classify_litellm_error(e, model=model)
+        typed = _classify_litellm_error(e, model=model, secret=kwargs.get("api_key"))
         _emit_trace(
             trace_hook,
             {"event": "after_call", "model": model, "error": str(typed)},
@@ -425,10 +427,13 @@ def complete(
             thinking_budget=thinking_budget,
         )
     except (IndexError, AttributeError) as e:
+        # Same masking seam as _classify_litellm_error — this is the one
+        # provider_message construction site outside the classifier.
+        masked = _mask_key_material(str(e), secret=kwargs.get("api_key"))
         typed = LLMResponseParseError(
-            f"LiteLLM returned a malformed response shape for model {model!r}: {e}",
+            f"LiteLLM returned a malformed response shape for model {model!r}: {masked}",
             model=model,
-            provider_message=str(e),
+            provider_message=masked,
         )
         _emit_trace(
             trace_hook,
@@ -442,31 +447,37 @@ def complete(
 
 # Internals ------------------------------------------------------------------
 
-_KEY_MATERIAL_PATTERNS = (
-    # `key=...` URL query params — Google's REST surface carries the API key
-    # in the request URL, which some provider error strings echo back.
-    re.compile(r"(?i)\b(key=)[A-Za-z0-9_\-]{8,}"),
+_KEY_MATERIAL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # `key=` / `api_key=` / `api-key=` labelled values — providers echo the
+    # request URL (Google carries the key as a `?key=` query param) or the
+    # rejected credential itself back in error text.
+    (re.compile(r"(?i)\b(api[_-]?key=|key=)[A-Za-z0-9_\-]{8,}"), r"\1***"),
     # Google API key shape.
-    re.compile(r"\bAIza[0-9A-Za-z_\-]{10,}"),
+    (re.compile(r"\bAIza[0-9A-Za-z_\-]{10,}"), "***"),
     # OpenAI / Anthropic secret-key shapes (sk-..., sk-ant-..., sk-proj-...).
-    re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}"),
+    (re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}"), "***"),
 )
 
 
-def _mask_key_material(text: str) -> str:
+def _mask_key_material(text: str, *, secret: str | None = None) -> str:
     """Mask API-key material echoed in provider/LiteLLM error text.
 
     ``provider_message`` is rendered to the terminal and stored in traces
     and JSON output, so any credential a provider echoes back must not
-    survive capture. Masking happens once here at the seam — every typed
-    exception below carries the sanitized text.
+    survive capture. ``secret`` is the exact key this call put on the wire
+    — replaced verbatim, which covers arbitrary key shapes the patterns
+    can't anticipate; the shape patterns remain the fallback for any other
+    credential the text may carry. Masking happens at the classification
+    seam so every typed exception carries the sanitized text.
     """
-    for pattern in _KEY_MATERIAL_PATTERNS:
-        text = pattern.sub(lambda m: (m.group(1) if m.lastindex else "") + "***", text)
+    if secret and len(secret) >= 8:
+        text = text.replace(secret, "***")
+    for pattern, replacement in _KEY_MATERIAL_PATTERNS:
+        text = pattern.sub(replacement, text)
     return text
 
 
-def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
+def _classify_litellm_error(exc: Exception, *, model: str, secret: str | None = None) -> LLMCallError:
     """Translate a LiteLLM exception to a typed pflow subclass.
 
     The adapter is the single place where ``litellm.exceptions`` types are
@@ -540,7 +551,7 @@ def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
     # Diagnostic.message stays as the pflow-wrapped framing (the WHAT);
     # provider_message exposes the raw detail for agents that need to
     # discriminate sub-cases beyond the typed kind/reason.
-    raw = _mask_key_material(str(exc))
+    raw = _mask_key_material(str(exc), secret=secret)
 
     # 1. Auth (specific status-code classes; check before other 4xx).
     if isinstance(exc, openai.AuthenticationError):

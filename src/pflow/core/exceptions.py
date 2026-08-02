@@ -323,7 +323,7 @@ class UnknownModelError(LLMCallError):
         if self.reason == "missing_prefix":
             suggestions = [
                 f"Add a provider prefix to the model identifier "
-                f"(e.g. 'openai/{self.model}', 'anthropic/claude-sonnet-4-5', "
+                f"(e.g. 'openai/{self.model}', 'anthropic/claude-sonnet-5', "
                 f"'gemini/gemini-2.5-flash').",
                 "See https://docs.litellm.ai/docs/providers for the full list of supported providers.",
                 "Run 'pflow settings llm show' to see your configured defaults.",
@@ -333,12 +333,11 @@ class UnknownModelError(LLMCallError):
             # That is NOT proof the name is wrong — providers also 404 when
             # the API key or project lacks access to the model — so the
             # suggestions must keep both readings open and point at the
-            # provider's own text (rendered as "Provider response:" above).
+            # provider's own text (rendered as the "Provider response:" block).
             suggestions = [
-                "The provider returned 404 for this model. Check the exact "
-                "name against the provider's current catalogue, and check the "
-                "provider response above — a 404 can also mean your API key "
-                "or project lacks access to this model.",
+                "Check the exact model name against the provider's current catalogue.",
+                "A 404 can also mean your API key or project lacks access to this "
+                "model — see the provider response shown with this error.",
                 "Run 'pflow settings llm show' to see your configured defaults.",
                 "See https://docs.litellm.ai/docs/providers for supported models.",
             ]
@@ -354,10 +353,8 @@ class UnknownModelError(LLMCallError):
                 detected = get_default_llm_model()
                 if detected:
                     suggestions.append(
-                        f"Known-working fallback: '{detected}' (pflow's "
-                        "auto-detected default — the highest-priority provider "
-                        "with a configured key, not a statement about this "
-                        "model's key)."
+                        f"To isolate model-vs-key, retry with '{detected}' "
+                        "(a model your configured keys already reach)."
                     )
 
         return [

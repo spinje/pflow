@@ -287,20 +287,31 @@ def _format_exception_type_line(context: dict[str, Any]) -> list[str]:
     return []
 
 
+_PROVIDER_MESSAGE_MAX_LINES = 5
+_PROVIDER_MESSAGE_LINE_LIMIT = 300
+
+
 def _format_provider_message_lines(context: dict[str, Any]) -> list[str]:
     """Render the LLM provider's own error text when available.
 
     ``provider_message`` is the raw upstream diagnosis captured by the LLM
     adapter ("model not found for API version v1beta", "quota exceeded",
     ...). It is often the only line that distinguishes a bad model name
-    from a key/entitlement problem, so it renders in full.
+    from a key/entitlement problem. Capped like every other context block
+    — the untruncated text stays available in traces and JSON output.
     """
     provider_message = context.get("provider_message")
     if not provider_message:
         return []
-    first, *rest = str(provider_message).strip().splitlines()
+    raw_lines = str(provider_message).strip().splitlines()
+    if not raw_lines:  # whitespace-only message — truthy but unrenderable
+        return []
+    shown = [line[:_PROVIDER_MESSAGE_LINE_LIMIT] for line in raw_lines[:_PROVIDER_MESSAGE_MAX_LINES]]
+    first, *rest = shown
     lines = [f"  Provider response: {first}"]
     lines.extend(f"    {line}" for line in rest)
+    if len(raw_lines) > _PROVIDER_MESSAGE_MAX_LINES:
+        lines.append("    ... (truncated — full text in the trace)")
     return lines
 
 

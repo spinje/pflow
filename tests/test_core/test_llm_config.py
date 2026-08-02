@@ -123,3 +123,73 @@ class TestResolveProviderApiKey:
     def test_unknown_provider_returns_none(self, monkeypatch):
         monkeypatch.setenv("GEMINI_API_KEY", "value")
         assert resolve_provider_api_key("mystery") is None
+
+
+class TestEnvAliasPrecedenceAcrossInjection:
+    """A genuinely exported alias beats a settings-injected canonical var.
+
+    inject_settings_env_vars() copies settings keys into os.environ, which
+    would otherwise make a stale settings GEMINI_API_KEY indistinguishable
+    from a real one — and canonical-first order would pick it over a live
+    shell-exported GOOGLE_API_KEY. Provenance tracking restores the
+    documented environment-over-settings precedence across aliases.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clean_provider_env(self, monkeypatch):
+        import pflow.core.llm_config as llm_config
+
+        for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr(llm_config, "_settings_injected_env_vars", set())
+
+    def test_real_env_alias_beats_settings_injected_canonical(self, monkeypatch):
+        import pflow.core.llm_config as llm_config
+
+        monkeypatch.setenv("GEMINI_API_KEY", "stale-settings-key")
+        monkeypatch.setenv("GOOGLE_API_KEY", "live-shell-key")
+        monkeypatch.setattr(llm_config, "_settings_injected_env_vars", {"GEMINI_API_KEY"})
+
+        assert resolve_provider_api_key("gemini") == "live-shell-key"
+
+    def test_settings_injected_value_used_when_no_real_env(self, monkeypatch):
+        import pflow.core.llm_config as llm_config
+
+        monkeypatch.setenv("GEMINI_API_KEY", "settings-injected-key")
+        monkeypatch.setattr(llm_config, "_settings_injected_env_vars", {"GEMINI_API_KEY"})
+
+        assert resolve_provider_api_key("gemini") == "settings-injected-key"
+
+    def test_inject_records_provenance(self, monkeypatch):
+        import os
+
+        import pflow.core.llm_config as llm_config
+        from pflow.core.settings import SettingsManager
+
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+        SettingsManager().set_env("GEMINI_API_KEY", "from-settings")
+        try:
+            llm_config.inject_settings_env_vars()
+
+            assert "GEMINI_API_KEY" in llm_config._settings_injected_env_vars
+            assert os.environ["GEMINI_API_KEY"] == "from-settings"
+        finally:
+            os.environ.pop("GEMINI_API_KEY", None)
+
+    def test_clear_model_cache_resets_provenance(self):
+        import pflow.core.llm_config as llm_config
+
+        llm_config._settings_injected_env_vars.add("GEMINI_API_KEY")
+        clear_model_cache()
+        assert not llm_config._settings_injected_env_vars
+
+
+class TestGeminiAutoDetectDefault:
+    def test_gemini_default_is_flash_lite(self):
+        with mock.patch("pflow.core.llm_config._has_provider_key") as mock_has:
+            mock_has.side_effect = lambda p: p == "gemini"
+
+            from pflow.core.llm_config import _detect_default_model
+
+            clear_model_cache()
+            assert _detect_default_model() == "gemini/gemini-3.5-flash-lite"

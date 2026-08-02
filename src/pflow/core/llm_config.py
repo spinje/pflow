@@ -21,6 +21,13 @@ _cached_default_model: str | None = None
 # Flag to track if detection has been completed (even if result is None)
 _detection_complete: bool = False
 
+# Env-var names whose values inject_settings_env_vars() copied out of pflow
+# settings. Lets resolve_provider_api_key() distinguish a genuinely exported
+# variable from a settings-injected one, so a real shell alias beats a
+# settings-stored canonical var (environment-over-settings precedence holds
+# across aliases, not just per variable name).
+_settings_injected_env_vars: set[str] = set()
+
 # Provider to environment variable mapping derived from the canonical
 # `llm_providers` registry. The registry's tuple of env vars carries
 # canonical-first ordering plus any provider-accepted aliases (e.g. Gemini
@@ -59,11 +66,22 @@ def resolve_provider_api_key(provider: str) -> str | None:
 
     env_vars = PROVIDER_ENV_VARS.get(provider, [])
 
-    # 1. Check environment variables directly (fastest)
+    # 1a. Genuinely exported environment variables (canonical-first).
+    # Values that inject_settings_env_vars() copied out of pflow settings
+    # are skipped in this pass so a real shell alias beats a settings-stored
+    # canonical var — environment-over-settings must hold across aliases,
+    # not just when the exact same variable name collides.
+    for var in env_vars:
+        value = os.environ.get(var, "").strip()
+        if value and var not in _settings_injected_env_vars:
+            logger.debug(f"Found {provider} key in environment variable {var}")
+            return value
+
+    # 1b. Settings-injected environment values (canonical-first).
     for var in env_vars:
         value = os.environ.get(var, "").strip()
         if value:
-            logger.debug(f"Found {provider} key in environment variable {var}")
+            logger.debug(f"Found {provider} key in settings-injected environment variable {var}")
             return value
 
     # 2. Check pflow settings — keeps non-CLI callers correct even when
@@ -104,19 +122,21 @@ def _detect_default_model() -> str | None:
     # Try Anthropic first (best overall quality)
     if _has_provider_key("anthropic"):
         logger.debug("Using Anthropic Claude (key detected)")
-        return "anthropic/claude-sonnet-4-5"
+        return "anthropic/claude-sonnet-5"
 
-    # Try Gemini second (good quality, cheaper)
+    # Try Gemini second (good quality, cheaper). Flash-Lite over Flash:
+    # the default is the workhorse for discovery/filtering-style calls,
+    # where the ultra-cheap tier is the right cost floor.
     if _has_provider_key("gemini"):
         logger.debug("Using Google Gemini (key detected)")
-        return "gemini/gemini-3-flash-preview"
+        return "gemini/gemini-3.5-flash-lite"
 
     # Try OpenAI last (common fallback). Provider prefix is required —
     # LiteLLM rejects bare model names with a "LLM Provider NOT provided"
     # BadRequestError that pflow surfaces as UnknownModelError(reason="missing_prefix").
     if _has_provider_key("openai"):
         logger.debug("Using OpenAI GPT (key detected)")
-        return "openai/gpt-5.2"
+        return "openai/gpt-5.6-luna"
 
     logger.debug("No LLM API keys detected")
     return None
@@ -182,6 +202,9 @@ def clear_model_cache() -> None:
     global _cached_default_model, _detection_complete
     _cached_default_model = None
     _detection_complete = False
+    # Injection provenance is process state the same way the cache is —
+    # tests that exercise inject_settings_env_vars() reset via this hook.
+    _settings_injected_env_vars.clear()
 
 
 def inject_settings_env_vars() -> None:
@@ -216,6 +239,7 @@ def inject_settings_env_vars() -> None:
 
             if key not in os.environ:  # Don't override user's environment
                 os.environ[key] = value
+                _settings_injected_env_vars.add(key)
                 logger.debug(f"Injected {key} from pflow settings into environment")
             else:
                 logger.debug(f"Skipped {key} - already set in environment")
@@ -225,7 +249,7 @@ def inject_settings_env_vars() -> None:
 
 
 # Default fallback model when nothing else is configured
-_DEFAULT_FALLBACK_MODEL = "anthropic/claude-sonnet-4-5"
+_DEFAULT_FALLBACK_MODEL = "anthropic/claude-sonnet-5"
 
 
 def get_model_for_feature(feature: str) -> str:
@@ -235,7 +259,7 @@ def get_model_for_feature(feature: str) -> str:
     1. Feature-specific setting (discovery_model or filtering_model)
     2. Default model setting (default_model) - shared fallback for all features
     3. Auto-detected default (based on available API keys)
-    4. Hardcoded fallback (anthropic/claude-sonnet-4-5)
+    4. Hardcoded fallback (anthropic/claude-sonnet-5)
 
     Args:
         feature: Feature name - "discovery" or "filtering"

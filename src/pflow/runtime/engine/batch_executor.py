@@ -37,14 +37,53 @@ logger = logging.getLogger(__name__)
 _BATCH_META_KEYS = frozenset({"item", "original_index", "error", "exception"})
 
 
-def _build_batch_error(index: int, item: Any, error: str, exception: Exception | None) -> dict[str, Any]:
-    return {
+def _build_batch_error(
+    index: int,
+    item: Any,
+    error: str,
+    exception: Exception | None,
+    *,
+    provider_message: str | None = None,
+) -> dict[str, Any]:
+    """Build one batch error record.
+
+    ``provider_message`` — the raw upstream provider diagnosis captured by the
+    LLM adapter (``core/llm_client._classify_litellm_error``) — is carried as a
+    structured key so renderers can surface it. Batch otherwise reduces an item
+    failure to a single message string, which drops the one line that often
+    names the real cause. Two producers: a raised exception carrying the
+    attribute (retry exhaustion, executor errors) and an explicit value read
+    from an error-shaped node result (the LLM node converts deterministic
+    ``LLMCallError``s into an error dict rather than raising).
+    """
+    record: dict[str, Any] = {
         "index": index,
         "item": item,
         "item_summary": summarize_batch_item(item),
         "error": error,
         "exception": exception,
     }
+    provider = provider_message or getattr(exception, "provider_message", None)
+    if isinstance(provider, str) and provider.strip():
+        record["provider_message"] = provider
+    return record
+
+
+def _extract_provider_message(result: Any) -> str | None:
+    """Return the provider diagnosis carried by an error-shaped node result.
+
+    LLM nodes lift the failing exception's structured context into
+    ``_diagnostic_context`` on their error dict (see ``nodes/llm/llm.py``),
+    which is where ``provider_message`` lives when the node returned an error
+    action instead of raising.
+    """
+    if not isinstance(result, dict):
+        return None
+    context = result.get("_diagnostic_context")
+    if not isinstance(context, dict):
+        return None
+    provider = context.get("provider_message")
+    return provider if isinstance(provider, str) and provider.strip() else None
 
 
 def _batch_item_summary_text(error: dict[str, Any]) -> str:
@@ -421,7 +460,11 @@ def _run_batch_item_once(
         error_msg = "Node returned error action"
 
     duration_ms = (time.perf_counter() - start_time) * 1000
-    error_info = _build_batch_error(idx, item, error_msg, None) if error_msg else None
+    error_info = (
+        _build_batch_error(idx, item, error_msg, None, provider_message=_extract_provider_message(result))
+        if error_msg
+        else None
+    )
     if error_info is not None:
         # Carry a failed sub-workflow item's structured child-failure bundle into
         # the error record so the parent can reconstruct rich per-item diagnostics

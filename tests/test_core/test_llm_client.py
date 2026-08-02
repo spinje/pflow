@@ -1653,3 +1653,92 @@ class TestProviderMessageMasking:
         assert exc_info.value.provider_message is not None
         assert "AIzaSyDsecretsecret" not in exc_info.value.provider_message
         assert "key=***" in exc_info.value.provider_message
+
+
+class TestCompleteEffectiveModelKeyResolution:
+    """The key must match the model actually sent — model_options can override it."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_provider_env(self, monkeypatch):
+        for var in _PROVIDER_KEY_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+    @patch("litellm.completion")
+    def test_model_override_governs_key_choice(self, mock_completion, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key")
+        mock_completion.return_value = make_litellm_response()
+
+        complete(
+            model="gemini/gemini-2.5-flash",
+            prompt="Hi",
+            model_options={"model": "anthropic/claude-sonnet-4-5"},
+        )
+
+        call_kwargs = mock_completion.call_args.kwargs
+        assert call_kwargs["model"] == "anthropic/claude-sonnet-4-5"
+        assert call_kwargs["api_key"] == "anthropic-key"
+
+    @patch("litellm.completion")
+    def test_model_override_to_unregistered_provider_omits_key(self, mock_completion, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+        mock_completion.return_value = make_litellm_response()
+
+        complete(
+            model="gemini/gemini-2.5-flash",
+            prompt="Hi",
+            model_options={"model": "openrouter/mistralai/mistral-7b"},
+        )
+
+        assert "api_key" not in mock_completion.call_args.kwargs
+
+
+class TestKeyMaterialMaskingCoverage:
+    """Labelled credentials and exact wire secrets are masked, on every error branch."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_provider_env(self, monkeypatch):
+        for var in _PROVIDER_KEY_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+    def test_masks_api_key_labelled_credential(self):
+        from pflow.core.llm_client import _mask_key_material
+
+        masked = _mask_key_material("401 Unauthorized: api_key=custom-corporate-token-123456 rejected")
+
+        assert "custom-corporate-token-123456" not in masked
+        assert "api_key=***" in masked
+
+    def test_exact_secret_masked_regardless_of_shape(self):
+        from pflow.core.llm_client import _mask_key_material
+
+        masked = _mask_key_material(
+            "provider said: credential zorp8f2k1q is not valid",
+            secret="zorp8f2k1q",  # noqa: S106
+        )
+
+        assert "zorp8f2k1q" not in masked
+
+    def test_short_secret_not_replaced(self):
+        """A <8-char secret is skipped — replacing e.g. 'abc' would shred the text."""
+        from pflow.core.llm_client import _mask_key_material
+
+        assert _mask_key_material("abc is in many words: abcdef", secret="abc") == "abc is in many words: abcdef"  # noqa: S106
+
+    @patch("litellm.completion")
+    def test_auth_error_masks_exact_wire_secret(self, mock_completion, monkeypatch):
+        """The auth path — where providers most likely echo the credential — masks
+        the exact key complete() put on the wire, whatever its shape."""
+        monkeypatch.setenv("GEMINI_API_KEY", "weird-shape-secret-123456")
+        mock_completion.side_effect = _make_auth(
+            msg="Invalid credential: weird-shape-secret-123456",
+            model="gemini/gemini-2.5-flash",
+            provider="gemini",
+        )
+
+        with pytest.raises(MissingApiKeyError) as exc_info:
+            complete(model="gemini/gemini-2.5-flash", prompt="Hi")
+
+        assert exc_info.value.provider_message is not None
+        assert "weird-shape-secret-123456" not in exc_info.value.provider_message
+        assert "***" in exc_info.value.provider_message

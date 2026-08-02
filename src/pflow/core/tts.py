@@ -33,14 +33,13 @@ from __future__ import annotations
 import base64
 import io
 import json
-import os
 import re
 import wave
 
 import httpx
 
 from pflow.core.exceptions import MissingApiKeyError, TTSSynthesisError
-from pflow.core.llm_config import PROVIDER_ENV_VARS
+from pflow.core.llm_config import resolve_provider_api_key
 
 # Gemini generateContent surface (live-verified 2026-07-04, returns 200 with base64 PCM16 audio).
 _GEMINI_MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -182,20 +181,13 @@ def wav_duration(wav: bytes) -> float:
 
 
 def _gemini_api_key() -> str | None:
-    """First non-empty Gemini key from the environment (canonical-first).
+    """The Gemini key pflow will use (canonical-first, env then settings).
 
-    ``PROVIDER_ENV_VARS["gemini"]`` carries the registry's canonical-first order
-    (``GEMINI_API_KEY`` then ``GOOGLE_API_KEY``). The CLI injects settings-stored
-    keys into ``os.environ`` before calling this, so reading the environment
-    covers both sources.
+    Delegates to the single resolution algorithm so TTS uses the same key
+    the LLM adapter would. Never raises (this runs BEFORE synthesize()'s
+    totality wrapper): resolve_provider_api_key degrades to None.
     """
-    # `.get("gemini", [])` mirrors llm_config._has_provider_key — a robust no-key degrade rather than a
-    # raw KeyError (this runs BEFORE synthesize()'s totality wrapper, so it must not throw unexpectedly).
-    for var in PROVIDER_ENV_VARS.get("gemini", []):
-        value = os.environ.get(var, "").strip()
-        if value:
-            return value
-    return None
+    return resolve_provider_api_key("gemini")
 
 
 def _extract_audio(payload: object) -> tuple[str, str]:
