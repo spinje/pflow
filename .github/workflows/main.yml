@@ -98,6 +98,10 @@ jobs:
   pip-install-smoke:
     name: pip-install-smoke (${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    # Same reasoning as tests-windows' cap: a required check must not be able to
+    # burn a runner for the 6h default. The one plausible hang here is a stalled
+    # PyPI download, and the job is measured at ~40s, so this is ~14x headroom.
+    timeout-minutes: 10
     strategy:
       matrix:
         python-version: ["3.10", "3.13"]
@@ -121,21 +125,34 @@ jobs:
         with:
           version: "0.6.14"
 
+      # Plain `uv build` (sdist -> wheel), NOT `uv build --wheel` — this is the path
+      # the release workflow uses, so the artifact under test matches the published
+      # one. METADATA is identical either way, but the sdist's `exclude` entry for
+      # CLAUDE.md matches by basename recursively, so `--wheel` would test a file set
+      # we never ship. Also emits an sdist; the glob below still matches one wheel.
       - name: Build the wheel
-        run: uv build --wheel --out-dir dist
+        run: uv build --out-dir dist
 
       - name: Install the wheel with real pip
         # stdlib venv + real pip (see the load-bearing list above). `--upgrade pip`
         # keeps the resolver current, so the signal matches what users actually run.
         run: |
           python -m venv /tmp/pip-smoke
-          /tmp/pip-smoke/bin/python -m pip install --upgrade pip
+          /tmp/pip-smoke/bin/python -m pip install --no-cache-dir --upgrade pip
           /tmp/pip-smoke/bin/python -m pip install --no-cache-dir dist/*.whl
 
       - name: Verify the installed CLI runs
+        # `--version` / `--help` exercise the click layer and already pull mcp,
+        # starlette, uvicorn and httpx — but NOT litellm or claude_agent_sdk, which
+        # are deliberately lazy (tests/test_cli/test_lazy_imports.py). Without the
+        # third line a wheel that installs cleanly and then dies on first real LLM
+        # call would pass. Import them through pflow's own seam: a bare
+        # `import litellm` makes a 5s-timeout cost-map fetch to GitHub, which
+        # import_litellm() avoids by setting LITELLM_LOCAL_MODEL_COST_MAP first.
         run: |
           /tmp/pip-smoke/bin/pflow --version
           /tmp/pip-smoke/bin/pflow --help > /dev/null
+          /tmp/pip-smoke/bin/python -c "import pflow.nodes.agent.claude_backend; from pflow.core.litellm_runtime import import_litellm; import_litellm()"
 
   # Summary job for branch protection — Linux-version, Windows-shard, and
   # pip-install-smoke matrix jobs have suffixed display names, so their bare
@@ -144,6 +161,9 @@ jobs:
   # compatibility smoke test.
   tests-and-type-check-done:
     if: always()
+    # Every job listed here needs a matching result check below. `if: always()` means
+    # a missing check silently un-gates that job: it gets waited on, its result is
+    # never inspected, and this job still exits 0.
     needs: [tests-and-type-check, tests-windows, tests-windows-mcp-smoke, tests-macos-make, pip-install-smoke]
     runs-on: ubuntu-latest
     steps:

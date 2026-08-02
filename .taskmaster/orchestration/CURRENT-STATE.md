@@ -41,13 +41,13 @@ Every claim here is a pointer to verify, not a fact._
   `task_171/task-review.md` + `task_176/task-review.md` before resume/gate/trace work.
 - No task, issue, PR, or child agent is in flight. **Tasks 142 and 46 are parked in Later by user
   ruling 2026-07-15.**
+  Task 142's observed bugs are fixed and explicit dependency edges remain necessary. Task 46's
+  planner/wrapper premises were removed by Tasks 92/135; modern runtime parity would duplicate
+  the runtime without observed demand. Its spec carries the full stale/parked warning.
 - **Between sessions (2026-08-02, no session record):** filed **#602** (pip on 3.14 silently
   installs pflow-cli 0.12.0 — `litellm==1.86.1` caps `Requires-Python <3.14`; blocked on upstream
   macOS wheels, BerriAI/litellm#31261) and **#603** (CI never real-`pip install`s the wheel).
   #603's `pip-install-smoke` job (3.10/3.13) is written + verified; in review (PR linked from #603).
-  Task 142's observed bugs are fixed and explicit dependency edges remain necessary. Task 46's
-  planner/wrapper premises were removed by Tasks 92/135; modern runtime parity would duplicate
-  the runtime without observed demand. Its spec carries the full stale/parked warning.
 - **Task 94 spec REWRITTEN + design LOCKED (session-06); not yet started.** Original spec was
   substantially stale (targeted the removed `registry describe` surface; false "no detection"
   premise; obsolete `llm`-library). Refreshed `task_94/task-94.md` in place with provenance. Locked
