@@ -44,6 +44,10 @@ Every claim here is a pointer to verify, not a fact._
   Task 142's observed bugs are fixed and explicit dependency edges remain necessary. Task 46's
   planner/wrapper premises were removed by Tasks 92/135; modern runtime parity would duplicate
   the runtime without observed demand. Its spec carries the full stale/parked warning.
+- **Between sessions (2026-08-02, no session record):** filed **#602** (pip on 3.14 silently
+  installs pflow-cli 0.12.0 — `litellm==1.86.1` caps `Requires-Python <3.14`; blocked on upstream
+  macOS wheels, BerriAI/litellm#31261) and **#603** (CI never real-`pip install`s the wheel).
+  #603's `pip-install-smoke` job (3.10/3.13) is written + verified; in review (PR linked from #603).
 - **Task 94 spec REWRITTEN + design LOCKED (session-06); not yet started.** Original spec was
   substantially stale (targeted the removed `registry describe` surface; false "no detection"
   premise; obsolete `llm`-library). Refreshed `task_94/task-94.md` in place with provenance. Locked
@@ -88,4 +92,4 @@ Every claim here is a pointer to verify, not a fact._
 - Worktrees: only `main`; no live subagents. `main == origin/main` at the session-06 close commit
   (Task 94 spec + DECISIONS #3 Fable/Sonnet-ban amendment + this file + BRAINDUMP + session-06.md);
   code tip is `573718cb` (#597/#592). Session-06 CLOSED — user-authorized commit+push. Nothing
-  uncommitted.
+  uncommitted; one branch in review since (see Current arc, between-sessions bullet).
