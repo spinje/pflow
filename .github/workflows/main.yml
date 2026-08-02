@@ -76,13 +76,75 @@ jobs:
       - name: Check typing
         run: uv run mypy
 
-  # Summary job for branch protection — Linux-version and Windows-shard matrix
-  # jobs have suffixed display names, so their bare names never resolve as
-  # stable required checks. Point branch protection at this job; it gates both
-  # matrices, Windows MCP smoke, and the macOS Make compatibility smoke test.
+  # Real-pip installability of the wheel we publish. Rationale, measurements, and
+  # the full list of deliberate choices: GH #603.
+  #
+  # NOT redundant with tests-and-type-check: that matrix installs via
+  # `uv sync --frozen`, which never re-checks a dependency's Requires-Python, and
+  # uv ignores Requires-Python UPPER bounds by design. Only real pip catches it.
+  #
+  # Three things here are load-bearing — do not "simplify" them:
+  #   - install the BUILT WHEEL, not `pip install pflow-cli` (no older release for
+  #     pip to silently backtrack to, so a bad pin fails loudly)
+  #   - never use uv for the install step (it would pass unconditionally)
+  #   - never add a pip cache; pip caches index responses, so a warm cache can
+  #     agree with a stale view of PyPI while real installs fail (hit while
+  #     diagnosing #602). The cold download IS the check.
+  #
+  # 3.14 is deliberately absent — the one interpreter where pip is known to fail
+  # (litellm==1.86.1 caps Requires-Python <3.14), so the leg would be red on
+  # arrival. Add "3.14" when the litellm pin moves; that leg going green is the
+  # acceptance criterion for GH #602. Do not paper it over by relaxing this job.
+  pip-install-smoke:
+    name: pip-install-smoke (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.13"]
+      fail-fast: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # Deliberately NOT ./.github/actions/setup-python-env — that composite runs
+      # `uv sync --frozen` and installs a dev toolchain this job never touches.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          version: "0.6.14"
+
+      - name: Build the wheel
+        run: uv build --wheel --out-dir dist
+
+      - name: Install the wheel with real pip
+        # stdlib venv + real pip (see the load-bearing list above). `--upgrade pip`
+        # keeps the resolver current, so the signal matches what users actually run.
+        run: |
+          python -m venv /tmp/pip-smoke
+          /tmp/pip-smoke/bin/python -m pip install --upgrade pip
+          /tmp/pip-smoke/bin/python -m pip install --no-cache-dir dist/*.whl
+
+      - name: Verify the installed CLI runs
+        run: |
+          /tmp/pip-smoke/bin/pflow --version
+          /tmp/pip-smoke/bin/pflow --help > /dev/null
+
+  # Summary job for branch protection — Linux-version, Windows-shard, and
+  # pip-install-smoke matrix jobs have suffixed display names, so their bare
+  # names never resolve as stable required checks. Point branch protection at
+  # this job; it gates all three matrices, Windows MCP smoke, and the macOS Make
+  # compatibility smoke test.
   tests-and-type-check-done:
     if: always()
-    needs: [tests-and-type-check, tests-windows, tests-windows-mcp-smoke, tests-macos-make]
+    needs: [tests-and-type-check, tests-windows, tests-windows-mcp-smoke, tests-macos-make, pip-install-smoke]
     runs-on: ubuntu-latest
     steps:
       - run: |
@@ -96,6 +158,9 @@ jobs:
             exit 1
           fi
           if [[ "${{ needs.tests-macos-make.result }}" != "success" ]]; then
+            exit 1
+          fi
+          if [[ "${{ needs.pip-install-smoke.result }}" != "success" ]]; then
             exit 1
           fi
 
