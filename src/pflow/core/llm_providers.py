@@ -36,10 +36,12 @@ class ProviderInfo:
 PROVIDERS: tuple[ProviderInfo, ...] = (
     ProviderInfo("anthropic", "anthropic/", ("claude-",), ("ANTHROPIC_API_KEY",)),
     ProviderInfo("openai", "openai/", ("gpt-", "o1", "o3", "o4"), ("OPENAI_API_KEY",)),
-    # LiteLLM checks GOOGLE_API_KEY first then GEMINI_API_KEY for the Gemini
-    # path (see litellm/llms/gemini/common_utils.py). pflow's canonical is
-    # GEMINI_API_KEY for naming consistency with the provider prefix; the
-    # alias is honored at every layer.
+    # LiteLLM's own env lookup checks GOOGLE_API_KEY first then
+    # GEMINI_API_KEY (see litellm/llms/gemini/common_utils.py) — the reverse
+    # of this canonical-first order. pflow neutralizes that by resolving the
+    # key itself (llm_config.resolve_provider_api_key) and passing it
+    # explicitly to litellm.completion, so this tuple's order is the one
+    # that actually governs which key a call uses.
     ProviderInfo("gemini", "gemini/", ("gemini-",), ("GEMINI_API_KEY", "GOOGLE_API_KEY")),
 )
 

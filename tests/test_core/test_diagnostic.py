@@ -558,3 +558,54 @@ def test_warning_degrades_status_honors_source_dimension() -> None:
 
     # Legacy/untyped shapes (no severity) fail closed — degrade.
     assert warning_degrades_status("plain string warning") is True
+
+
+def test_format_diagnostic_renders_provider_message() -> None:
+    """The provider's raw error text renders — it's the only line that
+    distinguishes a bad model name from a key/entitlement problem."""
+    diagnostic = Diagnostic(
+        severity=Severity.ERROR,
+        source="runtime",
+        message="Unknown model: gemini/gemini-2.5-flash",
+        context={"provider_message": "NotFoundError: models/gemini-2.5-flash is not found for API version v1beta"},
+    )
+
+    rendered = format_diagnostic(diagnostic)
+
+    assert "Provider response: NotFoundError: models/gemini-2.5-flash is not found" in rendered
+
+
+def test_format_diagnostic_renders_multiline_provider_message_indented() -> None:
+    diagnostic = Diagnostic(
+        severity=Severity.ERROR,
+        source="runtime",
+        message="boom",
+        context={"provider_message": "line one\nline two"},
+    )
+
+    rendered = format_diagnostic(diagnostic)
+
+    assert "  Provider response: line one" in rendered
+    assert "    line two" in rendered
+
+
+def test_unknown_model_error_renders_provider_response_and_honest_suggestions() -> None:
+    """End-to-end: a provider 404 wrapped as UnknownModelError surfaces the
+    provider's own text and keeps the key/entitlement reading open, instead
+    of the old exclusive-capability hint ("Your configured API key supports")
+    that misdirected debugging when multiple provider keys were set."""
+    from pflow.core.exceptions import UnknownModelError
+
+    exc = UnknownModelError(
+        "Unknown model: gemini/gemini-2.5-flash",
+        model="gemini/gemini-2.5-flash",
+        reason="unknown_name",
+        provider_message="NotFoundError: models/gemini-2.5-flash is not found for API version v1beta",
+    )
+
+    (diagnostic,) = exception_to_diagnostics(exc)
+    rendered = format_diagnostic(diagnostic)
+
+    assert "Provider response: NotFoundError:" in rendered
+    assert "a 404 can also mean your API key or project lacks access" in rendered
+    assert "Your configured API key supports" not in rendered

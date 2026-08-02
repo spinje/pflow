@@ -38,6 +38,7 @@ import base64
 import copy
 import logging
 import mimetypes
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -313,6 +314,22 @@ def complete(
         _validate_model_options(model, model_options)
         kwargs.update(model_options)
 
+    # Pass the API key explicitly for pflow's registered providers instead
+    # of letting LiteLLM re-resolve it from os.environ. LiteLLM's own lookup
+    # has a different precedence (for Gemini: GOOGLE_API_KEY before
+    # GEMINI_API_KEY), so with both vars set it can silently send a
+    # different key than the one pflow's validation checked — turning a
+    # validate-green workflow into a provider 404/401 at runtime.
+    # Unregistered providers (e.g. openrouter/...) keep full delegation.
+    if "api_key" not in kwargs and (provider := detect_provider(model)) is not None:
+        # Lazy import — keeps llm_config (and its SettingsManager import)
+        # off this module's import graph for non-LLM code paths.
+        from pflow.core.llm_config import resolve_provider_api_key
+
+        resolved_key = resolve_provider_api_key(provider.name)
+        if resolved_key is not None:
+            kwargs["api_key"] = resolved_key
+
     # Capture the request-side thinking budget so _normalize can include it
     # in the response usage dict. Lets MetricsCollector compute thinking
     # utilization (tokens used / budget) without needing the LLMNode to
@@ -425,6 +442,29 @@ def complete(
 
 # Internals ------------------------------------------------------------------
 
+_KEY_MATERIAL_PATTERNS = (
+    # `key=...` URL query params — Google's REST surface carries the API key
+    # in the request URL, which some provider error strings echo back.
+    re.compile(r"(?i)\b(key=)[A-Za-z0-9_\-]{8,}"),
+    # Google API key shape.
+    re.compile(r"\bAIza[0-9A-Za-z_\-]{10,}"),
+    # OpenAI / Anthropic secret-key shapes (sk-..., sk-ant-..., sk-proj-...).
+    re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}"),
+)
+
+
+def _mask_key_material(text: str) -> str:
+    """Mask API-key material echoed in provider/LiteLLM error text.
+
+    ``provider_message`` is rendered to the terminal and stored in traces
+    and JSON output, so any credential a provider echoes back must not
+    survive capture. Masking happens once here at the seam — every typed
+    exception below carries the sanitized text.
+    """
+    for pattern in _KEY_MATERIAL_PATTERNS:
+        text = pattern.sub(lambda m: (m.group(1) if m.lastindex else "") + "***", text)
+    return text
+
 
 def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
     """Translate a LiteLLM exception to a typed pflow subclass.
@@ -500,7 +540,7 @@ def _classify_litellm_error(exc: Exception, *, model: str) -> LLMCallError:
     # Diagnostic.message stays as the pflow-wrapped framing (the WHAT);
     # provider_message exposes the raw detail for agents that need to
     # discriminate sub-cases beyond the typed kind/reason.
-    raw = str(exc)
+    raw = _mask_key_material(str(exc))
 
     # 1. Auth (specific status-code classes; check before other 4xx).
     if isinstance(exc, openai.AuthenticationError):

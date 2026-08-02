@@ -31,22 +31,31 @@ PROVIDER_ENV_VARS: dict[str, list[str]] = {p.name: list(p.env_vars) for p in PRO
 ALLOWED_PROVIDERS = frozenset(PROVIDER_ENV_VARS.keys())
 
 
-def _has_provider_key(provider: str) -> bool:
-    """Check if an LLM provider key is configured from any source.
+def resolve_provider_api_key(provider: str) -> str | None:
+    """Resolve the API key value pflow will use for a provider.
 
-    Checks in order (stops at first found):
+    Walks the provider's env vars canonical-first (e.g. ``GEMINI_API_KEY``
+    before ``GOOGLE_API_KEY``), checking each source in order (stops at
+    first found):
     1. Environment variables (os.environ)
     2. pflow settings (settings.json env section)
+
+    This is the single resolution algorithm for which key a call will use.
+    The LLM adapter passes the returned value explicitly to LiteLLM so the
+    key pflow validated is the key the request carries — LiteLLM's own env
+    lookup uses a different precedence (for Gemini: ``GOOGLE_API_KEY``
+    before ``GEMINI_API_KEY``), which would otherwise silently shadow the
+    canonical key when both are set.
 
     Args:
         provider: Provider name ("anthropic", "gemini", "openai")
 
     Returns:
-        True if key is configured in any source
+        The key value from the first source that has one, or None.
     """
     if provider not in ALLOWED_PROVIDERS:
         logger.debug("Provider validation failed")
-        return False
+        return None
 
     env_vars = PROVIDER_ENV_VARS.get(provider, [])
 
@@ -55,9 +64,11 @@ def _has_provider_key(provider: str) -> bool:
         value = os.environ.get(var, "").strip()
         if value:
             logger.debug(f"Found {provider} key in environment variable {var}")
-            return True
+            return value
 
-    # 2. Check pflow settings (lazy import to avoid circular dependencies)
+    # 2. Check pflow settings — keeps non-CLI callers correct even when
+    # inject_settings_env_vars() hasn't run yet. Import resolved at call
+    # time so tests can patch pflow.core.settings.SettingsManager.
     try:
         from pflow.core.settings import SettingsManager
 
@@ -66,12 +77,17 @@ def _has_provider_key(provider: str) -> bool:
             settings_value = manager.get_env(var)
             if settings_value and settings_value.strip():
                 logger.debug(f"Found {provider} key in pflow settings ({var})")
-                return True
+                return settings_value.strip()
     except Exception as e:
         # Settings might not exist or be corrupt — graceful degradation
         logger.debug(f"Failed to check pflow settings for {provider}: {e}")
 
-    return False
+    return None
+
+
+def _has_provider_key(provider: str) -> bool:
+    """Check if an LLM provider key is configured from any source."""
+    return resolve_provider_api_key(provider) is not None
 
 
 def _detect_default_model() -> str | None:

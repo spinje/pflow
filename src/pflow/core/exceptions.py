@@ -329,14 +329,19 @@ class UnknownModelError(LLMCallError):
                 "Run 'pflow settings llm show' to see your configured defaults.",
             ]
         else:
-            # unknown_name: prefix is recognized; the model name doesn't exist there.
+            # unknown_name: the provider itself returned 404 for this model.
+            # That is NOT proof the name is wrong — providers also 404 when
+            # the API key or project lacks access to the model — so the
+            # suggestions must keep both readings open and point at the
+            # provider's own text (rendered as "Provider response:" above).
             suggestions = [
-                "Check the model name against the provider's current model catalogue.",
+                "The provider returned 404 for this model. Check the exact "
+                "name against the provider's current catalogue, and check the "
+                "provider response above — a 404 can also mean your API key "
+                "or project lacks access to this model.",
                 "Run 'pflow settings llm show' to see your configured defaults.",
                 "See https://docs.litellm.ai/docs/providers for supported models.",
             ]
-            # Append "your key supports X" hint when a default is detected.
-            # Lazy import keeps llm_config off the exceptions import graph.
             import contextlib
 
             with contextlib.suppress(Exception):
@@ -348,7 +353,12 @@ class UnknownModelError(LLMCallError):
 
                 detected = get_default_llm_model()
                 if detected:
-                    suggestions.append(f"Your configured API key supports '{detected}'.")
+                    suggestions.append(
+                        f"Known-working fallback: '{detected}' (pflow's "
+                        "auto-detected default — the highest-priority provider "
+                        "with a configured key, not a statement about this "
+                        "model's key)."
+                    )
 
         return [
             Diagnostic(

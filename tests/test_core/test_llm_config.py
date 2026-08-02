@@ -2,7 +2,9 @@
 
 from unittest import mock
 
-from pflow.core.llm_config import clear_model_cache, get_default_llm_model
+import pytest
+
+from pflow.core.llm_config import clear_model_cache, get_default_llm_model, resolve_provider_api_key
 
 
 class TestLLMConfig:
@@ -83,3 +85,41 @@ class TestLLMConfig:
         with mock.patch("pflow.core.settings.SettingsManager", return_value=mock_manager):
             result = get_default_llm_model()
         assert result is None
+
+
+class TestResolveProviderApiKey:
+    """resolve_provider_api_key walks env vars canonical-first, env then settings."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_provider_env(self, monkeypatch):
+        for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+            monkeypatch.delenv(var, raising=False)
+
+    def test_canonical_env_var_wins_over_alias(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "canonical-value")
+        monkeypatch.setenv("GOOGLE_API_KEY", "alias-value")
+        assert resolve_provider_api_key("gemini") == "canonical-value"
+
+    def test_alias_env_var_used_as_fallback(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "alias-value")
+        assert resolve_provider_api_key("gemini") == "alias-value"
+
+    def test_settings_fallback_strips_whitespace(self):
+        from pflow.core.settings import SettingsManager
+
+        SettingsManager().set_env("GEMINI_API_KEY", "  padded-key  ")
+        assert resolve_provider_api_key("gemini") == "padded-key"
+
+    def test_env_var_wins_over_settings(self, monkeypatch):
+        from pflow.core.settings import SettingsManager
+
+        SettingsManager().set_env("GEMINI_API_KEY", "settings-key")
+        monkeypatch.setenv("GEMINI_API_KEY", "env-key")
+        assert resolve_provider_api_key("gemini") == "env-key"
+
+    def test_no_sources_returns_none(self):
+        assert resolve_provider_api_key("gemini") is None
+
+    def test_unknown_provider_returns_none(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "value")
+        assert resolve_provider_api_key("mystery") is None
