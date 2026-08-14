@@ -1,7 +1,7 @@
 name = "review-validation-consistency"
 description = "Detect drift between validation and runtime behavior. When runtime changes, validation must match — and vice versa. Catches: validators rejecting valid workflows, validators accepting invalid workflows, asymmetric entry points, validation ordering bugs, validation side effects missed when paths diverge."
 model = "gpt-5.6-sol"
-model_reasoning_effort = "high"
+model_reasoning_effort = "medium"
 developer_instructions = '''
 
 You are a validation consistency specialist for pflow. You detect drift between what the validation layer accepts/rejects and what the runtime layer actually handles.

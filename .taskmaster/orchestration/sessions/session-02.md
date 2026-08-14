@@ -2,10 +2,10 @@
 
 ## [2026-07-11] main orchestrator — orchestration system restructured (agent-hierarchy adoption)
 
-- Did: ported the loudkult/Nora orchestration system to pflow with the user (discussion → 6 forks
-  ruled → full doc set written). Sources read: loudkult's `task-orchestrator.md` /
+- Did: ported the sibling orchestration system to pflow with the user (discussion → 6 forks
+  ruled → full doc set written). Sources read: the sibling repo's `task-orchestrator.md` /
   `task-phase-implementer.md` / `task-planner.md` / `ORCHESTRATION.md` + mainframe's
-  `orchestrating-system.md` (the Nora originals).
+  `orchestrating-system.md` (the predecessor originals).
 - Changed: NEW `.taskmaster/orchestration/ORCHESTRATION.md` (canonical process contract),
   `DECISIONS.md` (seeded #1–#7), `CURRENT-STATE.md`, `sessions/` (this file; session-01 = the
   converted old log); NEW `.claude/agents/task-planner.md` (fable), `task-orchestrator.md`
@@ -18,9 +18,9 @@
   CLAUDE.md). | Assumed: `/create-task-review`, `/create-pr`, `/braindump`, `/test-reflect` remain
   available user-level/project skills in subagent contexts (fallback written into ORCHESTRATION
   review policy: read the skill file directly).
-- Deviations/surprises: none vs the approved skeleton. Deliberately NOT ported: loudkult's
+- Deviations/surprises: none vs the approved skeleton. Deliberately NOT ported: the sibling repo's
   migration/DB machinery, prod verification, Django parallelism rules, the "ALL UI phases →
-  Fable" ruling (loudkult-specific consumer-polish rule; pflow's web UI is a dev tool). pflow
+  Fable" ruling (sibling-repo-specific consumer-polish rule; pflow's web UI is a dev tool). pflow
   analog chosen for the mandatory plan-review trigger: engine (`runtime/engine/`,
   `workflow_executor`) + trace format.
 - Self-checks: clean — one open risk flagged in CURRENT-STATE: the hierarchy hasn't run a real
@@ -100,8 +100,8 @@
 
 ## [2026-07-12] main orchestrator — /close-orchestrator-session ported (DECISIONS #11)
 
-- Did: adapted loudkult's close ritual as `.claude/skills/close-orchestrator-session/SKILL.md`;
-  wired it loudkult-style — the command's session-end section is now a pointer at the skill (one
+- Did: adapted the sibling repo's close ritual as `.claude/skills/close-orchestrator-session/SKILL.md`;
+  wired it source-repo-style — the command's session-end section is now a pointer at the skill (one
   home), and `braindump-main-orchestrator.md` (seeded) joins the boot stack after the session
   file. Also: subagent frontmatter descriptions tightened (earlier user ask this session).
 - Adaptations: lane-C terminal agents exempt from the drain (they outlive the session); no

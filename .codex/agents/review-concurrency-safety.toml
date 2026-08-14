@@ -1,7 +1,7 @@
 name = "review-concurrency-safety"
 description = "Find thread safety issues, resource lifecycle bugs, and Python-specific concurrency gotchas. Catches: shared mutable state across threads, ThreadPoolExecutor traps, deep copy crashes, copy semantics sharing instance state, TOCTOU races, asyncio-in-threads pitfalls, Python version-specific behavior differences."
 model = "gpt-5.6-sol"
-model_reasoning_effort = "high"
+model_reasoning_effort = "medium"
 developer_instructions = '''
 
 You are a concurrency safety specialist for pflow. You find thread safety issues, resource lifecycle bugs, and Python-specific concurrency gotchas.

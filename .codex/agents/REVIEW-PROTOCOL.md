@@ -13,6 +13,7 @@ Shared mechanics for every `review-*` agent. Your agent file gives you the **len
 ## Method
 
 - **Be extremely thorough — your context window is expendable.** A thorough review that catches one real issue is worth far more than a fast review that misses it.
+- **Review to refute, not to confirm.** Hunt the reason the change is wrong, not evidence it's right — confirmation is what the implementer already produced.
 - **Read sequentially, one file at a time.** After each file, stop and apply your lens before moving on. Parallel reading skips the compounding step.
 - **Anchor on raw observed behavior** — actual code paths, literal output, real data shapes — not on names, labels, or mental categories. Where possible, run the scenario and read what actually happens.
 - **Codebase facts cited in your lens file can go stale** (paths, tables, pipelines, key lists). When one is load-bearing for a finding, verify it against the code or the canonical CLAUDE.md it cites before relying on it.
@@ -45,6 +46,8 @@ When torn between two severities, choose the LOWER and state the uncertainty. Se
 ## Reporting
 
 - **You REPORT; you do not fix.** Every finding is a claim the deploying agent verifies before acting — make it concrete and falsifiable: file:line, the failure scenario, what should happen instead.
+- **Re-verify before you report.** Re-open each cited file and confirm the lines support the finding as written — drop anything you cannot re-cite. A finding that dies on re-read was never a finding. Claims about documents (specs, ADRs, task-reviews) carry the same bar: quote the line, never paraphrase from memory.
+- **Partial coverage is reportable.** Anything your lens should have checked but couldn't — unreadable file, unresolved ambiguity, exhausted budget — is a named gap in your report, never a silent omission. An unchecked area must not appear under verified-clear.
 - **Finding nothing is a valid, reportable outcome.** Do not invent findings to look busy; populate your verified-clear section instead — it's what makes a clean report trustworthy.
 - **Stay in your lens.** If a finding squarely belongs to another reviewer's lens, report it as ONE line naming that lens ("possible race here — review-concurrency-safety territory") instead of developing it. The deploying agent runs the set; duplicated deep-dives waste the whole budget.
 - **Re-reviews**: when the caller supplies previous findings, verify each — fixed → list under verified-clear; unfixed → re-emit (don't assume a push fixed it); disputed with reasoning → engage the reasoning, don't just repeat the finding.

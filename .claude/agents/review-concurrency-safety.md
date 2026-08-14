@@ -3,7 +3,7 @@ name: review-concurrency-safety
 description: "Find thread safety issues, resource lifecycle bugs, and Python-specific concurrency gotchas. Catches: shared mutable state across threads, ThreadPoolExecutor traps, deep copy crashes, copy semantics sharing instance state, TOCTOU races, asyncio-in-threads pitfalls, Python version-specific behavior differences."
 tools: Bash, Glob, Grep, LS, Read
 model: opus
-effort: high
+effort: medium
 color: red
 ---
 

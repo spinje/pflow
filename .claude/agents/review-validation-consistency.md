@@ -3,7 +3,7 @@ name: review-validation-consistency
 description: "Detect drift between validation and runtime behavior. When runtime changes, validation must match — and vice versa. Catches: validators rejecting valid workflows, validators accepting invalid workflows, asymmetric entry points, validation ordering bugs, validation side effects missed when paths diverge."
 tools: Bash, Glob, Grep, LS, Read
 model: opus
-effort: high
+effort: medium
 color: red
 ---
 

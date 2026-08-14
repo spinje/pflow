@@ -30,6 +30,16 @@ Prioritize simplicity of the final code, not how easy it is to get there.
 
 ## Process
 
+**Run the pass LEAN (DECISIONS #21):** one orchestrating agent + a handful of parallel
+`pflow-codebase-searcher` subagents doing the heavy lifting — never a wide multi-agent workflow.
+The lean shape has found everything the wide shape would, at a fraction of the cost.
+
+**Disposition through the leverage filter:** leverage is measured against the REMAINING roadmap,
+never aesthetics. A candidate earns a standalone slot only with **≥2 real remaining consumers, or
+1 consumer plus a live defect class**; pure code-shape improvements ride their next consumer
+instead of getting their own task. Cross-check candidates against the open issue set before
+dispositioning — a finding an issue already owns is attached there, not re-filed.
+
 ### 1. Explore
 
 Read `context/CONTEXT.md` (always), [PFLOW.md](PFLOW.md) (repo constraints that carry ADR weight — enforced invariants, testing doctrine, deliberate shapes), and any ADRs in `context/adr/` related to the area you're examining.

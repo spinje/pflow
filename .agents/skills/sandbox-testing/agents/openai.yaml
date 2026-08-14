@@ -1,4 +1,4 @@
 interface:
   display_name: "Sandbox Testing"
-  short_description: "Run pflow or Loudkult checks safely"
+  short_description: "Run pflow or sibling-repo checks safely"
   default_prompt: "Use $sandbox-testing to run focused repository checks safely in the Codex sandbox."
