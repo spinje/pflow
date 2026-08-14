@@ -58,6 +58,19 @@
   CURRENT-STATE rewrite done same day (state layer had recorded nothing of the fold).
 - Verification at close of work: `make check` green; `./scripts/tasks --check` clean; all
   `DECISIONS #N` citations resolve through #21; asset mirrors in sync; name-ban grep zero.
-- **Everything UNCOMMITTED per DECISIONS #5** (37 files + new workflows/ and lane-implementer/
-  falsifier defs). Deliberately unported: pr-closer + release-block machinery; appsec /
-  architecture-fit / error-surfaces lenses (flagged follow-up); migration/tenant lenses.
+- Deliberately unported: pr-closer + release-block machinery; appsec / architecture-fit /
+  error-surfaces lenses (flagged follow-up); migration/tenant lenses. "Every task gets a
+  planner" HELD (#21).
+
+## [2026-08-14] main orchestrator — close: committed on branch, PR #610, fresh-eyes re-audit commissioned
+
+- User ruled: keep this meta session as session-07 (session-02 precedent — the port session was
+  also meta); commit + PR before relaunch. Fold committed `20a3639f` on
+  `chore/orchestration-cross-repo-fold` → **PR #610**, held open for a successor session's
+  adversarial re-audit (blind-first: form an independent transfer list from the source corpus
+  BEFORE reading the PR diff; then compare). Known unaudited surfaces handed to the successor:
+  the sibling's five commands, post-fork drift in the SHARED review lenses, its deep-review
+  skill, pr-closer kernels, searcher defs, sessions 08–56, and a deep braindump mining pass +
+  fresh-eyes re-audit of ALL its DECISIONS #1–#57 (user's explicit ask).
+- Braindump refreshed (substrate-check lesson). Boot-readiness: successor boots per the role
+  prompt, writes session-08, works ON the PR branch.

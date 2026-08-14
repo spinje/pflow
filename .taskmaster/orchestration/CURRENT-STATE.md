@@ -22,13 +22,14 @@ Every claim here is a pointer to verify, not a fact._
   (codex fan-out, FOREGROUND) · `workflows/search/run-searcher.pflow.md` (codex searcher offload).
   Known cosmetic gap: no pricing data for `gpt-5.6-sol` → fan-out runs print "cost unavailable".
 
-## In flight / uncommitted
+## In flight
 
-- **The ENTIRE fold is uncommitted** (37 files: orchestration docs, agent defs, skills,
-  `workflows/`, ADR-FORMAT, one release-note scrub) — awaiting the user's commit ruling
-  (DECISIONS #5). Nothing else is in flight; no worktrees, no live subagents.
-- Session-07 close ritual (retrospect + braindump refresh) still owed when the user ends the
-  session.
+- **The fold is committed on `chore/orchestration-cross-repo-fold` → PR #610** (42 files,
+  `20a3639f`), user-approved. **Held open for a fresh-eyes adversarial re-audit** (successor
+  session, blind-first-then-compare; corrections land as `[skip review]` commits on the branch)
+  before merge. No worktrees, no live subagents.
+- Session-07's close steps (braindump refresh, state-true, boot-readiness) are DONE; the
+  successor writes `session-08`.
 
 ## Recently shipped / filed (verified 2026-08-14)
 
