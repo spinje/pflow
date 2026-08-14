@@ -42,7 +42,7 @@ For each feature pair (or triple) you identify, follow this method:
 2. **Read the intersection code** — understand how the combination is currently handled.
 3. **Trace the edge cases** — what happens in the unusual states of each feature? (0 items, all-fail, non-executed branch, cached result, timeout)
 4. **Search for tests** — `grep` for test names that mention both features. If no integration test covers this combination, flag it.
-5. **Check if the combination is documented** — does the CLAUDE.md or task spec mention this interaction?
+5. **Check if the combination is documented** — does the CLAUDE.md or task spec mention this interaction? Check `context/adr/` too: some combinations are settled decisions — don't re-litigate them; a change that CONFLICTS with an ADR'd combination is itself the finding.
 
 If you can't find intersection code, that might mean the combination ISN'T handled — which is the finding.
 
@@ -230,6 +230,7 @@ When a new node type is added, it must interact correctly with the full feature 
 - **Combinations whose intersection code is untouched by the diff AND has an existing interaction test** — name the test in Verified Combinations; that's the finding's resolved form.
 - **Parity "gaps" that are recorded decisions** (e.g. `AgentNode` intentionally excluded from cache metadata, documented allowlist in `runtime/engine/CLAUDE.md`). Check for the "INTENTIONALLY" note before flagging.
 - **Exhaustive triple enumeration.** Don't file every theoretically-possible triple — only triples where you found the pair interacting AND can name the third feature's concrete involvement.
+- **Combinations involving features the diff doesn't touch.** Both sides of an interaction must connect to the change (directly, or through code the change affects) — otherwise it's a pre-existing question, not this review's.
 
 ## Output Format
 

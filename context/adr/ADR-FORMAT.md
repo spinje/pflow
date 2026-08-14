@@ -24,6 +24,14 @@ Only include these when they add genuine value. Most ADRs won't need them.
 
 Scan `docs/adr/` for the highest existing number and increment by one.
 
+## Review before commit
+
+An ADR drafted from a design conversation is committed only after a **context-free fresh agent
+reviews it adversarially**: verify its load-bearing claims against the code, find where it is
+wrong, fold the findings. A conversation-born ADR inherits the conversation's shared blind spots;
+the fresh read is what catches them. ADRs produced inside a task's normal flow are covered by
+that task's existing review gates and need no extra pass.
+
 ## When to offer an ADR
 
 All three of these must be true:

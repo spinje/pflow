@@ -1,7 +1,7 @@
 # ORCHESTRATION.md — how implementation runs
 
 Canonical process spec for implementing pflow tasks and issues via the agent hierarchy.
-Established 2026-07-11 with the user (ported from the loudkult/Nora orchestration systems —
+Established 2026-07-11 with the user (ported from the user's sibling orchestration systems —
 DECISIONS #1). Every orchestrating or implementing agent reads this file first. Layers ON TOP of
 `CLAUDE.md` (read automatically) and repeats nothing from it — domain, dev commands, code quality,
 testing directives, decision ownership, and the epistemic rules all live there.
@@ -12,16 +12,20 @@ testing directives, decision ownership, and the epistemic rules all live there.
 |------|-------|-----------|-----|
 | **Main orchestrator** | user's session | `start-orchestration` workflow | Cross-task view: pick lane + work, verify spec freshness (fix staleness itself — spec accuracy is its job; implementation detail is not), provision the worktree, launch planners/task-orchestrators with a context packet, handle handbacks/escalations, talk to the user, **merge the PR and reconcile**, keep `CURRENT-STATE.md` + its session file + the ledgers current. **Never writes plans, never reads plans, never runs deep-review — trust the agents' gates** |
 | **Task planner** | **Opus** | `.claude/agents/task-planner.md` | Investigate ONE task (via searchers) IN the task's worktree + write `implementation/implementation-plan.md`, **self-review it** (plan-mode `deep-review` — mandatory when the plan touches the engine or the trace format, its judgment otherwise), commit it on the feature branch, then STOP. May offer to implement small tasks itself (see Model routing) |
-| **Task orchestrator** | Opus intent by default; Fable opt-in | `.claude/agents/task-orchestrator.md` | One task end to end in the same worktree: (plan +) delegate phases → per-phase self-checks → when FULLY happy: code-mode `deep-review` + apply fixes → `create-task-review` → `create-pr` → minimal handback |
+| **Task orchestrator** | Opus intent by default; Fable opt-in | `.claude/agents/task-orchestrator.md` | One task end to end in the same worktree: (plan +) delegate phases → per-phase self-checks → when FULLY happy: commission the code-mode `deep-review` gate (DECISIONS #17) → `create-task-review` → `create-pr` → minimal handback |
+| **Lane implementer** | Opus floor (DECISIONS #9) | `.claude/agents/lane-implementer.md` | ONE GitHub issue end to end in a provisioned worktree (lane B): critically evaluate → fix with tests → proportionate gate → PR → CI green + auto-reviewers → merge it itself. May delegate MECHANICAL execution to leaf subagents; never judgment |
 | **Phase implementer** | per launch (routing table) | `.claude/agents/task-phase-implementer.md` | Implement exactly the assigned phase(s); tests as it goes; substance to the progress-log; minimal handback; stop on ambiguity |
-| **Searcher** | pinned (opus) | `pflow-codebase-searcher` | Read-only investigation, cited findings. Never the generic `Explore` or `general-purpose` |
+| **Searcher** | pinned (opus) | `pflow-codebase-searcher` | Read-only investigation, cited findings. Never the generic `Explore` or `general-purpose`. **Two channels, disambiguate by name**: the NATIVE searcher (this def, Agent tool — the default) vs the SEARCHER OFFLOAD (`workflows/search/run-searcher.pflow.md`, codex — cross-model verification or capacity relief only, never the default) |
 | **Review battery** | per lens | `.claude/agents/review-*.md` via the `deep-review` skill | The pflow specialists (selection rubric in the skill + `REVIEW-PROTOCOL.md`). Plan gate + completion gate (see Review policy) |
 
-**Hierarchy is exactly two levels deep**: only the main orchestrator launches planners and task
-orchestrators; only those launch implementers/searchers/review agents. Implementers never spawn
-agents. The planner→orchestrator split is a SEQUENCE, not a third level. **Small tasks don't
-split**: one task orchestrator plans and implements (or the planner implements itself — Model
-routing).
+**Hierarchy is exactly two levels deep**: only the main orchestrator launches planners, task
+orchestrators, and lane implementers; only planners/task orchestrators launch
+implementers/searchers/review agents. A **lane implementer may launch leaf subagents
+(`code-implementer`) for MECHANICAL execution only** — work with no judgment left in it — and
+never delegates evaluation, design, or its completion gate (contract in `lane-implementer.md`).
+Phase implementers never spawn agents, and no spawned agent spawns further. The
+planner→orchestrator split is a SEQUENCE, not a third level. **Small tasks don't split**: one
+task orchestrator plans and implements (or the planner implements itself — Model routing).
 
 ## Lanes — which procedure a piece of work gets
 
@@ -32,18 +36,25 @@ B, pick A; between A and C, ask the user.
   dedicated Opus planner → Opus task orchestrator) when the task's PLANNING needs its own top-tier
   pass — hard architecture, subtle seam design, a high-complexity spec; single task-orchestrator
   that plans and implements for ordinary tasks. The shape is a stated judgment call, made visibly.
-- **Lane B — GH-issue lane** (bug fixes & small self-contained tasks — DECISIONS #7): these do NOT
-  become tasks. Write a GH issue if none exists (correct root cause, verified against code), then
-  launch ONE subagent end to end in a provisioned worktree — a `task-orchestrator` in issue
-  mode: the issue is the spec, it implements directly (no plan file, no implementers), but the
-  Definition of done and UI routing (DECISIONS #8) still govern — implement → `create-pr` with
-  a `Closes #N` body → CI green → **merge it itself**. **Model by assessed complexity
-  (DECISIONS #9): the main orchestrator assesses at pick time; Opus is the floor — never lower
-  for an end-to-end agent; genuinely complex issues (hard debugging, subtle root cause) warrant
-  Fable, but ONLY with the user's per-launch approval.** No task folder, no task-review — the
-  issue and PR body are the record. The main orchestrator still provisions/tears down, relays any
-  escalation, and reconciles. **Excluded regardless of size** (always lane A): anything touching
-  `runtime/engine/`/`workflow_executor` or the trace format.
+- **Lane B — GH-issue lane** (bug fixes & small self-contained tasks — DECISIONS #7, #20): these
+  do NOT become tasks. Write a GH issue if none exists (correct root cause, verified against
+  code), then launch ONE **`lane-implementer`** end to end in a provisioned worktree. The stable
+  agent-side protocol has ONE home in its def — critical evaluation first, escalation above
+  importance 2/5, proportionate completion gate, PR discipline, merge-it-itself after CI green +
+  auto-reviewer action (DECISIONS #14) — **don't restate it in packets**; the packet carries only
+  the variables: issue #, worktree absolute path, base SHA, file-ownership list (derived from
+  what else is in flight), evaluation hints (your own pick-time verification findings, so the
+  lane doesn't re-derive them). **When the issue prescribes a fix to shipped user-visible
+  behavior or a shipped rule AND ≥2 defensible final shapes exist, the packet directs the lane
+  to hand back evaluation + options BEFORE building** — a named hand-back condition, not a hope.
+  The Definition of done and UI routing (DECISIONS #8) still
+  govern. **Model by assessed complexity (DECISIONS #9): the main orchestrator assesses at pick
+  time; Opus is the floor — never lower for an end-to-end agent; genuinely complex issues (hard
+  debugging, subtle root cause) warrant Fable, but ONLY with the user's per-launch approval.** No
+  task folder, no task-review — the issue and PR body are the record. The main orchestrator
+  still provisions/tears down, relays any escalation, and reconciles. **Excluded regardless of
+  size** (always lane A): anything touching `runtime/engine/`/`workflow_executor` or the trace
+  format.
 - **Lane C — manual lane** (kept deliberately — DECISIONS #2): the goal itself is open-ended and
   will be discovered through iteration with the user, or verification is inherently
   interactive/taste-based. The pre-restructure flow, unchanged: decision session + kickoff brief
@@ -76,11 +87,16 @@ Per task, `.taskmaster/tasks/task_N/`:
 - **`starting-context/`** — briefs/braindumps, newest last (tacit layer; the spec is the truth).
 - **Review** (`task-review.md`) — the completion contract, below.
 
-**Orchestration state** — `.taskmaster/orchestration/CURRENT-STATE.md` (living header, ~80-line
-budget, the ONE mandatory session-start read; updated when the RESUME PICTURE changes —
-launch/park/completion/ruling — the test: *would a successor resuming from a crash act differently
-because of this event?*) + `sessions/session-NN.md` (the main orchestrator's per-session
-append-only log; a new session creates its own file and reads the latest predecessor — **if that
+**Orchestration state docs are handoff artifacts for the NEXT main orchestrator — not a
+crash-resilience journal (DECISIONS #16).** Write at real state transitions
+(ruling/launch/ship/course-change), one-line entries; batch the rest to session close; the
+orchestrator's working state lives in its context window. —
+`.taskmaster/orchestration/CURRENT-STATE.md` (living header, ~80-line budget, the ONE mandatory
+session-start read; reflects the RESUME PICTURE — the test: *would a successor resuming from a
+crash act differently because of this event?* — and is **rewritten at close/park, never patched
+incrementally**) + `sessions/session-NN.md` (the main orchestrator's per-session
+log — append-only mid-session; the close ritual's spent-category cut is the ONE sanctioned
+rewrite (close skill); a new session creates its own file and reads the latest predecessor — **if that
 file is thin** (a short check-in, an aborted session), **read one further back until you hit a
 substantive one** (DECISIONS #10); older files are on-demand forensics; NO session-end digest —
 the file boundary does that job; session-01 is the converted pre-restructure log).
@@ -136,11 +152,16 @@ merged PR and point the packet there instead; almost all recent tasks have revie
    this process. Create worktrees sequentially, never in one parallel shot.
 2. **Launch:** planner and task orchestrator are Agent-tool subagents pointed at the worktree's
    ABSOLUTE path; they work only there — **sequentially, never two agents concurrently in one
-   worktree**. First acts of each: verify the base ref (`git log -1` vs `origin/main` — a stale
+   worktree**. Launch only into a FULLY provisioned worktree — an agent in a half-provisioned
+   checkout silently operates on the wrong target; a failed provisioning is torn down and
+   re-run, never worked around. First acts of each: verify the base ref (`git log -1` vs `origin/main` — a stale
    base misses the newest contracts) and `make install` (fast — uv's cache is shared).
 3. **Commits:** the planner commits its plan (+ spec corrections) on the feature branch; the task
    orchestrator commits as phases complete (deliberate staging, never blanket `-A`;
-   scratchpads/briefs are gitignored and stay out). Never to `main`. Task docs merge to `main`
+   scratchpads/briefs are gitignored and stay out). **An orchestrator and its implementer share
+   one worktree, so the orchestrator does not commit while an implementer is live** — pre-commit's
+   stash/restore cycle runs over the child's uncommitted edits; batch log entries to phase
+   boundaries. Never to `main`. Task docs merge to `main`
    WITH the code, via the PR. Pre-commit hooks enforce repo conventions (including the task-Status
    vocabulary) — never bypass with `--no-verify`. **PR review marker (DECISIONS #12):** the first
    commit on each PR branch uses a normal message; EVERY later commit on that branch (follow-up,
@@ -176,6 +197,14 @@ fan out multiple consumers against a DRAFT contract — skeleton-first, pin the 
 first real consumer, then parallelize. Contracts get pinned **in-task at the seam that forces
 them**, not in up-front documents.
 
+**Never mutate shared tooling while producers are live** (the Makefile, `make check`, a
+pre-commit hook, a global MCP entry) — every running checkout reads it, so a fix lands as a
+mid-flight breakage; defer it to a quiet moment or make the change purely additive. When several
+in-flight branches will inherit the same shared-tooling change, hold the LAST one idle and have
+it rebase ONCE onto final `main` rather than per sibling ship. When `main` moves under a live
+producer, send it the TEXT deltas that touch what it will author — the rebase carries the file;
+it does not make the agent re-read it.
+
 ## Model routing (supersedes the 2026-07-03 rulings — DECISIONS #3; user may override any launch)
 
 | Tier | Use for | Rule |
@@ -202,6 +231,14 @@ Claude agent `effort` maps directly to the same Codex reasoning level: `low` →
   control rather than the generated/frontmatter default. On Codex also pass `reasoning_effort`
   explicitly. Codex accepts both fields even though the displayed `spawn_agent` schema omits them;
   persisted child `turn_context` records the applied values.
+- **Effort routing: effort tracks the residual ambiguity the agent must absorb (DECISIONS #18).**
+  A detailed plan leaves the implementer execution, not reasoning — a spelled-out phase routes
+  `medium`; `high` is earned by ambiguity (an underspecified step the implementer must design
+  itself, a design-bearing UI phase, subtle seam logic, gnarly debugging). Agents that author
+  their own plan of attack (planners, task orchestrators, lane implementers) route `high`.
+  Defaults live in the agent-def frontmatter — the def is the contract, the per-launch param the
+  live lever: pass explicit `effort` on every launch like `model`. Plans state effort per phase
+  alongside the model tier.
 - **Lane B**: Opus floor, never lower; Fable for complex/hard-debugging issues only with the
   user's per-launch approval (DECISIONS #9).
 - **Planner-implements exception:** when a planner finds the implementation small, it may offer in
@@ -210,13 +247,23 @@ Claude agent `effort` maps directly to the same Codex reasoning level: `low` →
   planner to implement (it keeps its investigation context, and the task-orchestrator close-out —
   self-checks, code-mode review, `create-task-review`, `create-pr` — becomes its); tight →
   launch an Opus task orchestrator on the finished plan.
-- **Limit recovery** (empirical, inherited from the Nora system's Fable exhaustion): NEVER
+- **Limit recovery** (empirical, inherited from a predecessor system's Fable exhaustion): NEVER
   resume an agent whose model tier is exhausted — it re-dies on its next inference
-  call. Recovery = a REPLACEMENT at an available tier launched into the SAME worktree (absolute
-  path, no isolation flag), explicitly RESUMING from spec + plan + progress log. Tier capped with
-  a lower option → re-route the plan down; capped with none → the task waits. **Never `fork` to
-  force a model** — a fork inherits the main orchestrator's whole context (breaking the two-level
-  design) and ignores the `model` param anyway.
+  call. **MODEL-TIER caps only**: an agent killed by a GENERAL session limit resumes fine
+  through the runner's follow-up mechanism once the limit resets — its children died with it, so
+  relaunch those fresh; a transient API death (connection dropped mid-response) resumes the same
+  way. A watchdog-STALL kill gets ONE resume attempt under the mid-write protocol — the resumed
+  agent first writes the log entry for where it actually is, then re-verifies its own partial
+  artifacts file-by-file (a mid-write death leaves edits that read as complete); stalls again →
+  rotate fresh. After a mass limit kill, resume the ORCHESTRATORS first — one hop; each resumes
+  its own children; never resume grandchildren directly. A death mid-fix exposes DISPOSITION
+  STATE, not findings — the report survives on disk; which findings were accepted lives only in
+  the dead context, so dispositions are re-derived before code is touched.
+  Tier-cap recovery = a REPLACEMENT at an available tier launched into the SAME worktree
+  (absolute path, no isolation flag), explicitly RESUMING from spec + plan + progress log. Tier
+  capped with a lower option → re-route the plan down; capped with none → the task waits.
+  **Never `fork` to force a model** — a fork inherits the main orchestrator's whole context
+  (breaking the two-level design) and ignores the `model` param anyway.
 
 ## Agent economics — phases ≠ agents
 
@@ -232,6 +279,22 @@ implementer pays a real context-rebuild tax. The plan's agent assignment default
   instruction. If you'd send "continue as planned" regardless, the stop is overhead — bundle.
 - **Fresh launch** only for a stated reason: tier change, parallel disjoint work, a huge/degrading
   window, or fresh eyes (which are the review battery's job, not an implementer's).
+- **UI-driving phases hit the degrading-window trigger EARLY** — every screenshot lands in the
+  implementer's context, so UI phases burn tokens several times faster than backend work; treat
+  ~300–400k as the rotation point. **Once a phase has externalized its knowledge into a written
+  archetype/doc, the continuity rationale expires** — rotate to a fresh same-tier implementer
+  whose packet is the written doc + progress-log tail, not a full re-read. Drive/screenshot what
+  acceptance requires, not more.
+- **Token counts for subagents arrive only in the MAIN orchestrator's notification metadata** —
+  an agent's self-estimate is unreliable (observed under-reporting by ~250k) and the metadata is
+  per-segment/non-monotonic; relay the number unprompted — the rotation call is structurally the
+  launching orchestrator's to inform. **Partial rotation is a real option**: a long-lived
+  implementer names WHERE its priors are worst and that one lens goes to a fresh agent.
+- **A COMPLETED agent still holds everything it learned** — ask it to shape the next agent's
+  brief or resolve a later doubt (including the list of things it dismissed on documentation
+  alone); one message beats a re-derivation. The main orchestrator alone holds cross-agent
+  evidence — re-read your own recent handbacks before letting any agent re-derive a fact a
+  sibling already proved.
 - Synthesis/doc phases belong to whoever already holds the content.
 - Main-orchestrator waits on running children default to 15 minutes (DECISIONS #13); child
   completion and user messages still interrupt immediately.
@@ -250,13 +313,35 @@ plans — the agents own their own quality:**
   findings against code itself and folds confirmed fixes in before building on the plan. (If the
   skill is unavailable in a subagent context, read `.claude/skills/deep-review/SKILL.md` and
   follow it — it is instructions + subagent launches.)
-- **Completion gate — run by the TASK orchestrator** when it is FULLY happy, before
-  `create-task-review`: code-mode `deep-review` on the full branch diff. It applies the correct
-  fixes and logs EVERY finding with disposition — fixed, or skipped with a reason.
+- **Completion gate — COMMISSIONED by the task orchestrator** when it is FULLY happy, before
+  `create-task-review` (code-mode `deep-review` on the full branch diff). **The task orchestrator
+  does NOT evaluate-and-fix itself (DECISIONS #17)** — evaluating findings and applying the fixes
+  go to the implementer that built the phases when its window is still healthy, else to a fresh
+  review-evaluator agent packeted with spec + plan + progress log + the reports. Whoever runs it
+  verifies Critical findings against code, applies the correct fixes, and logs EVERY finding with
+  disposition — fixed, or skipped with a reason; the orchestrator reads the outcome and
+  dispositions what remains. Dispatch is Bash-drivable
+  (`workflows/review/run-review-lenses.pflow.md`, provider codex — model-family diversity),
+  launched backgrounded to a declared output file and **waited on IN-TURN** (Monitor until-loop
+  or foreground polls — a foreground call past the 600s Bash cap auto-backgrounds into the wake
+  trap; never end a turn on it), so the whole gate is one job owned by the gate-runner; direct
+  Agent-tool lens launches are a logged one-off for when pflow cannot run or the caller must
+  keep working.
+  `review-falsifier` always launches directly — it executes, and the fan-out is read-only.
+  Direct launches need the Agent tool, which phase implementers lack: when the falsifier (or the
+  direct-launch fallback) is needed and the gate-runner is an implementer, the task orchestrator
+  launches it at commissioning time and hands the report to the gate-runner for evaluation with
+  the rest. (In the GH-issue lane the lane implementer runs its own gate — its own Agent tool
+  covers a direct falsifier launch; same when a planner implements itself.)
+- **Lane completion gate — the LANE IMPLEMENTER's own, proportionate to its diff** (contract in
+  `lane-implementer.md`): lenses self-selected by what the diff touches, with a **floor of one
+  when the diff changes shared tooling, CI, or a security boundary**. A one-line fix may warrant
+  none; the choice is recorded in the PR body either way. Lanes carry no task-review, so the PR
+  body is where selection, findings, and dispositions live.
 - **Mid-task phase review** at the task orchestrator's judgment after an especially risky phase
   (engine contact, trace-format change, resume/gate semantics — anything later phases build upon):
   one or two targeted specialists on that phase's diff, not the full battery. The plan marks
-  candidate phases ("triggers review").
+  candidate phases ("triggers review"). Same ownership split as the completion gate.
 - **Focused seam/area review** on demand — when a shared pattern or a hot seam changed, regardless
   of which task did it. The main orchestrator may also commission cross-task area reviews.
 - Never review Sonnet mechanical output alone — if it seems to need review, the routing was wrong.
@@ -273,6 +358,17 @@ test surface; never mock what you can test directly). Process additions:
   coverage. A test earns its place only if it would FAIL when the behavior it guards breaks. Bug
   fix ⇒ regression test on the exact buggy path. Shallow tests in your working area get deepened
   or deleted (and logged).
+- **An absence assertion is evidence only when paired with a presence assertion in the same
+  medium.** "The value is not there" passes for free against an empty store, an errored response,
+  a fixture that was never populated, or output that was never produced — so every "must not
+  appear" needs a "must appear" beside it, proving the medium was capable of showing it. Applies
+  identically to CLI output, trace contents, API shapes, and a driven page's text.
+- **A verification that would pass identically on the PRE-change code is a regression guard, not
+  shipped-ness evidence** — label it as such, and state separately what positively proves the
+  new behavior exists. **"Could this environment show a failure?" is a separate question from
+  "does the check assert the right thing?"** — an empty shared store, an unpopulated fixture set,
+  or a dataset with zero qualifying rows makes any check pass for free; probe the data before
+  writing the check.
 - **"Verified" means you exercised the real surface**: CLI/behavior changes → run a real workflow
   (`uv run pflow ...`) and observe the output. **Web-UI changes ALWAYS invoke the
   `screenshot-pflow-web-ui` skill and verify EVERYTHING changed** (screenshot/measure every
@@ -290,7 +386,10 @@ test surface; never mock what you can test directly). Process additions:
   were plausibly hard to write / easy to cheat** (subtle logic, non-deterministic edges, a
   behavior a shallow test could fake-pass), additionally direct the implementer to read
   `.claude/commands/test-reflect.md` and apply it (deepen or delete, log which) — skip it for
-  scaffolding/config phases. The completion-gate battery is the correctness backstop.
+  scaffolding/config phases with nothing discriminating to reflect on. **Either way the phase
+  entry RESOLVES it** (`(directed): …` / `not needed — <reason>`): a parked "to run when
+  directed" leaves "judged unnecessary" indistinguishable from "forgotten" and does not close
+  the self-check. The completion-gate battery is the correctness backstop.
 
 ## Checkpoints, escalations, park/resume
 
@@ -311,6 +410,12 @@ Subagents cannot talk to the user — the main orchestrator is the channel.
 - Before ANY parking handback, write the progress-log entry capturing state + exact resume point —
   it is the disaster-recovery record if the session is lost while parked. Finish
   decision-independent work first; bundle pending questions into ONE handback.
+- **A stopped subagent is never woken by background-Bash completion** — a `run_in_background`
+  process can finish successfully while its owner sleeps through it; completion delivery reaches
+  the main conversation only. Subagents wait in-turn (Monitor until-loop or repeated foreground
+  polls); a genuine stop hands back naming the exact resume condition and output path.
+  Long-running launches write output to a declared path inside the worktree/task folder so a
+  diagnoser checks it before concluding "no output exists".
 - **Never launch a fresh agent to "continue" a parked task** — it re-derives everything and
   drifts. Sole exception: the parked agent is unrecoverable (the runner's resume mechanism fails,
   no transcript) —
@@ -334,6 +439,17 @@ Subagents cannot talk to the user — the main orchestrator is the channel.
 
 ## Write discipline (all logs)
 
+**Instruction files state the CONSTRAINT, never the incident.** This file, the `CLAUDE.md`s, and
+the agent defs read as if the rule was always known — no PR numbers, no dates, no "we found this
+when…". Provenance lives in `DECISIONS.md` (dated by design) and the session logs; cite
+`DECISIONS #N` when authority matters. The one date that belongs in an instruction file is a
+**live deadline** (an expiry, a review-by), because that is a constraint.
+
+**Findings are verified-or-dropped.** A reported finding — in a handback, a PR body, or an issue —
+names how it was verified: executed, or read at `file:line`. A pure hypothetical is not written
+down at all; a hypothetical with potentially serious consequences is investigated first (a
+searcher is the cheap tool) and arrives as a verified finding or a verified all-clear.
+
 Lean by construction: **point, don't restate** (anything in a durable artifact is referenced,
 never paraphrased); full sentences only for the EXCEPTIONAL (deviations, doubts, honest unknowns —
 never "none" by reflex); choreography is one line — with ONE exception: **pre-park resume-state
@@ -350,6 +466,11 @@ unmet DoD"). Always a **suggestion to the user first — never self-approved**, 
 `CLAUDE.md`'s observed-problems rule: what/why, where it slots (dependencies), rough size. On
 approval the main orchestrator writes the spec (`create-task` conventions) and updates the
 CLAUDE.md roadmap (short task names only). Small/bug-shaped work goes to lane B instead.
+
+**A gap your change is about to widen is yours to close (DECISIONS #15).** The trigger is narrow
+and checkable: the defect is live before your diff AND your diff is what extends it to a new
+surface or a larger blast radius. It is not a licence to fix adjacent bugs. The producer states
+the extension and its reasoning, and it must stay cleanly revertible.
 
 ## Living documentation
 

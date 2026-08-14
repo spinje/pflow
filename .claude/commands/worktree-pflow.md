@@ -65,3 +65,11 @@ If a value is malformed, the workflow rejects it with an actionable error — fi
 ## After it runs
 
 Report the worktree path from the output. Unless `open_cli`/`open_cursor` were disabled, also tell the user that Cursor and the selected agent (Claude Code, or Codex when `agent=codex`) opened in the new worktree.
+
+When sibling branches are in flight, remind the session working in the new worktree of the
+parallel-branch discipline (ORCHESTRATION.md "Collision analysis"): check the file-ownership
+fences, never mutate shared tooling mid-flight, and **the second branch to merge re-runs its
+code-mode review on the rebased/merged diff** — the first merge changed the ground under it.
+
+Teardown is not this workflow's job: after merge, the main orchestrator prunes worktree + branch
+per ORCHESTRATION.md "Worktree & git flow" step 6 (the squash-safe prune check).

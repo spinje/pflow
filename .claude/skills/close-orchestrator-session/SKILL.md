@@ -16,7 +16,7 @@ DECISIONS #10) → BRAINDUMP.md` and nothing else; this ritual makes that stack 
 reality first (`git log`, `gh`, `./scripts/tasks`, `git worktree list`, the filesystem) — a
 braindump line that's false is worse than a missing one.
 
-## 0. Drain — nothing closes hot
+## 0. Drain — nothing closes hot (user rule, 2026-07-11)
 
 If anything is in flight, the close has not started yet: **let all running agents and tasks run
 to the end, fix all loose ends, THEN close out.** Keep doing the job — relay handbacks, nudge
@@ -68,6 +68,12 @@ Should be near-no-ops if you kept discipline; audit, don't rewrite:
   verify, not a fact.
 - **Session file** — entries were appended as events landed; add nothing at close except what
   step 1 surfaced that belongs to the journey (an overturned call, a ruling). No summary rewrite.
+  Then **reread it once and CUT the three spent categories**: post-ship evidence (SHAs beyond the
+  squash, test counts, teardown confirmations — the PR and task-review own it), per-phase build
+  narration (the task's progress-log owns it, and it merges with the code), and launch-packet
+  enumerations (they die with the task). The next orchestrators read this file in full — deletion
+  of spent narration, never a digest. What survives: rulings and their reasoning,
+  corrections/overturns, cross-task seams, escalations, and the user's own words.
 - **Trackers** — the CLAUDE.md roadmap, task spec Status lines, and spec decision ledgers were
   reconciled at each ship; spot-check the ones this session moved.
 - **DECISIONS.md** — every settled-decision-grade user ruling from this session has a row
@@ -78,8 +84,12 @@ Should be near-no-ops if you kept discipline; audit, don't rewrite:
 Update the **rolling tacit layer** — the top section of
 `.taskmaster/orchestration/BRAINDUMP.md`, above the `---` that precedes the frozen **Genesis**
 section (2026-07-02; never refreshed) — **in place, minimal deltas**, extending its header with
-this session's marker. This is a knowledge transfer to yourself, returning
-with no memory. The doctrine, customized for this role:
+this session's marker. **The rolling layer is organized BY THEME, not by session: merge each new
+line into the section that owns it and tag it `(sNN)`. Never append a dated session section** —
+chronology hides duplication (the same lesson restated in several places reads as several
+lessons), which is how a braindump silently grows tenfold. If a new line has no home, that is a
+signal it may be a new theme — or that it belongs in DECISIONS instead. This is a knowledge
+transfer to yourself, returning with no memory. The doctrine, customized for this role:
 
 **The one test, applied line by line to the EXISTING file first:**
 > "Could the next agent find this by reading files?" If yes — cut it.
@@ -87,8 +97,33 @@ with no memory. The doctrine, customized for this role:
 Knowledge migrates: what was tacit last session may now live in a skill, a task-review, a
 DECISIONS row, or a gotcha that got fixed in code. **The braindump must shrink as knowledge
 becomes durable elsewhere** — pruning stale lines is as important as adding new ones. Delete
-verified "needs verification" items; rewrite bullets whose advice was superseded (never leave an
-old bad habit standing next to its correction).
+verified "needs verification" items; rewrite bullets whose advice was superseded — never leave
+an old bad habit standing next to its correction.
+
+**Prune previous sessions' lines as deliberately as you add — and prefer EDITING an existing line
+over adding one beside it** (two lines making the same point are worse than one, because a reader
+cannot tell whether the second is a distinct case). Four categories earn removal, each on PROOF,
+not impression:
+
+- **Migrated** — it now lives in ORCHESTRATION / DECISIONS / a skill / the code. *Proof: open the
+  destination and confirm it says so.*
+- **Resolved** — a marked `ASSUMPTION:` / `UNCLEAR:` / `ASKED-NOT-ANSWERED:` that got answered,
+  or a sharp edge fixed at its source. *Proof: the answer, or the fix.*
+- **HARMFUL — the sharpest category and the easiest to miss.** A line that is false, or
+  true-but-scoped-so-narrowly that it models the wrong thing. It reads as helpful for exactly as
+  long as nobody tests it, and it is being believed the entire time. *Proof: check it against the
+  system, not against your memory of writing it.*
+- **Restatement** — the same lesson already stated elsewhere in the file. But **merge, don't
+  delete**: where two lines share a lesson and differ in the TELL (what made it detectable), the
+  tells are the transferable part and both survive as sub-bullets.
+
+**The proof bar is deliberately ASYMMETRIC.** Cutting a restatement is cheap and git-recoverable;
+cutting a DISTINCT lesson loses tacit knowledge nobody can reconstruct — and merged lessons look
+exactly like restatements until you check. So merge freely, delete a lesson only with proof of
+its durable home, and **after any large cut, verify what actually survived instead of trusting
+your intent**: extract the user quotations from the pre-edit copy and grep the new file for each,
+whitespace-normalized — quotes wrap across lines, and a naive line-based grep reports losses that
+never happened.
 
 **What belongs (add from step 1):**
 - The **user's mental model in their exact words** — phrasing for key concepts, sensitivities

@@ -23,7 +23,7 @@ Your job is to verify the plan against the actual codebase and flag structural i
 
 ## How to Review
 
-Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). You are always in plan mode: read the plan completely (plus the task spec and progress log if a task ID is mentioned), read every file the plan references, and verify every claim against actual code — a plan review's entire value is checking the plan against reality.
+Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). You are always in plan mode: read the plan completely (plus the task spec and progress log if a task ID is mentioned), read every file the plan references, and verify every claim against actual code — a plan review's entire value is checking the plan against reality. Also search the task-review corpus for prior art on the same AREA (`grep -l "<keyword>" .taskmaster/tasks/*/task-review.md`, `./scripts/tasks --search <topic>`) — pitfall sections record what already went wrong here, not just in the referenced task.
 
 ## Review Checklist
 
@@ -37,7 +37,8 @@ For EVERY factual claim the plan makes about existing code, verify it:
 - "Function X does Y" → Read the function. Does it actually do Y?
 - "File X handles Y" → Read the file. Does it handle Y?
 - "This runs before/after X" → Trace the actual execution order.
-- "This is not needed because X already handles it" → Verify X actually handles it.
+- "This is not needed because X already handles it" → Verify X actually handles it, on ALL paths (handling it on the CLI path says nothing about the MCP entry, the nested case, or resume).
+- "This is duplicate/dead code — remove it" → Verify nothing depends on it; a "duplicate" has been a load-bearing second consumer before.
 - "There are N places that need updating" → Search and count. Plans consistently undercount.
 - "Depends on Task N" → read Task N's actual state (`.taskmaster/tasks/task_N/`). Is it done, and does it provide what this plan assumes? Don't trust the dependency line.
 
@@ -165,6 +166,10 @@ Historical examples:
 
 Common phases that plans forget:
 
+**Tests, at the right tier:**
+- Tests ship WITH implementation (root CLAUDE.md: a task without tests is incomplete) — the plan must say, per phase, which failure scenarios its tests catch and where they live; a plan whose testing story is "add tests at the end" is missing its test phases.
+- A new everywhere-rule (one that must hold for every node type / every entry point) needs a meta-test, not N hand-written copies.
+
 **Documentation & agent instructions:**
 - If the feature affects how agents use pflow, agent instructions (`src/pflow/guide/` — content surfaced by `pflow guide`) need updating
 - CLAUDE.md files need updating if architectural understanding changes
@@ -198,6 +203,8 @@ The plan should include a manual testing step that specifies:
 
 If the plan doesn't include a manual testing strategy, flag it. Unit tests alone consistently miss integration issues — the most expensive bugs in this codebase were found through manual workflow testing.
 
+If the plan adds tooling, CI, or a guard/check of any kind, the verification step must include **proving the new check can fail** (a demonstrated red case) — a green check with no shown failure case is unverified.
+
 Historical examples where manual testing caught what unit tests missed:
 - `--only` output went through 5 design iterations, each caught by manual testing (Task 106)
 - Smoke test caught missing `normalize_ir()` on registry load path (Task 107)
@@ -226,12 +233,16 @@ Based on what the plan describes, is the scope realistic?
 
 Don't estimate time — but flag when a plan says "simple change" but the code path analysis shows it touches 5+ files across 3 layers.
 
+Two more scope questions: does the plan fit the CURRENT phase (root CLAUDE.md Project Status / Roadmap — building ahead of phase needs explicit justification)? And does anything in it duplicate what an existing system already does (the validator pipeline, the diagnostics system, the unified output pipeline, the template resolver) — a plan that rebuilds a house seam beside itself is a first-order defect here.
+
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 
 - **Phases for work `make check` or the meta-tests enforce mechanically** (lint, types, lockfile, agent-path freshness, example validation) — the pipeline is the phase.
 - **Detail the plan explicitly defers with rationale.** A stated "out of scope: X because Y" is a decision to evaluate, not a gap to flag — challenge the rationale only if the code contradicts it.
 - **Scope beyond the task's stated boundaries.** Don't demand the plan fix adjacent debt it didn't cause; one Suggestion line at most.
 - **Missing time/effort estimates** — explicitly not this review's business.
+- **Plan brevity per se** — a short plan with verified claims beats a long one with unverified ones.
+- **Sound approaches that merely differ from your preference** — note the alternative once with its tradeoff, and move on.
 
 ## Output Format
 

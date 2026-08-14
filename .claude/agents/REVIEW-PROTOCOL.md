@@ -13,9 +13,11 @@ Shared mechanics for every `review-*` agent. Your agent file gives you the **len
 ## Method
 
 - **Be extremely thorough — your context window is expendable.** A thorough review that catches one real issue is worth far more than a fast review that misses it.
+- **Review to refute, not to confirm.** Hunt the reason the change is wrong, not evidence it's right — confirmation is what the implementer already produced.
 - **Read sequentially, one file at a time.** After each file, stop and apply your lens before moving on. Parallel reading skips the compounding step.
 - **Anchor on raw observed behavior** — actual code paths, literal output, real data shapes — not on names, labels, or mental categories. Where possible, run the scenario and read what actually happens.
 - **Codebase facts cited in your lens file can go stale** (paths, tables, pipelines, key lists). When one is load-bearing for a finding, verify it against the code or the canonical CLAUDE.md it cites before relying on it.
+- **Your lens's checklist is the floor, not the ceiling.** After completing it, take one dedicated pass asking how THIS change could fail in a way no listed item names — the off-checklist find is a review's highest-value outcome.
 
 ## What NOT to flag (all lenses)
 
@@ -28,6 +30,7 @@ Signal over noise: a flood of speculative findings teaches the deploying agent t
 - **Speculative future needs.** The project rule is "solve observed problems, not theorized ones" — don't invert it.
 - **"Consider adding X" where X already exists.** Verify first; suggesting infrastructure that's already wired is the classic false positive.
 - **Defense-in-depth when the primary defense is adequate and tested.**
+- **Faithful copies of an established pattern.** Code that mirrors how sibling modules implement the same concern is convention here, not a finding — deviation FROM the established pattern is.
 - **Syntax, idiom, formatting, and naming nitpicks.** ruff/mypy own the mechanical layer; everything past that is preference unless you can name its consequence.
 
 **The general test behind this whole list: name what goes wrong if it isn't fixed.** Every finding must carry a consequence — wrong behavior, a concrete bug class, or a real comprehension cost for the next agent. "I would have written it differently" is never a finding.
@@ -45,6 +48,8 @@ When torn between two severities, choose the LOWER and state the uncertainty. Se
 ## Reporting
 
 - **You REPORT; you do not fix.** Every finding is a claim the deploying agent verifies before acting — make it concrete and falsifiable: file:line, the failure scenario, what should happen instead.
+- **Re-verify before you report.** Re-open each cited file and confirm the lines support the finding as written — drop anything you cannot re-cite. A finding that dies on re-read was never a finding. Claims about documents (specs, ADRs, task-reviews) carry the same bar: quote the line, never paraphrase from memory.
+- **Partial coverage is reportable.** Anything your lens should have checked but couldn't — unreadable file, unresolved ambiguity, exhausted budget — is a named gap in your report, never a silent omission. An unchecked area must not appear under verified-clear.
 - **Finding nothing is a valid, reportable outcome.** Do not invent findings to look busy; populate your verified-clear section instead — it's what makes a clean report trustworthy.
 - **Stay in your lens.** If a finding squarely belongs to another reviewer's lens, report it as ONE line naming that lens ("possible race here — review-concurrency-safety territory") instead of developing it. The deploying agent runs the set; duplicated deep-dives waste the whole budget.
 - **Re-reviews**: when the caller supplies previous findings, verify each — fixed → list under verified-clear; unfixed → re-emit (don't assume a push fixed it); disputed with reasoning → engage the reasoning, don't just repeat the finding.

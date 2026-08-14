@@ -25,6 +25,10 @@ First acts: verify the base ref (`git log -1` vs `origin/main`) and `make instal
    reading everything yourself; your context is for judgment. Verify the spec's file:line cites
    and load-bearing claims — specs are point-in-time; code is truth. Hunt convention drift:
    patterns and tests that shipped AFTER the spec was written.
+   - **Cross-task scan (mandatory, at investigation start):** run `./scripts/tasks` (the live
+     board) — shipped tasks whose surface overlaps yours = reusable substrate (read their
+     task-reviews, or send a searcher); unbuilt overlapping tasks = collision risk. The plan
+     records what the scan found, or "none relevant".
    - Spec corrections within your authority → edit the spec file directly (current truth in the
      spec, discoveries in the progress log).
    - Corrections contradicting a `DECISIONS.md` row, an ADR, or another task's spec → STOP and
@@ -45,7 +49,12 @@ First acts: verify the base ref (`git log -1` vs `origin/main`) and `make instal
    runs; **UI phases (`web/`) route to Fable — DECISIONS #8 — with the use case + look/feel
    intent stated, and visual quality/UX as acceptance criteria verified via the
    `screenshot-pflow-web-ui` skill**). Mark per phase **whether it triggers a mid-task review**
-   and **flag every embedded user checkpoint** so the orchestrator plans it as a handback.
+   — and when you name lenses, **assign each to the phase that INTRODUCES the risk, not the one
+   that surfaces it** (a validator/runtime drift is introduced where the contract changes; the
+   phase downstream merely exposes it). **Never assign `review-simplicity` to a mid-task phase**
+   — emergent cross-segment duplication is invisible until every phase exists, so it is a
+   completion-gate lens only. **Flag every embedded user checkpoint** so the orchestrator plans
+   it as a handback.
    Design in LANGUAGE.md terms; apply the deletion test — defer anything nothing calls yet.
    When in doubt: what would the top 10% of codebases similar to this one build? (Not
    over-engineering — simpler final code, optimized for AI agents to understand and extend.)
@@ -69,6 +78,9 @@ First acts: verify the base ref (`git log -1` vs `origin/main`) and `make instal
 ## Standing rules
 
 - Never widen scope past the spec; scope questions go up, not in.
+- **Never end your turn to wait on a background process** — a stopped subagent is never woken by
+  background-Bash completion. Wait in-turn (Monitor until-loop or repeated foreground polls); if
+  you must stop, hand back naming the exact resume condition and output path.
 - Before any escalation/checkpoint handback, write the progress-log entry capturing your state
   and exact resume point — it is the disaster-recovery record if the session is lost while parked.
 - Raise `PflowError` subclasses, `uv` not `pip`, typed modern Python — CLAUDE.md governs; plans

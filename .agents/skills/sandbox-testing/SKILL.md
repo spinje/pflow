@@ -1,6 +1,6 @@
 ---
 name: sandbox-testing
-description: Run focused tests and quality checks safely in the Codex sandbox for pflow or Loudkult. Use before testing either repository, especially when uv caches, home-directory writes, subprocess permissions, databases, Redis, or frontend tooling may behave differently inside the sandbox.
+description: Run focused tests and quality checks safely in the Codex sandbox for pflow or the sibling Django repo. Use before testing either repository, especially when uv caches, home-directory writes, subprocess permissions, databases, Redis, or frontend tooling may behave differently inside the sandbox.
 ---
 
 # Sandbox Testing
@@ -8,7 +8,7 @@ description: Run focused tests and quality checks safely in the Codex sandbox fo
 ## Detect the repository and platform
 
 - pflow: root `pyproject.toml` and root `.venv/`.
-- Loudkult: `backend/pyproject.toml`, `backend/.venv/`, and `frontend/`.
+- Sibling Django repo: `backend/pyproject.toml`, `backend/.venv/`, and `frontend/`.
 - Detect macOS, Linux, or Windows before choosing paths and shell syntax.
 
 ## Operating rules
@@ -37,7 +37,7 @@ Linux uses `HOME="${TMPDIR:-/tmp}/pflow-test-home"`. Windows uses `.venv\Scripts
 
 Prefer `.venv/bin/pflow` (or `.venv\Scripts\pflow.exe`) for CLI checks. Defer authoritative Windows shell, subprocess, and broad e2e behavior to pflow's Windows GitHub Actions jobs after a sandbox process failure appears.
 
-## Loudkult profile
+## Sibling Django repo profile
 
 The backend virtualenv lives under `backend/`; the frontend uses pnpm.
 
@@ -60,7 +60,7 @@ pnpm exec eslint <paths>
 pnpm exec tsc -p tsconfig.app.json --noEmit
 ```
 
-Backend tests may require PostgreSQL and Redis. Check `make doctor`; if the sandbox cannot reach or start a required service, run service-independent checks locally and leave the service-backed proof to Loudkult's Ubuntu CI. Loudkult does not use pflow's encoding-warning, redirected-home, Windows Git Bash, or pflow CLI rules unless the changed code independently introduces those concerns.
+Backend tests may require PostgreSQL and Redis. Check `make doctor`; if the sandbox cannot reach or start a required service, run service-independent checks locally and leave the service-backed proof to that repo's Ubuntu CI. The sibling repo does not use pflow's encoding-warning, redirected-home, Windows Git Bash, or pflow CLI rules unless the changed code independently introduces those concerns.
 
 ## Failure signatures
 

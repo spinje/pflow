@@ -41,7 +41,42 @@ Tell the agents the chosen scope explicitly in their prompts — per REVIEW-PROT
 
 **Protect your context window.** Do NOT read diffs, plans, or full files yourself — the subagents have expendable context windows. The cheap scope commands above and small targeted reads during verification (an ADR, one flagged function) are the exception, never whole diffs or plans. You only need the task ID and a one-line description to deploy.
 
-## Deploy Agents
+## Dispatch — how the lenses run
+
+**Default: the pflow fan-out, waited on IN-TURN.**
+
+```
+uv run pflow workflows/review/run-review-lenses.pflow.md \
+  lenses='["review-silent-failures","review-impact-completeness",…]' \
+  review_target="Review all changes on this branch vs main for task N (title)."
+```
+
+Provider defaults to codex — cross-model diversity is the point: a same-family reviewer shares
+the author's blind spots. **Cross-model means OPPOSITE the builder**: a Claude-side caller keeps
+the codex default; a Codex-side gate runner passes `provider=claude` (the claude branch runs
+tool-restricted and SDK-sandboxed; the codex branch stays the mechanically read-only path). Each `lenses` entry is a bare agent name or `{"name": …, "target": …}`
+giving that one lens its own review target (the mechanism for re-reviews: hand a lens its prior
+findings via its per-lens target). The workflow reads each lens's persona + frontmatter itself,
+runs them read-only in parallel, and returns ONE merged, deduplicated report (the merge
+preserves, never adjudicates — evaluation stays yours). A battery outruns a single Bash call
+(lenses run minutes to tens of minutes; a foreground call caps at 600s and past the cap
+auto-backgrounds into the wake trap), so launch it **backgrounded with stdout redirected to a
+declared file inside the worktree/task folder**, then **WAIT IN-TURN** for that file — a Monitor
+until-loop or repeated foreground polls. **Never end your turn to wait** — a stopped caller is
+never woken by background-Bash completion (DECISIONS #17). An empty or
+partial report is a COVERAGE GAP, not a clean pass — the report's Coverage section names failed
+lenses; re-run those before evaluating.
+
+**Fallback: direct Agent-tool launches** (the section below) — a logged one-off for when pflow
+cannot run or the caller must keep working in parallel; state the reason wherever you record the
+gate's outcome. **Plan-mode reviews always launch directly too** — the fan-out's contract is
+code review; the fan-out default applies to code mode only.
+
+**`review-falsifier` always launches directly** (Agent tool), never through the fan-out — it
+EXECUTES the change (real workflow runs, targeted pytest) and needs the access the read-only
+fan-out never grants. Code mode only.
+
+## Deploy Agents (direct launch — the fallback path, and the falsifier's only path)
 
 Launch selected agents in capacity-aware parallel batches. Never exceed the runner's available child slots (Codex has four total slots, so an orchestrator can run at most three children at once). Fill the available slots in one parallel launch, wait for that batch, then launch any remainder. Keep prompts minimal — the agents have detailed built-in instructions and know the pflow codebase.
 
@@ -64,8 +99,9 @@ Pick by what the scope actually touches — every selected agent must earn its s
 | `review-concurrency-safety` | Threads, executors, copy semantics, asyncio, shared mutable state |
 | `review-test-fidelity` | Substantial new test coverage, regression tests for bug fixes |
 | `review-simplicity` | Multi-phase implementations at Full tier+ (integrated code only, code mode) |
+| `review-falsifier` | The spec makes testable behavioral promises and a dev environment can run them — the only lens that EXECUTES (real workflow runs, targeted pytest). Direct launch only, code mode only |
 
-`review-plan` only reviews plans; `review-simplicity` only reviews integrated code — never deploy them in the wrong mode.
+`review-plan` only reviews plans; `review-simplicity` and `review-falsifier` only review integrated code — never deploy them in the wrong mode.
 
 ### Prompts
 

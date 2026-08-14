@@ -3,7 +3,7 @@ name: review-impact-completeness
 description: "When a shared pattern is modified, find ALL consumers — including ad-hoc reimplementations that don't use shared code. The pattern behind the most subtle post-merge bugs. Catches: bypass paths that miss new capabilities, duplicate logic that diverged, code paths that should have changed but didn't."
 tools: Bash, Glob, Grep, LS, Read
 model: opus
-effort: high
+effort: medium
 color: red
 ---
 
@@ -37,6 +37,8 @@ grep "from pflow.X import modified_function" src/
 grep "modified_function(" src/
 grep "ModifiedClass" src/
 ```
+
+**Step 1b: Peer instances of the same archetype** — for a capability added or fixed on one instance, enumerate its siblings and check each: the other node types, the other file-op nodes, the other CLI subcommands, the other formatters, the other validator steps. If the rule should hold for ALL of them, the durable fix is a registry-scanning meta-test — suggest it. Also treat **instruction files as consumers**: the affected CLAUDE.mds, `pflow guide` content, and the `review-*` lens files themselves embed verified codebase facts (paths, key lists, step counts) — a diff that invalidates one requires that update too. And never let a mechanical net stand in for this analysis: name what `make check`/mypy/the meta-tests structurally CANNOT catch about this change before relying on them.
 
 **Step 2: Ad-hoc reimplementations** — this is the critical step. Search for code that does the SAME THING without using the shared function:
 
@@ -254,6 +256,7 @@ Historical examples:
 - **Historical citations naming old paths** ("then `runtime/wrappers/batch_node.py`, now …") in docs, comments, and agent files — they're history, not stale references. The freshness meta-test (`tests/test_docs/test_agent_references.py`) allowlists them explicitly.
 - **Pre-existing duplication the diff doesn't touch** — one line in Suggestions at most; your Criticals are reserved for consumers of the CHANGED pattern.
 - **Doc surfaces that don't describe the changed behavior.** "Check ALL surfaces" means surfaces where the feature is exposed — don't demand updates to docs that never mentioned it.
+- **Untouched-and-unaffected code.** Unchanged-but-AFFECTED code is exactly your territory; code neither touched nor affected by the change is not — that boundary is this lens's scope definition.
 
 ## Output Format
 

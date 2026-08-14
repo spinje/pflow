@@ -43,6 +43,10 @@ The established pattern is to REDUCE test count while INCREASING coverage of rea
 
 **Actively flag test bloat.** If the diff adds many tests that test the same thing at slightly different parameters, or tests that assert implementation internals — suggest consolidation or removal. One well-crafted integration test beats five shallow unit tests.
 
+The "never test" rules: don't test the framework or a third-party library (pydantic field constraints, click's own parsing); don't duplicate archetype tests across siblings — **test the archetype once** (one node type, one file-op, one formatter), then test only the *differences* in the others. Flag new tests that violate these as bloat to remove.
+
+**Passing by coincidence applies to EVERY test, not just regression tests**: a single-record dataset makes `count == 1` trivially true (use ≥2 with distinguishable values and assert the specific one); a test on a neighboring path proves nothing about the path under claim; an input the code silently ignores yields a pass that verified nothing.
+
 ## Review Checklist
 
 ### 1. Tests That Encode Wrong Behavior
@@ -117,20 +121,7 @@ Historical examples:
 
 ### 5. Comparisons That Aren't Assertions
 
-A Python comparison (`x == 1`) is a valid expression that returns `True`/`False` but does nothing. It looks like an assertion but isn't one.
-
-```python
-# BUG: comparison, not assertion — test always passes
-node._run.call_count == 1
-
-# CORRECT: assertion — test fails if count is wrong
-assert node._run.call_count == 1
-```
-
-Historical example:
-- `test_checkpoint_tracking.py` had `node1._run.call_count == 1` — a comparison, not an assertion. Test passed regardless of actual behavior. (Task 68)
-
-**Search pattern**: In test files, look for lines that are bare comparisons — expressions with `==`, `!=`, `>`, `<`, `in`, `is` that aren't preceded by `assert` and aren't in an `if`/assignment.
+A bare comparison statement (`node._run.call_count == 1` with no `assert`) always passes. **ruff's flake8-bugbear B015 owns this mechanically for `tests/`** — don't re-scan by hand; flag only occurrences where the linter can't see (test code under ruff-excluded paths like `examples/` or `scripts/`), and hand the rest to the pipeline.
 
 ### 6. Missing Integration Tests
 
@@ -208,6 +199,8 @@ Tests that depend on timing are inherently fragile. Check:
 
 ### 11. Missing Negative and Edge Case Tests
 
+**A rejection-path test needs a second case that fails DIFFERENTLY, plus a non-vacuity check.** A single "it errored" assertion proves only that something refused — not that the guard under test refused it (a missing-file error and a validation error can look identical to a loose assert). Pair two cases whose failures carry different messages/types so together they identify which guard fired, and make sure the rejection path was actually REACHED (an input rejected earlier in the pipeline satisfies "raises" for free).
+
 For every feature change in the diff, check: are FAILURE cases tested?
 
 Not just "it works" but:
@@ -220,7 +213,7 @@ If the diff only has happy-path tests, flag it. The bugs in this codebase live i
 
 ### 12. Safety Tooling Must Be Proven to Fail
 
-If the diff adds or edits a check that guards the codebase — a meta-test (`tests/test_docs/`), lint rule, make target, CI step, pre-commit hook — demand the demonstrated red case: what input makes it fail, and has that been shown? **A green check is evidence of nothing until you've seen it red** — a typechecker verifying 0 files and a linter linting 0 files both pass beautifully.
+If the diff adds or edits a check that guards the codebase — a meta-test (`tests/test_docs/`), lint rule, make target, CI step, pre-commit hook — demand the demonstrated red case: what input makes it fail, and has that been shown? **A green check is evidence of nothing until you've seen it red** — a typechecker verifying 0 files and a linter linting 0 files both pass beautifully. If none is demonstrated, that absence IS the finding; the deploying agent constructs the violating input, not you.
 
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 
@@ -232,7 +225,7 @@ If the diff adds or edits a check that guards the codebase — a meta-test (`tes
 
 ## Output Format
 
-REVIEW-PROTOCOL.md skeleton. Title: `Test Fidelity Review`. Critical = tests that encode wrong behavior or give false confidence; Suggestions include removals (bloat). Verified-clear section: **Good Tests** (behavior-focused, production-matching, high-value). Summary answers: do these tests provide real confidence, and is there bloat?
+REVIEW-PROTOCOL.md skeleton. Title: `Test Fidelity Review`. Critical = tests that encode wrong behavior or give false confidence — for this lens that IS the battery's Critical, because it lets breakage ship unseen; never deflate it to Warning for being "only a test". Suggestions include removals (bloat). Verified-clear section: **Good Tests** (behavior-focused, production-matching, high-value). Summary answers: do these tests provide real confidence, and is there bloat?
 
 ## Key Principle
 

@@ -1,5 +1,5 @@
 ---
-description: This command is for human / machine invocation only. Do not use.
+description: This command is for human / machine invocation only. Do not use unless explicitly asked by the user.
 argument-hint: <task-id | plan-path> [phase N] [extra context files]
 ---
 Implement an existing implementation plan without shortcuts, keeping the progress log current as you go.
