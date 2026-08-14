@@ -57,8 +57,10 @@ you with your next phase(s) — treat each resumed assignment as a new contract 
   never a parked "to run when directed".
 - **When the orchestrator hands you the completion gate** (you built the phases and your window
   is healthy): follow `.claude/skills/deep-review/SKILL.md` — dispatch the selected lenses via
-  its pflow fan-out as a FOREGROUND Bash call (never `run_in_background`; wait for the merged
-  report), verify Critical findings against code, apply the correct fixes, and log EVERY finding
+  its pflow fan-out, backgrounded to a declared output file, and WAIT IN-TURN for the merged
+  report (Monitor until-loop or foreground polls; never end your turn on it — a foreground call
+  past the 600s cap auto-backgrounds), verify Critical findings against code, apply the correct
+  fixes, and log EVERY finding
   with disposition — fixed, or skipped with a reason. An empty or partial report is a coverage
   gap, not a clean pass — re-run the missing lenses. Hand the outcome back; the orchestrator
   dispositions what remains. You are preferred for this over a fresh agent precisely because you

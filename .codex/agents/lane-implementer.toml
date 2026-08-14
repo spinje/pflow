@@ -91,7 +91,8 @@ calls you make yourself, stated visibly in the PR body. Always-escalate regardle
   docs/CI diffs. Platform-sensitive code must clear the blocking `tests-windows` CI gate.
 - **Completion gate, proportionate to the diff.** When you are FULLY happy, select review lenses
   by what the diff actually touches and run them per the `deep-review` skill — dispatch via its
-  pflow fan-out (`workflows/review/run-review-lenses.pflow.md`) as a FOREGROUND Bash call. A
+  pflow fan-out (`workflows/review/run-review-lenses.pflow.md`), backgrounded to a declared
+  output file and waited on IN-TURN per the skill (never by ending your turn). A
   one-line fix may warrant none. **Floor of one lens — never zero — when the diff changes shared
   tooling, CI, or a security boundary**, because there your blast radius exceeds what
   self-verification can see. Evaluate and apply the correct fixes yourself and record EVERY

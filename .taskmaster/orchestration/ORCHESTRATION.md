@@ -44,7 +44,10 @@ B, pick A; between A and C, ask the user.
   auto-reviewer action (DECISIONS #14) — **don't restate it in packets**; the packet carries only
   the variables: issue #, worktree absolute path, base SHA, file-ownership list (derived from
   what else is in flight), evaluation hints (your own pick-time verification findings, so the
-  lane doesn't re-derive them). The Definition of done and UI routing (DECISIONS #8) still
+  lane doesn't re-derive them). **When the issue prescribes a fix to shipped user-visible
+  behavior or a shipped rule AND ≥2 defensible final shapes exist, the packet directs the lane
+  to hand back evaluation + options BEFORE building** — a named hand-back condition, not a hope.
+  The Definition of done and UI routing (DECISIONS #8) still
   govern. **Model by assessed complexity (DECISIONS #9): the main orchestrator assesses at pick
   time; Opus is the floor — never lower for an end-to-end agent; genuinely complex issues (hard
   debugging, subtle root cause) warrant Fable, but ONLY with the user's per-launch approval.** No
@@ -148,11 +151,16 @@ merged PR and point the packet there instead; almost all recent tasks have revie
    this process. Create worktrees sequentially, never in one parallel shot.
 2. **Launch:** planner and task orchestrator are Agent-tool subagents pointed at the worktree's
    ABSOLUTE path; they work only there — **sequentially, never two agents concurrently in one
-   worktree**. First acts of each: verify the base ref (`git log -1` vs `origin/main` — a stale
+   worktree**. Launch only into a FULLY provisioned worktree — an agent in a half-provisioned
+   checkout silently operates on the wrong target; a failed provisioning is torn down and
+   re-run, never worked around. First acts of each: verify the base ref (`git log -1` vs `origin/main` — a stale
    base misses the newest contracts) and `make install` (fast — uv's cache is shared).
 3. **Commits:** the planner commits its plan (+ spec corrections) on the feature branch; the task
    orchestrator commits as phases complete (deliberate staging, never blanket `-A`;
-   scratchpads/briefs are gitignored and stay out). Never to `main`. Task docs merge to `main`
+   scratchpads/briefs are gitignored and stay out). **An orchestrator and its implementer share
+   one worktree, so the orchestrator does not commit while an implementer is live** — pre-commit's
+   stash/restore cycle runs over the child's uncommitted edits; batch log entries to phase
+   boundaries. Never to `main`. Task docs merge to `main`
    WITH the code, via the PR. Pre-commit hooks enforce repo conventions (including the task-Status
    vocabulary) — never bypass with `--no-verify`. **PR review marker (DECISIONS #12):** the first
    commit on each PR branch uses a normal message; EVERY later commit on that branch (follow-up,
@@ -187,6 +195,14 @@ any parallel launch** (hot seams shift as arcs progress). Never
 fan out multiple consumers against a DRAFT contract — skeleton-first, pin the contract against the
 first real consumer, then parallelize. Contracts get pinned **in-task at the seam that forces
 them**, not in up-front documents.
+
+**Never mutate shared tooling while producers are live** (the Makefile, `make check`, a
+pre-commit hook, a global MCP entry) — every running checkout reads it, so a fix lands as a
+mid-flight breakage; defer it to a quiet moment or make the change purely additive. When several
+in-flight branches will inherit the same shared-tooling change, hold the LAST one idle and have
+it rebase ONCE onto final `main` rather than per sibling ship. When `main` moves under a live
+producer, send it the TEXT deltas that touch what it will author — the rebase carries the file;
+it does not make the agent re-read it.
 
 ## Model routing (supersedes the 2026-07-03 rulings — DECISIONS #3; user may override any launch)
 
@@ -232,11 +248,21 @@ Claude agent `effort` maps directly to the same Codex reasoning level: `low` →
   launch an Opus task orchestrator on the finished plan.
 - **Limit recovery** (empirical, inherited from a predecessor system's Fable exhaustion): NEVER
   resume an agent whose model tier is exhausted — it re-dies on its next inference
-  call. Recovery = a REPLACEMENT at an available tier launched into the SAME worktree (absolute
-  path, no isolation flag), explicitly RESUMING from spec + plan + progress log. Tier capped with
-  a lower option → re-route the plan down; capped with none → the task waits. **Never `fork` to
-  force a model** — a fork inherits the main orchestrator's whole context (breaking the two-level
-  design) and ignores the `model` param anyway.
+  call. **MODEL-TIER caps only**: an agent killed by a GENERAL session limit resumes fine
+  through the runner's follow-up mechanism once the limit resets — its children died with it, so
+  relaunch those fresh; a transient API death (connection dropped mid-response) resumes the same
+  way. A watchdog-STALL kill gets ONE resume attempt under the mid-write protocol — the resumed
+  agent first writes the log entry for where it actually is, then re-verifies its own partial
+  artifacts file-by-file (a mid-write death leaves edits that read as complete); stalls again →
+  rotate fresh. After a mass limit kill, resume the ORCHESTRATORS first — one hop; each resumes
+  its own children; never resume grandchildren directly. A death mid-fix exposes DISPOSITION
+  STATE, not findings — the report survives on disk; which findings were accepted lives only in
+  the dead context, so dispositions are re-derived before code is touched.
+  Tier-cap recovery = a REPLACEMENT at an available tier launched into the SAME worktree
+  (absolute path, no isolation flag), explicitly RESUMING from spec + plan + progress log. Tier
+  capped with a lower option → re-route the plan down; capped with none → the task waits.
+  **Never `fork` to force a model** — a fork inherits the main orchestrator's whole context
+  (breaking the two-level design) and ignores the `model` param anyway.
 
 ## Agent economics — phases ≠ agents
 
@@ -252,6 +278,22 @@ implementer pays a real context-rebuild tax. The plan's agent assignment default
   instruction. If you'd send "continue as planned" regardless, the stop is overhead — bundle.
 - **Fresh launch** only for a stated reason: tier change, parallel disjoint work, a huge/degrading
   window, or fresh eyes (which are the review battery's job, not an implementer's).
+- **UI-driving phases hit the degrading-window trigger EARLY** — every screenshot lands in the
+  implementer's context, so UI phases burn tokens several times faster than backend work; treat
+  ~300–400k as the rotation point. **Once a phase has externalized its knowledge into a written
+  archetype/doc, the continuity rationale expires** — rotate to a fresh same-tier implementer
+  whose packet is the written doc + progress-log tail, not a full re-read. Drive/screenshot what
+  acceptance requires, not more.
+- **Token counts for subagents arrive only in the MAIN orchestrator's notification metadata** —
+  an agent's self-estimate is unreliable (observed under-reporting by ~250k) and the metadata is
+  per-segment/non-monotonic; relay the number unprompted — the rotation call is structurally the
+  launching orchestrator's to inform. **Partial rotation is a real option**: a long-lived
+  implementer names WHERE its priors are worst and that one lens goes to a fresh agent.
+- **A COMPLETED agent still holds everything it learned** — ask it to shape the next agent's
+  brief or resolve a later doubt (including the list of things it dismissed on documentation
+  alone); one message beats a re-derivation. The main orchestrator alone holds cross-agent
+  evidence — re-read your own recent handbacks before letting any agent re-derive a fact a
+  sibling already proved.
 - Synthesis/doc phases belong to whoever already holds the content.
 - Main-orchestrator waits on running children default to 15 minutes (DECISIONS #13); child
   completion and user messages still interrupt immediately.
@@ -278,9 +320,12 @@ plans — the agents own their own quality:**
   verifies Critical findings against code, applies the correct fixes, and logs EVERY finding with
   disposition — fixed, or skipped with a reason; the orchestrator reads the outcome and
   dispositions what remains. Dispatch is Bash-drivable
-  (`workflows/review/run-review-lenses.pflow.md`, provider codex — model-family diversity), run
-  in the FOREGROUND, so the whole gate is one job owned by the gate-runner; direct Agent-tool
-  lens launches are a logged one-off for when pflow cannot run or the caller must keep working.
+  (`workflows/review/run-review-lenses.pflow.md`, provider codex — model-family diversity),
+  launched backgrounded to a declared output file and **waited on IN-TURN** (Monitor until-loop
+  or foreground polls — a foreground call past the 600s Bash cap auto-backgrounds into the wake
+  trap; never end a turn on it), so the whole gate is one job owned by the gate-runner; direct
+  Agent-tool lens launches are a logged one-off for when pflow cannot run or the caller must
+  keep working.
   `review-falsifier` always launches directly — it executes, and the fan-out is read-only.
   Direct launches need the Agent tool, which phase implementers lack: when the falsifier (or the
   direct-launch fallback) is needed and the gate-runner is an implementer, the task orchestrator
@@ -317,6 +362,12 @@ test surface; never mock what you can test directly). Process additions:
   a fixture that was never populated, or output that was never produced — so every "must not
   appear" needs a "must appear" beside it, proving the medium was capable of showing it. Applies
   identically to CLI output, trace contents, API shapes, and a driven page's text.
+- **A verification that would pass identically on the PRE-change code is a regression guard, not
+  shipped-ness evidence** — label it as such, and state separately what positively proves the
+  new behavior exists. **"Could this environment show a failure?" is a separate question from
+  "does the check assert the right thing?"** — an empty shared store, an unpopulated fixture set,
+  or a dataset with zero qualifying rows makes any check pass for free; probe the data before
+  writing the check.
 - **"Verified" means you exercised the real surface**: CLI/behavior changes → run a real workflow
   (`uv run pflow ...`) and observe the output. **Web-UI changes ALWAYS invoke the
   `screenshot-pflow-web-ui` skill and verify EVERYTHING changed** (screenshot/measure every

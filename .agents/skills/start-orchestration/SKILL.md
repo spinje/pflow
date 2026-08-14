@@ -53,7 +53,12 @@ body's, the state file's — decays. Verification is the job, not overhead.
 3. **Freshness-check the spec before launch** (specs written ahead of their dependencies go stale
    as a *rule*). Fix staleness yourself — spec accuracy is your job; the HOW is the planner's, so
    don't design it. Corrections carry provenance ("Refreshed <date> against main — <what
-   changed>"). **Lock the decisions that gate the build** with the user → record them in the
+   changed>"). *For a security-heavy or architecturally complex draft spec*, you may commission
+   the review fan-out as a **SPEC review** (`review_target` = "SPEC review, not a code-diff
+   review …") — spec accuracy is orchestrator work, an explicit carve-out from "never runs
+   deep-review", which bans diff/plan review only. Disposition: A = fold accuracy corrections
+   now · B = record design gaps as a "RESOLVE AT START" constraint block in the spec (constraint
+   stated, mechanism left to the planner) · C = genuine decisions go to the user. **Lock the decisions that gate the build** with the user → record them in the
    spec's decision ledger *immediately* (DECIDED + date) + keep a deferred-by-design list. ADR
    check: hard to reverse + surprising + real trade-off → write it now (`context/adr/`).
 4. Before provisioning, apply **DECISIONS #5's commit gate**. Then **provision + launch** per
@@ -124,7 +129,10 @@ like a grant.
 
 - **Never send a bare conclusion** — the reasoning is what makes a subordinate able to improve on
   it, or refuse it when it's wrong. Hand inherited claims down AS claims with their source, never
-  as instructions.
+  as instructions. **Handing a multi-claim suggestion down, name WHICH claims need verifying** —
+  a bare "verify this" gets checked on its interesting half while its premise rides through
+  unexamined. A user condition on a risky op becomes a **fail-closed predicate** in the packet
+  ("every affected row must match X, else HOLD"), never a quoted sentence.
 - **Relay measurements, not verdicts**: paste the command's output (`git diff --name-only …`)
   labelled MEASURED — a verdict invites trust, a measurement invites verification.
 - **Attach a falsifiable precondition to a ruling handed down** ("confirm X is the worst case; at
@@ -154,7 +162,14 @@ like a grant.
   directly. Delegate verification sweeps, searches, mechanical edits — then **personally
   full-read the output**. "Make sure to verify everything when done."
 - **Explain simply when asked.** They approve on plain-language rationales, not spec text —
-  capture those verbatim (braindump/decision ledger); they're the real decision record.
+  capture those verbatim (braindump/decision ledger); they're the real decision record. The
+  plain-language problem statement and the options-already-weighed are ONE deliverable, not two.
+- **Quote the user VERBATIM as a blockquote into specs and packets — never a paraphrase.** Their
+  wording is what does the work downstream; a paraphrase loses the operative clause.
+- **Read boards and listings WHOLE — never through `head`/`tail`/`grep`** on your own reads: a
+  silently dropped row is exactly the failure a board exists to prevent.
+- **Lead with the deliverable.** A link, file, or artifact they must hunt for at the end of a
+  long message is one you failed to hand over.
 - **Honest self-correction is valued.** New evidence overturns your claim → say "that was a
   misread on my part" plainly. Never quietly paper over it.
 - **They decide direction; you own the recommendation.** They answer forks tersely ("a", "yes",

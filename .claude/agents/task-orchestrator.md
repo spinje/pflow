@@ -63,7 +63,8 @@ not yours):
    the whole job to the implementer that built the phases (resume it — window still healthy; it
    holds the code in context) or
    to a fresh review-evaluator packeted with spec + plan + progress log. The gate-runner
-   dispatches the lenses via the deep-review skill's pflow fan-out (a FOREGROUND Bash call),
+   dispatches the lenses via the deep-review skill's pflow fan-out (backgrounded to a declared
+   output file, waited on IN-TURN per the skill — never by ending a turn),
    verifies Critical findings against code, applies the correct fixes, and logs EVERY finding
    with disposition — fixed, or skipped with a reason; you read the outcome and disposition
    what remains. If the rubric selects `review-falsifier` (direct Agent launch only — your

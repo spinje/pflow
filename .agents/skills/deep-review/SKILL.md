@@ -42,7 +42,7 @@ Tell the agents the chosen scope explicitly in their prompts — per REVIEW-PROT
 
 ## Dispatch — how the lenses run
 
-**Default: the pflow fan-out, in the FOREGROUND.**
+**Default: the pflow fan-out, waited on IN-TURN.**
 
 ```
 uv run pflow workflows/review/run-review-lenses.pflow.md \
@@ -55,8 +55,12 @@ the author's blind spots. Each `lenses` entry is a bare agent name or `{"name": 
 giving that one lens its own review target (the mechanism for re-reviews: hand a lens its prior
 findings via its per-lens target). The workflow reads each lens's persona + frontmatter itself,
 runs them read-only in parallel, and returns ONE merged, deduplicated report (the merge
-preserves, never adjudicates — evaluation stays yours). Run it as a foreground Bash call and wait — never
-`run_in_background` (a stopped caller is never woken by background-Bash completion). An empty or
+preserves, never adjudicates — evaluation stays yours). A battery outruns a single Bash call
+(lenses run minutes to tens of minutes; a foreground call caps at 600s and past the cap
+auto-backgrounds into the wake trap), so launch it **backgrounded with stdout redirected to a
+declared file inside the worktree/task folder**, then **WAIT IN-TURN** for that file — a Monitor
+until-loop or repeated foreground polls. **Never end your turn to wait** — a stopped caller is
+never woken by background-Bash completion (DECISIONS #17). An empty or
 partial report is a COVERAGE GAP, not a clean pass — the report's Coverage section names failed
 lenses; re-run those before evaluating.
 
