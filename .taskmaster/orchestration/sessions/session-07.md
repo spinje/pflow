@@ -74,3 +74,38 @@
   fresh-eyes re-audit of ALL its DECISIONS #1–#57 (user's explicit ask).
 - Braindump refreshed (substrate-check lesson). Boot-readiness: successor boots per the role
   prompt, writes session-08, works ON the PR branch.
+
+## [2026-08-14] main orchestrator — session continued (user ruling): fresh-eyes re-audit begins
+
+- User ruled: continue in THIS session file (no session-08). Booted per role prompt; reality
+  verified (main == origin/main == 15a36a0f; fold = 2 commits on the PR-#610 branch; clean tree).
+- Blind-pass quarantine held at boot: DECISIONS read #1–#14 only; pflow BRAINDUMP.md and the
+  cross-repo scratchpad deferred to Phase B; PR #610 diff unread. Partial contamination noted
+  honestly: CURRENT-STATE headlines + this file's close entries name some imports in shorthand.
+- Next: Phase A — independent transfer list from the sibling programme's corpus.
+
+## [2026-08-14] main orchestrator — Phase A complete (blind pass)
+
+- Read personally: the sibling programme's DECISIONS #1–#57, ORCHESTRATION.md (538 ln),
+  BRAINDUMP.md (1382 ln, full), CURRENT-STATE.md. Five parallel searchers mined sessions 08–56
+  (~12k lines); all five reported with citations.
+- Independent transfer list written (scratchpad: phase-a-transfer-list.md): ~90 candidate items
+  across ledger kernels (A), ORCHESTRATION deltas (B), braindump kernels (C), session-mined
+  additions (D/E). pflow fold docs still unread; blindness held except the noted shorthand
+  contamination.
+- Next: Phase B — read pflow DECISIONS #15–#21, pflow BRAINDUMP, cross-repo scratchpad, PR #610
+  diff; four-bucket comparison.
+
+## [2026-08-14] main orchestrator — re-audit Phases B/C: two corrections landed
+
+- Phase B done: pflow DECISIONS #15–#21, BRAINDUMP, fold plan, and the full PR #610 diff read;
+  wiring greps green (name-ban 0 hits; citations resolve ≤#21; mirrors in sync; board clean).
+- Correction 1 (importance 2, visible): **falsifier gate-runner wiring gap** — #17 makes the
+  completion gate one job owned by the gate-runner, but phase implementers hold no Agent tool and
+  `review-falsifier` is direct-launch only; nothing said who launches it in the delegated-gate
+  configuration. Fixed: ORCHESTRATION review policy + task-orchestrator step 6 (orchestrator
+  launches it at commissioning, hands the report to the gate-runner); lane side confirmed covered
+  by its own Agent tool and stated.
+- Correction 2 (importance 1): CURRENT-STATE fold headline said #15–#20; row #21 exists → #15–#21.
+- Phase C in flight: pr-closer + sibling lane def + sibling role prompt read (kernels extracted);
+  two searchers comparing shared lenses and the five commands/skills pairs.

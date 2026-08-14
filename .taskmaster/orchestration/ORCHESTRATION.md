@@ -281,9 +281,12 @@ plans — the agents own their own quality:**
   (`workflows/review/run-review-lenses.pflow.md`, provider codex — model-family diversity), run
   in the FOREGROUND, so the whole gate is one job owned by the gate-runner; direct Agent-tool
   lens launches are a logged one-off for when pflow cannot run or the caller must keep working.
-  `review-falsifier` always launches directly — it executes, and the fan-out is read-only. (In
-  the GH-issue lane the lane implementer runs its own gate; same when a planner implements
-  itself.)
+  `review-falsifier` always launches directly — it executes, and the fan-out is read-only.
+  Direct launches need the Agent tool, which phase implementers lack: when the falsifier (or the
+  direct-launch fallback) is needed and the gate-runner is an implementer, the task orchestrator
+  launches it at commissioning time and hands the report to the gate-runner for evaluation with
+  the rest. (In the GH-issue lane the lane implementer runs its own gate — its own Agent tool
+  covers a direct falsifier launch; same when a planner implements itself.)
 - **Lane completion gate — the LANE IMPLEMENTER's own, proportionate to its diff** (contract in
   `lane-implementer.md`): lenses self-selected by what the diff touches, with a **floor of one
   when the diff changes shared tooling, CI, or a security boundary**. A one-line fix may warrant

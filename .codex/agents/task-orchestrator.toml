@@ -65,8 +65,10 @@ not yours):
    dispatches the lenses via the deep-review skill's pflow fan-out (a FOREGROUND Bash call),
    verifies Critical findings against code, applies the correct fixes, and logs EVERY finding
    with disposition — fixed, or skipped with a reason; you read the outcome and disposition
-   what remains. (When you implemented directly as a small task, you are the builder — run
-   your own gate.) Trace format touched? Run the Task-159 baseline
+   what remains. If the rubric selects `review-falsifier` (direct Agent launch only — your
+   implementer cannot launch agents), launch it yourself when you commission the gate and hand
+   its report to the gate-runner for evaluation alongside the fan-out's. (When you implemented
+   directly as a small task, you are the builder — run your own gate.) Trace format touched? Run the Task-159 baseline
    (`task_159/baseline/verify.sh`) as the outer regression net.
 7. **Close** — the fixed sequence: run **`create-task-review`** (the completion contract), then
    **`create-pr`** (which pushes the feature branch; you never merge). Both are user-level

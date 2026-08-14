@@ -6,7 +6,7 @@ Every claim here is a pointer to verify, not a fact._
 
 ## Process
 
-- **Cross-repo fold landed 2026-08-14 (DECISIONS #15–#20, session-07): the process contract
+- **Cross-repo fold landed 2026-08-14 (DECISIONS #15–#21, session-07): the process contract
   moved substantially** — read ORCHESTRATION.md fresh, don't trust memory of the pre-fold text.
   Headlines: state-doc cadence (#16, this file rewritten at close/park); completion gate is one
   job owned by the gate-runner, dispatched via the pflow fan-out (#17); effort routing (#18);
