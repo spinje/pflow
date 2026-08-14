@@ -109,3 +109,21 @@
 - Correction 2 (importance 1): CURRENT-STATE fold headline said #15–#20; row #21 exists → #15–#21.
 - Phase C in flight: pr-closer + sibling lane def + sibling role prompt read (kernels extracted);
   two searchers comparing shared lenses and the five commands/skills pairs.
+
+## [2026-08-14] main orchestrator — re-audit Phase C/D complete; report written
+
+- Phase C done: 7 remaining lens pairs + 5 commands + deep-review/close skills compared
+  (two searchers, load-bearing claims re-verified by me: test-reflect is the raw 7-line seed;
+  ruff B015 makes test-fidelity §5 mechanically redundant; the fan-out workflow supports
+  per-lens {name,target} that the skill didn't document); sibling role prompt, pr-closer,
+  lane-implementer, searcher defs, architecture skill read/diffed directly.
+- Correction 3 landed: deep-review skill now documents the workflow's per-lens target form.
+- NOT silently fixed (contradicts DECISIONS #17's literal "FOREGROUND"): the dispatch wording vs
+  the 600s Bash cap (workflow lens timeout 3600s; sibling measured 10–15 min batteries; a
+  foreground call past the cap auto-backgrounds into the wake trap). Escalated as proposal P0.
+- Deliverable written: `scratchpads/cross-repo-knowledge-transfer/re-audit-report.md` —
+  four buckets: ON-TARGET (the fold's core is sound; lane def improves on its source) ·
+  LANDED-BUT-WRONG (3, all fixed on branch) · MISSED (proposals P0–P8, incl. the sibling-ledger
+  #1–#27 gap the fold's #28–#57 read left, lens drift, test-reflect, braindump kernels) ·
+  OVERWEIGHTED (none found; two borderline candidates examined and kept).
+- Awaiting user rulings on P0–P8; PR #610 stays open meanwhile.

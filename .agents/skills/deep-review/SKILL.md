@@ -51,9 +51,11 @@ uv run pflow workflows/review/run-review-lenses.pflow.md \
 ```
 
 Provider defaults to codex — cross-model diversity is the point: a same-family reviewer shares
-the author's blind spots. The workflow reads each lens's persona + frontmatter itself, runs them
-read-only in parallel, and returns ONE merged, deduplicated report (the merge preserves, never
-adjudicates — evaluation stays yours). Run it as a foreground Bash call and wait — never
+the author's blind spots. Each `lenses` entry is a bare agent name or `{"name": …, "target": …}`
+giving that one lens its own review target (the mechanism for re-reviews: hand a lens its prior
+findings via its per-lens target). The workflow reads each lens's persona + frontmatter itself,
+runs them read-only in parallel, and returns ONE merged, deduplicated report (the merge
+preserves, never adjudicates — evaluation stays yours). Run it as a foreground Bash call and wait — never
 `run_in_background` (a stopped caller is never woken by background-Bash completion). An empty or
 partial report is a COVERAGE GAP, not a clean pass — the report's Coverage section names failed
 lenses; re-run those before evaluating.
