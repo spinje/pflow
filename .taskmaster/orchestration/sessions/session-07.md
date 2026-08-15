@@ -138,3 +138,12 @@
   mechanical-ownership rule (verified against pyproject); Summary-answers NOT added per-lens
   (verified already present in REVIEW-PROTOCOL's skeleton); `Blocked by:` machine line skipped
   (no parser support), its test imported as prose.
+
+## [2026-08-15] main orchestrator — "FULLY happy?" audit: found loose ends, closed them (batch 4)
+
+- The honest answer was no. Found: the #14 auto-reviewer gate unread (6 codex comments — user's
+  probe caught it); two P4/P6 items recommended-but-never-landed; the Phase-A list reboot-mortal;
+  CI state unchecked (now verified all green incl. Windows).
+- All six reviewer comments dispositioned (2 code-verified fixes in the workflows, 2 doc/contract
+  amendments, 1 guidance line, 1 already-fixed); stragglers landed; list rescued; workflows
+  re-validated by dry-run. Disposition comment posted on PR #610.

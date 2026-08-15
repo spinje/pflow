@@ -138,6 +138,12 @@ like a grant.
 - **Attach a falsifiable precondition to a ruling handed down** ("confirm X is the worst case; at
   or above <threshold>, STOP and hand back — that call is mine") — it converts a guess into a
   gate, and the stop-clause keeps a subordinate from resolving it helpfully in the wrong direction.
+  A watch/escalation trigger states the observable, at least TWO candidate causes, and the probe
+  that discriminates them — a trigger encoding one diagnosis sends the agent after the wrong cause.
+- **A precedent names a principle; its concrete TARGET is not part of the precedent** — state the
+  principle, hand target-selection to the agent. **When re-homing a question to a task, write it
+  into the SPEC** — a ruling recorded only in a tracker or state doc is invisible to the planner,
+  who reads the spec first.
 - **Keep a finished planner reachable through you for the whole build** — the plan's author is the
   only cheap authority on what the plan MEANT; direct the task orchestrator to hand design doubts
   UP rather than re-derive or override a plan decision.

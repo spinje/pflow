@@ -130,7 +130,7 @@ result: dict = {
 
 ### run-codex
 
-Every codex-routed lens runs here concurrently as a read-only sol agent — its persona as system prompt, the repo as cwd so it reads REVIEW-PROTOCOL.md and the CLAUDE.md files itself. `continue` error handling: one dead lens never kills the battery; it surfaces as a named coverage gap instead. The 3600s timeout is a hang detector, not a pace expectation.
+Every codex-routed lens runs here concurrently as a read-only sol agent — its persona as system prompt, the repo as cwd so it reads REVIEW-PROTOCOL.md and the CLAUDE.md files itself. `continue` error handling: one dead lens never kills the battery; it surfaces as a named coverage gap instead. The one exception: when EVERY selected lens fails, the engine aborts the batch loudly (per-lens errors recorded, no merged report) — the caller treats that as a full coverage gap and re-runs; it is never a clean pass. The 3600s timeout is a hang detector, not a pace expectation.
 
 - type: agent
 - backend: codex
@@ -158,12 +158,14 @@ You are in a read-only sandbox: verify by reading code, never by running tests o
 
 ### run-claude
 
-Identical contract for claude-routed lenses (empty and skipped under the codex default). Read-only is enforced by the tool allow-list — the same `Glob, Grep, Read, Bash` set the battery's agent definitions declare.
+Identical contract for claude-routed lenses (empty and skipped under the codex default). Read-only is approximated, not fully enforced: the tool allow-list blocks Edit/Write, and the SDK sandbox constrains Bash — but a sandboxed Bash can still write inside permitted roots, so the prompt's read-only instruction is part of the contract. The codex branch (`sandbox: read-only`) is the mechanically enforced path; prefer it when read-only matters.
 
 - type: agent
 - backend: claude
 - model: ${item.model}
 - cwd: ${resolve-cwd.stdout}
+- sandbox:
+    enabled: true
 - allowed_tools:
     - Read
     - Grep

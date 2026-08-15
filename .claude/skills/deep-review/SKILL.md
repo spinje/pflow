@@ -52,7 +52,9 @@ uv run pflow workflows/review/run-review-lenses.pflow.md \
 ```
 
 Provider defaults to codex — cross-model diversity is the point: a same-family reviewer shares
-the author's blind spots. Each `lenses` entry is a bare agent name or `{"name": …, "target": …}`
+the author's blind spots. **Cross-model means OPPOSITE the builder**: a Claude-side caller keeps
+the codex default; a Codex-side gate runner passes `provider=claude` (the claude branch runs
+tool-restricted and SDK-sandboxed; the codex branch stays the mechanically read-only path). Each `lenses` entry is a bare agent name or `{"name": …, "target": …}`
 giving that one lens its own review target (the mechanism for re-reviews: hand a lens its prior
 findings via its per-lens target). The workflow reads each lens's persona + frontmatter itself,
 runs them read-only in parallel, and returns ONE merged, deduplicated report (the merge

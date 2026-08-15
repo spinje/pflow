@@ -95,7 +95,8 @@ orchestrator's working state lives in its context window. —
 session-start read; reflects the RESUME PICTURE — the test: *would a successor resuming from a
 crash act differently because of this event?* — and is **rewritten at close/park, never patched
 incrementally**) + `sessions/session-NN.md` (the main orchestrator's per-session
-append-only log; a new session creates its own file and reads the latest predecessor — **if that
+log — append-only mid-session; the close ritual's spent-category cut is the ONE sanctioned
+rewrite (close skill); a new session creates its own file and reads the latest predecessor — **if that
 file is thin** (a short check-in, an aborted session), **read one further back until you hit a
 substantive one** (DECISIONS #10); older files are on-demand forensics; NO session-end digest —
 the file boundary does that job; session-01 is the converted pre-restructure log).

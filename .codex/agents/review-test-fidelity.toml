@@ -196,6 +196,8 @@ Tests that depend on timing are inherently fragile. Check:
 
 ### 11. Missing Negative and Edge Case Tests
 
+**A rejection-path test needs a second case that fails DIFFERENTLY, plus a non-vacuity check.** A single "it errored" assertion proves only that something refused — not that the guard under test refused it (a missing-file error and a validation error can look identical to a loose assert). Pair two cases whose failures carry different messages/types so together they identify which guard fired, and make sure the rejection path was actually REACHED (an input rejected earlier in the pipeline satisfies "raises" for free).
+
 For every feature change in the diff, check: are FAILURE cases tested?
 
 Not just "it works" but:

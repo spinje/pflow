@@ -58,7 +58,7 @@ fi
 
 ### load-persona
 
-Load the persona body (frontmatter stripped) and resolve the `effort` tier to a codex `(model, reasoning_effort)` pair: `low` → terra/medium (mechanical lookups), `medium` → sol/medium, `high` → sol/high (verification). The persona frontmatter's own model/effort is intentionally NOT used here — `effort` is the single per-call control (searchers vary by call; review lenses, by contrast, stay frontmatter-pinned). Fails loudly on a missing persona file or an unknown effort value.
+Load the persona body (frontmatter stripped) and resolve the `effort` tier to a codex `(model, reasoning_effort)` pair: `low` → sol/low (mechanical lookups), `medium` → sol/medium, `high` → sol/high (verification). While the DECISIONS #3 override holds (Sonnet banned for all subagents), every tier maps to the Opus-equivalent `sol` — restore `low` → terra when the override lifts. The persona frontmatter's own model/effort is intentionally NOT used here — `effort` is the single per-call control (searchers vary by call; review lenses, by contrast, stay frontmatter-pinned). Fails loudly on a missing persona file or an unknown effort value.
 
 - type: code
 - inputs:
@@ -73,11 +73,11 @@ agent: str
 cwd: str
 effort: str
 
-# effort tier -> (codex launch model, reasoning_effort). low = sonnet-tier terra at
-# medium reasoning (a sensible floor for search); medium/high = sol (opus/fable-tier)
-# for judgment/verification.
+# effort tier -> (codex launch model, reasoning_effort). All tiers map to sol
+# (opus/fable-tier) while the DECISIONS #3 override bans the Sonnet tier for
+# subagents; when the override lifts, low reverts to ("gpt-5.6-terra", "medium").
 TIER = {
-    "low": ("gpt-5.6-terra", "medium"),
+    "low": ("gpt-5.6-sol", "low"),
     "medium": ("gpt-5.6-sol", "medium"),
     "high": ("gpt-5.6-sol", "high"),
 }
