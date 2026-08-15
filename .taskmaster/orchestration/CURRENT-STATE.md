@@ -1,4 +1,4 @@
-# CURRENT-STATE.md (last verified: 2026-08-14 — main @ 15a36a0f, session-07)
+# CURRENT-STATE.md (last verified: 2026-08-15 — main @ 15a36a0f, session-07 continued)
 
 _Living state header — the ONE mandatory session-start read (~80-line budget; state + pointers
 only). Rewritten at close/park (DECISIONS #16). How-it-got-here: latest `sessions/session-NN.md`.
@@ -6,8 +6,8 @@ Every claim here is a pointer to verify, not a fact._
 
 ## Process
 
-- **Cross-repo fold landed 2026-08-14 (DECISIONS #15–#21, session-07): the process contract
-  moved substantially** — read ORCHESTRATION.md fresh, don't trust memory of the pre-fold text.
+- **Cross-repo fold landed 2026-08-14 + re-audit batch 2026-08-15 (DECISIONS #15–#22,
+  session-07): the process contract moved substantially** — read ORCHESTRATION.md fresh, don't trust memory of the pre-fold text.
   Headlines: state-doc cadence (#16, this file rewritten at close/park); completion gate is one
   job owned by the gate-runner, dispatched via the pflow fan-out (#17); effort routing (#18);
   lane B runs on `lane-implementer`, task-orchestrator issue mode retired (#20);
@@ -19,17 +19,19 @@ Every claim here is a pointer to verify, not a fact._
 - **Merge policy** (DECISIONS #4/#14): orchestrator merges when fully ready — CI green + the
   implementing agent has acted on auto-reviewer comments. Lane implementers merge their own PRs.
 - New instruments, both shaken down live 2026-08-14: `workflows/review/run-review-lenses.pflow.md`
-  (codex fan-out, FOREGROUND) · `workflows/search/run-searcher.pflow.md` (codex searcher offload).
+  (codex fan-out, waited on in-turn per #17 as amended) · `workflows/search/run-searcher.pflow.md`
+  (codex searcher offload).
   Known cosmetic gap: no pricing data for `gpt-5.6-sol` → fan-out runs print "cost unavailable".
 
 ## In flight
 
-- **The fold is committed on `chore/orchestration-cross-repo-fold` → PR #610** (42 files,
-  `20a3639f`), user-approved. **Held open for a fresh-eyes adversarial re-audit** (successor
-  session, blind-first-then-compare; corrections land as `[skip review]` commits on the branch)
-  before merge. No worktrees, no live subagents.
-- Session-07's close steps (braindump refresh, state-true, boot-readiness) are DONE; the
-  successor writes `session-08`.
+- **PR #610 (`chore/orchestration-cross-repo-fold`) is re-audited and READY TO MERGE on the
+  user's word.** The fresh-eyes re-audit ran blind-first-then-compare (session-07 continuation,
+  user-ruled — no session-08): 3 landed-but-wrong defects fixed; user then ruled "fix all
+  issues" → proposals P0–P8 applied per the report's recommendations (DECISIONS #22; #5/#8/#17
+  amended in place). Full report: `scratchpads/cross-repo-knowledge-transfer/re-audit-report.md`
+  (local-only). HELD by the same ruling: producer-reconciles-own-status; probe-spend/bad-history
+  stay braindump posture until a real instance. No worktrees, no live subagents.
 
 ## Recently shipped / filed (verified 2026-08-14)
 

@@ -55,7 +55,7 @@ their own PR after CI green.
 
 Home: `ORCHESTRATION.md` "Worktree & git flow"
 
-### 5 — Role-scoped commit authority (2026-07-11; amended 2026-07-15, 2026-08-14)
+### 5 — Role-scoped commit authority (2026-07-11; amended 2026-07-15, 2026-08-14, 2026-08-15)
 
 Implementing agents may commit and push on their feature branches as required by task/issue
 execution. The main orchestrator commits to `main` only with explicit user approval, except for a
@@ -65,7 +65,7 @@ inputs the producer must inherit (freshness-corrected specs, material instructio
 corrections); if nothing producer-facing changed, make no prep commit and branch from verified
 `origin/main`** (#21). Routine reconciliation, roadmap/state/session
 updates, and session close do not qualify. Pushing `main` always requires explicit user approval.
-**Amended 2026-08-14 (re-audit, #22): the approval that authorizes a prep commit covers pushing
+**Amended 2026-08-15 (re-audit, #22): the approval that authorizes a prep commit covers pushing
 it in the same act** — worktrees branch from verified `origin/main`, so an unpushed prep commit
 is invisible to the very producer it exists to serve.
 User correction after the session-05 reconciliation: approval to edit or reconcile is not approval
@@ -98,7 +98,7 @@ acceptance criteria. **UI work ALWAYS invokes the `screenshot-pflow-web-ui` skil
 everything changed** — green component tests never close a UI phase. User ruling (correcting the
 initial port, which had skipped the sibling system's equivalent rule on the wrong premise that pflow's web
 UI is a mere dev tool). **Dormant under #3's override** (the routing half; the
-screenshot-verification half stands regardless of tier). **Clarified 2026-08-14 (re-audit, #22;
+screenshot-verification half stands regardless of tier). **Clarified 2026-08-15 (re-audit, #22;
 adopting the sibling programme's later ruling on the same rule): the trigger is TASTE — a
 look/feel judgment the spec cannot settle, not the file location.** If there is no look/feel
 intent for the plan to state, the phase was never this rule's target; fixing a broken
@@ -191,7 +191,7 @@ orchestrator keeps deciding a gate is due, reading the outcome, and dispositioni
 Dispatch runs through the pflow fan-out (`workflows/review/run-review-lenses.pflow.md`, provider
 codex — model-family diversity), waited on IN-TURN, so the whole gate is one job owned by the
 gate-runner; direct Agent-tool lens launches are a logged one-off. Imported via the fold (#19;
-source ledger rows #37 + #29). **Amended 2026-08-14 (re-audit, #22): "in the FOREGROUND" →
+source ledger rows #37 + #29). **Amended 2026-08-15 (re-audit, #22): "in the FOREGROUND" →
 waited on IN-TURN** — a battery outruns the 600s Bash cap, past which a foreground call
 auto-backgrounds into the wake trap; the mechanism is a backgrounded call writing a declared
 output file, watched by Monitor/foreground polls, never an ended turn.
@@ -258,7 +258,7 @@ split shape. Source ledger rows #53, #28, #52, #2/#35.
 Home: `improve-codebase-architecture` skill "Process"; role prompt "Interpreting an autonomy
 grant"; `lane-implementer.md` (evaluate step); row #5
 
-### 22 — Re-audit follow-up batch: second fold import, user-approved (2026-08-14)
+### 22 — Re-audit follow-up batch: second fold import, user-approved (2026-08-15)
 
 User ruling on the re-audit report ("go ahead and fix all issues"): proposals P0–P8 applied per
 the report's recommendations, on the PR #610 branch. Amendments in place: #17 (in-turn wait),

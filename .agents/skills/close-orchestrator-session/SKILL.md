@@ -16,7 +16,7 @@ DECISIONS #10) → BRAINDUMP.md` and nothing else; this ritual makes that stack 
 reality first (`git log`, `gh`, `./scripts/tasks`, `git worktree list`, the filesystem) — a
 braindump line that's false is worse than a missing one.
 
-## 0. Drain — nothing closes hot
+## 0. Drain — nothing closes hot (user rule, 2026-07-11)
 
 If anything is in flight, the close has not started yet: **let all running agents and tasks run
 to the end, fix all loose ends, THEN close out.** Keep doing the job — relay handbacks, nudge
@@ -96,10 +96,14 @@ transfer to yourself, returning with no memory. The doctrine, customized for thi
 
 Knowledge migrates: what was tacit last session may now live in a skill, a task-review, a
 DECISIONS row, or a gotcha that got fixed in code. **The braindump must shrink as knowledge
-becomes durable elsewhere** — pruning stale lines is as important as adding new ones.
+becomes durable elsewhere** — pruning stale lines is as important as adding new ones. Delete
+verified "needs verification" items; rewrite bullets whose advice was superseded — never leave
+an old bad habit standing next to its correction.
 
 **Prune previous sessions' lines as deliberately as you add — and prefer EDITING an existing line
-over adding one beside it.** Four categories earn removal, each on PROOF, not impression:
+over adding one beside it** (two lines making the same point are worse than one, because a reader
+cannot tell whether the second is a distinct case). Four categories earn removal, each on PROOF,
+not impression:
 
 - **Migrated** — it now lives in ORCHESTRATION / DECISIONS / a skill / the code. *Proof: open the
   destination and confirm it says so.*

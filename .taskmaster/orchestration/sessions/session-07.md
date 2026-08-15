@@ -127,3 +127,14 @@
   #1–#27 gap the fold's #28–#57 read left, lens drift, test-reflect, braindump kernels) ·
   OVERWEIGHTED (none found; two borderline candidates examined and kept).
 - Awaiting user rulings on P0–P8; PR #610 stays open meanwhile.
+
+## [2026-08-15] main orchestrator — user ruled "fix all issues": P0–P8 applied (DECISIONS #22)
+
+- Applied in three [skip review] batches on the PR #610 branch per the report's own
+  recommendations; #5/#8/#17 amended in place, dated; row #22 records the batch and the HELD
+  items (P7f; P7d/P7e as posture). Report's Disposition section has the full manifest.
+- Notable calls made visibly: the fan-out FOREGROUND wording replaced by in-turn wait everywhere
+  it appeared (5 files + the row); test-fidelity §5 deleted in favor of the B015
+  mechanical-ownership rule (verified against pyproject); Summary-answers NOT added per-lens
+  (verified already present in REVIEW-PROTOCOL's skeleton); `Blocked by:` machine line skipped
+  (no parser support), its test imported as prose.

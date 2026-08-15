@@ -55,6 +55,36 @@ were absorbed into the command's "Working with the user".
   and design the new surface to match — don't invent a shape in isolation. Show-before-code with
   concrete mock output per iteration is how the design converged.
 
+_Lines tagged `(sibling, s07)` were imported from the sibling programme's tacit layer in the
+re-audit (DECISIONS #22) — same user, empirically earned THERE; imported-not-earned here (#19)._
+
+- **(sibling, s07) The user stages changes themselves to read incremental diffs** — a staged
+  tree is their normal working state: never reset/unstage to "clean up"; staged ≠ about to
+  commit; `git commit <pathspec>` is the safe shape; fresh `git status` at every commit and
+  launch, never from memory.
+- **(sibling, s07) A model-swap mid-session is a REVIEW move, not capacity** — expect it on a
+  design fork you already analysed; re-derive from evidence, don't defend the framing. On
+  "anything to think through before I switch you?", write pending decisions + their settled
+  handling into the session file BEFORE the swap. A downgraded orchestrator degrades its
+  decision authority too: park borderline 2–3/5 calls, close conservatively.
+- **(sibling, s07) They prune your pending-actions list and the pruning is a ruling** — carrying
+  someone else's to-do list is not diligence; surface once, then ask whether it's still yours.
+- **(sibling, s07) Cost the zero-build option before designing** — their first move on a scope
+  gap is the existing surface that already covers it, and they're usually right. Twin: "why is
+  there a max in the first place?" — state what a constraint is FOR before working around it.
+- **(sibling, s07) Delegation triggers: YOUR uncertainty (not task size), and SHELF LIFE** —
+  one-shot verification reading that won't be needed again never enters this window; hand it to
+  a searcher/fork.
+- **(sibling, s07) At every major ruling, produce the claims-risk inventory unasked** — rank the
+  load-bearing claims by damage × evidence-thinness, delegate the probes as ONE battery,
+  per-claim VERIFIED/REFUTED/PARTIAL.
+- **(sibling, s07) Bad-history posture: a module with an n≥3 fix-is-the-risky-artifact record
+  reverses the cost calculus** — offer the heavier shape (planner / full task) unprompted.
+  **Probe-spend posture:** a bounded probe that settles a load-bearing premise beats an
+  inference — cap stated at launch, counted, reported; and research scoped to "make it work" is
+  not research scoped to "map what it can do" — a task needing both must be asked for both.
+  (Both recorded as posture; promote to a row on the first real pflow instance.)
+
 ## 2. Claims and their tells — verify before relaying
 
 - **Trap — a PR review authored by `spinje` is the AGENT under the repo git identity, not the human
@@ -67,6 +97,33 @@ were absorbed into the command's "Working with the user".
   the claim at face value: run your OWN background CI poll (`gh pr checks` until no `pending`) and
   resume the agent only for the terminal action (merge). Resuming just to re-watch dies again on the
   wait.
+- **(sibling, s07) A subordinate's VERIFICATION REPORT is still a claim** — "I independently
+  re-read all six and confirmed" has been wrong for two of six; corrections come from agents
+  that EXECUTED, not read. Same family: a harness failure-notification's excerpt is not the
+  agent's final state — ground-truth `git log` in the worktree before ordering a relaunch (an
+  agent reported as "produced essentially nothing" had committed the complete phase).
+- **(sibling, s07) "It contradicts a settled ruling" is the one sentence that stops work without
+  anyone re-reading the ruling** — source it to the ruling's TEXT before it travels (which
+  decision, and does the fix negate its rationale?).
+- **(sibling, s07) Re-rate a producer's own 1–2/5 severity riders when they touch the surface its
+  fix changes** — a producer is least neutral exactly where it decided not to build.
+- **(sibling, s07) A note classifying an anomaly as HARMLESS is the least-tested inherited
+  claim** ("harmless" removes the prompt to look further) — spend the one probe that checks the
+  SYSTEM it's attached to, not the artifact. Cousins: an external-party gate is the least-tested
+  blocker (name what the answer could invalidate; if nothing, it's not a gate); an inherited
+  sequencing/timing claim is re-derived at proposal time and labeled hard-dependency vs
+  someone's priority call.
+- **(sibling, s07) A number travels WITH its basis (n, what the sample is, bias direction) or it
+  does not travel**; a count states its member definition; a probe + an impression are not a
+  measurement — run the grouped query.
+- **(sibling, s07) Fold hygiene, before writing any durable rule:** does it already EXIST
+  (un-applied ≠ missing — a restatement taxes every reader)? am I naming the MECHANISM or a
+  CARRIER (a rule feels sharp precisely because the carrier is concrete)? does it state its
+  BOUNDARY (a constraint without one reads as a general prohibition)? and when two independent
+  agents' observations INVERT, delete the ranking rather than pick a side. Readership/timing
+  test for placement: who reads this file, can they act on it, have they already decided by the
+  time they read it — skill bodies are read at the moment of use, so upstream-shaping content
+  there is structurally too late.
 
 ## 3. Running the machine — recovery, runner seams
 
@@ -78,6 +135,26 @@ were absorbed into the command's "Working with the user".
   external writes. The working mechanism is the child hands back the exact
   files/message/head/action; root performs only that directly authorized
   commit/push/PR-comment/merge action, then resumes the same child for ownership and monitoring.
+
+- **(sibling, s07) Merge-boundary recovery**: a session dying between `gh pr merge` and recording
+  the result leaves merged-vs-not ambiguous — ground-truth `gh pr view --json
+  state,mergeCommit,mergedAt` + `origin/main` BEFORE resuming anything, and treat the post-merge
+  half as unverified (it's exactly what an interrupted merger silently skips).
+- **(sibling, s07) Polling doctrine**: read existing check states ONCE before any appearance
+  wait — never poll toward a verdict that already exists; NO record of ANY status after a short
+  bounded wait means the trigger never fired — stop polling and diagnose.
+- **(sibling, s07) The permission classifier is NONDETERMINISTIC across identical shapes and
+  sessions** — an acceptance is a sample, never a predicate; never fold "this shape works" from
+  one acceptance or a ban from one denial. A classifier error that calls itself transient earns
+  exactly one identical retry; a plain denial earns a simpler shape, not a retry. Subagents
+  inherit the COMMITTED settings file, not the local one.
+- **(sibling, s07) Shell/git traps that transfer verbatim**: `git commit --amend` chained behind
+  a commit pre-commit ABORTED rewrites the previous, already-pushed commit (pflow runs the same
+  asset-mirror hook — recovery is `reset --soft` + fresh commit, never force-push); `git add a b
+  c` with one bad path stages NOTHING and is silent under `2>/dev/null` — read `git diff
+  --cached --name-only` before multi-path commits; the harness gitStatus block can be STALE —
+  cross-check live `git log`; zsh reserves `status`/`path`; a heredoc body starting `**` dies on
+  zsh globbing — use `--body-file`.
 
 ## 4. Mechanisms that worked
 
