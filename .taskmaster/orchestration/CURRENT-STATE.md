@@ -74,6 +74,11 @@ Every claim here is a pointer to verify, not a fact._
   trace-touching work. Engine + trace remain lane-A excluded regardless of size (DECISIONS #7).
 - Conflation attractor: `is_trace_locked` (probe, `ui/run_tailer.py`) vs `_lock_trace_handle`
   (writer flock, `workflow_trace.py`).
+- Conflation attractor: "pflow searcher" is ambiguous here — `pflow-codebase-searcher` (the
+  NATIVE Agent-tool default) vs the codex SEARCHER OFFLOAD (`run-searcher.pflow.md`, second
+  channel). Say "native searcher" / "searcher offload". Rename of the agent considered 2026-08-15
+  and held (n=1 confusion, rename churn across many files); flip condition: an agent launches the
+  wrong channel, or the user trips on it again.
 - Windows is a **blocking CI gate**; ADR-0013 governs shell semantics.
 - Real-browser verification requires killing stale `pflow ui` servers first.
 - Treat old spec file:line refs as stale (Task 177 moved 133 files).

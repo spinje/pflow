@@ -147,3 +147,13 @@
 - All six reviewer comments dispositioned (2 code-verified fixes in the workflows, 2 doc/contract
   amendments, 1 guidance line, 1 already-fixed); stragglers landed; list rescued; workflows
   re-validated by dry-run. Disposition comment posted on PR #610.
+
+## [2026-08-15] main orchestrator — searcher-channel question ruled; naming attractor recorded
+
+- User asked whether using Agent-tool searchers over the pflow searcher offload was intentional:
+  YES — the offload's own contract makes it the SECOND channel (cross-model verification /
+  capacity relief); the native def is the default, and most of this session's searchers read the
+  sibling repo where the offload buys nothing.
+- The naming IS a conflation attractor ("pflow searcher" = native def vs run-through-pflow):
+  vocabulary pinned (native searcher / searcher offload) in ORCHESTRATION's roles row + a watch
+  list entry; agent rename considered and HELD (n=1, churn) with a flip condition.
