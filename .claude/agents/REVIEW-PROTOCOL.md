@@ -17,6 +17,7 @@ Shared mechanics for every `review-*` agent. Your agent file gives you the **len
 - **Read sequentially, one file at a time.** After each file, stop and apply your lens before moving on. Parallel reading skips the compounding step.
 - **Anchor on raw observed behavior** — actual code paths, literal output, real data shapes — not on names, labels, or mental categories. Where possible, run the scenario and read what actually happens.
 - **Codebase facts cited in your lens file can go stale** (paths, tables, pipelines, key lists). When one is load-bearing for a finding, verify it against the code or the canonical CLAUDE.md it cites before relying on it.
+- **Your lens's checklist is the floor, not the ceiling.** After completing it, take one dedicated pass asking how THIS change could fail in a way no listed item names — the off-checklist find is a review's highest-value outcome.
 
 ## What NOT to flag (all lenses)
 
@@ -29,6 +30,7 @@ Signal over noise: a flood of speculative findings teaches the deploying agent t
 - **Speculative future needs.** The project rule is "solve observed problems, not theorized ones" — don't invert it.
 - **"Consider adding X" where X already exists.** Verify first; suggesting infrastructure that's already wired is the classic false positive.
 - **Defense-in-depth when the primary defense is adequate and tested.**
+- **Faithful copies of an established pattern.** Code that mirrors how sibling modules implement the same concern is convention here, not a finding — deviation FROM the established pattern is.
 - **Syntax, idiom, formatting, and naming nitpicks.** ruff/mypy own the mechanical layer; everything past that is preference unless you can name its consequence.
 
 **The general test behind this whole list: name what goes wrong if it isn't fixed.** Every finding must carry a consequence — wrong behavior, a concrete bug class, or a real comprehension cost for the next agent. "I would have written it differently" is never a finding.

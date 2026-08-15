@@ -16,7 +16,10 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 
 - Trace the threading model before checking for races. After each file, mentally simulate concurrent execution: shared state? interleaved writes? interrupt mid-operation?
 - Anchor on actual race scenarios, not "looks unsafe" intuition. Write out the literal interleaving (Thread A does X, Thread B does Y, A reads stale Z) — if you can't construct one, the concern may be theoretical. Conversely, "looks single-threaded" is wrong if the calling context spawns threads — trace the actual caller.
-- Plan mode: does the plan identify its shared mutable state and thread-safe access patterns? Would a different primitive be safer (Lock vs boolean flag, asyncio vs threads)? Could it avoid shared state entirely (immutable data, deep copies)? Would manual `pool.shutdown(wait=False, cancel_futures=True)` avoid the ThreadPoolExecutor timeout trap?
+- Plan mode: does the plan identify its shared mutable state and thread-safe access patterns? Would a different primitive be safer (Lock vs boolean flag, asyncio vs threads)? Could it avoid shared state entirely (immutable data, deep copies)? Could the work be IDEMPOTENT so the race is harmless instead of guarded? Would manual `pool.shutdown(wait=False, cancel_futures=True)` avoid the ThreadPoolExecutor timeout trap?
+- **Assume the same unit of work can run TWICE**: node retries (`max_retries`), loop re-entry, and resume-from-failed-node all re-execute bodies that may carry side effects — check what a second execution does to state the first already wrote.
+- **When the diff adds a second lock anywhere, re-derive the acquisition ORDER across all paths** — two paths taking the same locks in opposite order is a deadlock; consistent ordering (or a single lock) is the fix, and every new lock re-opens the question for the whole hierarchy it joins.
+- **Recommend the house remedy by name, don't just detect**: per-thread deepcopy isolation, an immutable snapshot, `os.replace` atomic write, a single compound operation under one lock — a finding that names the fix class gets applied; one that names only the race gets debated.
 
 ## Finding Concurrency-Sensitive Code
 
@@ -334,5 +337,5 @@ REVIEW-PROTOCOL.md skeleton. Title: `Concurrency Safety Review`. Critical = thre
 
 ## Key Principle
 
-**For every shared mutable state, assume it WILL be accessed concurrently and verify it's protected.** Mentally simulate interleaved execution: Thread A reads, Thread B writes, Thread A uses stale value. If that scenario is possible and unprotected, it's a bug — even if it works 99% of the time. The 1% is where production fails. If you cannot construct a concrete interleaving for any suspect, report "Verified Safe" with what you simulated — a clean result is a valid outcome.
+**For every shared mutable state, assume it WILL be accessed concurrently and verify it's protected.** Mentally simulate interleaved execution: Thread A reads, Thread B writes, Thread A uses stale value. If that scenario is possible and unprotected, it's a bug — even if it works 99% of the time. The 1% is where production fails. "It worked in tests" proves nothing — tests are single-actor. If you cannot construct a concrete interleaving for any suspect, report "Verified Safe" with what you simulated — a clean result is a valid outcome.
 '''
