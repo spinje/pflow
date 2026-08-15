@@ -8,7 +8,8 @@ _**Read these as LEADS, not as verified truth** — verify before propagating. O
 not by session. `(sNN)` tags mark which session a line came from, for recency and supersession.
 **When you add to this file, merge into the section that owns the theme — do not append a dated
 one.** Refreshed in place at each session close (`/close-orchestrator-session`, step 3 — the
-doctrine lives there). Sessions: seeded 2026-07-12; refreshed through session-07 (2026-08-14)._
+doctrine lives there). Sessions: seeded 2026-07-12; refreshed through session-07-continued
+(2026-08-15)._
 
 Predecessor tacit layer: the **Genesis** section at the bottom of this file (2026-07-02) —
 HISTORICAL; its process claims are superseded by ORCHESTRATION.md, its working-style observations
@@ -46,6 +47,11 @@ were absorbed into the command's "Working with the user".
   need (agents can't help *choose* a model). Guard both directions: the observed-problems rule stops
   over-building theorized problems, but a stale spec can also make a real need *look* theoretical.
   Re-derive the problem from today, not from the spec's old problem statement.
+- **They run this system's own gate prompts on YOU (s07 — pflow-earned; sibling standing).**
+  *"So you are FULLY happy? Any loose ends right now?"* and *"have you read all current reviews
+  on the pr?"* — answer by GOING LOOKING (that pass found five real loose ends, including the
+  #14 auto-reviewer gate I had skipped while declaring the PR ready). They audit whether a gate
+  RAN, not just what shipped.
 - **User pressure-tests a new CLI surface hard and iteratively — and demands consistency be VERIFIED,
   not asserted** (s06, `pflow settings llm models` design). They serially caught surface
   incoherences (a status label that read as an imperative, a flag combo that made no sense,
@@ -87,6 +93,11 @@ re-audit (DECISIONS #22) — same user, empirically earned THERE; imported-not-e
 
 ## 2. Claims and their tells — verify before relaying
 
+- **Own overturn (s07): "ready to merge" is a CHECKLIST claim, never a feeling** — CI green on
+  the FINAL head + #14 auto-reviewer dispositions + state docs true. I declared readiness with
+  the reviews unread. Sub-trap, same session: a CI watcher parsing `gh pr checks` tabular output
+  with `awk $2` reads green through noise (check names contain spaces) — parse `--json` with
+  python/jq, and re-measure any watcher verdict before acting on it.
 - **Trap — a PR review authored by `spinje` is the AGENT under the repo git identity, not the human
   user** (s06). I nearly treated an inline review comment as a human review gate. The git
   user IS `spinje`; children post disposition comments under it. Read the body/author-association
@@ -180,6 +191,14 @@ re-audit (DECISIONS #22) — same user, empirically earned THERE; imported-not-e
   streams ~MB (redirect to a file, read the tail). It surfaced real flaws my own review missed
   (durable-provenance gap, three-seams-not-N). Local-only: that review + the session's searcher
   outputs live in `scratchpad/` (gitignored) — gone once this machine's temp clears.
+
+## 5. Local-only artifacts (a successor cannot discover these)
+
+- `scratchpads/cross-repo-knowledge-transfer/` (gitignored): `plan.md` (the fold's plan),
+  `re-audit-report.md` (four buckets + P0–P8 dispositions + the addendum), and
+  `phase-a-transfer-list.md` (the blind-pass list — holds the UN-imported residue for any future
+  pass). If missing: DECISIONS #19/#22 summarize what landed; the residue is reconstructable
+  only from the sibling corpus.
 
 Note to next agent: read this file fully, summarize it to yourself, then proceed.
 

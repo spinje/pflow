@@ -1,4 +1,4 @@
-# CURRENT-STATE.md (last verified: 2026-08-15 — main @ 15a36a0f, session-07 continued)
+# CURRENT-STATE.md (last verified: 2026-08-15 at session-07-continued CLOSE — main @ 15a36a0f, branch head 014dfe44)
 
 _Living state header — the ONE mandatory session-start read (~80-line budget; state + pointers
 only). Rewritten at close/park (DECISIONS #16). How-it-got-here: latest `sessions/session-NN.md`.
@@ -25,13 +25,17 @@ Every claim here is a pointer to verify, not a fact._
 
 ## In flight
 
-- **PR #610 (`chore/orchestration-cross-repo-fold`) is re-audited and READY TO MERGE on the
-  user's word.** The fresh-eyes re-audit ran blind-first-then-compare (session-07 continuation,
-  user-ruled — no session-08): 3 landed-but-wrong defects fixed; user then ruled "fix all
-  issues" → proposals P0–P8 applied per the report's recommendations (DECISIONS #22; #5/#8/#17
-  amended in place). Full report: `scratchpads/cross-repo-knowledge-transfer/re-audit-report.md`
-  (local-only). HELD by the same ruling: producer-reconciles-own-status; probe-spend/bad-history
-  stay braindump posture until a real instance. No worktrees, no live subagents.
+- **PR #610 (`chore/orchestration-cross-repo-fold`) is COMPLETE and awaits ONLY the user's merge
+  word — the successor's FIRST act is getting that ruling.** Until it merges, `main` still
+  carries the PRE-fold process contract, so boot the process docs from the BRANCH. Verified at
+  close: CI green on the exact head (check-runs API, 15 success/1 skip incl. both Windows
+  gates); #14 auto-reviewer dispositions posted on the PR. Contents: the fold + the fresh-eyes
+  re-audit (3 landed-but-wrong fixed; OVERWEIGHTED none) + user-ruled "fix all issues" batch
+  (P0–P8 per the report; DECISIONS #22; #5/#8/#17 amended). Report:
+  `scratchpads/cross-repo-knowledge-transfer/re-audit-report.md` (local-only). HELD:
+  producer-reconciles-own-status; probe-spend/bad-history as braindump posture. Proposed
+  UNRULED: role-prompt failure mode 12 (merge-readiness is a checklist claim). No worktrees, no
+  live subagents.
 
 ## Recently shipped / filed (verified 2026-08-14)
 

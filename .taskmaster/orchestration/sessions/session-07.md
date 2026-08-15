@@ -82,7 +82,6 @@
 - Blind-pass quarantine held at boot: DECISIONS read #1–#14 only; pflow BRAINDUMP.md and the
   cross-repo scratchpad deferred to Phase B; PR #610 diff unread. Partial contamination noted
   honestly: CURRENT-STATE headlines + this file's close entries name some imports in shorthand.
-- Next: Phase A — independent transfer list from the sibling programme's corpus.
 
 ## [2026-08-14] main orchestrator — Phase A complete (blind pass)
 
@@ -93,8 +92,6 @@
   across ledger kernels (A), ORCHESTRATION deltas (B), braindump kernels (C), session-mined
   additions (D/E). pflow fold docs still unread; blindness held except the noted shorthand
   contamination.
-- Next: Phase B — read pflow DECISIONS #15–#21, pflow BRAINDUMP, cross-repo scratchpad, PR #610
-  diff; four-bucket comparison.
 
 ## [2026-08-14] main orchestrator — re-audit Phases B/C: two corrections landed
 
@@ -107,8 +104,6 @@
   launches it at commissioning, hands the report to the gate-runner); lane side confirmed covered
   by its own Agent tool and stated.
 - Correction 2 (importance 1): CURRENT-STATE fold headline said #15–#20; row #21 exists → #15–#21.
-- Phase C in flight: pr-closer + sibling lane def + sibling role prompt read (kernels extracted);
-  two searchers comparing shared lenses and the five commands/skills pairs.
 
 ## [2026-08-14] main orchestrator — re-audit Phase C/D complete; report written
 
@@ -157,3 +152,25 @@
 - The naming IS a conflation attractor ("pflow searcher" = native def vs run-through-pflow):
   vocabulary pinned (native searcher / searcher offload) in ORCHESTRATION's roles row + a watch
   list entry; agent rename considered and HELD (n=1, churn) with a flip condition.
+
+## [2026-08-15] main orchestrator — session close (user: "lets close the session and commit with skip review")
+
+- Drain verified quiescent: no live subagents, only the main worktree, tree clean; CI green on
+  the exact final head `014dfe44` (per-commit check-runs API: 15 success / 1 expected skip);
+  auto-reviewer dispositions posted (#14 gate). **PR #610 merge is the one parked item — the
+  user's gate**; nothing else is open.
+- Retrospect, owned: I declared "PR fully ready" with the #14 auto-reviewer comments UNREAD —
+  the user's "have you read all current reviews?" caught it; lesson: merge-readiness is a
+  checklist claim (CI on final head + #14 dispositions + state true), never a feeling. My first
+  CI watcher read green through parse noise (awk on space-containing check names) — the
+  watcher-instrument rule applied to its own author; re-measured via JSON.
+- What worked, reusable: the blind-first quarantine boot (read DECISIONS to the ruled row only;
+  defer own-braindump/PR diff); the four-bucket comparison; miners with per-item
+  general-vs-production tagging + personal re-verification of load-bearing claims.
+- Proposed, UNRULED (role-prompt edit — never self-applied): failure mode 12, "declaring
+  merge-readiness without walking the merge gate (#14 dispositions + CI on the final head)".
+- Close ritual run: session file cut (choreography only — entries were already ruling-shaped);
+  braindump refreshed (gate-prompts-on-you now pflow-earned; merge-readiness lesson; watcher
+  parse trap; local-only artifact pointers); CURRENT-STATE rewritten. Successor's first act:
+  get the user's merge ruling on PR #610 — **main still carries the PRE-fold process contract
+  until it merges.**
