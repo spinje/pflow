@@ -1,4 +1,4 @@
-# CURRENT-STATE.md (last verified: 2026-08-15 at session-07-continued CLOSE — main @ 15a36a0f, branch head 014dfe44)
+# CURRENT-STATE.md (last verified: 2026-08-15 at session-07-continued CLOSE — main @ 15a36a0f; the branch head IS the close commit, doc-only on top of `014dfe44`, where CI was verified green)
 
 _Living state header — the ONE mandatory session-start read (~80-line budget; state + pointers
 only). Rewritten at close/park (DECISIONS #16). How-it-got-here: latest `sessions/session-NN.md`.
