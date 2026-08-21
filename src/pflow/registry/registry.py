@@ -110,8 +110,8 @@ class Registry:
             # Check if registry exists
             if not self.registry_path.exists():
                 logger.info("Registry not found, auto-discovering core nodes...")
-                # First time - auto-discover core nodes
-                self._auto_discover_core_nodes()
+                core_nodes, scan_started_at = self._scan_core_nodes()
+                self._save_with_metadata(core_nodes, scan_time=scan_started_at)
 
             # Try to load from file
             nodes = self._load_from_file()
@@ -392,8 +392,12 @@ class Registry:
                 types[kind] = fields
         return types
 
-    def _auto_discover_core_nodes(self) -> None:
-        """Auto-discover and save core nodes on first use."""
+    def _scan_core_nodes(self) -> tuple[dict[str, dict[str, Any]], str]:
+        """Return registry-ready core nodes and the pre-scan timestamp.
+
+        Scanning imports trusted pflow node modules, but does not read or write
+        the registry. Callers decide which complete node set to persist.
+        """
         import pflow.nodes
         from pflow.registry.scanner import scan_for_nodes
 
@@ -410,7 +414,7 @@ class Registry:
         # with a POST-scan timestamp would lose concurrent edits made during the
         # scan window (their mtime would sit < stored timestamp, so the next
         # mtime check wouldn't refresh).
-        scan_start = self._now_iso()
+        scan_started_at = self._now_iso()
         scan_results = scan_for_nodes(subdirs)
 
         # Convert to registry format with type marking
@@ -427,10 +431,8 @@ class Registry:
             del node_copy["name"]  # Registry doesn't store name in value
             registry_nodes[name] = node_copy
 
-        logger.info(f"Auto-discovered {len(registry_nodes)} core nodes")
-
-        # Save with metadata, using the pre-scan timestamp
-        self._save_with_metadata(registry_nodes, scan_time=scan_start)
+        logger.info(f"Discovered {len(registry_nodes)} core nodes")
+        return registry_nodes, scan_started_at
 
     def _save_with_metadata(self, nodes: dict[str, dict[str, Any]], scan_time: str | None = None) -> None:
         """Save nodes with updated version and timestamp.
@@ -556,24 +558,15 @@ class Registry:
         # Preserve every non-core node (see docstring: fail-safe, self-healing).
         preserved = {name: data for name, data in nodes.items() if data.get("type") != "core"}
 
-        # Re-discover core nodes — _auto_discover_core_nodes stamps
-        # last_core_scan with a PRE-scan timestamp (race-safe).
-        self._auto_discover_core_nodes()
+        core_nodes, scan_started_at = self._scan_core_nodes()
 
-        # Reload — populates self._registry_last_scan from the pre-scan stamp.
-        refreshed = self._load_from_file()
+        # Merge preserved nodes UNDER the fresh core scan, so fresh core
+        # metadata always wins a name collision.
+        refreshed = {**preserved, **core_nodes}
 
-        # Merge preserved nodes UNDER the fresh core scan: setdefault adds a
-        # preserved entry only when its name is free, so fresh core metadata
-        # always wins a name collision (see docstring).
-        for name, data in preserved.items():
-            refreshed.setdefault(name, data)
-
-        # Save the merged result, propagating the pre-scan timestamp so the
-        # race-safety is preserved through the final merge write. Without this,
-        # the merge save would stamp "now" (post-scan) and lose any edit made
-        # during the scan window.
-        self._save_with_metadata(refreshed, scan_time=self._registry_last_scan)
+        # Persist one complete snapshot. Propagating the pre-scan timestamp
+        # ensures a source edit made during scanning triggers the next refresh.
+        self._save_with_metadata(refreshed, scan_time=scan_started_at)
 
         return refreshed
 

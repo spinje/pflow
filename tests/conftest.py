@@ -176,9 +176,7 @@ def precomputed_core_registry_nodes(tmp_path_factory):
 
     session_registry_path = tmp_path_factory.mktemp("session_core") / "registry.json"
     reg = Registry(session_registry_path)
-    reg._auto_discover_core_nodes()  # safe in tests
-    raw = reg._load_from_file()
-    return raw.get("nodes", raw)
+    return reg.load(include_filtered=True)
 
 
 def _create_registry_patcher(test_registry_path) -> callable:
