@@ -449,15 +449,19 @@ class Registry:
         with _REGISTRY_IO_LOCK:
             # Preserve existing metadata (MCP sync hashes, etc.)
             existing = self._read_wrapper()
+            version = self._get_version()
+            last_core_scan = scan_time or self._now_iso()
 
             data = {
-                "version": self._get_version(),
-                "last_core_scan": scan_time or self._now_iso(),
+                "version": version,
+                "last_core_scan": last_core_scan,
                 "metadata": existing.get("metadata", {}),
                 "nodes": nodes,
             }
 
             self._write_atomic(data)
+            self._registry_version = version
+            self._registry_last_scan = last_core_scan
 
             logger.info(f"Saved {len(nodes)} nodes to registry with metadata")
 

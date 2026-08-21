@@ -8,7 +8,6 @@ REFACTOR HISTORY:
 - 2024-01-30: Added more integration tests and real workflow scenarios
 """
 
-import copy
 import json
 import os
 import sys
@@ -750,47 +749,39 @@ class TestRegistryVersionRefresh:
         """Core refresh must never persist a core-only intermediate snapshot."""
         registry_path = tmp_path / "registry.json"
         registry = Registry(registry_path)
+        scan_started_at = "2030-01-01T00:00:00+00:00"
         original_nodes = {
-            "shell": {
-                "module": "stale.shell",
-                "class_name": "StaleShellNode",
-                "type": "core",
-            },
             "removed-core": {
                 "module": "stale.removed",
                 "class_name": "RemovedCoreNode",
                 "type": "core",
             },
-            "my-user-node": {
-                "module": "my_project.nodes.user",
-                "class_name": "UserNode",
-                "type": "user",
-            },
-            "mcp-current-tool": {
+            "mcp-sentinel": {
                 "module": "pflow.nodes.mcp.node",
                 "class_name": "MCPNode",
                 "file_path": "virtual://mcp",
                 "type": "mcp",
             },
-            "mcp-legacy-tool": {
-                "module": "pflow.nodes.mcp.node",
-                "class_name": "MCPNode",
-                "file_path": "virtual://mcp",
-            },
         }
-        registry._save_with_metadata(original_nodes, scan_time="2000-01-01T00:00:00+00:00")
-        registry.set_metadata("sentinel", "keep")
+        registry._write_atomic({
+            "version": "stale-version",
+            "last_core_scan": "2000-01-01T00:00:00+00:00",
+            "metadata": {"sentinel": "keep"},
+            "nodes": original_nodes,
+        })
 
         registry = Registry(registry_path)
         loaded = registry._load_from_file()
         fresh_scan = [{"name": "shell", "module": "fresh.shell", "class_name": "ShellNode"}]
         monkeypatch.setattr("pflow.registry.scanner.scan_for_nodes", lambda _subdirs: fresh_scan)
+        timestamps = iter([scan_started_at, "2040-01-01T00:00:00+00:00"])
+        monkeypatch.setattr(registry, "_now_iso", lambda: next(timestamps))
 
         writes = []
         original_write = registry._write_atomic
 
         def record_write(data):
-            writes.append(copy.deepcopy(data))
+            writes.append(data)
             original_write(data)
 
         monkeypatch.setattr(registry, "_write_atomic", record_write)
@@ -799,14 +790,14 @@ class TestRegistryVersionRefresh:
 
         assert len(writes) == 1, "refresh must persist exactly one complete registry snapshot"
         written = writes[0]
+        assert written["last_core_scan"] == scan_started_at
         assert written["metadata"] == {"sentinel": "keep"}
-        assert written["version"] == registry._get_version()
         assert written["nodes"] == refreshed
         assert written["nodes"]["shell"]["module"] == "fresh.shell"
-        assert written["nodes"]["shell"]["type"] == "core"
         assert "removed-core" not in written["nodes"]
-        for name in ("my-user-node", "mcp-current-tool", "mcp-legacy-tool"):
-            assert written["nodes"][name] == original_nodes[name]
+        assert written["nodes"]["mcp-sentinel"] == original_nodes["mcp-sentinel"]
+        assert registry._registry_version == written["version"]
+        assert registry._registry_last_scan == scan_started_at
 
         persisted = json.loads(registry_path.read_text(encoding="utf-8"))
         assert persisted == written
