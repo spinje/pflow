@@ -28,7 +28,7 @@ File: `~/.pflow/registry.json`. Auto-created on first use by scanning `src/pflow
 
 | Type | Set by | Survives core refresh? |
 |------|--------|----------------------|
-| `"core"` | `_auto_discover_core_nodes()` | No — re-scanned on version change |
+| `"core"` | `_scan_core_nodes()` | No — re-scanned on version change |
 | `"user"` | `scan_user_nodes()` (Python API only — `pflow registry scan` CLI was removed in Task 151) | Yes |
 | `"mcp"` | `MCPRegistrar` (from `mcp/registrar.py`) | Yes |
 
@@ -88,7 +88,7 @@ The safe pattern: always use `load(include_filtered=True)` before any `save()` c
 
 User and MCP nodes are preserved through the refresh via `_refresh_core_nodes()`. Structured-wrapper registries missing either `version` or `last_core_scan` still hit the mtime path (the `not version and not last_scan` gate short-circuits only when BOTH are absent — legacy flat-format registries, which still heal via a version bump). Timestamps are written in UTC; naive legacy timestamps are interpreted as local time for backward compatibility.
 
-**Race-safety**: `_auto_discover_core_nodes()` captures the scan-start timestamp BEFORE `scan_for_nodes()` reads sources, and `_refresh_core_nodes()` propagates that timestamp through the final merge write. Stamping `last_core_scan` with a POST-scan time would lose any concurrent edit made during the scan window (mtime < stored timestamp on the next load → no refresh).
+**Race-safety**: `_scan_core_nodes()` captures the scan-start timestamp BEFORE `scan_for_nodes()` reads sources and does not persist anything itself. First-use initialization saves the discovered core nodes once; `_refresh_core_nodes()` merges preserved non-core nodes in memory and saves one complete snapshot. Stamping `last_core_scan` with a POST-scan time would lose any concurrent edit made during the scan window (mtime < stored timestamp on the next load → no refresh).
 
 **Limits**:
 - **Deletions aren't detected.** Removing a `src/pflow/nodes/**/*.py` file doesn't bump the mtime of surviving files, so the mtime path keeps serving the dead entry. Heals via version bump. Stat'ing the nodes dir itself would catch the immediate parent but is accepted complexity for a rare case.

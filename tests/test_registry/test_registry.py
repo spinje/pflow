@@ -745,6 +745,63 @@ class TestRegistryVersionRefresh:
             # Non-colliding untyped entry still self-heals through the refresh.
             assert "mcp-legacy-tool" in refreshed
 
+    def test_refresh_persists_one_complete_snapshot(self, tmp_path, monkeypatch):
+        """Core refresh must never persist a core-only intermediate snapshot."""
+        registry_path = tmp_path / "registry.json"
+        registry = Registry(registry_path)
+        scan_started_at = "2030-01-01T00:00:00+00:00"
+        original_nodes = {
+            "removed-core": {
+                "module": "stale.removed",
+                "class_name": "RemovedCoreNode",
+                "type": "core",
+            },
+            "mcp-sentinel": {
+                "module": "pflow.nodes.mcp.node",
+                "class_name": "MCPNode",
+                "file_path": "virtual://mcp",
+                "type": "mcp",
+            },
+        }
+        registry._write_atomic({
+            "version": "stale-version",
+            "last_core_scan": "2000-01-01T00:00:00+00:00",
+            "metadata": {"sentinel": "keep"},
+            "nodes": original_nodes,
+        })
+
+        registry = Registry(registry_path)
+        loaded = registry._load_from_file()
+        fresh_scan = [{"name": "shell", "module": "fresh.shell", "class_name": "ShellNode"}]
+        monkeypatch.setattr("pflow.registry.scanner.scan_for_nodes", lambda _subdirs: fresh_scan)
+        timestamps = iter([scan_started_at, "2040-01-01T00:00:00+00:00"])
+        monkeypatch.setattr(registry, "_now_iso", lambda: next(timestamps))
+
+        writes = []
+        original_write = registry._write_atomic
+
+        def record_write(data):
+            writes.append(data)
+            original_write(data)
+
+        monkeypatch.setattr(registry, "_write_atomic", record_write)
+
+        refreshed = registry._refresh_core_nodes(loaded)
+
+        assert len(writes) == 1, "refresh must persist exactly one complete registry snapshot"
+        written = writes[0]
+        assert written["last_core_scan"] == scan_started_at
+        assert written["metadata"] == {"sentinel": "keep"}
+        assert written["nodes"] == refreshed
+        assert written["nodes"]["shell"]["module"] == "fresh.shell"
+        assert "removed-core" not in written["nodes"]
+        assert written["nodes"]["mcp-sentinel"] == original_nodes["mcp-sentinel"]
+        assert registry._registry_version == written["version"]
+        assert registry._registry_last_scan == scan_started_at
+
+        persisted = json.loads(registry_path.read_text(encoding="utf-8"))
+        assert persisted == written
+
 
 class TestRegistrySourceMtimeRefresh:
     """Test mtime-based refresh when core node source files change.
@@ -915,7 +972,7 @@ class TestRegistrySourceMtimeRefresh:
 
         registry = Registry(tmp_path / "registry.json")
         before = time_mod.time()
-        registry._auto_discover_core_nodes()
+        registry.load(include_filtered=True)
         after = time_mod.time()
 
         stored_iso = json.loads((tmp_path / "registry.json").read_text(encoding="utf-8"))["last_core_scan"]
@@ -986,7 +1043,7 @@ class TestRegistryFormatConsistency:
             registry_path = Path(tmpdir) / "registry.json"
             registry = Registry(registry_path)
 
-            # Step 1: Write structured format (simulates _auto_discover_core_nodes)
+            # Step 1: Write structured format (simulates core initialization)
             test_nodes = {
                 "shell": {"module": "pflow.nodes.shell.shell", "class_name": "ShellNode", "type": "core"},
             }
