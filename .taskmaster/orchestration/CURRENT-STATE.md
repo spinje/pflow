@@ -1,4 +1,9 @@
-# CURRENT-STATE.md (last verified: 2026-08-15 at session-07-continued CLOSE — main @ 15a36a0f; the branch head IS the close commit, doc-only on top of `014dfe44`, where CI was verified green)
+# CURRENT-STATE.md (last verified: 2026-08-23 outside any numbered session — main @ 3892b8d2)
+
+## Outside-session override — 2026-08-23
+
+- PRs #610, #613, and #614 are merged; issues #611 and #612 are closed. #612 shipped per-server MCP config fingerprints, failure-preserving retry, exact canonical ownership, one coherent registry commit, and bounded discovery. No producer remains after standard lane teardown.
+- No task was created and no numbered orchestration session owns this work. The older session-07 snapshot below is historical where it conflicts with this override.
 
 _Living state header — the ONE mandatory session-start read (~80-line budget; state + pointers
 only). Rewritten at close/park (DECISIONS #16). How-it-got-here: latest `sessions/session-NN.md`.
