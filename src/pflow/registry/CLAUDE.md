@@ -56,8 +56,8 @@ Enhanced format supports nested structures for dict/list outputs. See `nodes/CLA
 | Consumer | Usage | `include_filtered` |
 |----------|-------|-------------------|
 | `runtime/compilation/` | Node class resolution, interface metadata, MCP validation, output validation | Default (filtered) |
-| `mcp/registrar.py` | Register/remove virtual MCP tool entries | **True** (safe) |
-| `cli/mcp_sync.py` auto-sync (via `cli/commands/run.py`) | Clean old MCP entries before re-syncing | **True** (safe) |
+| `mcp/registrar.py` | Reconcile virtual MCP tools and fingerprints after discovery | **True** (safe) |
+| `cli/mcp_sync.py` auto-sync (via `cli/commands/run.py`) | Inspect MCP ownership before selecting due servers | **True** (read-only snapshot) |
 | `cli/commands/mcp.py`, `_probe_impl.py` | MCP list/find/describe, probe | Default (filtered) |
 | `core/workflow/validator.py` | Validate node types exist | Default (filtered) |
 | `mcp_server/services/` | Registry service for MCP server | Default (filtered) |
@@ -100,12 +100,14 @@ All writes use a unified structured format:
 {
   "version": "0.10.0",
   "last_core_scan": "2026-03-22T...",
-  "metadata": {"mcp_config_hash": "..."},
+  "metadata": {"mcp_server_fingerprints": {"github": "..."}},
   "nodes": {"shell": {...}, "llm": {...}}
 }
 ```
 
-- `save()` preserves existing version/timestamp/metadata, only replaces nodes
+- `save()` preserves existing version/timestamp/metadata and replaces nodes; optional `metadata_updates=` values are merged into the same atomic write
 - `_save_with_metadata()` updates version and timestamp (used after core node discovery)
 - `get_metadata()`/`set_metadata()` read/write the `metadata` field directly
 - `_load_from_file()` still handles legacy flat format (`{node1: ..., node2: ...}`) for backward compatibility, stripping any `__metadata__` keys
+
+Atomic replacement means readers see a complete old or new wrapper. The module-level lock serializes in-process I/O only; Registry does not provide cross-process read-modify-write isolation.

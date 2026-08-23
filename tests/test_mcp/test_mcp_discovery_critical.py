@@ -186,7 +186,7 @@ class TestMCPRegistrarCritical:
             manager.add_server(name="test", transport="stdio", command="test-cmd", args=[])
 
             # Mock discovery to return tools
-            def mock_discover(server_name, verbose=False):
+            def mock_discover(server_name, verbose=False, *, server_config=None):
                 return [
                     {
                         "name": "tool1",
@@ -197,12 +197,12 @@ class TestMCPRegistrarCritical:
                 ]
 
             with patch.object(discovery, "discover_tools", side_effect=mock_discover):
-                result = registrar.sync_server("test")
+                result = registrar.sync_servers(["test"], reconcile_all=False).servers[0]
 
             # Verify sync results
-            assert result["server"] == "test"
-            assert result["tools_discovered"] == 2
-            assert result["tools_registered"] == 2
+            assert result.server == "test"
+            assert result.tools_discovered == 2
+            assert result.tools_registered == 2
 
             # Verify registry was updated
             nodes = registry.load()
@@ -225,9 +225,9 @@ class TestMCPRegistrarCritical:
 
             # Add some tools to registry
             nodes = {
-                "mcp-github-create-issue": {"class_name": "MCPNode"},
-                "mcp-github-list-issues": {"class_name": "MCPNode"},
-                "mcp-slack-send-message": {"class_name": "MCPNode"},
+                "mcp-github-create-issue": registrar._create_registry_entry("github", {"name": "create-issue"}),
+                "mcp-github-list-issues": registrar._create_registry_entry("github", {"name": "list-issues"}),
+                "mcp-slack-send-message": registrar._create_registry_entry("slack", {"name": "send-message"}),
                 "read-file": {"class_name": "ReadFileNode"},  # Non-MCP node
             }
             registry.save(nodes)
@@ -246,7 +246,7 @@ class TestMCPRegistrarCritical:
 
     @pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup requires Python 3.11+")
     def test_sync_server_returns_diagnostic_with_suggestions_on_failure(self):
-        """When discovery fails, sync_server should return a Diagnostic with suggestions.
+        """When discovery fails, sync_servers should return a Diagnostic with suggestions.
 
         CRITICAL: Without this, the CLI falls back to raw ExceptionGroup text
         with no actionable guidance — the exact bug this refactor fixes.
@@ -268,16 +268,15 @@ class TestMCPRegistrarCritical:
             exc_group = _ExceptionGroup("unhandled errors in a TaskGroup", [inner_exc])
 
             with patch.object(discovery, "discover_tools", side_effect=exc_group):
-                result = registrar.sync_server("test")
+                result = registrar.sync_servers(["test"], reconcile_all=False).servers[0]
 
             # Must have structured error, not ExceptionGroup garbage
-            assert "error" in result
-            assert "unhandled errors" not in result["error"]
-            assert "Authentication failed" in result["error"]
+            assert result.error is not None
+            assert "unhandled errors" not in result.error
+            assert "Authentication failed" in result.error
 
             # Must have Diagnostic with suggestions for CLI rendering
-            assert "diagnostic" in result
-            diagnostic = result["diagnostic"]
+            diagnostic = result.diagnostic
             assert isinstance(diagnostic, Diagnostic)
             assert diagnostic.severity == Severity.ERROR
             assert diagnostic.suggestions is not None

@@ -195,7 +195,12 @@ class Registry:
             logger.warning(f"Error reading registry file: {e}")
             return {}
 
-    def save(self, nodes: dict[str, dict[str, Any]]) -> None:
+    def save(
+        self,
+        nodes: dict[str, dict[str, Any]],
+        *,
+        metadata_updates: dict[str, Any] | None = None,
+    ) -> None:
         """Save nodes dictionary to registry JSON file in structured format.
 
         Always writes the structured wrapper format: {version, last_core_scan,
@@ -207,6 +212,8 @@ class Registry:
 
         Args:
             nodes: Dictionary mapping node names to metadata
+            metadata_updates: Values to merge into wrapper metadata in the same
+                atomic write as the node replacement.
 
         Note:
             This completely replaces the nodes in the registry file.
@@ -216,10 +223,15 @@ class Registry:
             # Preserve existing wrapper metadata (version, timestamps, metadata)
             existing = self._read_wrapper()
 
+            metadata = existing.get("metadata", {})
+            metadata = dict(metadata) if isinstance(metadata, dict) else {}
+            if metadata_updates:
+                metadata.update(metadata_updates)
+
             data = {
                 "version": existing.get("version", self._get_version()),
                 "last_core_scan": existing.get("last_core_scan", self._now_iso()),
-                "metadata": existing.get("metadata", {}),
+                "metadata": metadata,
                 "nodes": nodes,
             }
 

@@ -102,10 +102,14 @@ class MCPServerManager:
             return self._load_locked()
 
     def _load_locked(self) -> dict[str, Any]:
-        if not self.config_path.exists():
+        config = self._read_config_locked()
+        if config is None:
             logger.info(f"No MCP server configuration found at {self.config_path}, returning empty config")
             return {"mcpServers": {}}
+        return config
 
+    def _read_config_locked(self) -> dict[str, Any] | None:
+        """Read one config snapshot, preserving missing-file state."""
         try:
             with open(self.config_path, encoding="utf-8") as f:
                 config = json.load(f)
@@ -117,6 +121,8 @@ class MCPServerManager:
             logger.debug(f"Loaded {len(config.get('mcpServers', {}))} MCP servers from configuration")
             return dict(config)
 
+        except FileNotFoundError:
+            return None
         except json.JSONDecodeError as e:
             logger.exception("Failed to parse MCP server configuration")
             raise ValueError(f"Invalid JSON in MCP server configuration file: {e}") from e
@@ -402,6 +408,14 @@ class MCPServerManager:
 
         """
         config = self.load()
+        return dict(config["mcpServers"])
+
+    def get_all_servers_if_configured(self) -> dict[str, dict[str, Any]] | None:
+        """Return one raw server snapshot, or None when the config is missing."""
+        with _CONFIG_SAVE_LOCK:
+            config = self._read_config_locked()
+        if config is None:
+            return None
         return dict(config["mcpServers"])
 
     def parse_command_string(self, command_str: str) -> tuple[str, list[str]]:

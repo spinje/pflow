@@ -51,12 +51,20 @@ class MCPDiscovery:
             with open(os.devnull, "w", encoding="utf-8") as devnull:
                 yield devnull
 
-    def discover_tools(self, server_name: str, verbose: bool = False) -> list[dict[str, Any]]:
+    def discover_tools(
+        self,
+        server_name: str,
+        verbose: bool = False,
+        *,
+        server_config: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Discover tools from an MCP server (synchronous wrapper).
 
         Args:
             server_name: Name of the configured MCP server
             verbose: Whether to show server output to stderr
+            server_config: Optional raw configuration snapshot. When supplied,
+                discovery uses it instead of re-reading the manager.
 
         Returns:
             List of tool definitions with metadata
@@ -65,7 +73,8 @@ class MCPDiscovery:
             ValueError: If server not found in configuration
             RuntimeError: If discovery fails
         """
-        server_config = self.manager.get_server(server_name)
+        if server_config is None:
+            server_config = self.manager.get_server(server_name)
 
         if not server_config:
             available = ", ".join(self.manager.list_servers()) or "none"

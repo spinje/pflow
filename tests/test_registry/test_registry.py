@@ -1084,6 +1084,33 @@ class TestRegistryFormatConsistency:
             # Metadata must survive
             assert registry.get_metadata("mcp_config_hash") == "abc123"
 
+    def test_save_updates_nodes_and_metadata_in_one_atomic_write(self):
+        """save() can publish a coherent node and metadata snapshot."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+            registry = Registry(registry_path)
+            registry._write_atomic({
+                "version": "stored-version",
+                "last_core_scan": "2000-01-01T00:00:00+00:00",
+                "metadata": {"unrelated": "preserved", "sync": "old"},
+                "nodes": {"old": {"module": "old"}},
+            })
+
+            with patch.object(registry, "_write_atomic", wraps=registry._write_atomic) as atomic_write:
+                registry.save(
+                    {"new": {"module": "new"}},
+                    metadata_updates={"sync": "new"},
+                )
+
+            atomic_write.assert_called_once()
+            written = json.loads(registry_path.read_text(encoding="utf-8"))
+            assert written == {
+                "version": "stored-version",
+                "last_core_scan": "2000-01-01T00:00:00+00:00",
+                "metadata": {"unrelated": "preserved", "sync": "new"},
+                "nodes": {"new": {"module": "new"}},
+            }
+
     def test_get_set_metadata_roundtrip(self):
         """get_metadata/set_metadata must work on structured format."""
         with tempfile.TemporaryDirectory() as tmpdir:

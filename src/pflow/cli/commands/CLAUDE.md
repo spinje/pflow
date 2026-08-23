@@ -40,10 +40,10 @@ Subcommands: `list`, `find`, `describe`, `servers`, `add`, `sync`, `remove`, `se
 - `mcp find "description"` — LLM-powered MCP tool search via `find_components()`.
 - `mcp describe <tool>` — detailed tool info with parameters, outputs, and `.pflow.md` usage snippet.
 - `mcp servers` — lists configured **servers** (transport type, command/URL, timestamps). This was the old `mcp list`.
-- `mcp add|remove|sync` — server lifecycle management (unchanged).
+- `mcp add|remove|sync` — server lifecycle management. Manual sync is forced discovery but uses the same coherent per-server fingerprint/replacement path as workflow-start auto-sync.
 - `mcp serve` — launches pflow as an MCP server (stdio transport). Fundamentally different from the management commands.
 
-**Smart auto-discovery**: Runs at pflow startup on every command (via `mcp_sync.py`, not this file). Only syncs when config modified or servers changed.
+**Smart auto-discovery**: Runs only before workflow execution (via `mcp_sync.py`, not this file). Raw per-server config fingerprints prevent unchanged servers from starting; failures remain due without rolling back successful peers.
 
 **MCP tool normalization** (`normalize_node_id` in `registry/node_id.py`, 3-tier matching for `describe`/`probe`):
 1. Exact match: `mcp-slack-composio-SLACK_SEND_MESSAGE`
