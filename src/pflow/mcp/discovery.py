@@ -16,6 +16,8 @@ from .manager import MCPServerManager
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_DISCOVERY_TIMEOUT_SECONDS = 60
+
 
 class MCPDiscovery:
     """Discovers tools from MCP servers.
@@ -80,7 +82,7 @@ class MCPDiscovery:
             available = ", ".join(self.manager.list_servers()) or "none"
             raise ValueError(f"MCP server '{server_name}' not found. Available servers: {available}")
 
-        timeout = server_config.get("timeout", 30)
+        timeout = server_config.get("timeout", DEFAULT_DISCOVERY_TIMEOUT_SECONDS)
         try:
             return asyncio.run(
                 asyncio.wait_for(

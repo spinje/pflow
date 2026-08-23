@@ -9,7 +9,7 @@ from pflow.core.diagnostic import Diagnostic
 from pflow.registry import Registry
 from pflow.registry.constants import MCP_CANONICAL_OUTPUT
 
-from .discovery import MCPDiscovery
+from .discovery import DEFAULT_DISCOVERY_TIMEOUT_SECONDS, MCPDiscovery
 from .errors import describe_mcp_error
 from .manager import MCPServerManager
 from .sync_state import MCP_SERVER_FINGERPRINTS_KEY, fingerprint_server_configs, load_server_fingerprints
@@ -161,7 +161,10 @@ class MCPRegistrar:
                 results.append(ServerSyncResult(server=server_name, tools_discovered=len(tools)))
             except Exception as error:
                 original = error.__cause__ if error.__cause__ else error
-                diagnostic = describe_mcp_error(original, timeout=server_config.get("timeout", 30))
+                diagnostic = describe_mcp_error(
+                    original,
+                    timeout=server_config.get("timeout", DEFAULT_DISCOVERY_TIMEOUT_SECONDS),
+                )
                 results.append(
                     ServerSyncResult(
                         server=server_name,

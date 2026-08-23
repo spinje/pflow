@@ -121,6 +121,24 @@ class TestMCPDiscoveryCritical:
                 server_config={"command": "hung", "timeout": 0.01},
             )
 
+    def test_discovery_default_accommodates_slow_server_startup(self):
+        """The bounded default leaves room for cold package-runner startup."""
+        discovery = MCPDiscovery()
+        observed_timeout = None
+
+        async def capture_timeout(awaitable, *, timeout):
+            nonlocal observed_timeout
+            observed_timeout = timeout
+            return await awaitable
+
+        with (
+            patch.object(discovery, "_discover_async", return_value=[]),
+            patch("pflow.mcp.discovery.asyncio.wait_for", side_effect=capture_timeout),
+        ):
+            assert discovery.discover_tools("cold", server_config={"command": "npx"}) == []
+
+        assert observed_timeout == 60
+
 
 class TestMCPRegistrarCritical:
     """Test the critical tool registration process."""
