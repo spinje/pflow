@@ -16,6 +16,8 @@ from .manager import MCPServerManager
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_DISCOVERY_TIMEOUT_SECONDS = 60
+
 
 class MCPDiscovery:
     """Discovers tools from MCP servers.
@@ -51,12 +53,20 @@ class MCPDiscovery:
             with open(os.devnull, "w", encoding="utf-8") as devnull:
                 yield devnull
 
-    def discover_tools(self, server_name: str, verbose: bool = False) -> list[dict[str, Any]]:
+    def discover_tools(
+        self,
+        server_name: str,
+        verbose: bool = False,
+        *,
+        server_config: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Discover tools from an MCP server (synchronous wrapper).
 
         Args:
             server_name: Name of the configured MCP server
             verbose: Whether to show server output to stderr
+            server_config: Optional raw configuration snapshot. When supplied,
+                discovery uses it instead of re-reading the manager.
 
         Returns:
             List of tool definitions with metadata
@@ -65,18 +75,25 @@ class MCPDiscovery:
             ValueError: If server not found in configuration
             RuntimeError: If discovery fails
         """
-        server_config = self.manager.get_server(server_name)
+        if server_config is None:
+            server_config = self.manager.get_server(server_name)
 
         if not server_config:
             available = ", ".join(self.manager.list_servers()) or "none"
             raise ValueError(f"MCP server '{server_name}' not found. Available servers: {available}")
 
+        timeout = server_config.get("timeout", DEFAULT_DISCOVERY_TIMEOUT_SECONDS)
         try:
-            return asyncio.run(self._discover_async(server_name, server_config, verbose))
+            return asyncio.run(
+                asyncio.wait_for(
+                    self._discover_async(server_name, server_config, verbose),
+                    timeout=timeout,
+                )
+            )
         except Exception as e:
             from pflow.mcp.errors import describe_mcp_error
 
-            diagnostic = describe_mcp_error(e)
+            diagnostic = describe_mcp_error(e, timeout=timeout)
             logger.debug("Discovery failed for %s: %s", server_name, diagnostic.message, exc_info=True)
             raise RuntimeError(f"Tool discovery failed for {server_name}: {diagnostic.message}") from e
 

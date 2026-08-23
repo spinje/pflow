@@ -4,17 +4,16 @@ Registered as a subgroup of the PflowCLI group in main.py via cli.add_command(mc
 Click handles subcommand routing natively.
 """
 
-import hashlib
 import json
 import logging
 import sys
-import time
 from typing import ClassVar
 
 import click
 
 from pflow.core.suggestion_utils import find_similar_items, format_did_you_mean
 from pflow.mcp import MCPRegistrar, MCPServerManager
+from pflow.mcp.registrar import SyncBatchResult
 
 logger = logging.getLogger(__name__)
 
@@ -507,7 +506,7 @@ def remove(name: str, force: bool) -> None:
             sys.exit(1)
 
         # Count registered tools
-        registered_tools = registrar.list_registered_tools(name)
+        registered_tools = registrar.list_registered_tools(name, include_filtered=True)
 
         # Confirm removal
         if not force:
@@ -518,9 +517,9 @@ def remove(name: str, force: bool) -> None:
                 click.echo("Cancelled.")
                 return
 
-        # Remove tools from registry
-        if registered_tools:
-            removed = registrar.remove_server_tools(name)
+        # Remove exact owned tools and the server fingerprint before config removal.
+        removed = registrar.remove_server_tools(name)
+        if removed:
             click.echo(f"  Removed {removed} tools from registry")
 
         # Remove server configuration
@@ -553,40 +552,46 @@ def _validate_sync_arguments(name: str | None, all_servers: bool) -> None:
         sys.exit(1)
 
 
-def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar, verbose: bool = False) -> None:
+def _exit_on_sync_abort(batch: SyncBatchResult) -> None:
+    """Exit with the coordinator's reason when it declined to publish."""
+    if batch.aborted_reason:
+        click.echo(f"Error: {batch.aborted_reason}", err=True)
+        sys.exit(1)
+
+
+def _sync_all_servers(registrar: MCPRegistrar, verbose: bool = False) -> None:
     """Sync tools from all configured servers.
 
     Args:
-        manager: MCPServerManager instance
         registrar: MCPRegistrar instance
         verbose: Whether to show technical error details
     """
-    from pflow.registry import Registry
-
-    servers = manager.list_servers()
-    if not servers:
+    click.echo("Syncing all configured servers...")
+    batch = registrar.sync_servers(None, reconcile_all=True)
+    if batch.config_missing and not batch.aborted_reason:
+        click.echo("No MCP server configuration found.")
+        return
+    _exit_on_sync_abort(batch)
+    if not batch.servers:
         click.echo("No MCP servers configured.")
         return
-
-    click.echo(f"Syncing {len(servers)} servers...")
-    results = registrar.sync_all_servers()
 
     total_discovered = 0
     total_registered = 0
     has_failures = False
 
-    for result in results:
-        server = result["server"]
-        discovered = result["tools_discovered"]
-        registered = result["tools_registered"]
+    for result in batch.servers:
+        server = result.server
+        discovered = result.tools_discovered
+        registered = result.tools_registered
 
         total_discovered += discovered
         total_registered += registered
 
-        if "error" in result:
+        if result.error is not None:
             has_failures = True
-            click.echo(f"  ✗ {server}: {result['error']}", err=True)
-            diagnostic = result.get("diagnostic")
+            click.echo(f"  ✗ {server}: {result.error}", err=True)
+            diagnostic = result.diagnostic
             if diagnostic:
                 if diagnostic.suggestions:
                     for suggestion in diagnostic.suggestions:
@@ -603,15 +608,6 @@ def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar, verbos
     if has_failures and not verbose:
         click.echo("Run with --verbose for technical error details.", err=True)
 
-    # Update sync metadata after successful sync
-    registry = Registry()
-    registry.set_metadata("mcp_last_sync_time", time.time())
-
-    # Store hash of current servers
-    current_servers = sorted(servers)
-    servers_hash = hashlib.sha256(json.dumps(current_servers).encode()).hexdigest()
-    registry.set_metadata("mcp_servers_hash", servers_hash)
-
 
 def _sync_single_server(name: str, manager: MCPServerManager, registrar: MCPRegistrar, verbose: bool = False) -> None:
     """Sync tools from a single server.
@@ -625,25 +621,30 @@ def _sync_single_server(name: str, manager: MCPServerManager, registrar: MCPRegi
     Raises:
         SystemExit: If server not found or sync fails
     """
-    if not manager.get_server(name):
+    if manager.get_server(name) is None:
         click.echo(f"Error: Server '{name}' not found", err=True)
         sys.exit(1)
 
     click.echo(f"Syncing server '{name}'...")
-    result = registrar.sync_server(name)
+    batch = registrar.sync_servers([name], reconcile_all=False)
+    if batch.config_missing and not batch.aborted_reason:
+        click.echo("Error: MCP configuration is no longer available", err=True)
+        sys.exit(1)
+    _exit_on_sync_abort(batch)
+    result = batch.servers[0]
 
-    if "error" in result:
-        diagnostic = result.get("diagnostic")
+    if result.error is not None:
+        diagnostic = result.diagnostic
         if diagnostic:
             from pflow.core.diagnostic_render import format_diagnostic
 
             click.echo(format_diagnostic(diagnostic, verbose=verbose), err=True)
         else:
-            click.echo(f"Error: {result['error']}", err=True)
+            click.echo(f"Error: {result.error}", err=True)
         sys.exit(1)
 
-    discovered = result["tools_discovered"]
-    registered = result["tools_registered"]
+    discovered = result.tools_discovered
+    registered = result.tools_registered
 
     click.echo(f"✓ Discovered {discovered} tools")
     click.echo(f"✓ Registered {registered} tools in pflow registry")
@@ -686,7 +687,7 @@ def sync(name: str | None, all_servers: bool, verbose: bool) -> None:
 
     try:
         if all_servers:
-            _sync_all_servers(manager, registrar, verbose=verbose)
+            _sync_all_servers(registrar, verbose=verbose)
         else:
             if name:
                 _sync_single_server(name, manager, registrar, verbose=verbose)

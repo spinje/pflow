@@ -1,15 +1,41 @@
 """MCP tool registration for pflow registry."""
 
 import logging
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from typing import Any
 
+from pflow.core.diagnostic import Diagnostic
 from pflow.registry import Registry
 from pflow.registry.constants import MCP_CANONICAL_OUTPUT
 
-from .discovery import MCPDiscovery
+from .discovery import DEFAULT_DISCOVERY_TIMEOUT_SECONDS, MCPDiscovery
+from .errors import describe_mcp_error
 from .manager import MCPServerManager
+from .sync_state import MCP_SERVER_FINGERPRINTS_KEY, fingerprint_server_configs, load_server_fingerprints
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ServerSyncResult:
+    """Outcome of one server discovery within a reconciliation batch."""
+
+    server: str
+    tools_discovered: int = 0
+    tools_registered: int = 0
+    tools_filtered: int = 0
+    error: str | None = None
+    diagnostic: Diagnostic | None = None
+
+
+@dataclass(frozen=True)
+class SyncBatchResult:
+    """Outcome of one coherent MCP reconciliation attempt."""
+
+    servers: list[ServerSyncResult]
+    aborted_reason: str | None = None
+    config_missing: bool = False
 
 
 class MCPRegistrar:
@@ -46,148 +72,239 @@ class MCPRegistrar:
             self._settings_manager = SettingsManager()
         return self._settings_manager
 
-    def register_tools(self, server_name: str, tools: list[dict[str, Any]]) -> None:
-        """Register discovered tools in the registry.
+    @staticmethod
+    def get_server_owner(entry: dict[str, Any]) -> str | None:
+        """Return an entry's exact canonical MCP server owner, if valid."""
+        interface = entry.get("interface")
+        if not isinstance(interface, dict):
+            return None
+        metadata = interface.get("mcp_metadata")
+        if not isinstance(metadata, dict):
+            return None
+        owner = metadata.get("server")
+        if not isinstance(owner, str) or not owner.strip():
+            return None
+        return owner
 
-        This is the method called by auto-discovery to register tools
-        without re-discovering them.
+    @staticmethod
+    def is_mcp_entry(node_name: str, entry: dict[str, Any]) -> bool:
+        """Return whether an entry occupies the reserved MCP namespace."""
+        return entry.get("type") == "mcp" or node_name.startswith("mcp-")
 
-        Args:
-            server_name: Name of the MCP server
-            tools: List of tool definitions discovered from the server
-        """
-        # Load complete registry (unfiltered) to avoid persisting a filtered subset
-        nodes = self.registry.load(include_filtered=True)
+    @classmethod
+    def full_reconciliation_removals(
+        cls,
+        nodes: dict[str, dict[str, Any]],
+        configured_servers: set[str],
+    ) -> list[str]:
+        """Identify absent owners and unsupported entries for full reconciliation."""
+        removals = []
+        for node_name, entry in nodes.items():
+            owner = cls.get_server_owner(entry)
+            if (cls.is_mcp_entry(node_name, entry) and owner is None) or (
+                owner is not None and owner not in configured_servers
+            ):
+                removals.append(node_name)
+        return removals
 
+    def _replace_server_tools(
+        self,
+        nodes: dict[str, dict[str, Any]],
+        server_name: str,
+        tools: list[dict[str, Any]],
+    ) -> tuple[int, int]:
+        """Replace one server's exact owned entries in an in-memory snapshot."""
         registered_count = 0
         filtered_count = 0
-
+        replacements: dict[str, dict[str, Any]] = {}
         for tool in tools:
-            # Create node name following mcp-{server}-{tool} pattern
             node_name = f"mcp-{server_name}-{tool['name']}"
-
-            # Check if node should be included based on settings
             if not self.settings_manager.should_include_node(node_name):
                 filtered_count += 1
                 logger.debug(f"Filtering out MCP tool '{node_name}' based on settings")
-                # Remove from registry if it was previously registered
-                if node_name in nodes:
-                    del nodes[node_name]
                 continue
-
-            # Check if already exists
-            if node_name in nodes:
-                logger.debug(f"Updating existing registry entry for {node_name}")
-            else:
-                logger.debug(f"Creating new registry entry for {node_name}")
-
-            # Create virtual registry entry
-            nodes[node_name] = self._create_registry_entry(server_name, tool)
+            replacements[node_name] = self._create_registry_entry(server_name, tool)
             registered_count += 1
 
-        # Save updated registry
-        self.registry.save(nodes)
+        for node_name, entry in list(nodes.items()):
+            if self.get_server_owner(entry) == server_name:
+                del nodes[node_name]
+        nodes.update(replacements)
 
-        if filtered_count > 0:
-            logger.info(f"Registered {registered_count} tools from {server_name} ({filtered_count} filtered out)")
-        else:
-            logger.info(f"Registered {registered_count} tools from {server_name}")
+        return registered_count, filtered_count
 
-    def sync_server(self, server_name: str) -> dict[str, Any]:
-        """Sync tools from an MCP server to the registry.
+    def _discover_targets(
+        self,
+        targets: list[str],
+        configs: dict[str, dict[str, Any]],
+        *,
+        verbose: bool,
+        on_server_start: Callable[[str], None] | None,
+    ) -> tuple[dict[str, list[dict[str, Any]]], list[ServerSyncResult]]:
+        """Discover targets without reading or writing registry state."""
+        discovered_tools: dict[str, list[dict[str, Any]]] = {}
+        results: list[ServerSyncResult] = []
+        for server_name in targets:
+            server_config = configs.get(server_name)
+            if server_config is None:
+                results.append(ServerSyncResult(server=server_name, error="Server is not configured"))
+                continue
+            if on_server_start:
+                on_server_start(server_name)
+            try:
+                tools = self.discovery.discover_tools(
+                    server_name,
+                    verbose=verbose,
+                    server_config=server_config,
+                )
+                discovered_tools[server_name] = tools
+                results.append(ServerSyncResult(server=server_name, tools_discovered=len(tools)))
+            except Exception as error:
+                original = error.__cause__ if error.__cause__ else error
+                diagnostic = describe_mcp_error(
+                    original,
+                    timeout=server_config.get("timeout", DEFAULT_DISCOVERY_TIMEOUT_SECONDS),
+                )
+                results.append(
+                    ServerSyncResult(
+                        server=server_name,
+                        error=diagnostic.message,
+                        diagnostic=diagnostic,
+                    )
+                )
+        return discovered_tools, results
 
-        This discovers all tools from the specified server and creates
-        virtual registry entries for each one.
+    @staticmethod
+    def _configuration_changed(
+        initial: dict[str, str],
+        latest: dict[str, str],
+        targets: list[str],
+        *,
+        reconcile_all: bool,
+    ) -> bool:
+        if reconcile_all:
+            return latest != initial
+        return any(latest.get(name) != initial.get(name) for name in targets)
 
-        Args:
-            server_name: Name of the configured MCP server
+    def _clean_full_reconciliation(
+        self,
+        nodes: dict[str, dict[str, Any]],
+        configured_servers: set[str],
+    ) -> None:
+        """Remove absent canonical owners and unsupported reserved MCP entries."""
+        for node_name in self.full_reconciliation_removals(nodes, configured_servers):
+            del nodes[node_name]
 
-        Returns:
-            Summary of sync operation with counts
-        """
-        logger.info(f"Syncing MCP server '{server_name}'...")
+    def _apply_successful_replacements(
+        self,
+        nodes: dict[str, dict[str, Any]],
+        results: list[ServerSyncResult],
+        discovered_tools: dict[str, list[dict[str, Any]]],
+        fingerprints: dict[str, Any],
+        initial_fingerprints: dict[str, str],
+    ) -> list[ServerSyncResult]:
+        """Apply successful server replacements to one in-memory snapshot."""
+        final_results: list[ServerSyncResult] = []
+        for result in results:
+            tools = discovered_tools.get(result.server)
+            if tools is None:
+                final_results.append(result)
+                continue
+            try:
+                # Build every replacement before removing the server's working entries.
+                registered, filtered = self._replace_server_tools(nodes, result.server, tools)
+            except Exception as error:
+                diagnostic = describe_mcp_error(error)
+                diagnostic.message = f"Could not build registry entries for '{result.server}': {diagnostic.message}"
+                final_results.append(
+                    ServerSyncResult(
+                        server=result.server,
+                        tools_discovered=len(tools),
+                        error=diagnostic.message,
+                        diagnostic=diagnostic,
+                    )
+                )
+                continue
+            fingerprints[result.server] = initial_fingerprints[result.server]
+            final_results.append(
+                ServerSyncResult(
+                    server=result.server,
+                    tools_discovered=len(tools),
+                    tools_registered=registered,
+                    tools_filtered=filtered,
+                )
+            )
+        return final_results
 
-        # Discover tools from server
-        try:
-            # Don't show server output during sync (not verbose)
-            tools = self.discovery.discover_tools(server_name, verbose=False)
-        except Exception as e:
-            from pflow.mcp.errors import describe_mcp_error
+    def sync_servers(
+        self,
+        server_names: Iterable[str] | None,
+        *,
+        reconcile_all: bool,
+        verbose: bool = False,
+        on_server_start: Callable[[str], None] | None = None,
+    ) -> SyncBatchResult:
+        """Discover target servers, then publish one coherent reconciliation."""
+        initial_configs = self.manager.get_all_servers_if_configured()
+        if initial_configs is None:
+            return SyncBatchResult([], config_missing=True)
+        targets = list(initial_configs) if server_names is None else list(server_names)
+        initial_fingerprints = fingerprint_server_configs(initial_configs)
+        discovered_tools, results = self._discover_targets(
+            targets,
+            initial_configs,
+            verbose=verbose,
+            on_server_start=on_server_start,
+        )
 
-            # Get the original MCP exception (before RuntimeError wrapping in discover_tools)
-            original = e.__cause__ if e.__cause__ else e
-            diagnostic = describe_mcp_error(original)
-            return {
-                "server": server_name,
-                "tools_discovered": 0,
-                "tools_registered": 0,
-                "error": diagnostic.message,
-                "diagnostic": diagnostic,
+        latest_configs = self.manager.get_all_servers_if_configured()
+        if latest_configs is None:
+            return SyncBatchResult(
+                servers=results,
+                aborted_reason="MCP configuration was removed during discovery; no registry updates were published.",
+                config_missing=True,
+            )
+        latest_fingerprints = fingerprint_server_configs(latest_configs)
+        if self._configuration_changed(
+            initial_fingerprints,
+            latest_fingerprints,
+            targets,
+            reconcile_all=reconcile_all,
+        ):
+            return SyncBatchResult(
+                servers=results,
+                aborted_reason="MCP configuration changed during discovery; no registry updates were published. Retry sync.",
+            )
+
+        nodes = self.registry.load(include_filtered=True)
+        original_nodes = dict(nodes)
+        stored_fingerprints, fingerprints_valid = load_server_fingerprints(self.registry)
+        final_fingerprints = dict(stored_fingerprints)
+
+        if reconcile_all:
+            configured_servers = set(latest_configs)
+            self._clean_full_reconciliation(nodes, configured_servers)
+            final_fingerprints = {
+                name: fingerprint for name, fingerprint in final_fingerprints.items() if name in configured_servers
             }
 
-        # Load complete registry (unfiltered) to avoid persisting a filtered subset
-        nodes = self.registry.load(include_filtered=True)
+        final_results = self._apply_successful_replacements(
+            nodes,
+            results,
+            discovered_tools,
+            final_fingerprints,
+            initial_fingerprints,
+        )
 
-        registered_count = 0
-        filtered_count = 0
+        metadata_changed = not fingerprints_valid or final_fingerprints != stored_fingerprints
+        registry_updated = nodes != original_nodes or metadata_changed
+        if registry_updated:
+            self.registry.save(
+                nodes,
+                metadata_updates={MCP_SERVER_FINGERPRINTS_KEY: final_fingerprints},
+            )
 
-        for tool in tools:
-            # Create node name following mcp-{server}-{tool} pattern
-            node_name = f"mcp-{server_name}-{tool['name']}"
-
-            # Check if node should be included based on settings
-            if not self.settings_manager.should_include_node(node_name):
-                filtered_count += 1
-                logger.debug(f"Filtering out MCP tool '{node_name}' based on settings")
-                # Remove from registry if it was previously registered
-                if node_name in nodes:
-                    del nodes[node_name]
-                continue
-
-            # Check if already exists
-            if node_name in nodes:
-                logger.debug(f"Updating existing registry entry for {node_name}")
-            else:
-                logger.debug(f"Creating new registry entry for {node_name}")
-
-            # Create virtual registry entry
-            nodes[node_name] = self._create_registry_entry(server_name, tool)
-            registered_count += 1
-
-        # Save updated registry
-        self.registry.save(nodes)
-
-        if filtered_count > 0:
-            logger.info(f"Registered {registered_count} tools from {server_name} ({filtered_count} filtered out)")
-        else:
-            logger.info(f"Registered {registered_count} tools from {server_name}")
-
-        return {
-            "server": server_name,
-            "tools_discovered": len(tools),
-            "tools_registered": registered_count,
-            "tools_filtered": filtered_count,
-        }
-
-    def sync_all_servers(self) -> list[dict[str, Any]]:
-        """Sync tools from all configured MCP servers.
-
-        Returns:
-            List of sync summaries for each server
-        """
-        results = []
-        servers = self.manager.list_servers()
-
-        logger.info(f"Syncing {len(servers)} MCP servers...")
-
-        for server_name in servers:
-            result = self.sync_server(server_name)
-            results.append(result)
-
-        total_registered = sum(r["tools_registered"] for r in results)
-        logger.info(f"Sync complete: registered {total_registered} tools from {len(servers)} servers")
-
-        return results
+        return SyncBatchResult(servers=final_results)
 
     def remove_server_tools(self, server_name: str) -> int:
         """Remove all registry entries for a specific MCP server.
@@ -198,20 +315,19 @@ class MCPRegistrar:
         Returns:
             Number of entries removed
         """
-        # Load complete registry (unfiltered) to ensure removal even if tools are filtered
         nodes = self.registry.load(include_filtered=True)
-        prefix = f"mcp-{server_name}-"
-
-        # Find all nodes for this server
-        to_remove = [node_name for node_name in nodes if node_name.startswith(prefix)]
-
-        # Remove them
+        to_remove = [node_name for node_name, entry in nodes.items() if self.get_server_owner(entry) == server_name]
         for node_name in to_remove:
             del nodes[node_name]
             logger.debug(f"Removed registry entry: {node_name}")
 
+        fingerprints, _ = load_server_fingerprints(self.registry)
+        fingerprint_removed = server_name in fingerprints
+        fingerprints.pop(server_name, None)
+
+        if to_remove or fingerprint_removed:
+            self.registry.save(nodes, metadata_updates={MCP_SERVER_FINGERPRINTS_KEY: fingerprints})
         if to_remove:
-            self.registry.save(nodes)
             logger.info(f"Removed {len(to_remove)} tools for server '{server_name}'")
 
         return len(to_remove)
@@ -269,23 +385,26 @@ class MCPRegistrar:
 
         return entry
 
-    def list_registered_tools(self, server_name: str | None = None) -> list[str]:
+    def list_registered_tools(
+        self,
+        server_name: str | None = None,
+        *,
+        include_filtered: bool = False,
+    ) -> list[str]:
         """List all registered MCP tools in the registry.
 
         Args:
             server_name: Optional server name to filter by
+            include_filtered: Include settings-filtered persisted entries.
 
         Returns:
             List of registered tool node names
         """
-        nodes = self.registry.load()
+        nodes = self.registry.load(include_filtered=include_filtered)
 
-        if server_name:
-            prefix = f"mcp-{server_name}-"
-            return [node_name for node_name in nodes if node_name.startswith(prefix)]
-        else:
-            # All MCP nodes
-            return [node_name for node_name in nodes if node_name.startswith("mcp-")]
+        if server_name is not None:
+            return [node_name for node_name, entry in nodes.items() if self.get_server_owner(entry) == server_name]
+        return [node_name for node_name, entry in nodes.items() if self.get_server_owner(entry) is not None]
 
     def get_tool_info(self, node_name: str) -> dict[str, Any] | None:
         """Get detailed information about a registered MCP tool.

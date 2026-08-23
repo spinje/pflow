@@ -16,6 +16,15 @@ import pytest
 from pflow.mcp import MCPServerManager
 
 
+def test_raw_server_snapshot_distinguishes_missing_from_explicit_empty(tmp_path: Path) -> None:
+    manager = MCPServerManager(config_path=tmp_path / "mcp-servers.json")
+
+    assert manager.get_all_servers_if_configured() is None
+
+    manager.save({"mcpServers": {}})
+    assert manager.get_all_servers_if_configured() == {}
+
+
 class TestAtomicWriteProtection:
     """Test that atomic writes ACTUALLY prevent corruption."""
 

@@ -16,6 +16,7 @@ mcp/
 ├── discovery.py       # Connect to MCP servers, list tools, convert schemas to pflow format
 ├── manager.py         # CRUD for ~/.pflow/mcp-servers.json (standard MCP config format)
 ├── registrar.py       # Bridge: discovered tools → virtual pflow registry entries
+├── sync_state.py      # Stable raw-config fingerprints shared by auto/manual sync
 └── pool.py            # Connection pool: keeps server sessions alive across workflow steps
 ```
 
@@ -29,13 +30,13 @@ pflow mcp add      pflow mcp sync        (called by sync)        pflow run workf
 mcp-servers.json   lists tools+schemas   registry entries         for stateful sessions
 ```
 
-**Auto-sync at startup**: `pflow run` auto-discovers MCP tools before execution (`cli/mcp_sync.py:_auto_discover_mcp_servers`, invoked from `cli/commands/run.py`). Uses smart sync — compares config file mtime + SHA256 hash of server names against stored values in Registry metadata. Skips sync when config hasn't changed. Errors are silently swallowed (auto-discovery is optional).
+**Auto-sync before workflow execution**: `cli/mcp_sync.py:_auto_discover_mcp_servers` fingerprints each raw persisted server config independently. Only added/changed servers are discovered; each success advances independently, while failures preserve the prior tools/fingerprint and remain due. User-visible warnings are interactive-only because auto-discovery is optional.
 
 ## Integration Points
 
 | Integration | From → To | Mechanism |
 |-------------|-----------|-----------|
-| Auto-sync at startup | `cli/mcp_sync.py` (via `cli/commands/run.py`) → `MCPDiscovery` + `MCPRegistrar` | Smart sync on mtime+hash change; cleans ALL old `mcp-` entries before re-syncing |
+| Auto-sync before workflow execution | `cli/mcp_sync.py` (via `cli/commands/run.py`) → `MCPDiscovery` + `MCPRegistrar` | Per-server raw-config fingerprints; discover first, then exact-owner reconciliation in one registry write |
 | Compiler param injection | `runtime/compilation/compiler.py:inject_special_parameters` → MCPNode params | Injects `__mcp_server__`/`__mcp_tool__`; the server/tool split is delegated to `mcp_resolution._parse_mcp_node_type` (greedy longest-match). Does **NOT** use `mcp_metadata` from registry |
 | Pool creation | `execution/runner.py:_initialize_shared_store` → `shared["__mcp_pool__"]` | Created unconditionally for every workflow, but background thread starts lazily on first `call_tool()` |
 | Pool consumption | `nodes/mcp/node.py:prep()` → `pool.call_tool()` | Falls back to `asyncio.run()` if no pool (e.g., `pflow probe`) |
@@ -49,6 +50,8 @@ All MCP tools create registry entries pointing to the **same** `MCPNode` class (
 - `file_path`: always `"virtual://mcp"` (not a real file)
 - `interface.mcp_metadata`: contains `server`, `tool`, and `original_schema` (stored for reference but NOT used by the compiler at runtime)
 - Node name format: `mcp-{server_name}-{tool_name}`
+
+Registry mutation never parses that ambiguous node name. Replacement, removal, and server-filtered listing use exact equality on the non-empty `interface.mcp_metadata.server` owner. Full reconciliation discards reserved MCP entries without a canonical owner.
 
 ### Node Naming Ambiguity
 `mcp-slack-http-remote-SEND_MESSAGE` — where does server end and tool begin? The authoritative parser is **`runtime/compilation/mcp_resolution.py:_parse_mcp_node_type`**: greedy longest-match against known servers from `MCPServerManager().list_servers()`.
@@ -85,6 +88,8 @@ Storage: `~/.pflow/mcp-servers.json` with `mcpServers` wrapper (standard MCP for
 
 ### Registry Load Correctness
 Registrar always calls `registry.load(include_filtered=True)`. If you load with default `include_filtered=False` and save, you **permanently lose** all filtered-out entries. `save()` does a complete replacement of the registry file.
+
+Batch sync performs all network discovery first, rechecks the raw config, then late-loads the unfiltered registry and publishes nodes plus `mcp_server_fingerprints` in one atomic replacement. This prevents intermediate same-process snapshots, but Registry has no cross-process read-modify-write transaction isolation.
 
 ### Result Extraction Priority (in MCPNode)
 1. `structuredContent` — typed JSON matching outputSchema (preferred)

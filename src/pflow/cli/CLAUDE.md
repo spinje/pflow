@@ -211,7 +211,7 @@ Full list readable in `_initialize_context` and `_setup_workflow_execution` in `
 
 ## MCP Auto-Discovery (mcp_sync.py)
 
-Runs at startup on every `pflow` invocation. Smart skip: checks MCP config file mtime + SHA-256 hash of server list against stored metadata. Only re-syncs when config actually changed.
+Runs before workflow execution, not before other top-level commands. Each raw persisted server block has an independent SHA-256 fingerprint in registry metadata, so only added or changed servers start. Successful servers replace their exact owned tool set and advance independently; failures retain their tools/fingerprint for retry. A missing config is a no-op, while an explicit empty config reconciles MCP state to empty.
 
 Note: has its own copy of `_get_output_controller` (duplicated from `commands/run.py` to avoid circular imports).
 
@@ -264,7 +264,7 @@ See `core/CLAUDE.md` (shell_integration section) for FIFO detection, StdinData m
 | `error_output.py` | `test_unified_error_output.py`, `test_enhanced_error_output.py` |
 | `workflow_output.py` | `test_shell_stderr_warnings.py`, `test_direct_execution_helpers.py`, `test_workflow_output_source_simple.py` |
 | `workflow_resolution.py` | `test_workflow_resolution.py` |
-| `mcp_sync.py` | `test_mcp_auto_discovery.py` |
+| `mcp_sync.py` | `test_mcp_auto_discovery.py`, `test_mcp_auto_sync_state.py` |
 | `param_parsing.py` | `test_rerun_display.py`, `test_direct_execution_helpers.py` |
 | `commands/*` | See `commands/CLAUDE.md` |
 
