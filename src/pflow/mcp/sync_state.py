@@ -23,3 +23,8 @@ def parse_server_fingerprints(value: Any) -> tuple[dict[str, Any], bool]:
     if not isinstance(value, dict):
         return {}, False
     return dict(value), True
+
+
+def load_server_fingerprints(registry: Any) -> tuple[dict[str, Any], bool]:
+    """Load the persisted fingerprint map without exposing missing-value sentinels."""
+    return parse_server_fingerprints(registry.get_metadata(MCP_SERVER_FINGERPRINTS_KEY))

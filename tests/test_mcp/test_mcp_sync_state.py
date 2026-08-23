@@ -156,7 +156,7 @@ def test_conversion_failure_preserves_server_while_valid_peer_advances(tmp_path:
 
     batch = registrar.sync_servers(["bad", "good"], reconcile_all=True)
 
-    assert batch.servers[0].error == "invalid properties"
+    assert batch.servers[0].error == "Could not build registry entries for 'bad': invalid properties"
     assert batch.servers[1].error is None
     assert set(registry.load(include_filtered=True)) == {"mcp-bad-old", "mcp-good-new"}
     assert registry.get_metadata(MCP_SERVER_FINGERPRINTS_KEY) == {

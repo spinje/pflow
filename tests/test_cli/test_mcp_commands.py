@@ -436,6 +436,27 @@ def test_manual_single_config_change_during_discovery_aborts_without_registry_wr
     assert registry.get_metadata(MCP_SERVER_FINGERPRINTS_KEY) == {"one": "old"}
 
 
+def test_manual_single_config_disappears_before_discovery_reports_error(tmp_path: Path) -> None:
+    configs = {"one": {"command": "one"}}
+    manager, _, discovery, registrar = _manual_sync_components(tmp_path, configs)
+
+    def remove_after_read(name: str):
+        manager.config_path.unlink()
+        return configs[name]
+
+    with (
+        patch("pflow.cli.commands.mcp.MCPServerManager", return_value=manager),
+        patch("pflow.cli.commands.mcp.MCPRegistrar", return_value=registrar),
+        patch.object(manager, "get_server", side_effect=remove_after_read),
+    ):
+        result = click.testing.CliRunner().invoke(mcp, ["sync", "one"])
+
+    assert result.exit_code == 1
+    assert "MCP configuration is no longer available" in result.output
+    assert "list index out of range" not in result.output
+    discovery.discover_tools.assert_not_called()
+
+
 def test_manual_sync_all_missing_config_preserves_registry(tmp_path: Path) -> None:
     manager, registry, discovery, registrar = _manual_sync_components(tmp_path, {"old": {"command": "old"}})
     old_nodes = {"mcp-old-tool": _mcp_entry(registrar, "old", "tool")}
@@ -453,6 +474,20 @@ def test_manual_sync_all_missing_config_preserves_registry(tmp_path: Path) -> No
     discovery.discover_tools.assert_not_called()
     assert registry.load(include_filtered=True) == old_nodes
     assert registry.get_metadata(MCP_SERVER_FINGERPRINTS_KEY) == {"old": "old"}
+
+
+def test_manual_sync_all_explicit_empty_config_reports_no_servers(tmp_path: Path) -> None:
+    manager, _, discovery, registrar = _manual_sync_components(tmp_path, {})
+
+    with (
+        patch("pflow.cli.commands.mcp.MCPServerManager", return_value=manager),
+        patch("pflow.cli.commands.mcp.MCPRegistrar", return_value=registrar),
+    ):
+        result = click.testing.CliRunner().invoke(mcp, ["sync", "--all"])
+
+    assert result.exit_code == 0
+    assert "No MCP servers configured" in result.output
+    discovery.discover_tools.assert_not_called()
 
 
 def test_remove_uses_exact_owner_and_removes_zero_tool_fingerprint(tmp_path: Path) -> None:

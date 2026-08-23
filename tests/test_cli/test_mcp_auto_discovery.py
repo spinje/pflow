@@ -18,8 +18,8 @@ from pflow.mcp.sync_state import MCP_SERVER_FINGERPRINTS_KEY, fingerprint_server
 class TestAutoDiscovery:
     """Test automatic MCP server discovery at pflow startup."""
 
-    def test_no_servers_configured_does_nothing(self, tmp_path, monkeypatch):
-        """Test that auto-discovery exits early when no servers configured."""
+    def test_explicit_empty_config_reconciles_registry(self, tmp_path, monkeypatch):
+        """An explicit empty config reaches reconciliation for stale cleanup."""
         monkeypatch.setenv("HOME", str(tmp_path))
 
         # Create mock context
@@ -40,7 +40,7 @@ class TestAutoDiscovery:
             # Existing empty config is explicit reconciliation state.
             mock_manager = mock_manager_class.return_value
             mock_manager.get_all_servers_if_configured.return_value = {}
-            mock_registrar_class.return_value.sync_servers.return_value = SyncBatchResult([], 0, True)
+            mock_registrar_class.return_value.sync_servers.return_value = SyncBatchResult([])
 
             # Run auto-discovery
             _auto_discover_mcp_servers(ctx, verbose=True)
@@ -84,19 +84,15 @@ class TestAutoDiscovery:
             # Configure registry
             mock_registry = mock_registry_class.return_value
             mock_registry.list_nodes.return_value = []
-            mock_registry.get_metadata.side_effect = lambda _key, default: default
+            mock_registry.get_metadata.side_effect = lambda _key, default=None: default
             mock_registry.load.return_value = {}  # Empty registry for cleaning old entries
 
             # Configure the shared batch coordinator result.
             mock_registrar = mock_registrar_class.return_value
-            mock_registrar.sync_servers.return_value = SyncBatchResult(
-                [
-                    ServerSyncResult("github", tools_discovered=2, tools_registered=2),
-                    ServerSyncResult("slack", tools_discovered=2, tools_registered=2),
-                ],
-                0,
-                True,
-            )
+            mock_registrar.sync_servers.return_value = SyncBatchResult([
+                ServerSyncResult("github", tools_discovered=2, tools_registered=2),
+                ServerSyncResult("slack", tools_discovered=2, tools_registered=2),
+            ])
 
             # Run auto-discovery with verbose=False (summary only)
             _auto_discover_mcp_servers(ctx, verbose=False)
@@ -143,18 +139,14 @@ class TestAutoDiscovery:
             # Configure registry
             mock_registry = mock_registry_class.return_value
             mock_registry.list_nodes.return_value = []
-            mock_registry.get_metadata.side_effect = lambda _key, default: default
+            mock_registry.get_metadata.side_effect = lambda _key, default=None: default
             mock_registry.load.return_value = {}  # Empty registry for cleaning old entries
 
             mock_registrar = mock_registrar_class.return_value
-            mock_registrar.sync_servers.return_value = SyncBatchResult(
-                [
-                    ServerSyncResult("broken", error="Connection failed"),
-                    ServerSyncResult("working", tools_discovered=2, tools_registered=2),
-                ],
-                0,
-                True,
-            )
+            mock_registrar.sync_servers.return_value = SyncBatchResult([
+                ServerSyncResult("broken", error="Connection failed"),
+                ServerSyncResult("working", tools_discovered=2, tools_registered=2),
+            ])
 
             # Run auto-discovery
             _auto_discover_mcp_servers(ctx, verbose=False)
@@ -192,16 +184,14 @@ class TestAutoDiscovery:
 
             mock_registry = mock_registry_class.return_value
             mock_registry.list_nodes.return_value = []
-            mock_registry.get_metadata.side_effect = lambda _key, default: default
+            mock_registry.get_metadata.side_effect = lambda _key, default=None: default
             mock_registry.load.return_value = {}  # Empty registry for cleaning old entries
 
             registrar = Mock()
 
             def sync_servers(_servers, **kwargs):
                 kwargs["on_server_start"]("test-server")
-                return SyncBatchResult(
-                    [ServerSyncResult("test-server", tools_discovered=2, tools_registered=2)], 0, True
-                )
+                return SyncBatchResult([ServerSyncResult("test-server", tools_discovered=2, tools_registered=2)])
 
             registrar.sync_servers.side_effect = sync_servers
 
@@ -317,7 +307,7 @@ class TestAutoDiscovery:
             mock_registry.list_nodes.return_value = []
 
             mock_registrar = mock_registrar_class.return_value
-            mock_registrar.sync_servers.return_value = SyncBatchResult([ServerSyncResult("empty-server")], 0, True)
+            mock_registrar.sync_servers.return_value = SyncBatchResult([ServerSyncResult("empty-server")])
 
             # Run auto-discovery
             _auto_discover_mcp_servers(ctx, verbose=False)
@@ -357,19 +347,15 @@ class TestAutoDiscovery:
 
             mock_registry = mock_registry_class.return_value
             mock_registry.list_nodes.return_value = []
-            mock_registry.get_metadata.side_effect = lambda _key, default: default
+            mock_registry.get_metadata.side_effect = lambda _key, default=None: default
             mock_registry.load.return_value = {}  # Empty registry for cleaning old entries
 
             mock_registrar = mock_registrar_class.return_value
-            mock_registrar.sync_servers.return_value = SyncBatchResult(
-                [
-                    ServerSyncResult("empty"),
-                    ServerSyncResult("github", tools_discovered=2, tools_registered=2),
-                    ServerSyncResult("another-empty"),
-                ],
-                0,
-                True,
-            )
+            mock_registrar.sync_servers.return_value = SyncBatchResult([
+                ServerSyncResult("empty"),
+                ServerSyncResult("github", tools_discovered=2, tools_registered=2),
+                ServerSyncResult("another-empty"),
+            ])
 
             # Run auto-discovery
             _auto_discover_mcp_servers(ctx, verbose=False)
@@ -408,7 +394,7 @@ class TestAutoDiscovery:
 
             mock_registry = mock_registry_class.return_value
             mock_registry.list_nodes.return_value = []
-            mock_registry.get_metadata.side_effect = lambda _key, default: default
+            mock_registry.get_metadata.side_effect = lambda _key, default=None: default
             mock_registry.load.return_value = {}  # Empty registry for cleaning old entries
 
             registrar = Mock()
@@ -416,14 +402,10 @@ class TestAutoDiscovery:
             def sync_servers(servers, **kwargs):
                 for server in servers:
                     kwargs["on_server_start"](server)
-                return SyncBatchResult(
-                    [
-                        ServerSyncResult("failing-server", error="Connection timeout"),
-                        ServerSyncResult("working-server", tools_discovered=1, tools_registered=1),
-                    ],
-                    0,
-                    True,
-                )
+                return SyncBatchResult([
+                    ServerSyncResult("failing-server", error="Connection timeout"),
+                    ServerSyncResult("working-server", tools_discovered=1, tools_registered=1),
+                ])
 
             registrar.sync_servers.side_effect = sync_servers
 
@@ -465,7 +447,7 @@ class TestAutoDiscovery:
             mock_manager.config_path.touch()  # Create the config file
 
             mock_registry = mock_registry_class.return_value
-            mock_registry.get_metadata.side_effect = lambda key, default: (
+            mock_registry.get_metadata.side_effect = lambda key, default=None: (
                 fingerprint_server_configs(configs) if key == MCP_SERVER_FINGERPRINTS_KEY else default
             )
             mock_registry.load.return_value = {}
@@ -515,9 +497,9 @@ class TestAutoDiscoveryIntegration:
             # Create a valid JSON config file
             mock_manager.config_path.write_text('{"mcpServers": {}}', encoding="utf-8")
 
-            mock_registrar_class.return_value.sync_servers.return_value = SyncBatchResult(
-                [ServerSyncResult("test-server", tools_discovered=2, tools_registered=2)], 0, True
-            )
+            mock_registrar_class.return_value.sync_servers.return_value = SyncBatchResult([
+                ServerSyncResult("test-server", tools_discovered=2, tools_registered=2)
+            ])
 
             # Run auto-discovery
             _auto_discover_mcp_servers(ctx, verbose=False)

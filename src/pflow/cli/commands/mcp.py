@@ -13,6 +13,7 @@ import click
 
 from pflow.core.suggestion_utils import find_similar_items, format_did_you_mean
 from pflow.mcp import MCPRegistrar, MCPServerManager
+from pflow.mcp.registrar import SyncBatchResult
 
 logger = logging.getLogger(__name__)
 
@@ -551,11 +552,17 @@ def _validate_sync_arguments(name: str | None, all_servers: bool) -> None:
         sys.exit(1)
 
 
-def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar, verbose: bool = False) -> None:
+def _exit_on_sync_abort(batch: SyncBatchResult) -> None:
+    """Exit with the coordinator's reason when it declined to publish."""
+    if batch.aborted_reason:
+        click.echo(f"Error: {batch.aborted_reason}", err=True)
+        sys.exit(1)
+
+
+def _sync_all_servers(registrar: MCPRegistrar, verbose: bool = False) -> None:
     """Sync tools from all configured servers.
 
     Args:
-        manager: MCPServerManager instance
         registrar: MCPRegistrar instance
         verbose: Whether to show technical error details
     """
@@ -564,9 +571,10 @@ def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar, verbos
     if batch.config_missing and not batch.aborted_reason:
         click.echo("No MCP server configuration found.")
         return
-    if batch.aborted_reason:
-        click.echo(f"Error: {batch.aborted_reason}", err=True)
-        sys.exit(1)
+    _exit_on_sync_abort(batch)
+    if not batch.servers:
+        click.echo("No MCP servers configured.")
+        return
 
     total_discovered = 0
     total_registered = 0
@@ -619,9 +627,10 @@ def _sync_single_server(name: str, manager: MCPServerManager, registrar: MCPRegi
 
     click.echo(f"Syncing server '{name}'...")
     batch = registrar.sync_servers([name], reconcile_all=False)
-    if batch.aborted_reason:
-        click.echo(f"Error: {batch.aborted_reason}", err=True)
+    if batch.config_missing and not batch.aborted_reason:
+        click.echo("Error: MCP configuration is no longer available", err=True)
         sys.exit(1)
+    _exit_on_sync_abort(batch)
     result = batch.servers[0]
 
     if result.error is not None:
@@ -678,7 +687,7 @@ def sync(name: str | None, all_servers: bool, verbose: bool) -> None:
 
     try:
         if all_servers:
-            _sync_all_servers(manager, registrar, verbose=verbose)
+            _sync_all_servers(registrar, verbose=verbose)
         else:
             if name:
                 _sync_single_server(name, manager, registrar, verbose=verbose)

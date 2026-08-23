@@ -80,12 +80,18 @@ class MCPDiscovery:
             available = ", ".join(self.manager.list_servers()) or "none"
             raise ValueError(f"MCP server '{server_name}' not found. Available servers: {available}")
 
+        timeout = server_config.get("timeout", 30)
         try:
-            return asyncio.run(self._discover_async(server_name, server_config, verbose))
+            return asyncio.run(
+                asyncio.wait_for(
+                    self._discover_async(server_name, server_config, verbose),
+                    timeout=timeout,
+                )
+            )
         except Exception as e:
             from pflow.mcp.errors import describe_mcp_error
 
-            diagnostic = describe_mcp_error(e)
+            diagnostic = describe_mcp_error(e, timeout=timeout)
             logger.debug("Discovery failed for %s: %s", server_name, diagnostic.message, exc_info=True)
             raise RuntimeError(f"Tool discovery failed for {server_name}: {diagnostic.message}") from e
 

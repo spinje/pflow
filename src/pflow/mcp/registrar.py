@@ -12,7 +12,7 @@ from pflow.registry.constants import MCP_CANONICAL_OUTPUT
 from .discovery import MCPDiscovery
 from .errors import describe_mcp_error
 from .manager import MCPServerManager
-from .sync_state import MCP_SERVER_FINGERPRINTS_KEY, fingerprint_server_configs, parse_server_fingerprints
+from .sync_state import MCP_SERVER_FINGERPRINTS_KEY, fingerprint_server_configs, load_server_fingerprints
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +34,6 @@ class SyncBatchResult:
     """Outcome of one coherent MCP reconciliation attempt."""
 
     servers: list[ServerSyncResult]
-    removed_tools: int
-    registry_updated: bool
     aborted_reason: str | None = None
     config_missing: bool = False
 
@@ -163,7 +161,7 @@ class MCPRegistrar:
                 results.append(ServerSyncResult(server=server_name, tools_discovered=len(tools)))
             except Exception as error:
                 original = error.__cause__ if error.__cause__ else error
-                diagnostic = describe_mcp_error(original)
+                diagnostic = describe_mcp_error(original, timeout=server_config.get("timeout", 30))
                 results.append(
                     ServerSyncResult(
                         server=server_name,
@@ -189,13 +187,10 @@ class MCPRegistrar:
         self,
         nodes: dict[str, dict[str, Any]],
         configured_servers: set[str],
-    ) -> int:
+    ) -> None:
         """Remove absent canonical owners and unsupported reserved MCP entries."""
-        removed = 0
         for node_name in self.full_reconciliation_removals(nodes, configured_servers):
             del nodes[node_name]
-            removed += 1
-        return removed
 
     def _apply_successful_replacements(
         self,
@@ -213,9 +208,11 @@ class MCPRegistrar:
                 final_results.append(result)
                 continue
             try:
+                # Build every replacement before removing the server's working entries.
                 registered, filtered = self._replace_server_tools(nodes, result.server, tools)
             except Exception as error:
                 diagnostic = describe_mcp_error(error)
+                diagnostic.message = f"Could not build registry entries for '{result.server}': {diagnostic.message}"
                 final_results.append(
                     ServerSyncResult(
                         server=result.server,
@@ -247,7 +244,7 @@ class MCPRegistrar:
         """Discover target servers, then publish one coherent reconciliation."""
         initial_configs = self.manager.get_all_servers_if_configured()
         if initial_configs is None:
-            return SyncBatchResult([], 0, False, config_missing=True)
+            return SyncBatchResult([], config_missing=True)
         targets = list(initial_configs) if server_names is None else list(server_names)
         initial_fingerprints = fingerprint_server_configs(initial_configs)
         discovered_tools, results = self._discover_targets(
@@ -261,8 +258,6 @@ class MCPRegistrar:
         if latest_configs is None:
             return SyncBatchResult(
                 servers=results,
-                removed_tools=0,
-                registry_updated=False,
                 aborted_reason="MCP configuration was removed during discovery; no registry updates were published.",
                 config_missing=True,
             )
@@ -275,22 +270,17 @@ class MCPRegistrar:
         ):
             return SyncBatchResult(
                 servers=results,
-                removed_tools=0,
-                registry_updated=False,
                 aborted_reason="MCP configuration changed during discovery; no registry updates were published. Retry sync.",
             )
 
         nodes = self.registry.load(include_filtered=True)
         original_nodes = dict(nodes)
-        missing = object()
-        raw_fingerprints = self.registry.get_metadata(MCP_SERVER_FINGERPRINTS_KEY, missing)
-        stored_fingerprints, fingerprints_valid = parse_server_fingerprints(raw_fingerprints)
+        stored_fingerprints, fingerprints_valid = load_server_fingerprints(self.registry)
         final_fingerprints = dict(stored_fingerprints)
-        removed_tools = 0
 
         if reconcile_all:
             configured_servers = set(latest_configs)
-            removed_tools = self._clean_full_reconciliation(nodes, configured_servers)
+            self._clean_full_reconciliation(nodes, configured_servers)
             final_fingerprints = {
                 name: fingerprint for name, fingerprint in final_fingerprints.items() if name in configured_servers
             }
@@ -311,11 +301,7 @@ class MCPRegistrar:
                 metadata_updates={MCP_SERVER_FINGERPRINTS_KEY: final_fingerprints},
             )
 
-        return SyncBatchResult(
-            servers=final_results,
-            removed_tools=removed_tools,
-            registry_updated=registry_updated,
-        )
+        return SyncBatchResult(servers=final_results)
 
     def remove_server_tools(self, server_name: str) -> int:
         """Remove all registry entries for a specific MCP server.
@@ -332,9 +318,7 @@ class MCPRegistrar:
             del nodes[node_name]
             logger.debug(f"Removed registry entry: {node_name}")
 
-        missing = object()
-        raw_fingerprints = self.registry.get_metadata(MCP_SERVER_FINGERPRINTS_KEY, missing)
-        fingerprints, _ = parse_server_fingerprints(raw_fingerprints)
+        fingerprints, _ = load_server_fingerprints(self.registry)
         fingerprint_removed = server_name in fingerprints
         fingerprints.pop(server_name, None)
 

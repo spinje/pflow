@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import click
 
 from pflow.core.output_controller import OutputController
+
+if TYPE_CHECKING:
+    from pflow.mcp.registrar import SyncBatchResult
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +45,7 @@ def _registry_reconciliation_needed(
     return bool(removals or set(stored_fingerprints) - set(configs))
 
 
-def _show_sync_result(batch: Any, *, show_progress: bool, verbose: bool) -> None:
+def _show_sync_result(batch: SyncBatchResult, *, show_progress: bool, verbose: bool) -> None:
     """Render interactive auto-sync results without contaminating structured output."""
     if not show_progress:
         return
@@ -56,7 +59,7 @@ def _show_sync_result(batch: Any, *, show_progress: bool, verbose: bool) -> None
         for result in successful:
             click.echo(f"  ✓ Discovered {result.tools_discovered} tool(s) from {result.server}", err=True)
     elif successful:
-        total_tools = sum(result.tools_discovered for result in successful)
+        total_tools = sum(result.tools_registered for result in successful)
         click.echo(f"✓ Synced {total_tools} MCP tool(s) from {len(successful)} server(s)", err=True)
     if failed:
         click.echo(f"⚠ Failed to connect to MCP server(s): {', '.join(failed)}", err=True)
@@ -67,9 +70,8 @@ def _auto_discover_mcp_servers(ctx: click.Context, verbose: bool) -> None:
     try:
         from pflow.mcp import MCPDiscovery, MCPRegistrar, MCPServerManager
         from pflow.mcp.sync_state import (
-            MCP_SERVER_FINGERPRINTS_KEY,
             fingerprint_server_configs,
-            parse_server_fingerprints,
+            load_server_fingerprints,
         )
         from pflow.registry import Registry
 
@@ -82,9 +84,7 @@ def _auto_discover_mcp_servers(ctx: click.Context, verbose: bool) -> None:
 
         current_fingerprints = fingerprint_server_configs(configs)
         registry = Registry()
-        missing = object()
-        raw_fingerprints = registry.get_metadata(MCP_SERVER_FINGERPRINTS_KEY, missing)
-        stored_fingerprints, fingerprints_valid = parse_server_fingerprints(raw_fingerprints)
+        stored_fingerprints, fingerprints_valid = load_server_fingerprints(registry)
         due_servers = [name for name in configs if stored_fingerprints.get(name) != current_fingerprints[name]]
 
         inspection_nodes = registry.load(include_filtered=True)

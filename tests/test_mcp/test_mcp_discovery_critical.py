@@ -5,6 +5,7 @@ Without these components working, users cannot discover or use MCP tools at all.
 These tests prevent complete feature failure in production.
 """
 
+import asyncio
 import builtins
 import sys
 import tempfile
@@ -103,6 +104,22 @@ class TestMCPDiscoveryCritical:
         assert len(params) == 1
         assert params[0]["type"] == "str"  # Fallback to str (safe default)
         assert params[0]["key"] == "weird_field"
+
+    def test_discovery_times_out_a_hung_server(self):
+        """Discovery bounds the whole handshake/list operation, including stdio."""
+        discovery = MCPDiscovery()
+
+        async def hang(*_args, **_kwargs):
+            await asyncio.Event().wait()
+
+        with (
+            patch.object(discovery, "_discover_async", side_effect=hang),
+            pytest.raises(RuntimeError, match=r"Request timed out after 0\.01 seconds"),
+        ):
+            discovery.discover_tools(
+                "hung",
+                server_config={"command": "hung", "timeout": 0.01},
+            )
 
 
 class TestMCPRegistrarCritical:
