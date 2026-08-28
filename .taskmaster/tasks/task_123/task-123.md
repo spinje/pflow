@@ -47,6 +47,19 @@ Add an `oauth` auth type that uses the MCP SDK's `OAuthClientProvider` (already 
 - CLI flags: `--client-id`, `--client-secret`, `--callback-port` (for non-DCR servers)
 - Config schema: `"auth": {"type": "oauth", ...}` alongside existing bearer/api_key/basic
 
+## Current Workaround
+
+Until this lands, OAuth-protected servers can be reached through the `mcp-remote` npm proxy, which
+performs the OAuth flow itself and caches refreshable tokens in `~/.mcp-auth`:
+
+```bash
+pflow mcp add '{"heptabase": {"command": "npx", "args": ["-y", "mcp-remote@0.8.1", "https://api.heptabase.com/mcp", "--transport", "http-only"]}}'
+```
+
+Verified working against Heptabase on 2026-08-28 (19 tools discovered). Costs: a third-party proxy
+holds the tokens, and every call pays an `npx` cold start (~2-4s). Replacing this is the concrete
+payoff for this task.
+
 ## Design Decisions
 
 - **Use SDK's `OAuthClientProvider`, not custom OAuth**: The MCP SDK already implements the full OAuth 2.1 spec including PKCE, DCR, discovery, and token refresh. No reason to reimplement.
@@ -62,6 +75,24 @@ Add an `oauth` auth type that uses the MCP SDK's `OAuthClientProvider` (already 
 - **Browser flow with fallback**: Try `webbrowser.open()`, fall back to printing URL for headless/SSH environments. Claude Code has known issues with SSH sessions — we should handle this gracefully from the start.
 
 - **Callback port strategy**: Try a fixed port (e.g., 8456), fall back if busy. Allow override via `--callback-port`. Claude Code and Cline both had port conflict bugs — learn from this.
+
+- **Interactive grant and runtime refresh are separate paths** (the main scoping risk): `pool.py` runs
+  mid-workflow, so the runtime must **never** block on a browser popup. Split it:
+  - `pflow mcp auth <server>` performs the interactive grant. This is the only place a browser opens.
+  - Discovery and runtime do **silent refresh only**. If no valid token can be obtained without user
+    interaction, fail with a structured error naming the fix (`pflow mcp auth <server>`) rather than
+    prompting or hanging. pflow is agent-first — a blocked agent needs the command, not a popup.
+  - This makes "auto-trigger on first use" (see *Interactive auth trigger* below) viable **only** for
+    the `mcp add`/`sync` path, never for workflow execution.
+
+- **Concurrent refresh must not clobber the token file**: the pool plus batch/parallel nodes can drive
+  several refreshes of the same server at once, and the SDK calls `set_tokens()` on each. Write
+  atomically (temp file + `os.replace`, preserving `chmod 600`) and guard with a lock. Losing the
+  refresh token here silently forces a full re-auth — a plausible silent-failure mode.
+
+- **Non-TTY / CI must fail fast**: when there is no TTY and no stored token, error immediately with the
+  `pflow mcp auth` instruction. Never start a callback server that waits for a redirect that cannot
+  arrive. The static `bearer`/`api_key` path remains the supported CI story.
 
 ## Dependencies
 
@@ -122,7 +153,18 @@ The `--client-secret` flag should prompt for masked input (like Claude Code) or 
 
 ### Transport integration
 
-In both `discovery.py` (`_discover_async`) and `nodes/mcp/node.py` (execution), when `auth.type == "oauth"`:
+There are **three** transport construction sites, not two (verified 2026-08-28). All three must be
+wired, and the third is the one every real workflow run goes through:
+
+| Site | Path | Used by |
+|---|---|---|
+| `src/pflow/mcp/discovery.py:226` | `_discover_async` | `pflow mcp sync` |
+| `src/pflow/mcp/pool.py:233` | `_create_http_session` | **workflow execution** (pooled) |
+| `src/pflow/nodes/mcp/node.py:357` | unpooled fallback | `pflow probe`, no-pool execution |
+
+Wire all three through a single `create_oauth_provider(server_name, config)` factory rather than
+copying provider construction three times — token storage, headless fallback, and refresh handling
+should live in one place. When `auth.type == "oauth"`:
 
 ```python
 # Instead of:
@@ -145,8 +187,9 @@ Need an equivalent to Claude Code's `/mcp` command for triggering the browser fl
 ### Key files to modify
 
 - `src/pflow/mcp/auth_utils.py` — Add OAuth provider creation alongside existing auth types
-- `src/pflow/mcp/discovery.py` — Pass `auth=` when OAuth configured
-- `src/pflow/nodes/mcp/node.py` — Same transport change
+- `src/pflow/mcp/discovery.py` — Pass `auth=` when OAuth configured (sync path)
+- `src/pflow/mcp/pool.py` — Same transport change (pooled runtime path — **do not miss this one**)
+- `src/pflow/nodes/mcp/node.py` — Same transport change (unpooled `probe`/fallback path)
 - `src/pflow/cli/mcp.py` — Add `--client-id`, `--client-secret`, `--callback-port` flags; add `auth` subcommand
 - `src/pflow/mcp/manager.py` — Validate `oauth` auth type in config schema
 - New: `src/pflow/mcp/oauth_storage.py` — TokenStorage implementation
@@ -170,6 +213,14 @@ These are bugs other MCP clients hit. Design around them:
 - **Headless fallback**: When browser can't open (SSH), auth URL is printed to terminal.
 - **Static auth unchanged**: Existing `bearer`/`api_key`/`basic` configs continue working.
 - **Port conflict**: Two servers with OAuth don't deadlock on the same callback port.
+- **All three call sites**: OAuth server works via `pflow mcp sync` (discovery), via a workflow run
+  (pooled path), *and* via `pflow probe` (unpooled path). Regression risk: wiring only the first two
+  leaves `probe` broken, or vice versa.
+- **Runtime never opens a browser**: with tokens cleared, a workflow run fails with an actionable
+  error naming `pflow mcp auth <server>` — it does not open a browser or hang.
+- **Concurrent refresh**: a batch node fanning out N parallel calls against an expired token refreshes
+  without corrupting or truncating the stored token file.
+- **Non-TTY**: same run under a non-TTY (piped/CI) exits with the actionable error rather than hanging.
 
 ## Research Reference
 
