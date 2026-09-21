@@ -1,90 +1,61 @@
 # Hooks (`web/src/hooks/`)
 
-The runtime machinery between the pure `graph/` transform and the React Flow store — the
-fetch→build→layout→focus pipeline, the camera, the two side panes, and the source-watch poll.
-This is where the last several user-caught timing bugs lived.
+Runtime coordination between the pure graph transform, React Flow store, and browser.
 
-> Read `web/CLAUDE.md` (web root) FIRST for the cross-cutting invariants (build vs focus are
-> separate passes; errors never blank the canvas). The transform itself
-> (`buildFlow`/`layoutGraph`/`applyFocus`/`expandTargets`) lives in `web/src/graph/` — these
-> hooks ORCHESTRATE it, they don't re-implement it.
+- Data/build/layout/decoration and failure states → `useWorkflowGraph.ts`.
+- View fitting, deep links and navigation follow → `useCameraNavigation.ts`.
+- Source/read pane widths and persistence → `usePanelPair.ts`, `../utils/panelWidth.ts`.
+- Source-file change detection → `useSourceWatch.ts`.
+- SSE presence/reconnect/catch-up → `../api/events.ts:subscribe` (see web root).
 
-**Files:** `useWorkflowGraph` (the data pipeline + RF state + `status`) · `useCameraNavigation`
-(view fits, deep links, chip-navigation follow) · `usePanelPair` (the two panes' widths) ·
-`useSourceWatch` (the `/api/version` poll).
+## Layout snapshots and painting
 
-## `useWorkflowGraph` — the pipeline + the perf/motion machinery
+`useWorkflowGraph` caches by layout-affecting state. Focus alone is a restyle, except when
+beautiful-mode expansion changes card sizes; advanced mode uses the stable empty expansion set.
+Keep laid nodes and edges as one snapshot, and decorate only when its layout key matches current
+state. Otherwise new focus briefly paints on old positions, including during cache hits.
 
-Owns fetch → `buildFlow` → `layoutGraph` → `applyFocus` → React Flow store, plus `status`
-(`loading`/`ready`/`empty`/`error`) — a malformed 200 throws from `fetchGraph` (caught), an ELK
-failure becomes `error` (not a stuck spinner). The laid-out-nodes-and-edges snapshot that keeps
-focus off stale positions is kept HERE (the build-vs-focus invariant, root, in practice).
+On expansion layout, apply the viewport delta in the same effect that pushes node positions so
+the focused card remains anchored. IO-port focus anchors to its owner card; edge focus anchors
+to its rendered source. Neither a port ID nor an edge ID is itself a positioned node.
 
-- **Layout cache:** keyed by `layoutKey` (`density|direction|collapsed|expanded` — focus itself
-  is NOT layout-affecting), so un-click/re-click never re-runs ELK; a cache hit applies
-  synchronously.
-- **ELK in a web worker + watchdog** (the worker/fallback machinery is `graph/layout.ts`'s
-  `loadElk`/`layoutWithWatchdog`; this hook consumes it): a worker layout silent for 10s warns,
-  re-runs on the main-thread build, and demotes the session to main-thread layouts — bounded
-  badness, never a dead canvas (the silent-worker stall was environmental).
-- **Stale-paint guard:** the decoration effect paints ONLY a laid snapshot whose `layoutKey`
-  matches the current state — without it every cached click "shakes" (one frame of
-  new-focus-on-old-layout).
-- **Focus-EXPANSION is the one focus action that re-layouts** (beautiful): when `expandTargets`
-  (graph/) changes node sizes, the change flows build → ELK; this hook pans the viewport by the
-  focused node's layout delta IN THE SAME EFFECT that pushes the new positions, so the clicked
-  node never moves on screen (CAMERA ANCHORING). In advanced the expansion set is the stable
-  empty constant, so focus stays a pure restyle (no re-layout).
-- **Animation:** small graphs (≤ `ANIMATE_MAX_NODES`) interpolate positions THROUGH the RF store
-  per frame so edge paths follow (a CSS transform transition would glide nodes while edges snap —
-  rejected); the anchoring pan eases in sync; only moved nodes change identity; large flows /
-  `prefers-reduced-motion` snap.
-- **`paintEpoch`:** bumped after every COMPLETED decoration paint (animated glides bump when they
-  land) — `useCameraNavigation` defers its camera follow to this so a fit aims at post-re-layout
-  positions, not click-time ones.
-- **Live-source reload:** `useSourceWatch` triggers the in-place `reload` path here — re-fetch
-  `/api/graph` + rebuild via a React reconcile (NOT `location.reload()`), preserving viewport /
-  focus / collapse / source pane (`prevWorkflowRef` distinguishes a workflow CHANGE = full reset
-  from a same-workflow reload = in-place). A mid-edit 422 routes to a SEPARATE `reloadError`
-  channel (a non-blocking banner over the last-good canvas), recovering on the next valid save.
-  Preserved state survives the positional flat-id renumber via `graph/remap.ts`, applied in a
-  GraphView pre-paint `useLayoutEffect`.
-- **`builtEdgeIds`** is returned synchronously with the focus-derived expansion so GraphView's
-  edge-selection invalidation reads it, never the painted edges that lag one layout round-trip.
+Animate positions through the RF store so edge paths follow, with camera anchoring eased in
+sync. CSS-only transforms would move cards while edges snap. Large graphs and reduced-motion
+preferences snap. `paintEpoch` advances only after a completed paint, including animation landing;
+`useCameraNavigation` waits on it before following a target's final position.
 
-## `useCameraNavigation` — the camera
+`builtEdgeIds` is returned synchronously with focus-derived expansion. GraphView invalidates
+edge selection against it, not the painted edges that lag behind a layout round-trip.
 
-Owns the viewport: the fit-on-view-change effect (gated on `useNodesInitialized`), the one-shot
-`focus=` deep link (burn-the-flag, also gated on `useNodesInitialized` or it races RF's empty
-store), and `onNavigate` (chip clicks). The follow is DEFERRED to the `paintEpoch` bump the click
-produces — a fit started at click time aims at the target's PRE-re-layout position (first click
-landed wrong, second right). A same-focus navigate repaints nothing and fits immediately. An
-io-port chip resolves to its OWNER card via `ioOwners` (graph/) for both the follow and the
-expansion anchor (a port id is never a rendered node — unresolved, the follow silently skipped).
-**Hidden-tab re-frame:** a focus that CHANGES while the tab is `hidden` applies its state but
-its camera fit (rAF-driven) never runs and is not re-issued on return, leaving the node
-off-screen (agent Point at a backgrounded Viewer, user-confirmed 2026-06-23). The hook captures
-a change-while-hidden and re-fits on `visibilitychange → visible` — change-while-hidden ONLY, so
-an ordinary tab return where focus didn't move leaves the viewport alone. Two visibility concerns now
-legitimately key on `visibilitychange`: this camera re-frame, and SSE connection **PRESENCE** (Issue
-#539 — `api/events.ts` CLOSES its `EventSource` when the tab is hidden to free one of the browser's
-6-per-origin connection slots, and reopens on show; a reopened tab catches up via the run `snapshot()` +
-the epoch-deduped Point latch). What still must NOT key on visibility is SSE connection **RECOVERY**:
-the `onerror` reconnect stays trigger-agnostic (recovers from restart / sleep / blip / freeze uniformly,
-never reading `readyState`/`visibilityState`). Only `open()`'s single chokepoint reads `visibilityState`
-— that gate is *presence*, not recovery — and both share ONE single-flight state machine
-(`source`/`retry`/`connId`/`stopped`).
+Live status-only updates skip redundant edge writes to avoid transient edge blanking. Terminal
+replay dimming is the exception: its edge classes also depend on status-map identity.
 
-## `usePanelPair` — the two side panes
+ELK worker/fallback and watchdog belong to `../graph/layout.ts:layoutWithWatchdog`; worker silence
+must reach fallback/error handling rather than leaving the hook permanently loading.
 
-The source (left) + read (right) panes as ONE state machine: widths, drag/reset callbacks,
-persistence, and the symmetric reserved-budget re-clamp (incl. the window-resize arm — both panes
-are flex no-shrink, so a shrinking window would otherwise crush the canvas to 0). Pure clamp math
-is `utils/panelWidth.ts`.
+## Camera timing
 
-## `useSourceWatch` — change detection
+`useCameraNavigation` runs inside ReactFlowProvider and gates initial fits/deep-link focus on
+`useNodesInitialized`. Navigation waits for the completed `paintEpoch`; navigating to unchanged
+focus fits immediately because no new decoration paint will arrive. Resolve IO ports to owner
+cards for both fitting and expansion anchoring.
 
-Polls `GET /api/version` (~1.5s, visibility-gated, in-flight-guarded) for a source-file
-fingerprint; fires the `useWorkflowGraph` reload on a CHANGE. Detection is deliberately separable
-from reaction: Task 169's SSE can later replace the poll with a push calling the same trigger,
-nothing downstream changing. On by default; `--no-auto-update` (→ `?watch=0`) freezes it.
+A focus changed while the tab is hidden needs a reframe on return because its rAF-driven fit
+may never run. Keep that reframe pending until its target paints. An ordinary tab return with
+no hidden focus change must preserve the viewport.
+
+## Reload and panes
+
+`useSourceWatch` polls `/api/version` with visibility and in-flight guards. The initial response
+seeds the baseline without reloading; transient poll errors retain it. `--no-auto-update`
+(`?watch=0`) disables watching.
+
+A same-workflow reload rebuilds in place, preserving viewport/selection/collapse/source pane;
+a workflow change resets state. `reloadError` reports invalid edits over the last-good canvas,
+separately from initial fetch/layout failure. A successful new graph clears the layout cache.
+GraphView's pre-paint graph-replacement effect remaps held state through structural refs because
+positional IDs may renumber.
+
+`usePanelPair` treats source/read widths as one reserved-budget constraint and reclamps on both
+pane changes and window resize. Both panes are nonshrinking flex items; omitting the resize arm
+can reduce the canvas to zero width. Pure sizing and persistence helpers live in `../utils/panelWidth.ts`.

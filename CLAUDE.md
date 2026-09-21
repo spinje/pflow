@@ -61,7 +61,7 @@ This file provides guidance to Claude Code when working with code and documentat
 
 ### Node Lifecycle Primitives
 
-pflow's node system is built on `BaseNode` and `Node` (~90 lines in `src/pflow/core/node.py`). These provide the lifecycle (prep/exec/post), retry logic, and graph wiring operators (`>>`, `-`). The `WorkflowEngine` (in `src/pflow/runtime/engine/`) handles graph traversal and all runtime concerns.
+pflow's node system is built on `BaseNode` and `Node` (in `src/pflow/core/node.py`). These provide the lifecycle (prep/exec/post), retry logic, and graph wiring operators (`>>`, `-`). The `WorkflowEngine` (in `src/pflow/runtime/engine/`) handles graph traversal and all runtime concerns.
 
 > When implementing features that use nodes, start by reading `src/pflow/core/node.py`, then `src/pflow/nodes/CLAUDE.md` for node implementation patterns.
 
@@ -80,7 +80,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 - **Shared Store Pattern**: All node communication through shared store
 - **Atomic Nodes**: Isolated, focused on business logic only
 - **Agent-Friendly CLI**: Primary interface for AI agents
-- **Structured Errors**: Raise `PflowError` subclasses from `src/pflow/core/exceptions.py`, never vanilla `ValueError`/`Exception`. In nodes, just raise — the engine handles retries. See `src/pflow/core/exceptions.py` for the hierarchy; `src/pflow/core/CLAUDE.md` → `exceptions.py` section for the usage table.
+- **Structured Errors**: Raise `PflowError` subclasses from `src/pflow/core/exceptions.py`, never vanilla `ValueError`/`Exception`. For node retry and error-routing contracts, see `src/pflow/nodes/CLAUDE.md`. See `src/pflow/core/exceptions.py` for the hierarchy; `src/pflow/core/CLAUDE.md` → `exceptions.py` section for diagnostic guidance.
 
 ### Technology Stack
 
@@ -92,7 +92,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 
 ### Project Structure
 
-> Every directory below has its own CLAUDE.md with file-level details.
+> Read the relevant directory’s CLAUDE.md for local navigation and gotchas.
 
 ```
 pflow/
@@ -104,6 +104,7 @@ pflow/
 ├── architecture/            # Architecture and design specs
 ├── examples/                # Example workflows and usage patterns
 ├── scripts/                 # Development and debugging scripts
+├── web/                     # Web UI frontend source and build configuration
 ├── src/pflow/
 │   ├── cli/                 # CLI entrypoints and subcommands
 │   ├── core/                # Schemas, settings, validation, utilities, LLM/prompt utils
@@ -116,6 +117,7 @@ pflow/
 │   ├── mcp/                 # MCP client integration (for MCP nodes in workflows)
 │   ├── mcp_server/          # pflow-as-MCP-server for AI agents
 │   ├── registry/            # Node registry, scanning, context building, discovery
+│   ├── ui/                  # Python web UI server and trace streaming
 │   └── guide/               # `pflow guide` content — agent instructions (core/nodes/features)
 ├── tests/                   # Test suite
 │   ├── fixtures/            # Shared test fixtures (e.g. cache_analysis workflows)
@@ -159,7 +161,7 @@ pflow/
 - Start small, build minimal components that can be expanded
 - Capture the test baseline before you change code — which tests pass and which fail, by name — then re-run `make test` and `make check` before finalizing and report the delta. "No regressions" means nothing without a baseline you captured to diff against.
 - Document decisions and tradeoffs
-- Create `CLAUDE.md` files in each code directory to document code and reasoning
+- Keep `CLAUDE.md` files focused on code navigation, verified gotchas, and durable rationale; avoid duplicating implementation details
 - Create scratch pads in `scratchpads/<conversation-subject>/` for deep thinking
 
 **Utilizing subagents**:
@@ -180,111 +182,9 @@ pflow/
 
 Proactively use `pflow-codebase-searcher` subagents in PARALLEL when reading documentation and searching for code.
 
-### Project Status
-
-MVP feature-complete. Published to PyPI (initial release v0.8.0; current version per `pyproject.toml`).
+### Capabilities and Task Navigation
 
 **What's implemented**: shell/http/llm/mcp/`code` (Python)/`agent` (Claude or Codex) nodes plus five file-op nodes (read/write/copy/move/delete-file) — registry names, not directory names; template system (`${var}` with nested path access), batch processing, MCP integration (client + server), metrics/tracing, settings/security, CLI with Unix pipe support, workflow save/load, registry, skills publishing.
-
-**Recently Completed:**
-- ✅ Task 105: Auto-Parse JSON Strings During Nested Template Access
-- ✅ Task 103: Preserve Inline Object Type in Template Resolution
-- ✅ Task 96: Support Batch Processing in Workflows
-- ✅ Task 115: Automatic Stdin Routing for Unix-First Piping
-- ✅ Task 104: Python Code Node
-- ✅ Task 107: Markdown Workflow Format (.pflow.md replaces JSON)
-- ✅ Task 38: Conditional Branching in Workflows
-- ✅ Task 59: Nested Workflows
-- ✅ Task 128: Branch Convergence for Conditional Workflows
-- ✅ Task 92: Remove Planning Module and Repair System
-- ✅ Task 108: Smart Trace Debug Output
-- ✅ Task 106: Workflow Iteration Cache
-- ✅ Task 136: Recursive Sub-Workflow Validation at Parse Time
-- ✅ Task 137: Unified CLI Output Pipeline
-- ✅ Task 134: Output Detection Unification
-- ✅ Task 138: Shared Execution Pipeline
-- ✅ Task 135: Execution Core Compile-Once Redesign
-- ✅ Task 141: Consolidate Exception Hierarchy
-- ✅ Task 143: Unified Diagnostic System
-- ✅ Task 144: Display Consolidation — Diagnostic Rendering Redesign
-- ✅ Task 145 + 146: Mermaid Workflow Visualization
-- ✅ Task 147: Validator Produces Diagnostics Natively
-- ✅ Task 148: Template Error UX Consolidation
-- ✅ Task 149: Fix Non-Interactive Output Routing + Output Pipeline Consolidation
-- ✅ Task 150: Wire WorkflowValidator into Save Path
-- ✅ Task 151: CLI Surface Restructure
-- ✅ Task 77: Pflow Guide — tailored agent instructions
-- ✅ Task 153: Reject Undeclared Sub-Workflow Inputs
-- ✅ Task 154: Type Vocabulary Coherence
-- ✅ Task 156: Add `--dry-run` flag with cache plan and cost/duration estimates
-- ✅ Task 157: Fix Dry-Run Batch Sub-Workflow Recursion
-- ✅ Task 158: Replace `llm` Library with LiteLLM
-- ✅ Task 126: Structured Output for Claude Code Node
-- ✅ Task 159: Prompt Caching
-- ✅ Task 160: Cache Analysis Architectural Refactor
-- ✅ Task 161: Safer Cache Defaults
-- ✅ Task 162: Loop Config — Condition-Terminated Iteration
-- ✅ Task 163: Agentic Coding Workflow Harness example
-- ✅ Task 165: Shrink Trace Interning
-- ✅ Task 166: Declarative Stateful Loop Primitive
-- ✅ Task 155: Workflow Graph Model for Multi-Renderer Support
-- ✅ Task 168: Workflow Visualization Web UI
-- ✅ Task 133: Trace/Cache Storage Architecture
-- ✅ Task 169: Agent↔Browser Interaction Channel
-- ✅ Task 172: Streamable trace
-- ✅ Task 173: Live execution overlay
-- ✅ Task 175: Run workflows from the UI
-- ✅ Task 125: Human-in-the-Loop Approval Gates
-- ✅ Task 164: Resume Workflow From a Failed Node
-- ✅ Task 174: Agent Voice Narration — "Point & Say"
-- ✅ Task 171: Durable Resume Tokens & Non-TTY Gates
-- ✅ Task 116: Windows Compatibility
-- ✅ Task 176: Web-UI Approval Bridge
-- ✅ Task 177: Unified Agent Node (claude | codex)
-
-### Roadmap
-
-**Next**
-- Task 94: Display Available LLM Models
-- Task 99: Expose pflow Tools to the Agent Node
-- Task 111: Batch Limit for Iteration
-- Task 118: Code and Shell Linting
-- Task 121: Workflow Testability
-
-**Then**
-- Task 78: Save User Request History
-- Task 88: MCPMark Benchmarking
-- Task 87: Sandboxed Execution Runtime
-- Task 91: Export as MCP Server Packages
-- Task 97: OAuth for Remote MCP Servers
-- Task 109: Sandbox Bypass Controls
-- Task 65: MCP Gateway Integration
-- Task 81: Find/Install Remote MCP Servers
-- Task 86: MCP Server Discovery Automation
-- Task 123: OAuth Authentication for MCP HTTP Servers
-- Task 152: MCP Server Cli surface Parity
-- Task 117: Subcommand JSON Error Output
-- Task 120: Strict Input Type Validation
-- Task 170: One Template Language
-
-**Later**
-- Task 124: Code Node Dependency Management
-- Task 45: Evaluate n8n integration
-- Task 62: Route stdin to Workflow Inputs
-- Task 64: MCP Orchestration (long-running servers)
-- Task 74: Knowledge base system
-- Task 79: Tool definitions as JSON
-- Task 90: Workflows as Remote HTTP MCP Servers
-- Task 98: First-Class IR Execution
-- Task 100: Reduce/Fold for Batch
-- Task 101: Shell Node File Input
-- Task 110: PIPESTATUS Pipeline Detection
-- Task 112: Pre-execution Type Validation
-- Task 113: TypeScript Code Node
-- Task 114: Lightweight Custom Nodes
-- Task 167: LSP Support for `.pflow.md`
-- Task 142: Explore Function-Based Code Node Syntax
-- Task 46: Workflow Export to Zero-Dependency Code
 
 > **Task commands:**
 > ```bash
@@ -318,11 +218,7 @@ If anything is unclear or ambiguous in the documentation, the user makes the cal
 
 ### Implementation Guidelines
 
-Write modern, typed, safe Python — full type hints (no leaked `Any`, explicit `Optional[T]`), lowercase builtins, f-strings, comprehensions, simple control flow (no needless nesting), no mutable default args, `subprocess` over `os.system`, no shadowing builtins; suppress lints sparingly and always with a code (`# type: ignore[...]`, `# noqa: CODE`). mypy + ruff enforce these; they're named here to prime, not to teach (see *Why this matters* below).
-
-Why this matters: These guidelines aren't about passing linters—they're about you filtering your training data (as an LLM). By specifying "modern Python patterns," you naturally select from well-maintained, professional codebases rather than the vast sea of outdated tutorials and quick fixes. This selection bias toward quality code automatically prevents security issues, maintenance problems, and outdated practices.
-
-*You should actively and proactively think about selecting from the RIGHT part of your training distribution. The code and architectural patterns you know in your gut are a good fit for this project.*
+Write modern, typed, safe Python — full type hints (no leaked `Any`, explicit `Optional[T]`), lowercase builtins, f-strings, comprehensions, simple control flow (no needless nesting), no mutable default args, `subprocess` over `os.system`, no shadowing builtins; suppress lints sparingly and always with a code (`# type: ignore[...]`, `# noqa: CODE`). mypy + ruff enforce these.
 
 #### Code Quality
 
@@ -343,8 +239,6 @@ The codebase has been through a sustained consolidation pass — diagnostics, ou
 
 Full definitions and rejected framings: `.claude/skills/improve-codebase-architecture/LANGUAGE.md` (canonical). Project domain nouns: `context/CONTEXT.md`.
 
-*Mirror the top 10% of well-written CLI tools and small libraries, not enterprise frameworks.*
-
 ### Project-specific Memories
 
 - **NEVER** `git add`, `git commit` or `git push` code unless explicitly instructed by the user
@@ -356,7 +250,7 @@ Full definitions and rejected framings: `.claude/skills/improve-codebase-archite
 # Run a workflow file
 uv run pflow workflow.pflow.md
 
-# Traces saved to ~/.pflow/debug/workflow-trace-<hash>-[name-]YYYYMMDD-HHMMSS.json
+# Traces saved under ~/.pflow/debug/
 uv run pflow my-workflow
 
 # Full agent usage context (only read if needed)

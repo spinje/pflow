@@ -1,41 +1,22 @@
 # Examples
 
-Workflow examples and demo scripts. Some are used by tests, others are reference-only.
+Workflow examples also serve as regression fixtures. Start with `examples/README.md` for the example index. Bundling and external-file-reference scenarios have local verification notes in `examples/bundling/TESTING.md` and `examples/file-references/TESTING.md`.
 
-## Directory Structure
+## Test owners
 
-```
-examples/
-├── core/                  # Fundamental patterns (minimal, pipeline, templates, stdin, error handling)
-├── advanced/              # Complex workflows with companion .md explanations
-├── error-handling/        # ⚠️ USED BY TESTS — edge-case error scenarios (test_failed_node_invariant.py)
-├── invalid/               # ⚠️ USED BY TESTS — parse error test cases (test_example_validation.py)
-├── nested/                # Nested workflow examples (main + sub-workflows)
-├── nodes/                 # Node-specific examples (including agent backends)
-├── real-workflows/        # Real-world workflows (changelog, release, vision-scraper, announcements)
-├── agent-orchestration/   # plan-to-code + parallel-planner-review agent harnesses
-├── bundling/              # Workflow-bundling-on-save examples (see TESTING.md)
-├── file-references/       # External file-reference (${file:...}) examples (see TESTING.md)
-├── mcp-http/              # MCP HTTP transport examples
-├── mcp-integration/       # MCP client integration demos (Python scripts)
-├── mcp-pflow/             # pflow-as-MCP-server setup and testing
-├── *.pflow.md             # Root-level workflow examples (batch, MCP, output validation)
-├── *_demo.py              # Python demo scripts (registry, shell node, workflow manager)
-└── README.md              # User-facing example index
-```
+Test-owner paths below are repository-relative; fixture paths are relative to `examples/`. Check references to the particular fixture before changing, renaming, moving, or deleting it; this table is not an exhaustive consumer list.
 
-## Test Dependencies
+| Owner | Contract |
+|-------|----------|
+| `tests/test_docs/test_example_validation.py` | Runs full `WorkflowValidator` validation on collected, parseable examples, with dummy inputs and resolved file references. Excludes `invalid/`, `legacy/`, and `real-workflows/`; see MCP caveat below. Separately checks that `invalid/` examples fail parsing, schema validation, or full workflow validation. |
+| `tests/test_core/test_ir_examples.py` | Pins named core/advanced/invalid files, parser behavior, and IR schema validation; this is not full workflow validation. |
+| `tests/test_integration/test_failed_node_invariant.py` | Runs `error-handling/` fixtures through `WorkflowRunner` and pins diagnostic text, fixes, and source lines. See `examples/error-handling/README.md`. Even prose or blank-line edits can change these assertions. |
+| `tests/test_runtime/fixtures/baseline_workflows.py` | Canonical example paths and inputs for prompt-cache hash baselines, shared by regeneration and verification. |
+| `tests/test_integration/test_plan_to_code_harness.py` | Parses the shipped `agent-orchestration/plan-to-code/` workflows and pins routing/loop/output contracts. |
+| `tests/test_core/test_graph_build.py` | Uses real graph fixtures, including `nested/deep-research/`, the plan-to-code validate-fix workflow, and `core/stateful-loop-tournament.pflow.md`. |
 
-- `tests/test_docs/test_example_validation.py` — runs the full `WorkflowValidator.validate()` 11-step pipeline (same as `pflow --validate-only`) on every `.pflow.md` under `examples/` that isn't in `invalid/`, plus asserts `examples/invalid/` files fail parsing or schema validation.
-- `tests/test_core/test_ir_examples.py` — similar validation of example files
-- `tests/test_integration/test_failed_node_invariant.py` — executes each fixture in `examples/error-handling/` end-to-end via `WorkflowRunner` and asserts on rendered diagnostic text (source lines, paste-able fixes, structured failure blocks). See `examples/error-handling/README.md` for the per-fixture contract.
+## Environment-dependent validation
 
-Also pinned by path: `examples/bundling/parent-with-sub.pflow.md`, `examples/real-workflows/git-worktree-task-creator/workflow.pflow.md`, and the root-level files `batch-test.pflow.md`, `batch-test-parallel.pflow.md`, `test_llm_templates.pflow.md` are the prompt-cache hash baseline in `tests/test_runtime/fixtures/baseline_workflows.py` (golden hashes in `golden_config_hashes.json`; also covered by the validation tests above). The `examples/agent-orchestration/plan-to-code/` harness is parsed by path: `tests/test_integration/test_plan_to_code_harness.py` reads its real `.pflow.md` files (`_HARNESS_DIR`) and pins their routing/loop contract, and `tests/test_core/test_graph_build.py` parses `execute-plan/validate-fix/validate-fix.pflow.md` — so renaming/moving those files breaks tests.
+`test_example_validation.py` skips a workflow only when its missing direct node types are all `mcp-*` tools supplied by configured servers. Any missing non-MCP type still fails.
 
-**Don't rename/move/delete files in `core/`, `advanced/`, `error-handling/`, `invalid/`, `bundling/parent-with-sub.pflow.md`, `real-workflows/git-worktree-task-creator/workflow.pflow.md`, the root-level baseline files above, or under `agent-orchestration/plan-to-code/` without checking these tests.**
-
-### Environment-dependent examples
-
-`test_example_validation.py` skips workflows whose ONLY unregistered node types match `mcp-*` — MCP tools supplied by user-configured servers (`mcp-filesystem`, `mcp-http/example-workflow`, `real-workflows/*` that reference Slack/Discord MCP tools). Workflows with any non-MCP unregistered type (typo like `wrte-file`, removed node type) still fail so regressions get caught.
-
-Skip logic walks only top-level `node.type`. If a parent workflow references a sub-workflow file whose own nodes include unregistered MCP types, the recursive validator inside `WorkflowValidator._validate_sub_workflows` will still fail — the pre-scan won't see it. No shipped example currently has that shape; add a directory-level skip if it arises.
+That pre-scan checks only top-level `node.type`; it cannot see missing MCP types inside a referenced sub-workflow before recursive validation. This is why `real-workflows/` is excluded wholesale. Parse failures outside `invalid/` are also skipped by collection, so this suite does not prove every example parses or runs successfully.

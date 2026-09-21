@@ -1,6 +1,11 @@
-# tests/test_cli/CLAUDE.md
+# CLI Test Notes
 
-CLI-specific test notes. General test guidance (markers, fixtures, CliRunner limits, subprocess/e2e patterns, LLM mock) lives in `tests/CLAUDE.md`.
+General fixtures, markers, and real-stream/TTY testing guidance live in
+`tests/CLAUDE.md`.
 
-- **Don't use real saved workflow names as CliRunner args** — a kebab-case or `key=value` arg can trip `is_likely_workflow_name` and trigger a real direct-execution attempt instead of the path you meant to test.
-- Use `runner.isolated_filesystem()` for tests that touch the filesystem.
+When testing rejection/help rather than execution, choose arguments deliberately:
+`src/pflow/cli/workflow_resolution.py:is_likely_workflow_name` can route a kebab-case first
+argument or trailing `key=value` arguments into workflow execution. Tests of saved
+workflow execution should create isolated workflow fixtures rather than depend on
+real user data. Use `runner.isolated_filesystem()` when an isolated working
+directory is needed; ordinary temporary-file tests can use `tmp_path`.

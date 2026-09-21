@@ -1,150 +1,33 @@
 # CLI Commands
 
-One file per top-level command, registered in `main.py` via `cli.add_command()`.
+Commands are registered in `../main.py` with `cli.add_command`. Most filenames
+match their command; these are the less obvious ownership boundaries:
 
-## File Overview
+| Concern | Owner |
+|---|---|
+| Default workflow execution | Hidden `run.py`; delegates to `WorkflowRunner` |
+| Resume dispatch and paused-run listing | `resume.py:ResumeGroup`; refusal preflight in `execution/resume_preflight.py` |
+| Single-node probe | `probe.py` is Click-only; `_probe_impl.py:execute_single_node` executes |
+| Revisit probe output without executing | `read_fields.py`, `core/execution_cache.py` |
+| Publish/list/remove skills | `skills.py` implements singular `pflow skill`; `core/workflow/skill_service.py` owns behavior |
+| MCP client configuration/tools | `mcp.py`; `mcp serve` instead exposes `mcp_server/` |
+| Workflow save and discovery | `save.py` → `core/workflow/save_service.py`; `find.py` → `core/workflow/discovery.py` |
+| Guide composition | `guide.py` → `pflow.guide` |
+| Cache analysis | `analyze_cache.py` → `core/prompt_cache_analysis/` |
+| Optional web UI | `ui.py` lazily loads the `[ui]` backend; see `src/pflow/ui/CLAUDE.md` |
 
-| File | Command | External deps |
-|------|---------|---------------|
-| `run.py` | (hidden default — workflow execution) | All CLI modules, `pflow.execution.*` |
-| `resume.py` | `pflow resume [TARGET] [KEY=VALUE]...` — a `click.Group` (`ResumeGroup`: unknown first arg routes to the hidden `run` subcommand): resume a failed/interrupted run from the failed step (Task 164), or answer a paused gate with `--approve yes\|no` / `--choose "<answer or option number>"` (Task 171); `pflow resume list` shows pending unanswered pauses. Bare `pflow resume` shows the group help (the `--approve`/`--choose` discoverability surface). Task 176: the click-free refusal gates (load ladder → stale-hash → between-nodes entry → side-effect verdict) live in `pflow.execution.resume_preflight.preflight_resume` — shared with the UI server's `POST /api/resume`; this file keeps flag parsing, the interactive side-effect confirm (`_prompt_or_raise_side_effect`), and dispatch. | `run.py` (`execute_json_workflow`), `pflow.execution.resume_preflight.preflight_resume`, `pflow.runtime.resume_source.list_paused_runs` |
-| `list.py` | `pflow list [keyword...]` | `pflow.core.workflow.manager` |
-| `find.py` | `pflow find "description"` | `pflow.core.workflow.discovery` |
-| `describe.py` | `pflow describe <workflow>` | `pflow.core.workflow.manager` |
-| `history.py` | `pflow history <workflow>` | `pflow.core.workflow.manager` |
-| `save.py` | `pflow save <file> [--name]` | `pflow.core.workflow.save_service` |
-| `guide.py` | `pflow guide [topics...]` | `pflow.guide` |
-| `probe.py` + `_probe_impl.py` | `pflow probe <node> params...` | `pflow.registry.*`, `pflow.execution.*` |
-| `mcp.py` | `pflow mcp` subgroup | `pflow.mcp.*`, `pflow.registry.*` |
-| `read_fields.py` | `pflow read-fields <exec> <paths>` | `pflow.core.execution_cache` |
-| `skills.py` | `pflow skill save\|list\|remove` | `pflow.core.workflow.skill_service` |
-| `settings.py` | `pflow settings ...` | `pflow.core.settings` |
-| `report.py` | `pflow report` | `pflow.core.trace_report` |
-| `mermaid.py` | `pflow mermaid` | `pflow.core.workflow.mermaid`, `pflow.execution.*` |
-| `ui.py` | `pflow ui [workflow]`; Point verbs `focus`/`frame` take `--say TEXT` (Task 174: CLI-side Gemini TTS via `core/tts.py` → base64-WAV upload to `/api/say`; `_synthesize_say` NEVER raises — synthesis failure degrades to caption-only, `narration unavailable:` note on stderr in JSON mode, exit 0 if the point delivered). A `--say` WAITS for the previous clip to finish BEFORE dispatching (`_await_narration_turn` reads `narration_s_remaining`/`narration_blocked` off `/api/health` — synthesis runs first, so it overlaps the playing clip and sequential says have ~no dead air; residual gap = max(0, synth − prior clip); an autoplay-BLOCKED Viewer HOLDS the walkthrough, polling until the user's ▶ click clears it, capped at `_BLOCKED_MAX_POLLS`; `--no-wait` interrupts instead; a bare focus/frame never probes). Narration outcome rides the `Narration` NamedTuple; its `.report` (incl. `duration_s`) is merged into the JSON payload | `pflow.ui.server` (lazy, behind `[ui]` extra); server/contract → `src/pflow/ui/CLAUDE.md` |
-| `analyze_cache.py` | `pflow analyze-cache <workflow> [params]` | `pflow.core.prompt_cache_analysis` |
+`resume.py` imports `run.py:execute_json_workflow` locally when dispatching to avoid
+a startup import cycle. Resume refusal decisions are shared with the UI through
+`preflight_resume`; interactive confirmation stays in the CLI.
 
-## Cross-References Within commands/
+`find.py` and `mcp.py`'s find command share
+`cli/find_errors.py:handle_discovery_error`. Execution-start MCP auto-sync is in
+`cli/mcp_sync.py`, not the MCP command handler.
 
-`probe.py` is a thin Click wrapper that delegates to `_probe_impl.py:execute_single_node()`. The split keeps the Click decorator separate from the execution logic.
+## Model defaults
 
-`find.py` and `mcp.py` (the `find` subcommand) both use `handle_discovery_error()` from `cli/find_errors.py` for consistent LLM error handling.
-
-No other cross-references exist between command files.
-
-## MCP Commands (mcp.py)
-
-Subcommands: `list`, `find`, `describe`, `servers`, `add`, `sync`, `remove`, `serve`.
-
-- `mcp list [keyword...]` — lists MCP **tools** with grouped-by-server summary (no args) or keyword-filtered detail view. Groups by `mcp_metadata.server` from registry entries.
-- `mcp find "description"` — LLM-powered MCP tool search via `find_components()`.
-- `mcp describe <tool>` — detailed tool info with parameters, outputs, and `.pflow.md` usage snippet.
-- `mcp servers` — lists configured **servers** (transport type, command/URL, timestamps). This was the old `mcp list`.
-- `mcp add|remove|sync` — server lifecycle management. Manual sync is forced discovery but uses the same coherent per-server fingerprint/replacement path as workflow-start auto-sync.
-- `mcp serve` — launches pflow as an MCP server (stdio transport). Fundamentally different from the management commands.
-
-**Smart auto-discovery**: Runs only before workflow execution (via `mcp_sync.py`, not this file). Raw per-server config fingerprints prevent unchanged servers from starting; failures remain due without rolling back successful peers.
-
-**MCP tool normalization** (`normalize_node_id` in `registry/node_id.py`, 3-tier matching for `describe`/`probe`):
-1. Exact match: `mcp-slack-composio-SLACK_SEND_MESSAGE`
-2. Hyphen/underscore conversion: `SLACK-SEND-MESSAGE` → `SLACK_SEND_MESSAGE`
-3. Short form: `SLACK_SEND_MESSAGE` → searches for unique tool with this suffix
-
-Ambiguity → shows all matching full IDs with guidance.
-
-## Probe Command (`probe.py` + `_probe_impl.py`)
-
-`pflow probe <node> params...` executes a single node and returns metadata / template paths rather than dumping raw output by default.
-
-**Reads `verbose` from `ctx.obj`** — does NOT have its own `--verbose` flag.
-
-## Execution Caching Pipeline (probe + read_fields)
-
-```
-pflow probe <node> params...
-    ↓ executes node
-    ↓ ExecutionCache.store(execution_id, outputs)
-    ↓ displays results with execution_id
-
-pflow read-fields <execution_id> <field_paths>...
-    ↓ ExecutionCache.retrieve(execution_id)
-    ↓ TemplateResolver.resolve_value(field_path, outputs)
-    ↓ displays specific field values
-```
-
-This two-command pipeline allows agents to run a node once, then extract specific fields without re-execution. Output display mode controlled by `settings output-mode` ("smart"/"structure"/"full").
-
-## Workflow Commands
-
-Top-level commands: `list`, `find`, `describe`, `history`, `save`.
-
-**Workflow save** (`save.py`):
-- Name validation: lowercase, numbers, hyphens only, max 50 chars (shell/URL/git-safe)
-- Description extracted from markdown H1 prose (`--description` flag removed)
-- Delegates parse + full validation + save to `save_workflow_with_options()`
-- `--delete-draft` safety check: only works in `.pflow/workflows/`, resolves symlinks, refuses to delete symlinked files
-
-**Workflow history** (`history.py`): Shows execution history and last used inputs — useful for finding previously used parameter values.
-
-**Discovery commands use plain functions** — `find_workflow()` from `core/workflow/discovery` and `find_components()` from `registry/discovery`. Both return typed dataclasses (`WorkflowMatch`, `ComponentSelection`).
-
-**Shared formatters**: Uses `workflow_list_formatter`, `workflow_describe_formatter`, `discovery_formatter`, `workflow_save_formatter`, `history_formatter` from `pflow.execution.formatters/`.
-
-## Skill Commands (skills.py)
-
-Subcommands: `save`, `list`, `remove`.
-
-Skills are **symlinks** from tool-specific directories to saved workflows in `~/.pflow/workflows/`. The saved workflow is the single source of truth.
-
-**Multi-tool targets**: Claude Code (default), Cursor (`--cursor`), Codex (`--codex`), Copilot (`--copilot`). Can combine multiple flags.
-
-**Scope**: `--personal` for personal skills (`~/` dirs) vs project scope (project-relative dirs, default).
-
-**Enrichment**: `save` adds a `## Usage` section to the workflow file (idempotent — replaces existing).
-
-**Broken link detection**: `list` detects and reports broken symlinks with fix/remove guidance.
-
-## Guide Command (`guide.py`)
-
-`pflow guide` (no args) renders entry content (same as `pflow --help` body) via `render_entry_content()`.
-`pflow guide <topics...>` composes topic-scoped content via `compose_guide()`. Both from `pflow.guide`.
-
-Topics resolve to static `.md` files under `src/pflow/guide/` (nodes, features). Node topics also get dynamic interface data (parameters, outputs) injected from the registry at render time. See `src/pflow/guide/CLAUDE.md` for the content layout.
-
-## Settings Commands (settings.py)
-
-**Node filtering**: `init`, `show`, `allow`, `deny`, `remove`, `check`, `reset`.
-Node filtering priority: Test policy → Deny → Allow → Default. See `core/CLAUDE.md` for details.
-
-**Environment variables**: `set-env`, `unset-env`, `list-env`.
-Stores API keys in `~/.pflow/settings.json`. Injected into `os.environ` at CLI startup (`_inject_settings_env_vars` in `commands/run.py`).
-
-**LLM model settings** (`settings llm` subgroup): `show`, `providers`, `set-default`, `set-discovery`, `set-filtering`, `set-tts-model`, `set-tts-voice`, `unset`. The TTS pair (Task 174, `pflow ui --say`) stores values verbatim — no LiteLLM prefix normalization — and `unset` restores their BUILT-IN defaults (they have concrete defaults, unlike the model trio's revert-to-auto-detection).
-
-LLM model resolution chain (genuinely hard to discover):
-- `default`: workflow params → `default_model` setting → `llm` CLI default → error
-- `discovery`: `discovery_model` → `default_model` → auto-detect → fallback (`anthropic/claude-sonnet-4-5`)
-- `filtering`: `filtering_model` → `default_model` → auto-detect → fallback
-
-**Output mode** (`settings output-mode`): Controls probe output display (smart/structure/full). Flattened from the old `settings registry output-mode`.
-
-## Test Mapping
-
-| Command file | Test file(s) | Key mock.patch targets |
-|-------------|-------------|----------------------|
-| `run.py` | `test_workflow_resolution.py`, `test_validate_only.py`, `test_validate_verb_redirect.py`, `test_workflow_commands.py`, `test_dual_mode_stdin.py`, `test_dry_run.py`, `test_approval_gate_cli.py` | `pflow.cli.commands.run.WorkflowManager`, `.execute_json_workflow` |
-| `resume.py` | `test_resume_cli.py` | `pflow.execution.gate_prompt.can_prompt`, `pflow.cli.commands.resume.click.confirm` |
-| `list.py` | `test_workflow_commands.py` | `pflow.cli.commands.list.WorkflowManager` |
-| `describe.py` | `test_workflow_commands.py` | `pflow.cli.commands.describe.WorkflowManager` |
-| `history.py` | `test_workflow_commands.py` | `pflow.cli.commands.history.WorkflowManager` |
-| `find.py` | `test_find.py` | `pflow.core.workflow.discovery.find_workflow` |
-| `save.py` | `test_workflow_save_cli.py`, `test_workflow_save_security.py` | None |
-| `probe.py` | `test_probe.py`, `test_node_id_normalization.py` | None (uses real registry from `isolate_pflow_config`) |
-| `mcp.py` | `test_mcp_commands.py`, `test_mcp_add_json.py` | `pflow.cli.commands.mcp.MCPServerManager`, `.MCPRegistrar` |
-| `guide.py` | `test_guide.py` | None |
-| `read_fields.py` | `test_read_fields.py` | None |
-| `skills.py` | `test_skills.py` | `pflow.cli.commands.skills.WorkflowManager`, `.create_skill_symlink`, `.enrich_workflow`, `.find_skill_for_workflow`, `.find_pflow_skills`, `.remove_skill_service` |
-| `settings.py` | `test_settings_cli.py` | None |
-| `mermaid.py` | `test_mermaid.py` | None |
-| `ui.py` | `test_ui.py` | `pflow.ui.server._STATIC_DIR`, `pflow.ui.server.resolve_validate_build` |
-| `analyze_cache.py` | `test_analyze_cache.py` | `pflow.cli.commands.analyze_cache.analyze` (lazy import patched in nudge-failure test) |
+Workflow LLM defaults are injected by `runtime/compilation/compiler.py` through
+`core/llm_config.py:get_default_workflow_model`. Discovery/filtering instead use
+`get_model_for_feature` in that module. Agent nodes have separate backend defaults
+in `nodes/agent/agent_node.py:prep`. Change those owners rather than duplicating
+resolution chains or concrete model names in commands.

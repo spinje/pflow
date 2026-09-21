@@ -1,271 +1,78 @@
 # Node Implementation Guide
 
-This directory contains all pflow nodes. **CRITICAL**: All nodes MUST follow the Node retry pattern.
+Nodes own business logic. The engine owns template resolution, namespacing, and
+instrumentation; see `runtime/engine/CLAUDE.md`.
 
-> **Note:** Template resolution, namespacing, and instrumentation are applied automatically by the engine at runtime. Node implementations should focus only on business logic — never implement these concerns yourself. See `src/pflow/runtime/engine/CLAUDE.md` for details.
+## Inputs, outputs, and lifecycle
 
-## Shared Store vs Params
+Author-provided inputs—static or resolved from `${...}`—arrive in `self.params`
+before `prep()`. Do not read author inputs from `shared` as a fallback. `shared`
+still carries injected runtime infrastructure such as MCP pools/cancellation, and
+`post()` writes node outputs there.
 
-- **Params** (`self.params`): Static configuration — model name, temperature, timeout, file format. Set by the engine from the workflow IR before each `_run()`.
-- **Shared store** (`shared`): Dynamic data flowing between nodes — user inputs, API responses, generated content. Node *inputs* arrive via `self.params` (the engine resolves `${...}` templates from the shared store into params before `prep()`), not by reading `shared` directly — see the Parameter-Only Pattern below. Node *outputs* are written in `post()`.
+Production nodes inherit `core/node.py:Node`. Exceptions escaping `exec()` enter
+`Node._exec`'s retry loop; non-retriable failures or exhausted attempts reach
+`exec_fallback`. The engine owns graph traversal, not these retries. Translate
+failures inside exec deliberately when they are valid routable results, known
+non-retriable failures, or unsafe to repeat. Keep exec/fallback/post result shapes
+and returned actions consistent. Examples: `llm/llm.py` selective retry suppression
+and `http/http.py` routing of valid HTTP error responses.
 
-Rule of thumb: if the value changes between workflow runs, it's shared store data. If it's the same regardless of input, it's a param.
+Store natural output types. Do not add convenience JSON auto-parsing to ordinary
+nodes; template coercion owns that behavior. See
+`architecture/core-concepts/data-type-coercion.md`.
 
-`LLMNode.post()` and `AgentNode.post()` are approved direct producers of `shared["__warnings__"]`. The convention for choosing between `setdefault` and `=` is intent-based:
+## Navigation
 
-- **`setdefault` — preserve prior signal.** Used by `LLMNode._emit_observed_below_min_cache_warning` (catalog-backed `cache.below-min-observed` diagnostic emitted when provider telemetry reports zero cache creation/read for a node declaring `prompt_cache:`). Pre-existing warnings survive; this is supplementary observability that never overwrites earlier evidence.
-- **`=` — this signal takes precedence.** Used by `LLMNode._emit_prewarm_disabled_warning` (when `prewarm: true` is declared but cache rendering can't fire — e.g., images present, or canonical/standard byte alignment failed), adapter-empty-response warnings emitted later in `LLMNode.post()`, and `AgentNode._emit_soft_fail_signal` / `_emit_schema_resolved_null_warning` (schema soft-failures and templated-schema-resolved-to-None — both authoritative for the run). These signals clobber prior writes intentionally.
-
-`cache.below-min-rendered` also uses `=` because runtime marker stripping is authoritative for the current invocation. Same-node combined cases can still overwrite in `__warnings__`, but trace 2.3.0 records `cache_skipped_reason` and `prewarm_disabled_reason` independently on each LLM event.
-
-Future contributors adding new direct `__warnings__` writes: pick the verb by asking "is this signal authoritative for the node's current run, or supplementary?" Authoritative → `=`. Supplementary → `setdefault`.
-
-## Critical Pattern: Node Error Handling
-
-**This is non-negotiable** - violating this pattern disables automatic retries, severely impacting reliability.
-
-### The Pattern
-
-```python
-from pflow.core.node import Node  # NOT BaseNode!
-from .exceptions import NonRetriableError
-
-class ExampleNode(Node):
-    def __init__(self):
-        super().__init__(max_retries=3, wait=0.1)
-
-    def prep(self, shared: dict) -> Any:
-        """Validate inputs and prepare for execution."""
-        # Validation logic here
-        return prep_data
-
-    def exec(self, prep_res: Any) -> Any:
-        """Execute main logic - NO try/except blocks!"""
-        # Let ALL exceptions bubble up for retry mechanism
-        result = some_operation()  # If this fails, it will retry
-        return result  # Only return success value
-
-    def exec_fallback(self, prep_res: Any, exc: Exception) -> Any:
-        """Handle errors AFTER all retries exhausted."""
-        if isinstance(exc, SpecificError):
-            return "Error: Specific error message"
-        else:
-            return f"Error: Operation failed: {exc!s}"
-
-    def post(self, shared: dict, prep_res: Any, exec_res: Any) -> str:
-        """Process results and determine next action."""
-        if isinstance(exec_res, str) and exec_res.startswith("Error:"):
-            shared["error"] = exec_res
-            return "error"
-        else:
-            shared["result"] = exec_res
-            return "default"
-```
-
-### Key Rules
-
-1. **NO try/except in exec()** - Let exceptions bubble up!
-2. **Use NonRetriableError** for validation errors that shouldn't retry
-3. **Prefer `PflowError` subclasses** over vanilla `ValueError`/`Exception` — see `src/pflow/core/exceptions.py`
-4. **Return only success values** from exec()
-5. **Handle errors in exec_fallback()** after retries exhausted
-6. **Check for errors in post()** by looking for "Error:" prefix
-
-### Examples
-
-#### ✅ CORRECT - Enables Retry
-```python
-def exec(self, prep_res):
-    file_path = prep_res
-    # No try/except - exceptions bubble up!
-    with open(file_path) as f:
-        return f.read()
-```
-
-#### ❌ WRONG - Breaks Retry
-```python
-def exec(self, prep_res):
-    file_path = prep_res
-    try:
-        with open(file_path) as f:
-            return f.read()
-    except Exception as e:
-        # This prevents retry!
-        return f"Error: {e}"
-```
-
-### Testing Retry Behavior
-
-Always test that your nodes retry correctly:
-
-```python
-def test_node_retries_on_failure():
-    node = YourNode()
-    shared = {"input": "test"}
-
-    with patch("some.operation") as mock_op:
-        # Fail twice, then succeed
-        mock_op.side_effect = [
-            Exception("Temporary failure"),
-            Exception("Still failing"),
-            "Success!"
-        ]
-
-        action = node.run(shared)
-
-        assert action == "default"
-        assert mock_op.call_count == 3
-```
-
-## Node Categories
-
-- **file/** - File operations (read, write, copy, move, delete)
-- **llm/** - Language model interactions
-- **shell/** - Shell command execution
-- **http/** - HTTP requests
-- **python/** - Python code execution (sandboxed)
-- **agent/** - Unified Claude/Codex agent node and backend adapters
-- **mcp/** - MCP tool bridge
+| Concern | Owner |
+|---|---|
+| Lifecycle/retry primitives | `src/pflow/core/node.py` |
+| Shell and HTTP behavior | `shell/shell.py`, `http/http.py` |
+| LLM invocation and schema handling | `llm/llm.py`, `llm/schema_validation.py` |
+| File operations | `file/` (one implementation per operation) |
+| Python code execution and next-action routing | `python/python_code.py:PythonCodeNode` |
+| Agent orchestration and schema retries | `agent/agent_node.py:AgentNode` |
+| Provider contract/adapters | `agent/backend.py:AgentBackend`, `agent/claude_backend.py`, `agent/codex_backend.py` |
+| MCP tool bridge/result extraction | `mcp/node.py:MCPNode`, `_extract_result`; client sessions in `src/pflow/mcp/pool.py` |
+| Machine-read interfaces | `registry/metadata_extractor.py:PflowMetadataExtractor` |
 
 ## Interface Documentation Format
 
-All nodes MUST use the enhanced Interface format with type annotations:
-
-```python
-"""
-Node description here.
-
-Interface:
-- Reads: shared["file_path"]: str  # Path to the file to read
-- Reads: shared["encoding"]: str  # File encoding (optional, default: utf-8)
-- Writes: shared["content"]: str  # File contents
-- Writes: shared["error"]: str  # Error message if operation failed
-- Params: append: bool  # Append mode (default: false)
-- Actions: default (success), error (failure)
-"""
-```
-
-See `architecture/reference/enhanced-interface-format.md` for more details of the docstring format for pflow nodes.
-
-### Dynamic Routing via `next` Variable (Python Code Node)
-
-Python code nodes (`type: code`) support dynamic routing by setting `next: str = "target-node-id"` in the code. When `next` is set, it becomes the action returned by `post()`, routing execution to the matching edge. The `result` annotation is optional when `next` is declared.
-
-### Key Rules:
-
-1. **Multi-line format**: Each input/output on its own line for readability
-2. **Type annotations**: Always include `: type` after the key
-3. **Descriptions**: Use `# Description` after the type
-4. **Optional/defaults**: Document in description like `(optional, default: value)`
-5. **All inputs in Params**: Node inputs come from `self.params`, not shared store
-6. **Writes for outputs**: Node outputs go to shared store via `shared["key"]`
-
-### Example Interface:
+Node docstrings are parsed as interface metadata. Use one annotated entry per
+line, `#` descriptions, and required/optional/default information in descriptions:
 
 ```python
 Interface:
-- Params: file_path: str  # Path to the file to read (required)
+- Params: file_path: str  # Path to read (required)
 - Params: encoding: str  # File encoding (optional, default: utf-8)
-- Writes: shared["content"]: str  # File contents read from file
-- Writes: shared["error"]: str  # Error message if operation failed
+- Writes: shared["content"]: str  # File contents
+- Writes: shared["error"]: str  # Failure description
 - Actions: default (success), error (failure)
 ```
 
-### Parameter-Only Pattern
+Inputs use Params; outputs use Writes. Nested output structures use indented
+children under the output entry. The full syntax is in
+`architecture/reference/enhanced-interface-format.md`; parsing belongs to
+`registry/metadata_extractor.py`, rendered structure/path references to
+`registry/context_builder.py:_add_enhanced_structure_display`. Do not maintain a
+second rendered-output specification here.
 
-All node inputs should come from `self.params`, NOT from the shared store. The runtime uses template resolution to inject values from the shared store into node params before execution.
+## Execution-state and diagnostic gotchas
 
-Do:
-```python
-file_path = self.params.get("file_path")  # Correct - params only
-```
-
-Do NOT do:
-```python
-file_path = shared.get("file_path") or self.params.get("file_path")  # Wrong - shared store fallback
-```
-
-**Corollary — never name the shared store (or any runtime internal) in agent-facing errors (FORBIDDEN).** Nodes don't read the shared store, so errors must not tell agents to write to it either — point at the authoring surface (`- key:` bullets, `${node.output}`), never `shared[...]`/`params`/`prep`-`exec`-`post`.
-```python
-raise ValueError("No prompt provided. Specify it in shared['prompt'] or params.")  # Wrong - leaks internals
-raise ValueError("This node requires a 'prompt' parameter. Use template syntax like "
-                 "'- prompt: ${previous_node.output}' to wire data from other nodes.")  # Correct
-```
-Full principle: `core/CLAUDE.md` → "Agent-facing messages speak the authoring surface".
-
-## Creating New Nodes
-
-> **Node Output Types**: Nodes should store their natural output type (strings from shell/LLM, dicts from parsed APIs). Do NOT implement JSON auto-parsing in nodes — the template system handles type coercion automatically. See `architecture/core-concepts/data-type-coercion.md`.
-
-1. Copy the retry pattern above
-2. Inherit from `Node` (not `BaseNode`)
-3. NO try/except in exec()
-4. Use `NonRetriableError` for validation failures
-5. Test retry behavior
-6. Document using the Interface format above
-
-## Nested Structure support
-
-Nested JSON/Object Outputs Are Fully Supported:
-
-You can write this in a node's docstring:
-  Interface:
-  - Writes: shared["issue_data"]: dict  # GitHub issue information
-      - number: int  # Issue number
-      - title: str  # Issue title
-      - user: dict  # Author information
-        - login: str  # GitHub username
-        - id: int  # User ID
-        - avatar_url: str  # Profile picture URL
-      - labels: list  # Array of label objects
-      - milestone: dict  # Milestone info (optional)
-        - id: int  # Milestone ID
-        - title: str  # Milestone title
-
-  And the context builder will display it as:
-  **Outputs**: `issue_data: dict` - GitHub issue information
-    Structure of issue_data:
-      - number: int - Issue number
-      - title: str - Issue title
-      - user: dict - Author information
-        - login: str - GitHub username
-        - id: int - User ID
-        - avatar_url: str - Profile picture URL
-      - labels: list - Array of label objects
-      - milestone: dict - Milestone info (optional)
-        - id: int - Milestone ID
-        - title: str - Milestone title
-
-## Common Mistakes
-
-1. **Catching exceptions in exec()** - This is the #1 anti-pattern!
-2. **Returning error tuples** - Return only success values
-3. **Forgetting exec_fallback()** - Needed for error messages
-4. **Not testing retries** - Always verify retry behavior
-5. **Using `redirect_stdout`/`redirect_stderr` in threads** — Not thread-safe; zombie threads corrupt streams. See `python_code.py:_execute_code` docstring and issue #138 for details.
-6. **Storing execution state on `self`** — Nodes may be reused across sequential batch items (compile-once cache). Never set `self.X = result` in `exec()`/`post()` — communicate between lifecycle methods via the return value (`prep_res`, `exec_res`) or the shared store. Exception: `self.params` is set by the engine before each `_run()` call.
-7. **Writing directly to stderr from `prep`/`exec`/`post`** — Direct `click.echo(..., err=True)`, `print(..., file=sys.stderr)`, or `sys.stderr.write(...)` during live progress rendering corrupts the partial `node_id...` line emitted by `OutputController._handle_node_start`. Use `logger.warning`/`logger.error` instead — a logging filter installed by `OutputController` closes the partial line as a side effect before each log record emits, so `logger.*` calls render cleanly on their own lines. Raw stderr writes bypass the filter.
-
-## References
-
-- Full pattern documentation: `/.taskmaster/knowledge/patterns.md` - "Node Error Handling"
-- Anti-pattern to avoid: `/.taskmaster/knowledge/pitfalls.md` - "Catching Exceptions in exec()"
-- Architectural decision: `/.taskmaster/knowledge/decisions.md` - "All pflow Nodes Must Follow Node Retry Pattern"
-- Node lifecycle primitives: `src/pflow/core/node.py`
-
-## Quick Checklist
-
-Before committing any node:
-
-- [ ] Inherits from `Node` (not `BaseNode`)?
-- [ ] No try/except blocks in `exec()`?
-- [ ] Returns only success values from `exec()`?
-- [ ] Has `exec_fallback()` for error handling?
-- [ ] Uses `NonRetriableError` for validation errors?
-- [ ] Tests verify retry behavior?
-- [ ] `post()` checks for "Error:" prefix?
-- [ ] Interface uses enhanced format with types?
-- [ ] Only exclusive params listed (not in Reads)?
-- [ ] No `self.X = ...` in exec()/post()? (nodes reused across batch items — use return values, not instance state)
-
-Remember: **Let exceptions bubble up!** The framework handles retries for you.
+- Keep per-execution results out of instance attributes: compiled child nodes can
+  be reused across sequential batch items (`runtime/workflow_executor.py`). Pass
+  state through prep/exec return values or shared output instead. Engine-assigned
+  `self.params` and deliberate infrastructure/cache objects are different from
+  per-item results. See `tests/test_nodes/test_node_stateless_invariant.py`.
+- Authoritative per-run metadata must replace prior same-node evidence (`=`);
+  supplementary evidence can use `setdefault`. Make the choice explicit when
+  writing `shared["__warnings__"]`, so node reuse cannot retain a stale signal.
+- Never use process-global `redirect_stdout`/`redirect_stderr` inside worker
+  threads. A timed-out thread may outlive its caller and corrupt later streams;
+  see `python/python_code.py:_execute_code`.
+- Use logging for runtime diagnostics, not direct stderr writes. The logging
+  filter in `core/output_controller.py` closes partial progress lines; raw
+  print/click/sys.stderr writes bypass it and corrupt live progress rendering.
+- Agent-facing errors describe the authoring surface (`- prompt:`, `${node.output}`),
+  not shared-store or lifecycle internals. Follow `core/CLAUDE.md` →
+  “Agent-facing messages speak the authoring surface” and the root exception rule.

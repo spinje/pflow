@@ -1,392 +1,115 @@
 # Test Navigation and Guidelines
 
-## Test Structure
+## Find the test owner
 
-```
-tests/
-├── shared/                # Shared test utilities and mocks
-│   ├── llm_mock.py       # LLM-level mock (prevents API calls)
-│   ├── markdown_utils.py # ir_to_markdown() and write_workflow_file() for .pflow.md test files
-│   ├── registry_utils.py # ensure_test_registry() helper
-│   └── README.md         # Docs for shared utilities
-├── test_cli/              # CLI command tests (CliRunner-based)
-├── test_core/             # IR schema, shell integration, settings, workflow manager
-├── test_docs/             # Documentation validation
-├── test_execution/        # Execution service tests
-│   └── formatters/        # Formatter tests (CLI/MCP parity, security)
-├── test_integration/      # End-to-end workflow tests
-├── test_mcp/              # MCP client-side integration tests (connection pool, http transport)
-├── test_mcp_server/       # pflow-as-MCP-server tests
-├── test_nodes/            # Node implementation tests (one dir per node type:
-│   │                      #   test_file, test_shell, test_http, test_mcp, test_python,
-│   │                      #   test_agent, test_llm)
-│   ├── test_shell/        # Shell node tests (execution, binary, SIGPIPE, security)
-│   ├── test_agent/        # Unified agent node and backend tests (see pitfall #17 re: Claude SDK stub)
-│   └── test_llm/          # LLM node tests (includes RUN_LLM_TESTS integration test)
-├── test_registry/         # Registry, scanner, smart filter, and component discovery tests
-├── test_runtime/          # Compiler, engine, template resolution, batch, caching, tracing
-├── test_planning/         # Planning-related tests
-├── test_pocketflow/       # Pocketflow primitive tests
-└── fixtures/              # Committed JSON/workflow fixtures (e.g. cache_analysis; see pitfall #19)
-```
+| Concern | Start here |
+|---------|------------|
+| Isolation, LLM mocking, trace opt-in, subprocess environments | `tests/conftest.py` |
+| Workflow files, typed diagnostics, mock node interfaces | `tests/shared/markdown_utils.py`, `tests/shared/diagnostic_helpers.py`, `tests/shared/mock_nodes.py` |
+| LLM responses/history | `tests/shared/llm_mock.py::MockLLMClient` |
+| CLI capture and real process boundaries | `tests/test_cli/CLAUDE.md` |
+| Runner and cross-layer regressions | `tests/test_execution/`, `tests/test_integration/test_failed_node_invariant.py` |
+| Compiler, engine, batch, cache, tracing | `tests/test_runtime/`; template validation has its own `CLAUDE.md` |
+| Node behavior and agent backends | `tests/test_nodes/`; Claude SDK constraint below |
+| Registry/scanning; MCP client versus server | `tests/test_registry/`; `tests/test_mcp/` versus `tests/test_mcp_server/` |
+| Example/document contracts | `tests/test_docs/`, `examples/CLAUDE.md` |
+| Import boundaries; encoding guard | `tests/test_import_hygiene.py`, `tests/test_encoding_warning_net.py` |
+| Trace fixture parity and generation | `tests/test_core/test_trace_tree.py`; pitfall #19 below |
 
-**Mapping convention**: `src/pflow/X/Y/module.py` → `tests/test_X/test_Y/test_module.py`
-
-## Writing Workflow Test Files
-
-**Always use `tests/shared/markdown_utils.py`** to create `.pflow.md` test files (used by 30+ test files):
-```python
-from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
-
-# Write IR dict as .pflow.md file
-write_workflow_file(ir_dict, tmp_path / "test.pflow.md")
-
-# Or get markdown string directly
-md_content = ir_to_markdown(ir_dict, title="Test Workflow", description="...")
-```
-
-**Gotchas with `ir_to_markdown`**:
-- **Does not emit `edges`, `start_node`, or `ir_version`** — only emits `inputs`, nodes (as "Steps"), and `outputs`. The `.pflow.md` format infers execution order from step order.
-- **`purpose` is read from top-level node dict**, not from `params`. If you put `purpose` inside `params`, you get a duplicate.
-- Leading whitespace in param values (e.g., `" <<<"`) can be lost during markdown round-trip parsing.
+Most unit tests follow `src/pflow/X/module.py` → `tests/test_X/test_module.py`; integration contracts often live with their caller. Paths beginning `test_` below are relative to `tests/`.
 
 ## Choosing a Workflow Test Pattern
 
-The repo has four distinct patterns for getting a workflow into a test. Each tests a different stack slice. Pick by which layer is part of the system under test — don't mix patterns for the same scenario.
+| Pattern | Boundary exercised | Use when |
+|---------|--------------------|----------|
+| Inline IR → `WorkflowRunner().run(ir, ...)` | Compiler, engine, runner | Runtime behavior or IR shapes without parser involvement |
+| Temporary `.pflow.md` → runner | Parser and in-process pipeline | File/parser behavior needs scenario-specific text |
+| Committed example → runner | Reusable file, source locations, rendered diagnostics | Also useful for manual debugging; see `examples/error-handling/README.md` |
+| Real subprocess | Process descriptors, pipes, logging/progress interleaving | In-process capture cannot establish the contract; mark `e2e` |
 
-| Pattern | Layer(s) exercised | Per-test cost | When to use |
-|---|---|---|---|
-| **1. Inline IR dict** → `WorkflowRunner().run(ir_dict, ...)` | Compiler + engine + runner | ~5-10ms | **Default.** Testing IR shapes, internal invariants, compiler behavior, parameterized edge cases, anything where the parser isn't part of the system under test |
-| **2. `tmp_path` fixture** (via `tests/shared/markdown_utils.py`) → `runner.run(str(path), ...)` | Parser + full in-process pipeline | ~20-30ms | When the scenario needs a real file but the content is test-specific and not reusable |
-| **3. Committed fixture** under `examples/error-handling/` (or similar) → `runner.run(str(fixture_path), ...)` | Parser + full in-process pipeline + renderer text surface | ~10-20ms | **See decision rule below** |
-| **4. Real subprocess** → `subprocess.run([pflow, ...])` | Real CLI surface: stderr routing, `logger.*`, exit codes, progress streaming | 300-500ms | CLI-surface behavior that CliRunner can't reach. Mark as `e2e`. See `test_progress_streaming_subprocess.py` |
+Use real nodes/shared-store behavior for integration contracts rather than mocking the boundary under test. Keep subprocess cases focused and cover the broader scenario matrix in-process.
 
-### Decision rule for committed fixtures (Pattern 3)
+Use `tests/shared/markdown_utils.py::write_workflow_file` / `ir_to_markdown` for ordinary generated files. Deliberate malformed-syntax tests can write literal markdown. The helper is **not a general IR round-trip serializer**: it omits `edges`, `start_node`, and `ir_version`; reads `purpose` from the node, not `params`; and inline leading whitespace can be lost during parsing.
 
-**Use a committed fixture in `examples/<subdir>/` + a file-based test when ALL of these hold:**
+Check `examples/CLAUDE.md` and references to a committed fixture before changing or moving it; rerun its bound tests. Source-line assertions can depend on prose and blank lines.
 
-1. The scenario demonstrates **user-facing behavior** (could plausibly help a user debug their own workflow)
-2. **The parser layer is part of what's being tested** (source line tracking, YAML parsing, code-fence handling) **OR** rendered output text is part of the assertion (not just structured context data)
-3. You'd **re-run the fixture manually during debugging** — e.g., `pflow examples/error-handling/loop-recovery.pflow.md`
-4. The fixture has a **natural descriptive name** (`typo-on-failed-node.pflow.md`, not `edge_case_42.pflow.md`)
+## Autouse fixtures and isolation
 
-**Use inline IR (Pattern 1) otherwise.** Specifically, inline IR is the right default for:
-- Tests about specific IR shapes the parser wouldn't produce
-- Parameterized tests with `@pytest.mark.parametrize`
-- Internal-invariant tests (e.g., "after `mark_node_failed`, `__failures__[id]` has these keys")
-- Tests asserting on exception types or compiler rejections
-- Anything where the scenario doesn't have pedagogical value
+`tests/conftest.py` supplies these automatically:
 
-**Never dual-write**: if a scenario exists as both an inline-IR test and a fixture test, delete one. The fixture wins if the parser matters or rendered text is asserted; the inline IR wins otherwise.
+| Fixture | Non-obvious boundary |
+|---------|----------------------|
+| `isolate_pflow_config` | Redirects both `Path.home()` and `HOME`, manager paths, registry, and memoization cache. Yields isolated config paths; `DEBUG_TEST_PATHS=1` prints them. |
+| `mock_llm_client` | Patches `pflow.core.llm_client.complete` and imported consumer bindings; yields `MockLLMClient`. |
+| `_inject_fake_llm_api_keys` | Supplies absent canonical-provider keys so validation reaches mocked calls. `no_fake_llm_keys` instead clears ANTHROPIC/OPENAI/GEMINI/GOOGLE key variables, including the Gemini alias. |
+| `_block_upstream_cost_map_fetch` | Blocks runtime and validator catalog fetches using separate latches. Fetch-path tests must reset the relevant latch; see `test_core/test_litellm_runtime.py`. |
+| `disable_trace_file_writes_by_default` | Suppresses both buffered and streaming writes unless marked `trace_files`. In-memory `result.trace.events` remains available. |
 
-### Committed fixture directories
+The default isolated registry serves precomputed core nodes from memory; its `registry_path` may not exist. For persistence or empty-registry scenarios, use an explicit temporary path and initialize the intended contents: this bypasses fixture preload, but production `Registry.load()` may still scan a missing registry. `tests/shared/registry_utils.py::ensure_test_registry` provides explicit core-node population when needed.
 
-| Directory | Purpose | Test file |
-|---|---|---|
-| `examples/invalid/` | Parse/schema errors (workflows that should fail at parse time) | `tests/test_docs/test_example_validation.py` |
-| `examples/error-handling/` | Runtime error scenarios (failed nodes, coalesce, typo hints, source lines) | `tests/test_integration/test_failed_node_invariant.py` |
+The LLM mock and fake-key fixtures skip paths containing literal `/llm/` (or its Windows spelling), **not** `/test_llm/`. Thus `test_nodes/test_llm/test_llm_integration.py` still receives these fixtures; `RUN_LLM_TESTS` alone does not disable the mock. Check the actual adapter seam before treating a test as real-provider coverage.
 
-**Never rename, move, or delete files in these directories without running their bound tests first.** Committed fixtures double as regression guards and user-facing examples; a typo-fix edit can silently break both contracts.
+### LLM mock resolution
 
-**`test_docs/test_example_validation.py` auto-discovers via `rglob("*.pflow.md")`** — any new `.pflow.md` file you add under `examples/` automatically gets IR-schema-validated for free. This is load-bearing for Pattern 3: you get schema-level regression coverage without writing any test code.
+`MockLLMClient.set_response` resolves by exact model/schema, then wildcard model/schema, then built-in schema defaults, then a generic response. Check both model and schema when a configured response is missed.
 
-### Fixture drift risk
+`call_history` truncates prompts to 500 characters; use `call_history_full` for full prompt/cache assertions. Responses are `AdapterResponse` objects (`text` is a string, `usage` a dict). Cost defaults to `None`; use `set_response(cost_usd=..., warnings=...)` when those paths matter. The helper owns the detailed response contract.
 
-Pattern 3's cost is fixture drift: someone edits a fixture "to fix a typo" and silently breaks test assertions that match on specific rendered text. Mitigations:
+## Selection and I/O safeguards
 
-1. **The fixture's purpose is documented in `examples/<subdir>/README.md`** — edits should match the documented contract
-2. **Tests assert on specific substring markers** (`"file:N"`, `"${primary.stdout ?? fallback.stdout}"`) that encode the scenario's load-bearing features — if an edit changes these, the test fails loudly rather than passing on a drifted scenario
-3. **Mutation-test your assertions**: temporarily break the production code path you expect the test to catch, confirm the test fails. If the test still passes under mutation, the assertion is too loose
+Exact targets and markers live in `Makefile` and `pyproject.toml`:
 
-## Autouse Fixtures (tests/conftest.py)
+- `make test` excludes `e2e`, `paid`, and the separately ignored LLM integration file. `make test-e2e` selects non-paid boundary tests; `make test-all-local` and `make test-debug` include non-paid e2e.
+- `make test-llm` and `make test-all` opt into LLM integration and require an exported OpenAI key. Safe targets exclude `paid` independently of environment flags. Mark real chargeable calls `paid`; a mock does not prove real-provider coverage.
+- Mark real CLI subprocess/pipe/external-tool boundaries `e2e`. Generic shell/JSON/stdin assertions should use the active Python environment, not require incidental tools such as `jq` or a `python3` alias. When an external tool is the boundary, check availability and skip explicitly if absent.
+- `serial` is a selection marker, not automatic xdist serialization. Default `testpaths` is `tests`; source doctests require explicitly selecting the source path.
+- Pass `encoding="utf-8"` for text file and subprocess I/O, including Python snippets embedded in workflows. Make test targets enable `PYTHONWARNDEFAULTENCODING=1`; pytest treats `EncodingWarning` as an error. Bare pytest does not itself enable that interpreter flag. Binary I/O and deliberate byte-semantics tests are exempt.
+- Tests needing serialized trace files must use `trace_files`; runtime event assertions can use `result.trace.events`.
 
-These run automatically for every test — you do NOT need to set them up:
-- **`mock_llm_client`**: Patches `pflow.core.llm_client.complete` (and each consumer module's `complete` binding) with `MockLLMClient`. Returns `AdapterResponse` instances. **Skips** tests whose path contains `/llm/` — a hook for real-API test dirs; no tests currently live in such a path. The actual real-API test is `tests/test_nodes/test_llm/test_llm_integration.py` (dir `test_llm`, NOT matched by the skip), gated by its own `RUN_LLM_TESTS=1` skipif plus `--ignore` in the Makefile targets.
-- **`isolate_pflow_config`**: Creates isolated `tmp_path/.pflow/` dir, redirects `Registry`, `SettingsManager`, `MCPServerManager`, and `WorkflowManager` to temp paths. Default `Registry()` loads precomputed core nodes from memory to avoid per-test registry JSON writes.
-- **`disable_trace_file_writes_by_default`**: Makes `WorkflowTraceCollector.save_to_file()` a no-op unless the test is marked `trace_files`. In-memory `ExecutionResult.trace` still exists; only disk writes to `.pflow/debug` are suppressed.
+For subprocesses, use `uv_exe` and `prepared_subprocess_env` from `tests/conftest.py`. The latter writes a registry and isolates the child home; copy its dict before per-test changes. For custom environments, `set_isolated_home` sets both `HOME` and Windows `USERPROFILE`. A parent-process `Path.home` patch does not change the child.
 
-**Surprise**: `isolate_pflow_config` gives every test a registry with all core nodes already loaded. If you need an **empty** registry, create one with an explicit temp path.
-
-**Important**: the default isolated `registry_path` may not exist on disk. This is intentional. Tests that assert registry persistence must create `Registry(explicit_tmp_path)` or write the default `registry_path` themselves.
-
-**Tip**: `isolate_pflow_config` yields a dict with keys `pflow_dir`, `registry_path`, `settings_path`, `mcp_servers_path`, `workflows_path`. Capture it to inspect or manipulate isolated paths:
-```python
-def test_something(isolate_pflow_config):
-    paths = isolate_pflow_config
-    assert paths["pflow_dir"].exists()
-```
-
-**Performance**: Registry scan happens ONCE per session (~0.2s), not per test. Default tests use the precomputed nodes in memory; this avoids writing hundreds of ~48K `registry.json` files during a full run.
-
-### LLM Mock Resolution Chain
-
-When a test calls an LLM, the mock resolves in this order:
-1. Exact model+schema match (e.g., `"anthropic/claude-sonnet-4-5"` + `WorkflowDecision`)
-2. Wildcard `"*"` + schema match
-3. Built-in schema defaults (has defaults for `WorkflowDecision`, `ComponentSelection`, `FilteredFields`)
-4. Final fallback: `{"response": "mock response"}`
-
-If your custom mock isn't being used, check that model name AND schema type both match.
-
-**Mock behavior notes**:
-- `response.text` is a **string attribute** (not callable). Asserting `response.text()` raises `TypeError`.
-- `response.usage` is a dict — read fields with `usage["input_tokens"]`, etc.
-- `call_history` entries **truncate prompts to 500 chars** — don't assert on long prompt content. `call_history_full` is the parallel untruncated record (used for cache-structure tests).
-- `cost_usd` defaults to `None` in the returned usage dict (mirrors production for unknown-pricing models like Ollama). Tests that need a specific cost should pass `cost_usd=` to `set_response`.
-- `response.warnings` is a list of structured warning dicts (`kind`, `text`, `context`). Defaults to `[]`. Tests that need warning paths should pass `warnings=` to `set_response`.
-- `reset()` clears custom responses, costs, warnings, and call history; built-in `_DEFAULT_RESPONSES` for known schemas remain available.
-
-## Conftest Hierarchy
-
-| File | What it provides |
-|------|-----------------|
-| `tests/conftest.py` | Root: auto-applied LLM mock, isolated config, test nodes |
-| `tests/shared/llm_mock.py` | `MockLLMClient` — patches the adapter seam (`pflow.core.llm_client.complete`) |
-
-To configure LLM mock responses:
-```python
-def test_something(mock_llm_client):
-    mock_llm_client.set_response(
-        "anthropic/claude-sonnet-4-5",
-        WorkflowDecision,
-        {"found": True, "workflow_name": "test"},
-        cost_usd=0.000123,  # optional — defaults to None
-        warnings=[],        # optional — defaults to []
-    )
-```
-
-## Pytest Markers
-
-Registered in `pyproject.toml`:
-- **`serial`**: Tests that must run sequentially (deselect with `-m "not serial"`)
-- **`integration`**: Cross-component integration tests (rarely used — only 2 spots; subprocess/pipe tests use the `e2e` marker instead)
-- **`e2e`**: Real process, shell-pipe, external CLI boundary, or other slow environment-boundary tests. Excluded from default `make test`; run with `make test-e2e`.
-- **`paid`**: A real provider/model call that can incur charges. Every safe Make target excludes it independently of environment variables; only explicitly paid targets such as `make test-all` may select it.
-- **`trace_files`**: Tests that need real workflow trace JSON files. Without this marker, `save_to_file()` is a no-op under pytest.
-
-Other markers used across the suite:
-- `@pytest.mark.skipif(not os.getenv("RUN_LLM_TESTS"), ...)` — gates real LLM API tests
-- `@pytest.mark.skipif(sys.platform == "win32", ...)` — Unix-only pipe/SIGPIPE tests
-- `@pytest.mark.skipif(sys.version_info < (3, 11), ...)` — ExceptionGroup requires 3.11+
-
-## Make Test Commands
-
-| Command | Workers | What it excludes |
-|---------|---------|-----------------|
-| `make test` | `-n 4` | `test_llm_integration.py`, `e2e`, `paid` |
-| `make test-debug` | sequential | `test_llm_integration.py`, `paid` (does NOT exclude non-paid `e2e`) |
-| `make test-e2e` | `-n 4 --dist=worksteal` | Non-`e2e`, LLM integration, `paid` |
-| `make test-all-local` | `-n 4 --dist=worksteal` | `test_llm_integration.py`, `paid` |
-| `make test-llm` | sequential | Only runs LLM-specific tests |
-| `make test-all` | `-n 4` | Nothing — runs everything |
-| `make test-with-skipped` | sequential | LLM integration, `paid` — shows non-paid skip reasons |
-
-All commands include `--doctest-modules`, but `pyproject.toml` sets `testpaths = ["tests"]`, so collection only ever reaches `tests/` — **`src/pflow/` doctests are NOT collected by any `make` target**. They run only when pytest is pointed directly at a source path, e.g. `pytest --doctest-modules src/pflow/runtime/template_validation/type_checker.py`. Keep src doctests runnable anyway: if `testpaths` ever gains `src`, a stale example becomes a build failure.
-
-## Subprocess Test Fixtures
-
-Use shared fixtures from `tests/conftest.py` for real CLI subprocess tests:
-- **`uv_exe`**: Finds `uv` or skips the test
-- **`prepared_subprocess_env`**: Creates isolated HOME, writes pre-populated registry JSON
-
-```python
-def test_cli_subprocess(tmp_path, uv_exe, prepared_subprocess_env):
-    env = prepared_subprocess_env
-    completed = subprocess.run([uv_exe, "run", "pflow", "--help"], capture_output=True, text=True, encoding="utf-8", env=env)
-    assert completed.returncode == 0
-```
-
-**Rule: ONE subprocess test per bug/feature is usually enough.** Use unit tests for edge cases (1000x faster).
-
-**Marker rule**: real subprocess / pipe / shell-boundary CLI tests must be marked `e2e` so they do not run in default `make test`. Use in-process `CliRunner` or `WorkflowRunner` tests for the broad matrix, and keep subprocess tests as narrow contract pins.
-
-**External-tool rule**: the default suite may exercise the shell node, but it must not require incidental runner tools such as `jq` or a `python3` alias. Use the active Python environment for generic JSON/stdin assertions. If an external executable is itself the integration boundary under test, mark that narrow test `e2e` and skip with an explicit availability check when the tool is absent.
-
-**Trace rule**: do not rely on trace files unless the test is marked `trace_files`. If the test only needs runtime trace events, assert on `result.trace.events`; if it needs serialized JSON, add `@pytest.mark.trace_files`.
-
-**Encoding rule** (suite-wide, not just subprocess tests): all text-mode file and subprocess I/O must pass `encoding="utf-8"` — `write_text`/`read_text`/`open`/`fdopen`, `subprocess.run(text=True, ...)`, and python-code snippets embedded in workflow strings alike. The suite runs under PEP 597 (`PYTHONWARNDEFAULTENCODING=1`) with a blanket `error::EncodingWarning` filter, so a bare call is a hard test failure, and on Windows it would silently write cp1252. Binary-mode (`"rb"`/`"wb"`) and deliberate byte-semantics tests are exempt.
-
-For timeout-sensitive tests (e.g., hang detection), you can use minimal inline setup to avoid fixture overhead:
-```python
-# Special case (~0.3s): Minimal inline setup — only when fixture overhead matters
-env = os.environ.copy()
-env["HOME"] = str(tmp_path)
-(tmp_path / ".pflow").mkdir()
-registry = {"nodes": {"shell": {"module": "pflow.nodes.shell.shell", "class_name": "ShellNode"}}}
-(tmp_path / ".pflow/registry.json").write_text(json.dumps(registry))
-```
-
-## `PYTEST_CURRENT_TEST` in Production Code
-
-pytest sets `PYTEST_CURRENT_TEST` automatically. **Three production files check it** to skip dangerous operations during tests:
-- `src/pflow/core/llm_config.py` — Skips LLM key detection
-- `src/pflow/mcp_server/main.py` — Guards MCP-server behavior
-- `src/pflow/cli/logging_config.py` — Adjusts logging config
-
-If you modify these files, be aware they behave differently under test.
-
-**Debug env var**: Set `DEBUG_TEST_PATHS=1` to see which temp paths `isolate_pflow_config` uses per test.
-
-## Environment Variable Isolation
-
-For subprocess tests, use `monkeypatch.setenv("HOME", str(tmp_path))`.
-For in-process tests, use `monkeypatch.setattr(Path, "home", lambda: tmp_path)`.
-These are NOT interchangeable — the code under test may use either `os.environ["HOME"]` or `Path.home()`.
-
-## Retry Testing
-
-**ALWAYS use `wait=0`** when testing retries:
-```python
-node = SomeNode(max_retries=2, wait=0)  # ✅ Fast
-```
+`PYTEST_CURRENT_TEST` suppresses settings→environment injection in `src/pflow/core/llm_config.py::inject_settings_env_vars` and MCP startup, and skips `src/pflow/cli/logging_config.py::configure_logging`. Real subprocess logging tests must remove it from the child environment; see `test_cli/test_progress_streaming_subprocess.py`.
 
 ## Pitfalls and Gotchas
 
-### 1. Testing Framework Instead of Your Code
-```python
-# ❌ Don't hand-build complex node graphs to test retry
-generator >> validator
-validator - "retry" >> generator
+Numbers retained below are referenced by source and test comments.
 
-# ✅ Test that nodes return correct action strings
-action = validator.run(shared)
-assert action == "retry"  # WorkflowEngine handles routing
-```
+### 2. Import hygiene
 
-### 2. Import Hygiene
-Always import production code as `from pflow...`, never `from src.pflow...`. Both resolve under `pythonpath = ["."]`, but they create DISTINCT module objects — isinstance checks fail across the boundary and the autouse LLM mock (which patches `pflow.core.llm_client.complete`) is silently bypassed. Enforced by `tests/test_import_hygiene.py`, which also pins the allowlist of modules permitted to import `llm_client` at module level (everything else must lazy-import — see `runtime/engine/CLAUDE.md` → Cross-Module Dependencies).
+Import production code through `pflow...`, never `src.pflow...`. Both identities can resolve, producing different modules/classes: patches miss and `isinstance` fails. `tests/test_import_hygiene.py` also owns the module-level LLM adapter import allowlist and runtime→UI dependency guard. Avoid blanket module reloads as mock cleanup; they can create the same stale-binding problem.
 
-### 3. File System Tests
-Always use temporary directories. Clean up in `finally` blocks. Prefer `tmp_path` over `tempfile.NamedTemporaryFile(delete=False)`.
+### 10. CliRunner boundaries
 
-### 4. Shared State Between Tests
-Tests pass alone but fail together → Ensure proper isolation, don't modify global state.
+CliRunner's default stdin is non-TTY. Interactive branch tests need explicit TTY seams; see `tests/test_cli/CLAUDE.md`. Captured stderr assertions are useful, but cannot establish real descriptor routing or logger/progress interleaving: existing logging handlers can retain an earlier stream. Use subprocess coverage for those contracts, with production logging enabled as described above.
 
-### 5. Platform-Specific Issues
-Use `os.path.join()`, handle line endings, use `pathlib`.
+For `caplog` assertions, set the intended level and logger explicitly; suite-wide logger configuration may differ from an isolated run. Example: `test_runtime/test_compiler_interfaces.py`.
 
-### 6. Test Node Type Confusion
-`CompilationError: Node type 'basic-node' not found` → Use actually registered nodes: `echo`, `shell`, `read-file`. Aliases like `basic-node`, `transform-node` are NOT registered. For mocked tests, define any names in your mock registry.
+### 15. Bounded real waits
 
-### 7. Test Node Interface Inconsistency
-`KeyError: 'test_output'` → There is no globally-registered `echo` test node; tests that use `type: "echo"` mock it locally (e.g. `test_namespacing_integration.py` defines an `EchoNode` reading a `data` param). `ExampleNode` (`tests/shared/mock_nodes.py`) uses `test_input`/`test_output`. Check the node's interface in the specific test before assuming keys.
+Use `wait=0` for retry-count tests and short, bounded waits for synthetic race windows; don't copy production timeouts into ordinary unit tests. Real timing/process contracts need bounds appropriate to the behavior. Examples: `test_core/test_litellm_runtime.py` and `test_registry/test_registry.py`.
 
-### 8. Node Interface Uses `key`, Not `name`
-When building mock node interfaces, parameters use `{"key": "param_name", ...}`, NOT `{"name": "param_name", ...}`.
+### 17. Claude SDK stub and class identity
 
-### 9. `purpose` Field Minimum Length
-FlowIR schema requires `purpose` to be at least 10 characters. When building IR dicts for tests, don't use short strings like `"test"`.
+`test_nodes/test_agent/conftest.py` calls `tests/shared/claude_sdk_stub.py::install()` during collection, before test modules in that directory. It replaces `claude_agent_sdk` entries in `sys.modules` without teardown. `src/pflow/nodes/agent/claude_backend.py` binds SDK objects at import; installing the stub after an earlier backend import does not replace those bindings. Run real SDK integration separately without collecting the stub-installing conftest.
 
-### 10. CliRunner Limitations
-`CliRunner` always returns `False` for `isatty()`. Can't test interactive prompts (workflow save dialog). Test execution and save functionality independently.
+Keep the stub's `ResultMessage` a real annotated class, assigned into mocked `claude_agent_sdk.types` before backend import. The backend checks its `structured_output` annotation at import time; an auto-Mock is insufficient.
 
-**CliRunner also masks stderr coherence bugs**: `logging` writes to the original stderr fd, not Click's captured stream. Partial-line corruption, logger interleaving, and pipe routing bugs are invisible to CliRunner. Use real subprocess tests (Pattern 4) for anything involving stderr output, `logger.*` calls, or pipe routing.
+### 19. Production-shaped fixtures
 
-### 11. Mock Pollution Between Test Files
-Mocks from one file persist and break others → Use `@pytest.fixture(autouse=True)` with `patch.stopall()` and `importlib.reload()` for modules with persistent mocks.
+Synthetic traces can encode the same wrong assumption as production code. Start with `tests/shared/trace_fixture_builder.py::TraceFixtureBuilder`; `test_core/test_trace_tree.py::TestTraceFixtureBuilderShapeParity` compares covered event shapes against a real collector.
 
-### 12. Test Registry Must Point to Real Modules
-```python
-# ❌ {"module": "test.module", "class_name": "ExampleNode"}  # Module doesn't exist
-# ✅ {"module": "tests.test_runtime.test_compiler_integration", "class_name": "ExampleNode"}
-```
+Committed cache-analysis traces come from `tests/fixtures/cache_analysis/_generate.py`. `test_committed_cache_analysis_fixtures_match_generator_output` in `test_core/test_trace_tree.py` pins them to the generator and supplies the regeneration command. Preserve these producer/parity checks when changing trace shapes. CLI fixture coverage also exists in `test_cli/test_analyze_cache.py::test_analyze_cache_rolls_up_three_deep_sub_workflow_costs` (CliRunner).
 
-### 13. Context Builder Uses Fresh Instances
-`pflow.registry.context_builder.build_component_context()` creates fresh `WorkflowManager` instances (no singleton). Pass `workflow_manager=` parameter to control which instance is used in tests.
+### 20. Cross-layer tests through WorkflowRunner
 
-### 14. Testing Implementation Instead of Behavior
-```python
-# ❌ Relies on default max_suggestions=5
-formatted = format_suggestions(workflows)
-assert "workflow-6" not in formatted
+For changes spanning engine, runner, or rendering, include a test through `WorkflowRunner().run()` that observes the promised result. Inspect `result.shared_after`, structured `result.diagnostics`, and rendered output where relevant. Mocking their handoff separately can hide data dropped on error paths. `tests/test_integration/test_failed_node_invariant.py` supplies examples, including nested and batch failures.
 
-# ✅ Test the limiting behavior explicitly
-formatted = format_suggestions(workflows, max_suggestions=3)
-assert "workflow-3" not in formatted
-```
+### 21. Timeout mocks must reach the running code
 
-### 15. Slow Tests Destroy Parallel Performance
-A single 0.5s test caused 6.5s of total overhead with pytest-xdist due to worker scheduling.
-```python
-# ❌ 0.5s timeout blocks a worker
-action = run_code_node(shared, code="time.sleep(10)", timeout=0.5)
+A timeout test that passes after the production timeout may have missed its patch. Patch the clock/client actually called; check module identity when the running function and dotted patch target differ. `test_cli/test_ui_interaction_server.py::test_idle_connection_emits_keepalive_frames` demonstrates patching `events.__globals__` for that specific alias problem and bounding awaits so a missed patch fails quickly.
 
-# ✅ 0.05s timeout, minimal parallel impact
-action = run_code_node(shared, code="time.sleep(1)", timeout=0.05)
-```
-**Rule**: Keep real wall-clock waiting under 0.1s.
+### Mock registry and node interfaces
 
-### 16. `caplog` Requires Explicit Level + Logger Name
-Tests using `caplog` pass in isolation but fail in the full suite because earlier tests modify logger configuration:
-```python
-# ❌ Fails in full suite — logger level was changed by a prior test
-def test_warns(caplog):
-    do_something()
-    assert "warning message" in caplog.text
+Use registered node names or explicitly supply local mock metadata. There is no suite-wide `echo` test node: `tests/shared/mock_nodes.py::ExampleNode` uses `test_input` / `test_output`, while locally defined nodes may use other keys. Interface entries use `key`, not `name`. Registry module/class entries used for compilation must be importable; metadata-only validation mocks have a narrower contract.
 
-# ✅ Explicitly set level and logger name
-def test_warns(caplog):
-    caplog.set_level("WARNING", logger="pflow.runtime.compilation.compiler")
-    do_something()
-    assert "warning message" in caplog.text
-```
-
-### 17. `claude_agent_sdk` Mocked via `sys.modules` (installed in `conftest.py`)
-The mock `claude_agent_sdk` lives in `tests/shared/claude_sdk_stub.py` and is injected into `sys.modules` by `tests/test_nodes/test_agent/conftest.py` (which calls `install()` at import). pytest loads a directory's `conftest.py` before collecting its test modules, so the mock is in place **before any test file in that directory imports the Claude backend** — independent of import order, with no cleanup (it persists for the session). If you need to test real `claude_agent_sdk` integration, it won't work in the same pytest run.
-
-Why a stub + conftest rather than module-level injection in the test file: `ClaudeBackend` binds its SDK names (`query`, `ResultMessage`, `ProcessError`, ...) at import via `from claude_agent_sdk import ...`, so they're fixed to whatever is in `sys.modules` the first time the backend is imported. When injection lived at module scope, it only worked if that test won the import race; another test importing the backend first bound it to the **real** SDK, and the mock `ResultMessage`/`ProcessError` then failed `isinstance` checks — surfacing as unrelated failures whenever the files shared a process in that order.
-
-`ResultMessage` is a real `@dataclass` in the stub, not an auto-Mock. This is load-bearing: `ClaudeBackend` probes `ResultMessage.__annotations__` at import time to verify SDK structured-output support. Keep `mock_sdk_types.ResultMessage = ResultMessage` before `sys.modules["claude_agent_sdk.types"] = mock_sdk_types` in `install()`, or imports will fail before tests run.
-
-### 18. Rewritten Tests That Assert Less Are Regression Signals
-When rewriting tests during a refactor, if the new test asserts LESS than the original, the new implementation likely dropped behavior — the old test wasn't over-specified. Investigate before weakening the assertion.
-
-### 19. Synthetic Fixtures Matching Buggy Code
-
-Tests that construct trace events / workflow IRs by hand can pass
-against buggy production code if the fixture happens to encode the
-bug-compatible shape. Symptom: tests are green, the bug fires in
-production, agents trust green tests over real-world output.
-
-**Defenses that work in this codebase:**
-
-- **Builder/producer shape parity tests.** `TraceFixtureBuilder` ships
-  with `TestTraceFixtureBuilderShapeParity` (`tests/test_core/test_trace_tree.py`)
-  that drives a real `WorkflowTraceCollector` and asserts the builder's
-  output keys match the producer's keys. If the builder drifts, every
-  test using it fails noisily.
-- **Committed-fixture drift detection.** `tests/fixtures/cache_analysis/_generate.py`
-  is the single source of truth for committed JSON fixtures;
-  `test_committed_cache_analysis_fixtures_match_generator_output`
-  fails when committed JSON drifts from generator output. The failure
-  message includes the regen command verbatim.
-- **Subprocess CLI integration tests.** End-to-end via `pflow ...` on
-  real-shape fixtures (e.g.,
-  `test_analyze_cache_rolls_up_three_deep_sub_workflow_costs`)
-  catches the integration class that unit tests miss.
-- **Verification specialist passes** with real CLI on real workflows
-  (e.g., the gemini-smoke fixture set under `scratchpads/`). Manual
-  but high-leverage; the bugs that hit Task 159 across 4+ phases were
-  found here, not by the test suite.
-
-**Defense that didn't earn its keep and was removed:** per-test
-`@mutation_contract` markers + `make mutation-audit` verifier.
-Operational data across 4 cleanup phases on `feat/prompt-caching`:
-1 real bug caught, 6+ line-shift drifts requiring mechanical updates,
-32 stale contracts at peak. The infrastructure was deleted because
-the maintenance cost exceeded the catch rate. Future test-fidelity
-efforts should reinforce the four defenses above rather than
-reintroduce per-test markers.
-
-### 20. Cross-Layer Features Need End-to-End Tests Through `WorkflowRunner`
-Unit tests that mock the boundary you're testing will pass while the real pipeline breaks. When a feature crosses ≥2 layers (e.g. shared store → engine → runner → formatter), write at least one test that runs through `WorkflowRunner().run()` and inspects `result.shared_after` / `result.diagnostics` end-to-end. Failure modes that this catches:
-- Engine archives data correctly but the runner drops `shared_store` on the exception path
-- Diagnostic context is populated correctly but the renderer never consumes it
-- Single layer's tests pass; the integration breaks because each layer is "right by itself"
-
-Pattern: build the IR dict, run through `WorkflowRunner`, assert on `result.shared_after["__failures__"]` and the structured `result.diagnostics[i].context` rather than mocking `_extract_runtime_warnings` or `build_execution_steps` in isolation.
-
-### 21. A Mock That Misses the Code Path Makes a Timeout Test Pass — Slowly
-A timeout-gated test that passes but runs ≈ the *production* timeout (e.g. 15s) means the mock never reached the running code — it slept the real wait (green, testing nothing). Two ways to miss, both seen in `test_ui_*`:
-- **Wrong seam:** patch the function the code *actually calls*. A `time.monotonic()` deadline ignores `patch("time.sleep")`; a poll via `httpx.get` ignores `patch("httpx.request")`.
-- **Right name, wrong object:** `patch("pkg.mod.CONST")` targets `sys.modules["pkg.mod"]`, but the running closure may read a *different* module object via `fn.__globals__` (duplicated/reloaded module — pitfall #2), so the patch silently no-ops. Use `patch.dict(fn.__globals__, {...})` instead, and cap real awaits with a small `wait_for` so a future miss fails fast.
+`pflow.registry.context_builder.build_component_context` creates a fresh WorkflowManager when needed; pass `workflow_manager=` to control that dependency.

@@ -1,58 +1,19 @@
-# Historical Documentation
+# Historical documentation
 
-These are design-time documents from early planning. They contain valuable design rationale but **do not accurately reflect the current implementation**. Always verify against code before relying on specifics.
+These documents preserve design rationale, not current implementation contracts. Verify CLI syntax, feature status, and code patterns against current source before applying them. Do not treat a historical proposal as evidence that a feature exists.
 
-> The core design philosophy (shared store pattern, explicit over magic, validation-first) in these docs IS still valid — but implementation details, CLI syntax, and feature status are often wrong.
+Start with `architecture/architecture.md` for the system overview and `pflow guide` for current agent usage. Paths in the first column are relative to this directory; current-owner paths are repository-relative.
 
-## Source of Truth
+| Historical material | Where to check current behavior |
+|---------------------|---------------------------------|
+| `prd.md`, `mvp-implementation-guide.md`, `architecture-original.md`, `components-original.md` | `architecture/architecture.md`, then the relevant source-directory CLAUDE.md |
+| `cli-reference-original.md`, `cli-runtime-original.md`, `autocomplete-original.md`, `autocomplete-impl-original.md` | `src/pflow/cli/CLAUDE.md` |
+| `planner-specification.md`, `planner-debugging.md`, `agent-guide-pre-task71.md` | `pflow guide`; the built-in natural-language planner was removed |
+| `json-workflows-original.md` | `pflow guide` for authored `.pflow.md`; `src/pflow/core/markdown_parser.py` for parsing |
+| `node-reference-original.md`, `shared-store-original.md` | `src/pflow/nodes/CLAUDE.md`, `src/pflow/runtime/CLAUDE.md`; interface standard: `architecture/reference/enhanced-interface-format.md` |
+| `execution-reference-original.md` | `src/pflow/execution/CLAUDE.md` |
+| `mcp-integration-original.md`, `github-nodes-original.md` | `src/pflow/mcp/CLAUDE.md` for client integration; `src/pflow/mcp_server/CLAUDE.md` for pflow's server |
+| `simonw-llm-patterns/`, `thinking-tokens-optimization.md` | `src/pflow/core/llm_client.py`, `architecture/core-node-packages/llm-nodes.md` |
+| `prompt-caching-architecture.md` | `src/pflow/core/prompt_cache.py` |
 
-- **`architecture/architecture.md`** — Current system architecture
-- **`CLAUDE.md` (root)** — Authoritative project status
-- **`pflow guide`** — Current agent interface guide
-
-## What Changed
-
-| Original Plan | Current Reality |
-|--------------|-----------------|
-| `pflow node1 => node2` CLI syntax | `pflow workflow.pflow.md` or `pflow saved-name param=value` |
-| `@flow_safe` decorator for purity | Not implemented |
-| MCP integration "v2.0" | Fully implemented (stdio + http transports) |
-| Natural language planner as core | Labeled "legacy" — agents use CLI primitives directly |
-| Node names like `yt-transcript`, `shell-exec` | Actual: `shell`, `read-file`, `llm`, etc. |
-| Anthropic-specific features (thinking tokens, prompt caching) | Provider-agnostic via LiteLLM (Task 158 — superseded the Simon Willison `llm` library wiring from Task 95). Prompt caching is now a first-class feature (Task 159, with cache analysis from Task 160). |
-
-## Document Index
-
-### Original planning docs
-
-| Document | Context |
-|----------|---------|
-| prd.md | Original PRD. Contains `=>` syntax and `@flow_safe` — never implemented. |
-| mvp-implementation-guide.md | Original roadmap. Scope/features changed significantly. |
-
-### Superseded architecture and feature specs
-
-| Document | Context |
-|----------|---------|
-| architecture-original.md | Outdated CLI syntax, MCP marked "v2.0" (now implemented). |
-| components-original.md | Outdated node names and feature status. |
-| cli-reference-original.md | Uses `=>` syntax. Current: `pflow workflow.pflow.md`. |
-| cli-runtime-original.md | Superseded by current implementation. |
-| autocomplete-original.md, autocomplete-impl-original.md | v2.0 feature — not yet implemented. |
-| mcp-integration-original.md | Superseded. MCP is fully implemented. |
-| agent-guide-pre-task71.md | Superseded by CLI primitives. Run `pflow guide`. |
-| github-nodes-original.md | Deprecated — use MCP tools (e.g., `mcp-github-list_issues`). |
-| json-workflows-original.md | JSON workflow format — replaced by markdown `.pflow.md` in Task 107. |
-| shared-store-original.md | Shared-store/proxy design pattern. Rationale still valid; uses conceptual `=>` syntax. Current canonical: `src/pflow/runtime/CLAUDE.md` and `src/pflow/nodes/CLAUDE.md`. |
-
-### Archived January 2026
-
-| Document | Why moved | Current replacement |
-|----------|-----------|-------------------|
-| execution-reference-original.md | Describes 5 fictional features (`@flow_safe`, `ExecutionContext`, etc.) | `src/pflow/execution/CLAUDE.md` |
-| node-reference-original.md | Outdated param fallback pattern (removed in Task 102) | `reference/enhanced-interface-format.md` |
-| planner-specification.md | 40%+ describes unimplemented features | `pflow guide` |
-| planner-debugging.md | Inaccurate trace format, inverted flag behavior | Trace files at `~/.pflow/debug/` |
-| thinking-tokens-optimization.md | Pre-LiteLLM (Task 158) design; provider-agnostic now. | N/A |
-| prompt-caching-architecture.md | Pre-LiteLLM design, superseded by the shipped Task 159 implementation. | `src/pflow/core/prompt_cache.py` (current) |
-| simonw-llm-patterns/ | Pre-implementation research for Task 95 (Simon Willison `llm` library — superseded by Task 158 / LiteLLM) | `core-node-packages/llm-nodes.md` |
+Old arrow-based CLI syntax and the proposed `@flow_safe` model are design context. Current workflow entrypoints are `pflow workflow.pflow.md` and `pflow saved-name param=value`; shared-store and node-boundary rationale remains useful, but its implementation has changed.
