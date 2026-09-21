@@ -26,14 +26,14 @@ Canonical reference: `tests/CLAUDE.md` (autouse fixtures, mock resolution chain,
 
 Key load-bearing points to verify against the diff:
 
-- **Mirror structure**: `src/pflow/X/Y.py` → `tests/test_X/test_Y.py`. If new production code has no corresponding test file, flag it.
+- **Mirror structure**: Most unit tests mirror `src/pflow/X/Y.py` → `tests/test_X/test_Y.py`; integration contracts may live with their caller. Flag missing behavioral coverage, not the absence of a particular filename.
 - **Autouse fixtures** (`tests/conftest.py`): `mock_llm_client`, `isolate_pflow_config`, `disable_trace_file_writes_by_default`. If new subsystems read from `~/.pflow/` and aren't covered by `isolate_pflow_config`, they will produce cross-test pollution (Task 106 history).
-- **LLM mock**: patches `pflow.core.llm_client.complete` via `MockLLMClient`. Real LLM tests gated by `RUN_LLM_TESTS=1`.
+- **LLM mock**: patches `pflow.core.llm_client.complete` via `MockLLMClient`. Real LLM tests gated by `RUN_LLM_TESTS=1`. That flag alone does not disable the autouse mock; verify the adapter seam and path-based fixture exemption before treating a test as real-provider coverage (see `tests/CLAUDE.md`).
 - **Workflow test patterns**: 4 distinct patterns documented in `tests/CLAUDE.md` "Choosing a Workflow Test Pattern". Each tests a different stack slice — don't mix patterns for the same scenario.
 
 ## Test Quality Philosophy
 
-This codebase values **quality over quantity**: "Better a few good tests than a lot of bad tests. Always suggest removal of bad tests." (CLAUDE.md)
+This codebase values **quality over quantity**: prefer a few strong tests to many weak ones, and suggest removing tests that add no meaningful protection.
 
 The established pattern is to REDUCE test count while INCREASING coverage of real bugs:
 - Task 104: 34 → 30 tests (removed 11 implementation-detail tests, added 7 behavioral)
@@ -164,7 +164,7 @@ Historical examples where regression tests were needed:
 Mocks can create false confidence when they don't accurately represent production behavior.
 
 **Mock bypass detection** — the mock doesn't intercept what it claims to:
-- Stale `patch()` strings after module moves — silently mock nothing (Task 92: 53 stale patches)
+- Stale or unused `patch()` bindings after module moves (Task 92: 53 targets needed updating)
 - Tests that construct data manually instead of going through the pipeline — bypass the code being tested (Task 72)
 - Mock setup that doesn't verify the mock was called — test passes even if the mocked function was never invoked
 
@@ -174,7 +174,7 @@ Mocks can create false confidence when they don't accurately represent productio
 - Is the mock verified as actually called, not bypassed?
 - Test-writer subagents can RATIONALIZE incorrect mock behavior as expected — verify that the mock's response matches what the real API would return (Task 127)
 
-**For every `patch()` string in the diff**: Verify the target path exists. `grep` for the function name at the patched module path. If the path is wrong, the mock silently does nothing.
+**For every `patch()` string in the diff**: Stale patch targets may fail to resolve, or may still exist but no longer be the binding used by production, leaving the real call unmocked. Verify both target existence and the name looked up at the call site.
 
 ### 9. Test Isolation
 

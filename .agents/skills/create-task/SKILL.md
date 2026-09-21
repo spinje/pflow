@@ -139,6 +139,8 @@ If something is both a requirement and a test scenario, put it in Requirements. 
 
 ## Example
 
+Illustrative task spec only; its proposed format, decisions, and file paths are not current implementation guidance.
+
 ```markdown
 # Task 107: Implement Markdown Workflow Format
 

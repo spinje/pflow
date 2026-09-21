@@ -52,7 +52,7 @@ When a change touches any row, check its interactions with every column:
 
 | Feature | Batch | Nested WF | Branching | Caching | Error Handling | Template System | MCP Entry | Output/Display |
 |---|---|---|---|---|---|---|---|---|
-| **Batch** | — | Sub-WF items | Branch within item | Per-item cache | Continue/abort | `${item}` | MCP batch execution | Dual display paths |
+| **Batch** | — | Sub-WF items | Branch within item | Per-item cache | Continue/fail_fast | `${item}` | MCP batch execution | Dual display paths |
 | **Nested WF** | Batch of sub-WFs | Depth > 2 | Branch in child | Sub-WF invalidation | Error propagation | Child output refs | MCP sub-WF path | Cost rollup display |
 | **Branching** | Branch in batch | Branch in sub-WF | Multi-level | Conditional caching | Error routing | `??` coalesce | MCP branching | Output from branches |
 | **Caching** | Per-item keys | File change invalidation | Non-executed paths | — | Phantom costs | Template in cache key | No MCP flags | Cached status display |
@@ -89,17 +89,17 @@ Batch is the primary bug attractor. If the diff touches anything batch-related, 
 |---|---|---|
 | **Signaling** | Python exceptions vs node action strings ("error") vs return values (None) | Sub-WF error actions were missed because only exceptions were checked (fix 284a5934) |
 | **Categorization** | Compile errors (structural) vs runtime errors (data) vs timeouts vs validation | CompilationError swallowed by `except Exception` in continue mode (fix e45bba0d) |
-| **Mode** | continue (tolerate partial failure) vs abort (stop immediately) | All-fail + continue passed `[None, None, ...]` downstream (fix 52d9057b) |
+| **Mode** | `continue` (tolerate partial failure) vs `fail_fast` (stop on first failure) | All-fail + continue passed `[None, None, ...]` downstream (fix 52d9057b) |
 | **Propagation** | Within node → across batch items → across workflow boundary → to user | Costs invisible in nested workflows (fix ce8920de) |
 
 **Batch × Error Handling scenario matrix:**
 | Scenario | Expected behavior | Historical failure |
 |---|---|---|
-| 0 items | Warn + DEGRADED status | Silent SUCCESS (fix b5cda093) |
+| 0 items | Visible INFO advisory; does not by itself degrade status | Silent SUCCESS (fix b5cda093) |
 | All items fail + `continue` | Abort (total ≠ partial failure) | Passed `[None, None, ...]` downstream (fix 52d9057b) |
 | Some fail + `continue` | Continue with successes, return "default" | Returned "error" with no `on-error` edge (Task 131) |
 | Compile error in item | Abort (structural, not data error) | Swallowed by `except Exception` in continue mode (fix e45bba0d) |
-| Runtime error + `abort` | Stop immediately | All successful results lost (Task 131) |
+| Runtime error + `fail_fast` | Stop immediately | All successful results lost (Task 131) |
 
 **Batch × Nested Workflows:**
 | Scenario | Expected | Historical failure |
@@ -123,7 +123,7 @@ The parent/child workflow boundary is where signals get lost.
 **What must propagate parent → child**: the canonical set is `_PROPAGATED_KEYS` in `runtime/workflow_executor.py` (documented in `runtime/CLAUDE.md`) — registry, progress callback, MCP pool, warnings, parser diagnostics, memoization cache, trace collector, loop-active depth. READ the current set rather than trusting this summary, then ask: **does the diff add a cross-cutting concern that's missing from it?** Every key absent from that set is silently dropped for all nested workflows (fix ce8920de).
 
 **What must propagate child → parent:**
-- Output values (via `output_mapping` or auto-outputs)
+- Child declared outputs, or filtered child-store fallback values when no outputs are declared
 - Error status (action strings, not just exceptions)
 - Cost metrics and trace events
 
@@ -158,10 +158,10 @@ The MCP server is a parallel universe to the CLI. Every feature must work throug
 
 | Feature | CLI behavior | MCP gap risk |
 |---|---|---|
-| Batch processing | Template validation registers `${item}` | MCP may skip validation side effect (Task 107) |
+| Batch processing | Validation registers `${item}` metadata; runtime injects item/index values | Check validation coverage through MCP. Historical Task 107: missed batch-variable registration. |
 | Dependency bundling | Save discovers and bundles deps | MCP raw content save skipped bundling (Task 130) |
 | Cache/iteration flags | `--no-cache`, `--only` CLI flags | No MCP equivalent — features may be inaccessible |
-| Error display | Rich CLI error formatting | MCP returns structured JSON — different code path |
+| Error display | Rich CLI error formatting | MCP tool text/protocol error boundary — different surface from CLI; verify shared diagnostic content |
 | Compilation | Full compiler pipeline | `registry_run` is now MCP-server-only (`mcp_server/tools/execution_tools.py`); CLI equivalent is `pflow probe`. Historical (Task 72): bypassed compiler — all MCP nodes failed. |
 
 ### Output/Display Interactions
@@ -196,8 +196,8 @@ Some feature interactions are about WHEN things happen, not just what combines. 
 |---|---|---|
 | File reference resolution | Pre-execution validation | Validator sees raw paths, not content (Task 129) |
 | `normalize_ir()` | Any validation | Missing `ir_version` causes schema failure (Task 107) |
-| Batch variable registration (validation side effect) | Workflow execution | `${item}` unresolved at runtime (Task 107) |
-| `set_params()` forwarding to wrapper chain | Template resolution | Templates resolve to None (Task 96) |
+| Runtime item-alias/index injection into each item store | Per-item template resolution | `${item}`/`${__index__}` unavailable to that item; Task 107 registration failure is historical |
+| Template resolution | Assign resolved params to the bare node, then execute it | Wrong/unresolved params reach the node; Task 96 wrapper-forwarding failure is historical |
 | Cache key computation | Any state mutation | Stale/wrong cache key |
 
 If the diff reorders operations or adds new steps to the pipeline, check: does the new order satisfy all these dependencies?
@@ -228,7 +228,7 @@ When a new node type is added, it must interact correctly with the full feature 
 
 - **Statically impossible combinations.** `loop:` × `batch:` is mutually exclusive, enforced at two points — cite the enforcement in Verified Combinations instead of demanding a runtime interaction test for a state that can't exist.
 - **Combinations whose intersection code is untouched by the diff AND has an existing interaction test** — name the test in Verified Combinations; that's the finding's resolved form.
-- **Parity "gaps" that are recorded decisions** (e.g. `AgentNode` intentionally excluded from cache metadata, documented allowlist in `runtime/engine/CLAUDE.md`). Check for the "INTENTIONALLY" note before flagging.
+- **Parity "gaps" that are recorded decisions** (e.g. `AgentNode` intentionally excluded from cache metadata, documented allowlist in `runtime/engine/instrumentation.py::_should_write_cache_metadata`). Check for the "INTENTIONALLY" note before flagging.
 - **Exhaustive triple enumeration.** Don't file every theoretically-possible triple — only triples where you found the pair interacting AND can name the third feature's concrete involvement.
 - **Combinations involving features the diff doesn't touch.** Both sides of an interaction must connect to the change (directly, or through code the change affects) — otherwise it's a pre-existing question, not this review's.
 

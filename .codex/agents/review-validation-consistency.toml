@@ -26,7 +26,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 Changes applied to one touchpoint but not others create gaps. All three must agree:
 
 **1. WorkflowValidator** (pre-execution, orchestrated by `core/workflow/validator.py`):
-10-step pipeline that runs BEFORE compilation; emits `Diagnostic` objects natively. Canonical step list: `core/workflow/CLAUDE.md` §validator.py — read it rather than trusting a summary. Shape: structural → stdin → stdout → data flow (cache rules live HERE, in `_validate_cache_block`) → templates (in `runtime/template_validation/`) → node types → output sources → unknown params → node-specific semantics → sub-workflows (recursive). A step-1 `Severity.ERROR` short-circuits everything after it; an unnumbered reserved-literal-name guard runs between steps 1 and 2. Step order is load-bearing (templates before node types — see the CLAUDE.md).
+10-step pipeline that runs BEFORE compilation; emits `Diagnostic` objects natively. Canonical step list: `core/workflow/validator.py::WorkflowValidator.validate` — read it rather than trusting a summary. Shape: structural → stdin → stdout → data flow (cache rules live HERE, in `_validate_cache_block`) → templates (in `runtime/template_validation/`) → node types → output sources → unknown params → node-specific semantics → sub-workflows (recursive). A step-1 `Severity.ERROR` short-circuits everything after it; an unnumbered reserved-literal-name guard runs between steps 1 and 2. Step order is load-bearing (templates before node types — see that function).
 
 **2. Compile-time validation** (`runtime/compilation/compile_validation.py` + `runtime/compilation/ir_preparation.py`):
 Compile-time prerequisite checks (structural shape) and input preparation (CLI/env/settings resolution + type coercion). Runs alongside compilation, calls shared `validate_data_flow`.
@@ -34,7 +34,7 @@ Compile-time prerequisite checks (structural shape) and input preparation (CLI/e
 **3. Execution-entry validation** (`execution/runner.py` → `WorkflowRunner.validate()` and `WorkflowRunner.run()`):
 Both CLI (via `cli/commands/run.py`) and MCP route through `WorkflowRunner`, which calls `WorkflowValidator.validate()` once per execution. The same validator runs whether invoked through `--validate-only`, `--dry-run`, `pflow save`, or `pflow analyze-cache`.
 
-**Key insight**: These run in sequence. Data is in a DIFFERENT STATE at each point. Validation that checks for resolved data at touchpoint 1 will fail because resolution hasn't happened yet (Task 129).
+**Key insight**: The runner orchestrates `WorkflowValidator` before compilation checks; it is not a third downstream validation stage. File references can already be resolved before validation, while runtime template values generally are not. Trace the actual data state at each boundary; Task 129 was a historical file-resolution ordering failure.
 
 ### Runtime Layer (execution-time)
 
@@ -51,7 +51,7 @@ Validation sees **static metadata** (declared types, node interfaces, flow graph
 
 ### Validation Side Effects
 
-**Critical pattern**: Validation in pflow doesn't just CHECK — it also CONFIGURES the runtime. Template validation registers batch context variables (`${item}`, `${__index__}`) as a side effect. If a code path skips template validation, these variables are never registered and batch workflows fail silently.
+**Current boundary**: Template validation registers batch variables (`${item}`, `${__index__}`) in its local validation metadata. Runtime batch execution independently injects the actual item alias and index into each item store before template resolution. Skipping validation can lose coverage; it does not by itself omit runtime batch-variable initialization.
 
 When you see a code path that skips or reorders validation, ask: **"Does this validation step have side effects that later code depends on?"**
 
@@ -77,7 +77,7 @@ For every runtime behavior change in the diff/plan, check:
 |---|---|
 | `runtime/template_resolver.py` | `runtime/template_validation/validator.py`, `path_validation.py`, `type_validation.py`, `core/workflow/data_flow.py` |
 | `runtime/engine/template_resolution.py` | `runtime/template_validation/validator.py`, `runtime/template_resolver.py` |
-| `runtime/engine/batch_executor.py` | `core/workflow/data_flow.py` (batch variable registration), `runtime/template_validation/validator.py` + `batch_item_validation.py` (batch output shapes) |
+| `runtime/engine/batch_executor.py` | `core/workflow/data_flow.py` (batch-variable scope/reference validation), `runtime/template_validation/validator.py` + `batch_item_validation.py` (batch output shapes) |
 | `runtime/output_resolver.py` | `core/workflow/validator.py` (output source validation step) |
 | `runtime/workflow_executor.py` | `runtime/compilation/compiler.py`, `core/workflow/validator.py` (sub-workflow validation step) |
 | `runtime/compilation/compiler.py` | `runtime/compilation/compile_validation.py`, `runtime/compilation/ir_preparation.py`, `core/workflow/validator.py` |
@@ -85,9 +85,9 @@ For every runtime behavior change in the diff/plan, check:
 
 **Also search for ad-hoc resolution** — code that reimplements template handling without going through the canonical resolver:
 ```
-grep "startswith.*\\$\\{" src/pflow/          # Manual template detection
-grep "\\[2:-1\\]" src/pflow/                 # Manual ${...} stripping
-grep "resolve_value" src/pflow/              # Low-level resolution bypassing resolver
+rg 'startswith.*\$\{' src/pflow/          # Manual template detection
+rg '\[2:-1\]' src/pflow/                 # Manual ${...} stripping
+rg 'resolve_value' src/pflow/              # Low-level resolution bypassing resolver
 ```
 If the canonical resolver gained new capabilities (coalesce, type preservation, JSON auto-parsing), ad-hoc code that bypasses it creates drift.
 
@@ -124,7 +124,8 @@ pflow has multiple entry points that apply different validation:
 | CLI `--validate-only` | Full `WorkflowValidator.validate()` only — no compilation, no execution | `cli/commands/run.py` (validate-only branch) → `WorkflowRunner.validate()` |
 | CLI `--dry-run` | Full validation + compilation + plan builder (no execution) | `cli/commands/run.py` → `WorkflowRunner.plan()` |
 | MCP server | Routes through the same `WorkflowRunner` | `mcp_server/services/execution_service.py` |
-| Single-node probe | NO validator, NO compiler — `execute_single_node` calls `node.run()` directly, with the two-phase `ExecutionCache` (not the memoization cache) | `cli/commands/_probe_impl.py` (CLI), `mcp_server/tools/execution_tools.py` (`registry_run` → `ExecutionService.run_registry_node`) |
+| CLI `pflow probe` | No workflow validator/compiler — `execute_single_node` calls `node.run()` directly, with the two-phase `ExecutionCache` (not the memoization cache) | `cli/commands/_probe_impl.py` |
+| MCP `registry_run` | Synthetic single-node IR through `WorkflowRunner.run()` and its validation/compilation path; memo cache and trace disabled | `mcp_server/services/execution_service.py::run_registry_node` |
 | Saved workflows | Same as CLI; resolved by `execution/workflow_resolver.py` | `cli/commands/run.py` |
 
 For any validation change, ask:
@@ -151,13 +152,13 @@ This is a known source of drift. Template references are validated by TWO indepe
 
 **`runtime/template_validation/`** — validates template syntax, paths, types:
 - Handles array indices, coalesce operators, nested access
-- Subtracts `inputs` keys globally (not per-node) from the template set
+- Registers `inputs` keys globally (not per-node) in validation output/context metadata
 - Uses node Interface metadata for type checking
 
 **If the diff touches template validation**, check BOTH systems:
 - Does `data_flow.py` agree with `template_validation/` about which templates are valid?
 - Does a change to one system need a corresponding change in the other?
-- If two nodes define different `inputs` dicts with overlapping keys, does the global subtraction in `template_validation/` miss cross-node misuse?
+- If two nodes define different `inputs` dicts with overlapping keys, does the global registration in `template_validation/` miss cross-node misuse?
 
 ### 5. Type System Consistency
 
@@ -195,27 +196,27 @@ Batch and nested workflow nodes have special validation requirements that common
 
 **Nested workflow nodes:**
 - `workflow` type is not in the registry — handled by compiler, needs `compiler_special_types` allowlist in validator
-- `output_mapping` outputs need registration in template validation for downstream references
+- Child declared outputs need registration in template validation for downstream references; runtime otherwise falls back to filtered child-store exposure
 - Child workflow params validated against child's declared inputs
 
 If the diff touches batch or nested workflow code, verify these special cases are still handled correctly in validation.
 
-### 7. Known Current Gaps
+### 7. Known Boundaries and Gaps
 
-These gaps exist today. If changes touch these areas, note whether they make the gap better or worse — but don't flag them as new findings:
+These boundaries and gaps exist today. If changes touch these areas, check whether they change the boundary or worsen a gap; do not report a pre-existing gap as new:
 
 1. **Branch-conditional output availability** — validator doesn't track which nodes are on conditional branches vs main flow. Templates referencing branch-only nodes are validated as if they always execute.
 2. **On-error edge outputs** — `data_flow.py` includes forward error edges, treating error-handler outputs as always-available.
 3. **Positive-match pattern in data flow** — `data_flow.py` uses `_PFLOW_VAR_RE` for positive matching; templates that don't match the pflow variable shape (bash syntax, truncated nested templates) are skipped. Edge cases at the pattern boundary may bypass data flow validation.
-4. **Coalesce operand strictness** — validation checks BOTH coalesce operands, but at runtime only one needs to resolve. Can produce false rejections.
+4. **Coalesce validation boundary** — data flow still checks operand roots, while template Pass 5 excludes multi-operand coalesce from field/path checks so optional fields can fall through at runtime. Do not exempt regressions in this supported optional-field behavior as a known gap.
 5. **`inputs` scoping divergence** — `data_flow.py` scopes per-node, `template_validation/` scopes globally. Different models for the same concept.
 
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 
-- **The five Known Current Gaps above** — note if a change worsens one, never report as new.
+- **The pre-existing gaps above** — note if a change worsens one, never report the unchanged gap as new. The documented coalesce field/path behavior is supported behavior, not a gap exemption.
 - **Static validation not seeing runtime-only facts.** The validator sees declared types and structure, not values — "validation doesn't check the actual data" is the architecture, not drift. Drift requires a check that COULD be static and is missing/contradictory.
 - **Permissive mode being lenient** — it's a mode (`template_resolution_mode`), not a bug.
-- **The probe path lacking validation** — by design; it runs `node.run()` directly for fast iteration. Flag only if a change routes real workflow execution through it.
+- **The CLI probe path lacking workflow validation** — by design; it runs `node.run()` directly for fast iteration. Flag only if a change routes real workflow execution through it. MCP `registry_run` instead uses the runner validation/compilation path.
 - **Asymmetry that validation deliberately delegates to runtime defense-in-depth** (e.g. opaque `inputs: ${item}` skipping the static child-input check, caught per-item by `_validate_child_params`) — the split is documented; verify the runtime half still exists instead of flagging the static half.
 - **A rule NOT being replicated into every layer.** The correct shape is usually one owning layer plus a runtime backstop — demand replication only where a bypass path or the user experience requires it; "add this check everywhere" is noise, not defense.
 

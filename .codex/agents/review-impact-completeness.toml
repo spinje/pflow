@@ -95,7 +95,7 @@ Ask: "What are all the ways someone might implement this same behavior without k
 
 Search for code that duplicates logic from the modified function. Duplication is a bug waiting to happen — when one copy is updated, the other isn't.
 
-Known duplication patterns in this codebase:
+Historical duplication patterns to watch for recurring (several have since been consolidated; verify current consumers rather than treating this table as an open-bug list).
 
 | Original | Known duplicates | What diverges |
 |---|---|---|
@@ -113,12 +113,12 @@ For the diff's changes, search for similar logic elsewhere. If you find duplicat
 
 When the diff moves, renames, or deletes a function, class, or module, search for ALL references — many break silently:
 
-**`unittest.mock.patch()` strings** — the most dangerous. Patch strings are STRINGS, not imports. They silently mock nothing if the target path is wrong:
+**`unittest.mock.patch()` strings** — stale patch targets may fail to resolve, or may still exist but no longer be the binding used by production, leaving the real call unmocked. Verify both target existence and the name looked up at the call site:
 ```
 grep "patch.*pflow" tests/                  # All patch strings
 # Check every patch target against actual module paths
 ```
-Historical example: 53 patch strings needed updating after module moves in Task 92. They failed silently — mocked nothing instead of raising an error.
+Historical example: 53 string-based patch targets needed updating after module moves in Task 92.
 
 **Import paths** — especially in tests, which may use the old path:
 ```
@@ -200,7 +200,7 @@ If the diff changes any user-visible output or behavior, check ALL output paths 
 
 Tests are a MAJOR consumer of code patterns. They break in subtle ways that don't cause test failures — they cause tests to PASS INCORRECTLY:
 
-**`patch()` strings after moves/renames** — silently mock nothing (Task 92: 53 stale patches)
+**`patch()` strings after moves/renames** — stale or unused patch bindings (Task 92: 53 targets needed updating)
 
 **Fixtures using old data shapes** — tests pass but test the wrong thing (Task 92: formatter fixtures used nested `metadata.description` while production returns flat `description`)
 

@@ -33,7 +33,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 ## What NOT to flag (lens-specific — on top of the protocol's list)
 
 - **Faithful copies of an established pattern.** Duplication or structure that mirrors a recorded deliberate shape, or how sibling modules implement the same concern, is convention — deviation FROM the pattern is the finding, not the pattern itself. Check the architecture skill's `PFLOW.md` "deliberate shapes" before flagging (e.g. the two `loop:`×`batch:` enforcement points, the module-level-functions style of `batch_executor.py`/`loop_control.py`).
-- **Indirection with a recorded reason** — the litellm lazy-import seam exists for CLI startup time; a seam with two real adapters is earning its keep. Run the deletion test before flagging an abstraction: only "deleting it would merely move complexity" is a finding.
+- **Indirection with a recorded reason** — the litellm lazy-import seam exists for CLI startup time; a seam with two real adapters is earning its keep. Run the canonical deletion test before flagging an abstraction: if removing it only spreads its complexity into callers, it is earning its keep; flag it when removal eliminates needless concepts or indirection.
 - **Internal seams used by a module's own tests** — depth allows internal structure; only interface-surface complexity counts against it.
 
 ## For the deploying agent

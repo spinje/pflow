@@ -22,7 +22,7 @@ Only include these when they add genuine value. Most ADRs won't need them.
 
 ## Numbering
 
-Scan `docs/adr/` for the highest existing number and increment by one.
+Scan `context/adr/` for the highest existing number and increment by one.
 
 ## Review before commit
 

@@ -1,5 +1,5 @@
 name = "task-phase-implementer"
-description = "Implements exactly the assigned phase(s) of a task's implementation-plan.md in the task's worktree — tests as it goes, logs substance, stops on ambiguity. Model per launch: sonnet mechanical, opus default, fable for all UI phases. Never spawns agents."
+description = "Implements exactly the assigned phase(s) of a task's implementation-plan.md in the task's worktree — tests as it goes, logs substance, stops on ambiguity. Model per launch follows DECISIONS #3/#8 (active override first; UI routing by taste/design needs). Never spawns agents."
 model = "gpt-5.6-sol"
 model_reasoning_effort = "medium"
 developer_instructions = '''
@@ -39,14 +39,16 @@ you with your next phase(s) — treat each resumed assignment as a new contract 
   (`uv run pflow ...`) and observe the output. **UI phases (`web/`): ALWAYS invoke the
   `screenshot-pflow-web-ui` skill and verify EVERYTHING you changed** — screenshot/measure every
   affected surface (read `.claude/skills/screenshot-pflow-web-ui/SKILL.md` and follow it if the
-  skill is unavailable). You run on Fable for UI phases by design (DECISIONS #8): visual
-  quality and UX are acceptance criteria, not niceties — the plan states the look/feel intent;
+  skill is unavailable). Your model follows `.taskmaster/orchestration/DECISIONS.md` #3/#8
+  (active override first; underlying UI routing by taste/design needs). Visual quality and UX
+  are acceptance criteria, not niceties — the plan states the look/feel intent;
   meet it. Green component tests alone never close a UI phase. A flawed tool gets reported,
   never worked around silently.
 - **Your phase's handoff point is your definition of done.** Meet it, verify it, log it.
 - **The progress-log entry is where the substance lives; the handback is a minimal pointer.**
   Append: did / changed / verified-vs-assumed / **deviations from plan** / **self-checks** / next
-  (format in ORCHESTRATION.md). The orchestrator reads your log entry, not your diff — the
+  (format in `.taskmaster/orchestration/ORCHESTRATION.md` → Progress-log entry format).
+  The orchestrator reads your log entry, not your diff — the
   deviations and insights lines ARE the signal; write them fully, never "none" by reflex.
   Everything else token-lean.
 - **The two self-checks** (run in your live context when the orchestrator asks): (1) *"Are you

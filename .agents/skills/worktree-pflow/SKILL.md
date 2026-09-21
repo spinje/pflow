@@ -52,7 +52,7 @@ task_description=88 base_branch=main copy_folder=scratchpads/notes open_cursor=f
 |------|--------------------|
 | `work_type=issue` | refers to a GitHub issue — a number, an issue URL, or says "issue" — so the number isn't taken as a task id (default `task`) |
 | `agent=codex` | wants Codex instead of Claude Code (default `claude`) |
-| `mode=implement` | says "implement directly" / a plan already exists → points the agent at the `implement-plan` workflow instead of the default `explore` → `start-work`. Pass the bare task/issue number as `task_description` so the plan resolves |
+| `mode=implement` | says "implement directly" / a plan already exists → points the agent at the `implement-plan` workflow instead of the default `explore` → `start-work`. For a task, pass its bare number as `task_description` so the plan resolves; for an issue, the launched agent must locate its existing plan |
 | `phases=<spec>` | scopes the work to phases (**requires** `mode=implement`). Spoken phases → digits: "phase 1 and 2" → `phases=1-2`, "just phase 3" → `phases=3` |
 | `model=<model>` | names a model — an alias (`opus`, `sonnet`) or a full id (`claude-opus-4-8`). Omit for the agent's own default |
 | `copy_folder=<path>` | wants a folder/scratchpad copied into the fresh worktree (repo-root-relative, e.g. `scratchpads/notes`) |
@@ -68,7 +68,7 @@ If a value is malformed, the workflow rejects it with an actionable error — fi
 
 ## After it runs
 
-Report the worktree path from the output. Unless `open_cli`/`open_cursor` were disabled, also tell the user that Cursor and the selected agent (Claude Code, or Codex when `agent=codex`) opened in the new worktree.
+Report the worktree path from the output and which launches were requested by the enabled `open_cli`/`open_cursor` flags. Report any observed launch failures or skips; only claim Cursor or the selected agent opened when confirmed.
 
 When sibling branches are in flight, remind the session working in the new worktree of the
 parallel-branch discipline (ORCHESTRATION.md "Collision analysis"): check the file-ownership
