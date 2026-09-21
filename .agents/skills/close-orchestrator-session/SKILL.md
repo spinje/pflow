@@ -5,10 +5,11 @@ description: "End-of-session ritual for the pflow MAIN ORCHESTRATOR. Invoke when
 
 # Close Orchestrator Session
 
-The main orchestrator's session close is a **retrospection event, not a filing chore**. The state
-docs should already be true (you update them as events land); what this moment adds is the look
-BACK across the whole session — the corrections, overturned calls, improvised mechanisms, and the
-user's exact words — before they age out with your context window. A successor boots on
+The main orchestrator's session close is a **retrospection event, not a filing chore**. Session-file
+entries capture real transitions; `CURRENT-STATE.md` is rewritten at close/park (DECISIONS #16).
+This moment also adds the look BACK across the whole session — the corrections, overturned calls,
+improvised mechanisms, and the user's exact words — before they age out with your context window.
+A successor boots on
 `ORCHESTRATION.md + DECISIONS.md → CURRENT-STATE.md → latest session file (thin-file rule,
 DECISIONS #10) → BRAINDUMP.md` and nothing else; this ritual makes that stack sufficient.
 
@@ -60,7 +61,7 @@ Walk the session start-to-end and answer, honestly:
 
 ## 2. Make the state true
 
-Should be near-no-ops if you kept discipline; audit, don't rewrite:
+Rewrite `CURRENT-STATE.md` from verified current reality; audit the other ledgers below:
 
 - **CURRENT-STATE.md** — as-of line current; In flight / candidates / Watch reflect reality;
   closed items struck (`~~…~~` with a one-line verdict), not silently deleted. No session digest —
@@ -74,7 +75,7 @@ Should be near-no-ops if you kept discipline; audit, don't rewrite:
   enumerations (they die with the task). The next orchestrators read this file in full — deletion
   of spent narration, never a digest. What survives: rulings and their reasoning,
   corrections/overturns, cross-task seams, escalations, and the user's own words.
-- **Trackers** — the CLAUDE.md roadmap, task spec Status lines, and spec decision ledgers were
+- **Trackers** — task spec Status lines and spec decision ledgers were
   reconciled at each ship; spot-check the ones this session moved.
 - **DECISIONS.md** — every settled-decision-grade user ruling from this session has a row
   (same-breath rule); if one is missing, that's a discipline failure to note AND fix.

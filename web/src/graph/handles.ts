@@ -2,8 +2,8 @@
 // handles carry ids (an edge with an unset handle would not connect once any
 // id'd handle exists on a node). Node-level handles catch control-flow edges and
 // data-flow edges that can't be attributed to a specific row (input_name=None is
-// COMMON — see ui/CLAUDE.md H6); per-row handles let a ${ref} line land on its
-// exact param row in the detailed view.
+// COMMON — see src/pflow/ui/CLAUDE.md, "RFGraph contract and rendering seam");
+// per-row handles let a ${ref} line land on its exact param row in the detailed view.
 //
 // CRITICAL: each handle id encodes a fixed React Flow TYPE (source feeds out, target
 // receives in). An edge whose sourceHandle is a target-type id (or vice versa) is
@@ -56,9 +56,9 @@ export const branchHandle = (label: string): string => BRANCH + label;
 // root IO card, a collapsed sub-workflow card, or an expanded region's IO area).
 // A port bridges two scopes, so a row can carry BOTH handles: a SOURCE (feeds out —
 // an input feeding consumers, an output feeding the parent) and a TARGET (receives
-// in — an input bound from the parent, an output written by a producer). Each
-// location renders only the handles whose edges can exist there (a collapsed card's
-// inner-scope edges are self-loop-dropped, so its rows are single-handled).
+// in — an input bound from the parent, an output written by a producer). Both
+// handles remain rendered; the inactive role is styled quiet. A collapsed card's
+// inner-scope edges are self-loop-dropped, so only its outer role is active.
 export const portHandle = (ioNodeId: string): string => PORT_SOURCE + ioNodeId;
 export const portTargetHandle = (ioNodeId: string): string => PORT_TARGET + ioNodeId;
 

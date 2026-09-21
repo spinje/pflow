@@ -26,15 +26,15 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 Use these search patterns to locate concurrency-sensitive areas in the diff and surrounding code:
 
 ```
-grep "ThreadPoolExecutor\|thread\|Thread(" src/pflow/              # Thread usage
-grep "self\.\w.*=" src/pflow/runtime/engine/                       # Instance state writes in engine layer
-grep "shared\[" src/pflow/runtime/engine/batch_executor.py         # Store writes in batch
-grep "copy\.copy\|copy\.deepcopy\|__copy__\|__deepcopy__" src/pflow/  # Copy operations
-grep "Lock\|Event\|Semaphore\|Condition" src/pflow/                # Synchronization primitives
-grep "asyncio\.\|async def\|await " src/pflow/                     # Async code
-grep "redirect_stdout\|redirect_stderr" src/pflow/                 # IO redirection (NOT thread-safe)
-grep "daemon.*True\|daemon=True" src/pflow/                        # Daemon threads
-grep "run_coroutine_threadsafe" src/pflow/                         # Sync→async bridge
+rg 'ThreadPoolExecutor|thread|Thread\(' src/pflow/              # Thread usage
+rg 'self\.\w.*=' src/pflow/runtime/engine/                       # Instance state writes in engine layer
+rg 'shared\[' src/pflow/runtime/engine/batch_executor.py         # Store writes in batch
+rg 'copy\.copy|copy\.deepcopy|__copy__|__deepcopy__' src/pflow/  # Copy operations
+rg 'Lock|Event|Semaphore|Condition' src/pflow/                # Synchronization primitives
+rg 'asyncio\.|async def|await ' src/pflow/                     # Async code
+rg 'redirect_stdout|redirect_stderr' src/pflow/                 # IO redirection (NOT thread-safe)
+rg 'daemon.*True|daemon=True' src/pflow/                        # Daemon threads
+rg 'run_coroutine_threadsafe' src/pflow/                         # Sync→async bridge
 ```
 
 ## pflow's Concurrency Architecture
@@ -42,7 +42,7 @@ grep "run_coroutine_threadsafe" src/pflow/                         # Sync→asyn
 ### All Concurrency-Sensitive Areas
 
 **1. Parallel batch processing** (`runtime/engine/batch_executor.py`):
-`ThreadPoolExecutor` processes batch items in parallel. Each item gets a `copy.deepcopy()` of the node. Per-item store isolation is provided by `NamespacedSharedStore` (`runtime/engine/namespaced_store.py`).
+`ThreadPoolExecutor` processes batch items in parallel. Each item gets a `copy.deepcopy()` of the node. Per-item store isolation comes from a shallow root-store copy plus a fresh node output namespace; `NamespacedSharedStore` (`runtime/engine/namespaced_store.py`) provides namespaced access to that store. Other nested mutable values remain shared.
 
 **2. MCP connection pool** (`mcp/pool.py`):
 Background daemon thread running an asyncio event loop. Manages persistent MCP server sessions across workflow steps. Uses `threading.Lock()` for startup synchronization and `asyncio.run_coroutine_threadsafe()` to bridge sync→async.
@@ -69,10 +69,10 @@ Understanding the deliberate design helps catch deviations:
 
 | Intentionally ISOLATED | How | Risk if isolation breaks |
 |---|---|---|
-| Node chain (batch) | `copy.deepcopy()` per thread | Non-picklable state crashes deepcopy |
+| Bare node (batch) | `copy.deepcopy()` per thread | Non-picklable state crashes deepcopy |
 | `item_shared` namespace | `item_shared = dict(shared)` + `item_shared[node_id] = {}` | Shallow copy — nested mutable values still shared |
 | Thread-local state | `threading.local()` | State not inherited by child threads |
-| Retry counter | Local variable (not `self.cur_retry`) | Reverts to instance state = race |
+| Retry counter | `self.cur_retry` on each per-thread deep-copied node | Sharing the same node across threads would race |
 
 **If the diff changes what's shared vs isolated, it could break thread safety.** If it adds new state to the shared store that batch threads write to, or adds mutable instance state to a wrapper — flag it.
 
@@ -97,9 +97,11 @@ shared[node_id] = {}
 
 # UNSAFE — read-modify-write is NOT atomic:
 shared["count"] = shared.get("count", 0) + 1       # Race: two threads read same count
-shared["results"].append(item_result)                # Race: list.append on shared list
-shared["__llm_calls__"].extend(new_calls)            # Race: concurrent extend
+if item_result not in shared["results"]:
+    shared["results"].append(item_result)  # Two threads can both pass the check
 ```
+
+A built-in list append or list-to-list extend under CPython's GIL is not by itself a lost-update race. Check the surrounding invariant, shared-store replacement, ordering assumptions, and any user-defined operations; do not infer safety for a compound protocol or a different interpreter/build.
 
 Check: are there compound shared store operations in parallel code paths?
 
@@ -150,27 +152,26 @@ Historical example:
 
 **Shallow copy (`copy.copy()`)** — was historically used by the engine's graph traversal between loop iterations; that path was removed. If reintroduced, the trap is:
 
-Mutable instance attributes are SHARED across copies. Any `self.X = value` set during execution persists to the next iteration:
+A shallow copy shares references to contained mutable objects; rebinding an attribute on the copy is different from mutating a shared referent:
 ```python
 class MyWrapper:
     def __init__(self):
-        self._resolved = None  # Mutable instance state
+        self.results = []
 
-    def prep(self, shared):
-        self._resolved = expensive_computation()  # Set in iteration 1
-
-    def _run(self, shared):
-        use(self._resolved)  # Iteration 2 sees iteration 1's value!
+original = MyWrapper()
+cloned = copy.copy(original)
+cloned.results.append("item")  # Both instances still reference this list
+cloned.results = []            # Rebinds only cloned.results
 ```
 
-If the diff adds mutable instance state to any node or wrapper, and that wrapper is used in a loop — flag it.
+Cached per-execution attributes can also remain stale when the same instance, or a copy made after caching, is reused without reset. If the diff adds instance state to a node or wrapper used in a loop, trace the shared-reference or stale-state path before flagging it.
 
 Historical example:
 - `_resolved` caching optimization caused stale params from iteration 1 to be consumed in iteration 2 — removed entirely rather than patched (Task 106)
 
-**Deep copy (`copy.deepcopy()`)** — used by parallel batch for per-thread node chains:
+**Deep copy (`copy.deepcopy()`)** — used by parallel batch for per-thread nodes:
 
-Objects holding non-picklable state crash during deep copy. Python's `deepcopy` uses pickle under the hood:
+Deepcopy can use pickling/reduction hooks; objects such as locks may need an explicit copying policy:
 ```python
 # CRASH: _thread.RLock is not picklable
 class Registry:
@@ -182,7 +183,7 @@ class Registry:
         return self  # Registry is read-only during execution
 ```
 
-If the diff adds locks, file handles, connections, or other non-picklable state to objects in the node chain — check if `__deepcopy__` handles it.
+If the diff adds locks, file handles, connections, or other non-picklable state to objects reachable from a copied node — check if `__deepcopy__` handles it.
 
 Historical example:
 - `Registry.__deepcopy__` crashed because `_thread.RLock` is not picklable. Fixed by returning `self` (read-only during execution) (Task 96)
@@ -220,9 +221,9 @@ The MCP connection pool runs an asyncio event loop in a background daemon thread
 
 **Timeout boundary**: Timeout must cover the ENTIRE operation — both the async work AND the coroutine submission. If `_get_or_create_session()` was outside the timeout context, a missing server binary or a hung handshake would block indefinitely (Task 127).
 
-**Error context loss**: Exceptions raised inside the async event loop get wrapped in `concurrent.futures` exception chains. Original exception context (`__cause__`, traceback) can be lost or mangled crossing the async→sync boundary.
+**Error context loss**: `Future.result()` re-raises the exception from the submitted work; wrapping is not inherent to the async→sync boundary. Check application handlers that replace exceptions or discard their original cause/traceback.
 
-**`asyncio.timeout()` scope**: Only works INSIDE the event loop thread. Using it from the calling (sync) thread does nothing. Use `concurrent.futures.Future.result(timeout=X)` from the sync side.
+**`asyncio.timeout()` scope**: Use this asynchronous context manager with `async with` around awaited work in a running task. For the synchronous thread waiting on submitted work, use `concurrent.futures.Future.result(timeout=X)`.
 
 ### 6. Python Version-Specific Concurrency Differences
 
@@ -232,23 +233,23 @@ Python 3.10 vs 3.11+ has significant differences. pflow supports 3.10+, so ALL o
 |---|---|---|
 | `asyncio.timeout()` | Doesn't exist | Available |
 | `BaseExceptionGroup` | Doesn't exist | Available |
-| `TimeoutError` | Standalone class | Subclass of `OSError` |
+| `builtins.TimeoutError` | Subclass of `OSError` | Subclass of `OSError` |
 | `concurrent.futures.TimeoutError` | Separate from `builtins.TimeoutError` | Same class |
 
-**The `TimeoutError` is `OSError` trap**: On Python 3.11+, `TimeoutError` is a subclass of `OSError`. If you catch `OSError` (for transport errors), you also catch `TimeoutError` (for timeouts). A timeout would be classified as a transport error, potentially killing the server session and retrying — exactly the wrong response.
+**The `TimeoutError` is `OSError` trap**: Built-in `TimeoutError` is an `OSError` subclass on all supported Python versions. From Python 3.11, `concurrent.futures.TimeoutError` aliases that same class. Catching `OSError` for transport errors therefore also catches built-in timeouts, and futures timeouts on 3.11+. A timeout would be classified as a transport error, potentially killing the server session and retrying — exactly the wrong response.
 
-**Fix**: Always check `TimeoutError` FIRST, before `OSError`:
+**Fix**: Check timeout exceptions FIRST, before `OSError`; include the separate futures class for Python 3.10:
 ```python
-# CORRECT: TimeoutError checked before OSError
-except TimeoutError:
+# CORRECT: built-in and futures timeouts checked before OSError
+except (TimeoutError, concurrent.futures.TimeoutError):
     handle_timeout()
 except OSError:
     handle_transport_error()
 
-# BUG on 3.11+: TimeoutError caught by OSError handler
-except OSError:            # Catches TimeoutError on 3.11+!
+# BUG: built-in TimeoutError caught by OSError handler
+except OSError:            # Also catches futures timeouts on 3.11+
     handle_transport_error()
-except TimeoutError:       # Never reached on 3.11+
+except TimeoutError:       # Never reached for a built-in timeout
     handle_timeout()
 ```
 

@@ -1,97 +1,64 @@
 # MCP Client Integration
 
-This module connects pflow workflows to **external MCP servers** (Playwright, GitHub, Slack, etc.).
+Connects workflow nodes to external MCP servers. `mcp_server/` is the opposite
+surface: it exposes pflow itself as an MCP server.
 
-> **Not to be confused with `mcp_server/`** which exposes pflow *as* an MCP server for AI agents. This module is the MCP *client*.
+## Navigation
 
-## File Tree
+| Concern | Owner |
+|---|---|
+| Persisted server configuration | `manager.py:MCPServerManager` (`~/.pflow/mcp-servers.json`) |
+| Environment expansion and HTTP auth | `auth_utils.py:expand_env_vars_nested`, `build_auth_headers` |
+| Tool discovery/schema conversion | `discovery.py:MCPDiscovery` |
+| Registry reconciliation | `registrar.py:MCPRegistrar.sync_servers`; fingerprints in `sync_state.py` |
+| Stateful sessions and transport recovery | `pool.py:MCPConnectionPool` |
+| SDK exception/Diagnostic translation | `errors.py` |
+| Workflow tool execution/results | `nodes/mcp/node.py:MCPNode`, `_extract_result` |
+| Execution-start auto-sync | `cli/mcp_sync.py:_auto_discover_mcp_servers` |
 
-```
-mcp/
-├── __init__.py        # Re-exports: MCPConnectionPool, MCPDiscovery, MCPRegistrar, MCPServerManager
-├── types.py           # TypedDicts for server configs, tool schemas, registry entries
-├── utils.py           # parse_mcp_node_name — DEAD CODE (no callers; the live parser is mcp_resolution._parse_mcp_node_type)
-├── auth_utils.py      # Env var expansion (${VAR}, ${VAR:-default}) + auth header building
-├── errors.py          # Shared MCP SDK error handling: ExceptionGroup unwrapping + Diagnostic creation
-├── discovery.py       # Connect to MCP servers, list tools, convert schemas to pflow format
-├── manager.py         # CRUD for ~/.pflow/mcp-servers.json (standard MCP config format)
-├── registrar.py       # Bridge: discovered tools → virtual pflow registry entries
-├── sync_state.py      # Stable raw-config fingerprints shared by auto/manual sync
-└── pool.py            # Connection pool: keeps server sessions alive across workflow steps
-```
+## Registration and naming
 
-## Lifecycle (4-step pipeline)
+Virtual tool entries all reference the same `MCPNode` class and use
+`virtual://mcp` as their file path. Compiler parameter injection distinguishes the
+server/tool through `runtime/compilation/mcp_resolution.py:_parse_mcp_node_type`,
+which matches configured server names longest-first. Do not use
+`utils.py:parse_mcp_node_name`; it is not the live parser.
 
-```
-1. Configure    →  2. Discover       →  3. Register         →  4. Execute
-manager.py         discovery.py          registrar.py            pool.py + MCPNode
-pflow mcp add      pflow mcp sync        (called by sync)        pflow run workflow
-~/.pflow/          connects to server,   creates virtual          MCPNode uses pool
-mcp-servers.json   lists tools+schemas   registry entries         for stateful sessions
-```
+Registry mutation must **not** split `mcp-{server}-{tool}` names: server names can
+contain hyphens. Replacement/removal/listing use exact
+`interface.mcp_metadata.server` ownership. `registrar.py:get_tool_info` still has a
+naive split; its display limitation is separate from mutation and compiler parsing.
 
-**Auto-sync before workflow execution**: `cli/mcp_sync.py:_auto_discover_mcp_servers` fingerprints each raw persisted server config independently. Only added/changed servers are discovered; each success advances independently, while failures preserve the prior tools/fingerprint and remain due. User-visible warnings are interactive-only because auto-discovery is optional.
+Auto-sync fingerprints raw persisted configurations per server. Successful servers
+advance independently; failures retain prior tools/fingerprints for retry. Missing
+configuration is a no-op; an explicit empty configuration can reconcile MCP state
+to empty. `sync_servers` discovers first, rechecks configuration, then late-loads
+unfiltered registry state and publishes tools plus fingerprints together.
 
-## Integration Points
+Use `registry.load(include_filtered=True)` before replacement writes: saving a
+filtered view deletes hidden entries. Atomic publication prevents partial snapshots,
+not cross-process read-modify-write races; see `registry/CLAUDE.md`.
 
-| Integration | From → To | Mechanism |
-|-------------|-----------|-----------|
-| Auto-sync before workflow execution | `cli/mcp_sync.py` (via `cli/commands/run.py`) → `MCPDiscovery` + `MCPRegistrar` | Per-server raw-config fingerprints; discover first, then exact-owner reconciliation in one registry write |
-| Compiler param injection | `runtime/compilation/compiler.py:inject_special_parameters` → MCPNode params | Injects `__mcp_server__`/`__mcp_tool__`; the server/tool split is delegated to `mcp_resolution._parse_mcp_node_type` (greedy longest-match). Does **NOT** use `mcp_metadata` from registry |
-| Pool creation | `execution/runner.py:_initialize_shared_store` → `shared["__mcp_pool__"]` | Created unconditionally for every workflow, but background thread starts lazily on first `call_tool()` |
-| Pool consumption | `nodes/mcp/node.py:prep()` → `pool.call_tool()` | Falls back to `asyncio.run()` if no pool (e.g., `pflow probe`) |
-| Pool shutdown | `execution/runner.py:_cleanup()` | Always runs; safe to call multiple times |
-| Nested workflows | `__mcp_pool__` propagated from parent | Child workflows reuse parent's pool via `WorkflowExecutor._PROPAGATED_KEYS` (thread-safe, no shutdown risk) |
+## Pool lifecycle and retry
 
-## Critical Details
+Runner creates `shared["__mcp_pool__"]`; its background event-loop thread starts
+lazily. Synchronous `call_tool` submits work to that loop, which owns mutable async
+session state. Keeping sessions alive preserves state between workflow steps.
+`runtime/workflow_executor.py:_PROPAGATED_KEYS` passes the same pool to nested
+workflows; Runner owns shutdown. Do not shut it down from a child workflow.
 
-### Virtual Registry Entries
-All MCP tools create registry entries pointing to the **same** `MCPNode` class (`pflow.nodes.mcp.node`). What differentiates them:
-- `file_path`: always `"virtual://mcp"` (not a real file)
-- `interface.mcp_metadata`: contains `server`, `tool`, and `original_schema` (stored for reference but NOT used by the compiler at runtime)
-- Node name format: `mcp-{server_name}-{tool_name}`
+`MCPNode` uses one total attempt (`max_retries=1`). Without a pool it opens an
+ephemeral connection. The pool separately retries transport failures by evicting
+the session and reconnecting; the new session does not preserve server state.
+`pool.py:_is_transport_error` explicitly excludes TimeoutError even where it is an
+OSError subclass: slow responses must not trigger destructive reconnects.
 
-Registry mutation never parses that ambiguous node name. Replacement, removal, and server-filtered listing use exact equality on the non-empty `interface.mcp_metadata.server` owner. Full reconciliation discards reserved MCP entries without a canonical owner.
+## Configuration/auth traps
 
-### Node Naming Ambiguity
-`mcp-slack-http-remote-SEND_MESSAGE` — where does server end and tool begin? The authoritative parser is **`runtime/compilation/mcp_resolution.py:_parse_mcp_node_type`**: greedy longest-match against known servers from `MCPServerManager().list_servers()`.
-
-**Known inconsistency**: `registrar.py:get_tool_info()` uses a naive `split("-", 2)` that breaks for multi-hyphen server names.
-
-**Dead code**: `utils.py:parse_mcp_node_name` (progressive matching + `UPPERCASE_WITH_UNDERSCORES` heuristic) has NO callers in src/ or tests/ — it is not a live parsing path. Don't reach for it.
-
-### Connection Pool Threading Model
-pflow nodes are **synchronous**. MCP protocol is **async**. The pool bridges this:
-- Background daemon thread runs `asyncio.new_event_loop()` + `run_forever()`
-- `call_tool()` submits via `run_coroutine_threadsafe()`, blocks on future
-- All async state (`_sessions`, `_stacks`) accessed only from the background loop
-- `AsyncExitStack` per session manages lifecycle; shutdown closes all stacks (kills server subprocesses)
-
-**Why it exists**: Without pooling, each MCPNode.exec() spawns a new server subprocess. Stateful servers (Playwright, databases) lose ALL state between workflow steps.
-
-### Retry Behavior
-- **MCPNode**: `max_retries=1` (= 1 total attempt, 0 retries — Node's naming is misleading). Each retry spawns a NEW server subprocess, causing resource conflicts.
-- **Pool**: One automatic retry on transport errors (`BrokenPipeError`, `ConnectionError`, `OSError`). Evicts dead session, creates fresh one.
-- **TimeoutError is NOT a transport error** even on Python 3.11+ (where it's an `OSError` subclass). Timeout = server is alive but slow; retrying would destroy stateful sessions for no benefit.
-
-### Env Var Expansion
-`expand_env_vars_nested()` in `auth_utils.py` checks **two sources** in order:
-1. `os.environ` (case-sensitive) — wins if present
-2. `settings.json` via `SettingsManager` (case-insensitive fallback)
-
-Supports `${VAR}` and `${VAR:-default}` syntax. **Must be called BEFORE `build_auth_headers()`** — the auth function expects already-resolved values.
-
-### Config Format
-Storage: `~/.pflow/mcp-servers.json` with `mcpServers` wrapper (standard MCP format, same as Claude Desktop).
-
-**Gotcha**: `types.py` defines `transport` field in its TypedDicts but actual configs and all runtime code use `type`. Absent `type` = stdio (default), `"http"` = HTTP transport.
-
-### Registry Load Correctness
-Registrar always calls `registry.load(include_filtered=True)`. If you load with default `include_filtered=False` and save, you **permanently lose** all filtered-out entries. `save()` does a complete replacement of the registry file.
-
-Batch sync performs all network discovery first, rechecks the raw config, then late-loads the unfiltered registry and publishes nodes plus `mcp_server_fingerprints` in one atomic replacement. This prevents intermediate same-process snapshots, but Registry has no cross-process read-modify-write transaction isolation.
-
-### Result Extraction Priority (in MCPNode)
-1. `structuredContent` — typed JSON matching outputSchema (preferred)
-2. `isError` flag — tool-level error (distinct from protocol errors)
-3. `content` blocks — text, image, resource (legacy/fallback); text blocks are auto-parsed as JSON
+- Runtime transport selection reads `type` (absent means stdio); the TypedDicts in
+  `types.py` still name this field `transport`. Follow runtime/config behavior.
+- `expand_env_vars_nested` always checks process environment first. Settings lookup
+  is opt-in via `include_settings=True` and case-insensitive; discovery and MCPNode
+  enable it, together with `raise_on_missing=True`. Other callers may choose differently.
+- Expand configuration before `build_auth_headers`, which expects resolved values.
+  Fingerprints must still use the raw persisted configuration, not expanded secrets.

@@ -58,7 +58,7 @@ uv run pytest tests/test_X/ -v -x                                 # Module, stop
 make check                                                         # Lint + type check
 ```
 
-**Do NOT run `make test` (full suite) unless explicitly asked or your changes could affect other modules.**
+**Do NOT run `make test` (default suite; excludes e2e, paid tests, and the LLM integration file) unless explicitly asked or your changes could affect other modules.**
 
 ### 6. Report
 
@@ -77,7 +77,7 @@ uv run pytest tests/test_X/test_Y.py -v               # Single file
 uv run pytest tests/test_X/ -v -x                      # Directory, stop on first failure
 uv run pytest -k "keyword" -v                          # Filter by name
 
-# Full suite (only when explicitly asked)
+# Default suite (only when explicitly asked)
 make test
 
 # Lint + type check (always run before reporting done)
@@ -88,7 +88,7 @@ make check
 
 **Canonical reference: `tests/CLAUDE.md`** — for workflow test pattern selection (4 distinct patterns), pytest markers, conftest hierarchy, mock resolution chain, and pitfalls. Read it first when writing or fixing tests.
 
-Mirror structure: `src/pflow/X/Y.py` → `tests/test_X/test_Y.py`. New production code without a corresponding test file should be flagged.
+Most unit tests mirror `src/pflow/X/Y.py` → `tests/test_X/test_Y.py`; integration contracts may live with their caller. Flag missing behavioral coverage, not the absence of a particular filename.
 
 ### Auto-Applied Fixtures (from `tests/conftest.py`)
 
@@ -96,27 +96,29 @@ These apply to ALL tests automatically — you don't need to request them:
 
 | Fixture | Scope | What it does |
 |---------|-------|-------------|
-| `mock_llm_client` | function | Patches `pflow.core.llm_client.complete` with `MockLLMClient`. Skips tests in `/llm/` directories. Receive as fixture argument; call `mock_llm_client.set_response(...)` to configure. |
+| `mock_llm_client` | function | Patches `pflow.core.llm_client.complete` and imported consumer bindings with `MockLLMClient`. Skips tests in `/llm/` directories. Receive as fixture argument; call `mock_llm_client.set_response(...)` to configure. |
 | `isolate_pflow_config` | function | Isolates registry, settings, MCP servers, workflows to temp dirs per test. Yields dict of paths (`pflow_dir`, `registry_path`, `settings_path`, `mcp_servers_path`, `workflows_path`). |
-| `disable_trace_file_writes_by_default` | function | Makes `WorkflowTraceCollector.save_to_file()` a no-op unless test is marked `@pytest.mark.trace_files`. In-memory `result.trace` still works. |
+| `disable_trace_file_writes_by_default` | function | Suppresses buffered and streaming trace writes unless marked `trace_files`; in-memory trace events remain available. |
 | `precomputed_core_registry_nodes` | session | Scans and caches core node metadata once (~0.2s). |
 
 ### Shared Test Utilities (`tests/shared/`)
 
 | Utility | Import | Purpose |
 |---------|--------|---------|
-| LLM mock | `from tests.shared.llm_mock import create_mock_llm_client` | Prevents real LLM API calls (patches `pflow.core.llm_client.complete`) |
+| LLM mock | `from tests.shared.llm_mock import create_mock_llm_client` | Constructs `MockLLMClient`; the `mock_llm_client` fixture installs adapter and consumer patches. |
 | Markdown utils | `from tests.shared.markdown_utils import write_workflow_file, ir_to_markdown` | Convert IR dicts to `.pflow.md` files. `ir_to_markdown` does NOT emit `edges`, `start_node`, or `ir_version` — execution order is inferred from step order. |
 | Registry utils | `from tests.shared.registry_utils import ensure_test_registry` | Initialize test registry with all core nodes |
 
 ### Configuring LLM Mock Responses
 
 ```python
+from pflow.core.workflow.discovery import WorkflowDecision
+
 def test_with_custom_llm_response(mock_llm_client):
     mock_llm_client.set_response(
         "anthropic/claude-sonnet-4-5",
         WorkflowDecision,
-        {"found": True, "workflow_name": "test"},
+        {"found": True, "workflow_name": "test", "confidence": 1.0, "reasoning": "Exact test match"},
         cost_usd=0.000123,  # optional, defaults to None
         warnings=[],        # optional, defaults to []
     )
@@ -126,7 +128,7 @@ Resolution order: exact `model+schema` match → wildcard `"*" + schema` → bui
 
 ### RUN_LLM_TESTS Gating
 
-The real LLM integration test is `tests/test_nodes/test_llm/test_llm_integration.py` — gated by `RUN_LLM_TESTS=1` plus an API-key check, and excluded from `make test` via `--ignore`. Never run it without explicit instruction. (The conftest also auto-skips the LLM mock for any test under a `/llm/` directory path; no tests currently live in such a path.)
+`tests/test_nodes/test_llm/test_llm_integration.py` is gated by `RUN_LLM_TESTS=1` plus an API-key check and excluded from `make test`. Never run it without explicit instruction. Its `/test_llm/` path still receives the autouse mock; the flag alone does not establish real-provider coverage. See `tests/CLAUDE.md` for fixture boundaries.
 
 ## Sacred Rules
 
@@ -134,7 +136,7 @@ These cause real failures when violated:
 
 1. **Never mock node primitives** (BaseNode, Node from `pflow.core.node`) — create simple test nodes instead
 2. **Never mock the shared store** — use a real `{}` dict
-3. **Never catch exceptions in node `exec()` tests** — this breaks the retry mechanism; nodes should raise, the runtime handles errors
+3. **Do not swallow failures in test nodes.** Use `pytest.raises` for expected exceptions; direct `exec()` calls bypass `Node._exec` retries, so use `run()` or `_exec()` when testing retry/fallback behavior.
 4. **Test behavior, not structure** — don't assert on internal state, private attributes, or mock call counts
 5. **Never mock core abstractions** — shared store, BaseNode, Node are sacred; mock only at external boundaries (LLM APIs, network, filesystem when justified)
 6. **3+ mocks is a design smell** — if a test needs more than 3 mocks, the code under test likely has too many hard dependencies; consider refactoring the code, not adding more mocks
@@ -148,7 +150,7 @@ These are the ACTUAL patterns used throughout the codebase. Follow them exactly.
 ```python
 def test_node_reads_file_content():
     """Test that read-file node loads content into shared store."""
-    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt", encoding="utf-8") as f:
         f.write("hello world")
         temp_path = f.name
 
@@ -173,7 +175,7 @@ def test_node_returns_error_for_missing_file():
     node.set_params({"file_path": "/nonexistent/file.txt"})
     shared = {}
 
-    # Use run() for error paths — wraps lifecycle with exception handling
+    # Exercise ReadFileNode's retry/fallback/post error routing
     action = node.run(shared)
 
     assert action == "error"
@@ -184,8 +186,8 @@ def test_node_returns_error_for_missing_file():
 **Key points:**
 - `node.set_params({...})` passes parameters
 - `prep(shared)` → `exec(prep_res)` → `post(shared, prep_res, exec_res)` for success paths
-- `node.run(shared)` for error paths (catches exceptions, calls post)
-- Nodes return action strings: `"default"` (success) or `"error"`
+- `run()` executes the lifecycle through `_exec()`; the default fallback re-raises, while node-specific fallback/post methods may convert failures to error actions.
+- Nodes may return action strings such as `"default"` or `"error"`; exceptions can also propagate.
 - Results are written to `shared` dict by `post()`
 - Use helper functions to reduce boilerplate when testing many scenarios
 
@@ -203,7 +205,7 @@ def test_help_command_shows_usage():
     assert "workflow execution system" in result.output
 ```
 
-Note: `CliRunner` always returns `isatty()=False` — you can't test interactive prompts.
+CliRunner's default stdin is non-TTY. Interactive branch tests need an explicit TTY seam; real descriptor/stream behavior needs subprocess coverage. See `tests/CLAUDE.md` → `10. CliRunner boundaries`.
 
 ### End-to-End Workflow Testing
 
@@ -216,7 +218,7 @@ def test_read_write_workflow(tmp_path):
     ensure_test_registry()  # BEFORE entering isolated filesystem
 
     with runner.isolated_filesystem():
-        Path("input.txt").write_text("hello")
+        Path("input.txt").write_text("hello", encoding="utf-8")
 
         workflow = {
             "nodes": [
@@ -231,7 +233,7 @@ def test_read_write_workflow(tmp_path):
 
         result = runner.invoke(main, ["./workflow.pflow.md"])
         assert result.exit_code == 0
-        assert Path("output.txt").read_text() == "hello"
+        assert Path("output.txt").read_text(encoding="utf-8") == "hello"
 ```
 
 **Key points:**

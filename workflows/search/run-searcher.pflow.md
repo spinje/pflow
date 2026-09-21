@@ -22,7 +22,7 @@ The search or verification task, phrased exactly as you would brief the native s
 
 Model tier — the reasoning lever, distinct from the DEPTH you write into the prompt (DEPTH = how broadly the agent searches; this = how hard the model thinks).
 
-* `low` → **terra** (sonnet-tier), medium reasoning — mechanical/quick lookups ("which file defines X"). Search, not judgment, so sonnet-tier is appropriate; medium reasoning is the sensible floor.
+* `low` → **sol**, low reasoning — mechanical/quick lookups ("which file defines X"). Uses the Opus-equivalent model while the DECISIONS #3 override holds; the dormant mapping is terra with medium reasoning.
 * `medium` → **sol**, medium reasoning — ordinary investigation.
 * `high` → **sol**, high reasoning (**default**) — real verification / cross-model adversarial checks.
 

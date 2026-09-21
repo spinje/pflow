@@ -1,113 +1,30 @@
-# pflow Architecture Documentation Guide
+# Architecture documentation guide
 
-> Navigation guide for AI agents. Helps you decide WHICH files to read — not what's in them.
+Use this file to choose what to read. Paths below are repository-relative.
 
-**Start here**: [architecture.md](./architecture.md) — current system architecture, accurately reflects the codebase.
+## Reading paths by goal
 
-**Node lifecycle primitives**: `src/pflow/core/node.py` — BaseNode, Node, wiring operators. Read when working on pflow node internals.
+| Goal | Start here |
+|------|------------|
+| Product rationale | `architecture/overview.md` |
+| System architecture | `architecture/architecture.md`, then the implementation owner below |
+| Node lifecycle and authoring | `src/pflow/core/node.py` → `src/pflow/nodes/CLAUDE.md`; interface standard: `architecture/reference/enhanced-interface-format.md` |
+| Compiler, engine, templates, batch, shared store | `src/pflow/runtime/CLAUDE.md` |
+| Execution pipeline and results | `src/pflow/execution/CLAUDE.md` |
+| CLI commands and stdin/stdout | `src/pflow/cli/CLAUDE.md`; design context: `architecture/features/shell-pipes.md` |
+| Unexpected JSON parsing or type conversion | `architecture/core-concepts/data-type-coercion.md`, then the cited implementation |
+| Workflow IR and node metadata | `architecture/reference/ir-schema.md`; current schema: `src/pflow/core/ir_schema.py`; metadata extraction: `src/pflow/registry/CLAUDE.md` |
+| Template syntax | `architecture/reference/template-variables.md` |
+| LLM versus autonomous agent nodes | `architecture/core-node-packages/llm-nodes.md` and `architecture/core-node-packages/agent-nodes.md` |
+| MCP tools used by workflows | `src/pflow/mcp/CLAUDE.md` |
+| Exposing pflow as an MCP server | `src/pflow/mcp_server/CLAUDE.md` |
+| Settings, parsing, diagnostics | `src/pflow/core/CLAUDE.md` |
+| Building workflows | Run `pflow guide` for agent usage instructions |
 
-**Agent usage guide**: Run `pflow guide` for the authoritative CLI guide for AI agents.
+## Authority and historical context
 
-## Documentation Structure
+Architecture documents explain design and rationale; verify behavior against the implementation owner before relying on commands, schema promises, or feature status. For example, `architecture/guides/mcp-guide.md` still contains old natural-language and direct-node CLI examples.
 
-```
-architecture/
-├── CLAUDE.md                  # This file (navigation)
-├── overview.md                # Why pflow exists (conceptual, not technical)
-├── architecture.md            # Current system architecture (accurate)
-├── guides/
-│   └── mcp-guide.md           # MCP server integration guide
-├── core-concepts/
-│   └── data-type-coercion.md  # JSON auto-parsing and type coercion
-├── features/
-│   ├── shell-pipes.md         # Unix pipe/stdin support
-│   ├── simple-nodes.md        # Node design philosophy
-│   ├── api-key-management.md  # API key settings
-│   └── node-filtering-system.md # Node allow/deny filtering
-├── reference/
-│   ├── ir-schema.md           # Flow IR and node metadata JSON schemas
-│   ├── enhanced-interface-format.md # Node docstring format standard
-│   └── template-variables.md  # ${variable} syntax reference
-├── core-node-packages/
-│   ├── llm-nodes.md           # LLM node spec
-│   └── agent-nodes.md         # Unified Claude/Codex agent node architecture
-├── implementation-details/
-│   └── metadata-extraction.md # Node metadata extraction system
-├── vision/                    # ⚠️ Future directions, NOT current implementation
-├── best-practices/
-│   └── testing-quick-reference.md
-└── historical/                # ⚠️ Design-time docs, may be outdated
-```
-
-## File Guide — Non-Obvious Routing Signals
-
-Only notes that help you decide whether to read a file. If the filename is self-explanatory, it's not listed here.
-
-### Root-level docs
-
-**overview.md** — The "why", not the "what". Read for design rationale and product philosophy. Does NOT describe the current system — `architecture.md` does that.
-
-**Node authoring**: `src/pflow/nodes/CLAUDE.md` — how to write platform nodes. **Engine internals**: `src/pflow/runtime/CLAUDE.md` — compiler, engine, template resolution, batch. Key insight: complexity belongs in the compiler/engine layer, not in nodes.
-
-### Core Concepts
-
-**data-type-coercion.md** — Inventories all 6 auto-parse/coercion points in the system with assessments. Read when debugging "why was this value parsed/not parsed" issues. Design principle: producers store raw data, consumers declare types.
-
-**Shared store pattern** — Documented in `src/pflow/runtime/CLAUDE.md` (reserved keys, canonical reference) and `src/pflow/nodes/CLAUDE.md` (shared store vs params guidelines). Nodes are isolated "dumb pipes" that communicate only through the shared store.
-
-### Guides
-
-**mcp-guide.md** — MCP tools appear as nodes with pattern `mcp-{server}-{tool}` after syncing. Both stdio and HTTP transports are implemented; stdio is the recommended/default transport, HTTP (`type: "http"`, via `streamablehttp_client`) is newer — read the guide before relying on it.
-
-### Features
-
-**shell-pipes.md** — Stdin detection uses `stat.S_ISFIFO()` (not `select()`). Only one workflow input can receive stdin. CLI params override piped stdin.
-
-**simple-nodes.md** — Design philosophy: each node does exactly one thing. The `llm` node is the intentional "smart exception" that handles ALL text processing to prevent node proliferation.
-
-### Core Node Packages
-
-**llm-nodes.md** vs **agent-nodes.md** — Two-tier AI architecture. `llm` = general-purpose text processing via API through pflow's LiteLLM adapter. `agent` = repository-aware autonomous work through the Claude or Codex backend. Different tools for different jobs.
-
-### Reference
-
-**ir-schema.md** — Two key artifacts: Flow IR (orchestration structure) and Node Metadata (interfaces from docstrings). Schema versioning: minor additions allowed, major bumps refuse to run.
-
-### Vision and Historical
-
-**vision/** — All vision docs describe FUTURE directions. `north-star-examples.md` uses `>>` CLI syntax that was never implemented. Read for design intent, not current behavior.
-
-**historical/** — See `historical/CLAUDE.md` for full index. Design-time documents with valuable rationale but outdated specifics. Key paradigm shift: project moved from natural-language generation-first to primitives-first.
-
-## Reading Paths by Goal
-
-| Goal | Reading Path |
-|------|--------------|
-| **Conceptual understanding** | `overview.md` → `architecture.md` |
-| **System implementation** | `architecture.md` → `src/pflow/runtime/CLAUDE.md` |
-| **Writing new nodes** | `src/pflow/nodes/CLAUDE.md` → `features/simple-nodes.md` → `reference/enhanced-interface-format.md` |
-| **Building workflows** | Run `pflow guide` for the authoritative agent guide |
-| **CLI development** | `pflow --help` → `features/shell-pipes.md` → `reference/template-variables.md` |
-| **JSON/type debugging** | `core-concepts/data-type-coercion.md` |
-
-## Implementation CLAUDE.md Files
-
-These `CLAUDE.md` files in the source tree provide implementation-level guidance. They load automatically when working in those directories.
-
-| Architecture Concept | Implementation Guide | Key Content |
-|---------------------|---------------------|-------------|
-| Execution pipeline | `src/pflow/execution/CLAUDE.md` | ExecutionResult, formatters, status flow |
-| Compilation, engine | `src/pflow/runtime/CLAUDE.md` | Compiler stages, engine architecture |
-| Node implementation | `src/pflow/nodes/CLAUDE.md` | Retry patterns, interface format |
-| CLI commands | `src/pflow/cli/CLAUDE.md` | Routing, subcommands |
-| Core components | `src/pflow/core/CLAUDE.md` | Workflow manager, validation, settings |
-| MCP server | `src/pflow/mcp_server/CLAUDE.md` | 3-layer architecture, tools |
-| Node lifecycle primitives | `src/pflow/core/node.py` | BaseNode, Node, wiring operators |
-
-## Important Notes
-
-**Single source of truth**: Each concept has ONE canonical document. If you see duplication, find the canonical source.
-
-**Prerequisites**: Node implementation docs assume you've read `src/pflow/nodes/CLAUDE.md` and understand the shared store pattern (see "Shared Store vs Params" section there). CLI docs build on the architecture overview.
-
-**Current vs future**: Check root `CLAUDE.md` for authoritative project status. Features marked "v2.0" or "Future:" are not implemented.
+- `architecture/vision/` is aspirational design context, not an implementation inventory. Some features described there have since shipped.
+- `architecture/historical/CLAUDE.md` routes to early and superseded designs. The natural-language planner and arrow-based CLI examples are historical, not current entrypoints.
+- Keep one canonical explanation per concept. Link to its owner instead of duplicating implementation details here.

@@ -62,16 +62,15 @@ def workflow_path_id(resolved: ResolvedWorkflow) -> str:
 
     The trace collector's ``workflow_path``, the memo-cache scoping key
     (``_pflow_workflow_file``), the ``--only`` snapshot loader (issue #443), and
-    the Task-164 resume loader MUST all use this exact value — otherwise the
+    the resume loader MUST all use this exact value — otherwise the
     loader won't find the workflow's own most-recent trace. Single source so the
     sites can't drift byte-for-byte.
     """
     return resolved.file_path or _synthesize_inline_workflow_id(resolved.ir)
 
 
-# Back-compat alias: this was module-private (`_workflow_path_id`) before Task 164
-# needed it CLI-side. Promoted to public; the alias keeps existing internal
-# callers unchanged.
+# Back-compat alias for the former module-private name; the public helper is also
+# used CLI-side, while existing internal callers keep working unchanged.
 _workflow_path_id = workflow_path_id
 
 
@@ -117,15 +116,15 @@ class WorkflowRunner:
             params: User-provided parameters. Copied at boundary.
             config: Immutable execution configuration.
             progress_callback: Optional per-node progress callback for CLI streaming.
-            gate_resolver: Optional Task 125 gate resolver (see ``core/gate.py`` for
+            gate_resolver: Optional gate resolver (see ``core/gate.py`` for
                 the contract; built via ``execution.gate_prompt.build_gate_resolver``).
                 Installed as ``__gate_resolver__`` exactly like the progress callback.
                 None = gates fail loudly with ``GateNotInteractiveError``.
             workflow_manager: For metadata update on saved workflows. None = skip.
             workflow_name: Saved workflow name for metadata. None = skip.
-            resume_source: Optional Task 164 resume source (built by
+            resume_source: Optional resume source (built by
                 ``runtime.resume_source.load_resume_source``). Rides as a kwarg —
-                the Task 125 ``gate_resolver`` precedent; ``RunnerConfig`` stays
+                the ``gate_resolver`` precedent; ``RunnerConfig`` stays
                 execution-config-only. The caller merges ``resume_source.inputs``
                 into ``params`` BEFORE calling; the runner threads the entry node,
                 events, and lineage id to the collector and engine, nothing more.
@@ -164,12 +163,12 @@ class WorkflowRunner:
             metrics_collector = MetricsCollector()
             metrics_collector.record_workflow_start()
 
-            # Task 159 E.1 trace 2.1.0: ``workflow_path`` is the canonical
-            # identifier. File-based runs use the resolved path; inline runs
+            # ``workflow_path`` is the canonical identifier. File-based runs use
+            # the resolved path; inline runs
             # synthesize a stable ``ir-hash:<md5>`` (symmetric with
             # ``MemoizationCache.workflow_path`` scoping for inline rows).
             trace_workflow_path = _workflow_path_id(resolved)
-            # Task 173 replay version fingerprint: hash the PRISTINE resolved IR (logical only — source-line
+            # Hash the PRISTINE resolved IR (logical only — source-line
             # provenance stripped, see workflow_content_hash) so a replay can detect the file was edited since
             # this run (a node renamed/removed/re-nested), but NOT false-flag a comment/whitespace edit. Must
             # be computed BEFORE any IR-touching compile step — `_fill_declared_defaults` (above, in
@@ -178,20 +177,20 @@ class WorkflowRunner:
             trace_collector = WorkflowTraceCollector(
                 workflow_name=workflow_name or resolved.file_path or "unnamed",
                 workflow_path=trace_workflow_path,
-                # Task 172: THE single run-scoped collector. Sub-workflows record flat into it with
+                # THE single run-scoped collector. Sub-workflows record flat into it with
                 # emit-time correlation; the per-sub-workflow buffer collectors stay is_run_scoped=False.
                 is_run_scoped=True,
                 # Stream one JSONL line per node to disk as the run executes (so a live overlay can tail
-                # it) — gated by trace_enabled: CLI and MCP both persist (True — Task 171: a durable gate
+                # it) — gated by trace_enabled: CLI and MCP both persist (a durable gate
                 # pause needs the trace on disk); --no-trace and the registry probe pass False.
                 stream_to_disk=config.trace_enabled,
                 # Stamped into the trace `meta` line; the replay tailer compares it to the current file's
-                # digest to flag a stale (different-version) run (Task 173).
+                # digest to flag a stale (different-version) run.
                 content_hash=content_hash,
-                # Task 175: None for every normal run (mint a UUID); a `pflow ui` ▶ launch forces it so
+                # None for every normal run (mint a UUID); a `pflow ui` ▶ launch forces it so
                 # the browser can pin the overlay to the exact run it spawned.
                 execution_id=config.execution_id,
-                # Task 164: attempt-chain lineage. Set at CONSTRUCTION — before
+                # Attempt-chain lineage. Set at CONSTRUCTION — before
                 # start_streaming — because it rides the meta line (_meta_fields).
                 resumed_from=resume_source.execution_id if resume_source is not None else None,
             )
@@ -316,14 +315,13 @@ class WorkflowRunner:
         registry = Registry()
         workflow = compile_workflow(resolved.ir, registry=registry, initial_params=params)
 
-        # Seed shared store with resolved defaults (from prepare_inputs).
-        # User-provided params are already in shared_store via _initialize_shared_store.
-        # resolved_defaults contains ONLY defaults for inputs not provided by the user,
-        # so this doesn't overwrite user values.
+        # Apply prepare_inputs() updates after seeding the supplied parameters.
+        # resolved_defaults includes fallback values for missing inputs and coerced
+        # replacements for supplied values; those replacements must reach execution.
         shared_store.update(workflow.resolved_defaults)
 
         # Task 175: stamp the run's resolved top-level inputs onto the trace's eager
-        # ``meta`` line. ORDERING IS LOAD-BEARING — this MUST run after the defaults
+        # ``meta`` line. ORDERING IS LOAD-BEARING — this MUST run after the prepared-input
         # merge above (so every input holds its FINAL value) and BEFORE engine.run()
         # below (which calls trace.start_streaming() and flushes the meta line). The
         # snapshot is IR-driven: resolved.ir["inputs"] is keyed by bare input name and

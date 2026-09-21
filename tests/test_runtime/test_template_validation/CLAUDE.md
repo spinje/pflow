@@ -1,14 +1,16 @@
 # Template Validation Tests
 
-Tests for `src/pflow/runtime/template_validation/`. Most files exercise the public API via the `split_template_diagnostics` helper (`tests/shared/diagnostic_helpers.py`), which wraps `validate_workflow_templates` and splits results by severity — every file except `test_type_checker.py` uses it. Some files additionally call lower-level functions directly: `_extract_all_templates` (`test_array_notation.py`, `test_validator.py`) and `type_checker` functions (`test_type_checker.py`, which bypasses the public API entirely).
+Tests for `src/pflow/runtime/template_validation/`. Use `tests/shared/diagnostic_helpers.py::split_template_diagnostics` to call `validate_workflow_templates` and split typed `Diagnostic` results by severity. `test_type_checker.py` exercises helpers directly; `test_array_notation.py` and `test_validator.py` also test `_extract_all_templates`.
 
 ## Source-to-Test Mapping
+
+Test filenames are local; source modules are under `src/pflow/runtime/template_validation/`.
 
 | Test file | Source module | What it covers |
 |-----------|-------------|----------------|
 | `test_validator.py` | `validator.py` | Orchestrator, template extraction, batch-through-orchestrator integration |
 | `test_batch_item_validation.py` | `batch_item_validation.py` | `${item.field}` validation against inferred item structure |
-| `test_types.py` | `type_validation.py` | Pass 6 (type matching) + Pass 7 (shell command safety) |
+| `test_types.py` | `type_validation.py` | Parameter type matching, shell command safety, code-node input annotations |
 | `test_union_types.py` | `type_validation.py` | Union type handling (`dict\|str`) in type matching |
 | `test_type_checker.py` | `type_checker.py` | Type compatibility matrix, type inference |
 | `test_enhanced_errors.py` | `path_validation.py` | Error messages with input descriptions |
@@ -20,4 +22,4 @@ Tests for `src/pflow/runtime/template_validation/`. Most files exercise the publ
 
 ## Mock Pattern
 
-Most files define their own `create_mock_registry()` with node metadata specific to that file's tests. This is intentional — each registry has different nodes/outputs needed for its scenarios. Don't extract to conftest.
+Registry setup is local to each test concern: several files define `create_mock_registry()`, `test_unused_inputs.py` defines `MockRegistry`, and `test_types.py` uses a temporary real registry. Preserve the scenario-specific node/output metadata when changing or consolidating fixtures.

@@ -3,8 +3,9 @@
 Canonical process spec for implementing pflow tasks and issues via the agent hierarchy.
 Established 2026-07-11 with the user (ported from the user's sibling orchestration systems —
 DECISIONS #1). Every orchestrating or implementing agent reads this file first. Layers ON TOP of
-`CLAUDE.md` (read automatically) and repeats nothing from it — domain, dev commands, code quality,
-testing directives, decision ownership, and the epistemic rules all live there.
+the root and relevant directory `CLAUDE.md` files: follow them and read them if the runner has not
+supplied them. Domain, dev commands, code quality, testing directives, decision ownership, and the
+epistemic rules live there; this file does not repeat them.
 
 ## Roles
 
@@ -12,19 +13,19 @@ testing directives, decision ownership, and the epistemic rules all live there.
 |------|-------|-----------|-----|
 | **Main orchestrator** | user's session | `start-orchestration` workflow | Cross-task view: pick lane + work, verify spec freshness (fix staleness itself — spec accuracy is its job; implementation detail is not), provision the worktree, launch planners/task-orchestrators with a context packet, handle handbacks/escalations, talk to the user, **merge the PR and reconcile**, keep `CURRENT-STATE.md` + its session file + the ledgers current. **Never writes plans, never reads plans, never runs deep-review — trust the agents' gates** |
 | **Task planner** | **Opus** | `.claude/agents/task-planner.md` | Investigate ONE task (via searchers) IN the task's worktree + write `implementation/implementation-plan.md`, **self-review it** (plan-mode `deep-review` — mandatory when the plan touches the engine or the trace format, its judgment otherwise), commit it on the feature branch, then STOP. May offer to implement small tasks itself (see Model routing) |
-| **Task orchestrator** | Opus intent by default; Fable opt-in | `.claude/agents/task-orchestrator.md` | One task end to end in the same worktree: (plan +) delegate phases → per-phase self-checks → when FULLY happy: commission the code-mode `deep-review` gate (DECISIONS #17) → `create-task-review` → `create-pr` → minimal handback |
+| **Task orchestrator** | Opus intent by default; Fable opt-in subject to Model routing | `.claude/agents/task-orchestrator.md` | One task end to end in the same worktree: (plan +) delegate phases → per-phase self-checks → when FULLY happy: commission the code-mode `deep-review` gate (DECISIONS #17) → `create-task-review` → `create-pr` → minimal handback |
 | **Lane implementer** | Opus floor (DECISIONS #9) | `.claude/agents/lane-implementer.md` | ONE GitHub issue end to end in a provisioned worktree (lane B): critically evaluate → fix with tests → proportionate gate → PR → CI green + auto-reviewers → merge it itself. May delegate MECHANICAL execution to leaf subagents; never judgment |
 | **Phase implementer** | per launch (routing table) | `.claude/agents/task-phase-implementer.md` | Implement exactly the assigned phase(s); tests as it goes; substance to the progress-log; minimal handback; stop on ambiguity |
-| **Searcher** | pinned (opus) | `pflow-codebase-searcher` | Read-only investigation, cited findings. Never the generic `Explore` or `general-purpose`. **Two channels, disambiguate by name**: the NATIVE searcher (this def, Agent tool — the default) vs the SEARCHER OFFLOAD (`workflows/search/run-searcher.pflow.md`, codex — cross-model verification or capacity relief only, never the default) |
+| **Searcher** | pinned (opus) | `pflow-codebase-searcher` | Read-only investigation, cited findings. Never the generic `Explore` or `general-purpose`. **Two channels, disambiguate by name**: the NATIVE searcher (this def, Agent tool — the default) vs the SEARCHER OFFLOAD (`workflows/search/run-searcher.pflow.md`, Codex — cross-model verification for Claude callers or capacity relief; Codex callers use it for capacity relief; offload is never the default) |
 | **Review battery** | per lens | `.claude/agents/review-*.md` via the `deep-review` skill | The pflow specialists (selection rubric in the skill + `REVIEW-PROTOCOL.md`). Plan gate + completion gate (see Review policy) |
 
-**Hierarchy is exactly two levels deep**: only the main orchestrator launches planners, task
-orchestrators, and lane implementers; only planners/task orchestrators launch
-implementers/searchers/review agents. A **lane implementer may launch leaf subagents
-(`code-implementer`) for MECHANICAL execution only** — work with no judgment left in it — and
-never delegates evaluation, design, or its completion gate (contract in `lane-implementer.md`).
-Phase implementers never spawn agents, and no spawned agent spawns further. The
-planner→orchestrator split is a SEQUENCE, not a third level. **Small tasks don't split**: one
+**Hierarchy is exactly two levels below main**: only the main orchestrator launches planners,
+task orchestrators, and lane implementers. Planners/task orchestrators launch their permitted
+implementers/searchers/review agents; lane implementers use the delegation allowed by their
+role contract. A **lane implementer may launch `code-implementer` leaves for MECHANICAL execution
+only** — work with no judgment left in it — and never delegates evaluation, design, or its
+completion gate (contract in `lane-implementer.md`). Phase implementers and other leaf agents
+never spawn further. The planner→orchestrator split is a SEQUENCE, not a third level. **Small tasks don't split**: one
 task orchestrator plans and implements (or the planner implements itself — Model routing).
 
 ## Lanes — which procedure a piece of work gets
@@ -50,8 +51,8 @@ B, pick A; between A and C, ask the user.
   The Definition of done and UI routing (DECISIONS #8) still
   govern. **Model by assessed complexity (DECISIONS #9): the main orchestrator assesses at pick
   time; Opus is the floor — never lower for an end-to-end agent; genuinely complex issues (hard
-  debugging, subtle root cause) warrant Fable, but ONLY with the user's per-launch approval.** No
-  task folder, no task-review — the issue and PR body are the record. The main orchestrator
+  debugging, subtle root cause) warrant Fable, but ONLY with the user's per-launch approval and
+  subject to Model routing's active override.** No task folder, no task-review — the issue and PR body are the record. The main orchestrator
   still provisions/tears down, relays any escalation, and reconciles. **Excluded regardless of
   size** (always lane A): anything touching `runtime/engine/`/`workflow_executor` or the trace
   format.
@@ -78,8 +79,8 @@ Per task, `.taskmaster/tasks/task_N/`:
   (Review policy), and **every embedded user checkpoint flagged** so the orchestrator plans it as
   a handback. pflow specifics a plan states explicitly where applicable: engine-contact phases
   (serialization + review trigger), trace-format changes (version bump + the Task-159 baseline
-  `task_159/baseline/verify.sh` as the outer regression net), platform-sensitive code (the
-  blocking `tests-windows` gate; ADR-0013 governs shell semantics), and how user-facing surfaces
+  `.taskmaster/tasks/task_159/baseline/verify.sh` as the outer regression net), platform-sensitive
+  code (the blocking `tests-windows` gate; ADR-0013 governs shell semantics), and how user-facing surfaces
   get exercised (Definition of done).
 - **Log** (`implementation/progress-log.md`) — append-only audit trail and crash recovery (the
   `create-progress-log` skill scaffolds it; entry format below). Any successor reads spec →
@@ -207,11 +208,14 @@ it does not make the agent re-read it.
 
 ## Model routing (supersedes the 2026-07-03 rulings — DECISIONS #3; user may override any launch)
 
+Apply the active override in DECISIONS #3 before the underlying routing policy below; UI routing
+follows #8's taste clarification. Explicit user launch instructions take precedence.
+
 | Tier | Use for | Rule |
 |------|---------|------|
 | **Sonnet** | Mechanical phases: scaffolding from an exact spec, config wiring, repetitive table-driven tests. Also grep-shaped searcher lookups | Phase text must contain ZERO ambiguity. A Sonnet phase requiring judgment is a planning bug — fix the plan, not the routing |
 | **Opus** | **The default for everything with real judgment**: task planners, task orchestrators, most implementer phases, searchers (pinned) | Plans state decisions; bounded judgment may be left to the implementer |
-| **Fable** | **ALL web-UI implementation phases — always** (user ruling 2026-07-11, DECISIONS #8): every phase that writes UI (`web/` → `src/pflow/ui`) routes to a Fable `task-phase-implementer` — never implemented inline by the task orchestrator, never a lower tier — and is built with **deliberate design/UX care**: the plan states the phase's use case + look/feel intent, and visual quality/UX are acceptance criteria verified by driving the UI. Otherwise opt-in with a one-line justification: hard architecture, subtle seam design (engine, trace, resume/gate semantics), gnarly debugging. Lane C's terminal builder is the historical Fable home and stays one | Never an ambient default for non-UI implementation |
+| **Fable** | **Design-bearing UI phases under DECISIONS #8, subject to #3's active override**: the trigger is unsettled taste/look-and-feel judgment, not the file location. UI phases retain the specialist `task-phase-implementer` handoff — never implemented inline by the task orchestrator, never below the applicable tier. Design-bearing phases receive **deliberate design/UX care**: the plan states the use case + look/feel intent, and visual quality/UX acceptance criteria. Every UI change is verified via the `screenshot-pflow-web-ui` skill. Otherwise opt-in with a one-line justification: hard architecture, subtle seam design (engine, trace, resume/gate semantics), gnarly debugging. Lane C's terminal builder is the historical Fable home and stays one | Never an ambient default for non-UI implementation |
 
 Runner model names are an execution detail; plans continue to use the tier names above. The
 names below apply to generated configuration defaults and explicit dynamic-launch overrides:
@@ -240,7 +244,7 @@ Claude agent `effort` maps directly to the same Codex reasoning level: `low` →
   live lever: pass explicit `effort` on every launch like `model`. Plans state effort per phase
   alongside the model tier.
 - **Lane B**: Opus floor, never lower; Fable for complex/hard-debugging issues only with the
-  user's per-launch approval (DECISIONS #9).
+  user's per-launch approval (DECISIONS #9), subject to #3's active override.
 - **Planner-implements exception:** when a planner finds the implementation small, it may offer in
   its handback to implement directly (itself, in-context — NOT by spawning implementers). The main
   orchestrator decides using the handback's token-usage report: ample headroom → resume the
@@ -321,18 +325,18 @@ plans — the agents own their own quality:**
   verifies Critical findings against code, applies the correct fixes, and logs EVERY finding with
   disposition — fixed, or skipped with a reason; the orchestrator reads the outcome and
   dispositions what remains. Dispatch is Bash-drivable
-  (`workflows/review/run-review-lenses.pflow.md`, provider codex — model-family diversity),
+  (`workflows/review/run-review-lenses.pflow.md`; select the provider per the deep-review skill),
   launched backgrounded to a declared output file and **waited on IN-TURN** (Monitor until-loop
   or foreground polls — a foreground call past the 600s Bash cap auto-backgrounds into the wake
   trap; never end a turn on it), so the whole gate is one job owned by the gate-runner; direct
   Agent-tool lens launches are a logged one-off for when pflow cannot run or the caller must
   keep working.
   `review-falsifier` always launches directly — it executes, and the fan-out is read-only.
-  Direct launches need the Agent tool, which phase implementers lack: when the falsifier (or the
-  direct-launch fallback) is needed and the gate-runner is an implementer, the task orchestrator
-  launches it at commissioning time and hands the report to the gate-runner for evaluation with
-  the rest. (In the GH-issue lane the lane implementer runs its own gate — its own Agent tool
-  covers a direct falsifier launch; same when a planner implements itself.)
+  Phase implementers do not launch agents: when the falsifier (or the direct-launch fallback)
+  is needed and the gate-runner is an implementer, the task orchestrator launches it at
+  commissioning time (`Agent` in Claude, `spawn_agent` in Codex) and hands the report to the
+  gate-runner for evaluation with the rest. (In the GH-issue lane the lane implementer runs its
+  own gate and handles direct falsifier launches; same when a planner implements itself.)
 - **Lane completion gate — the LANE IMPLEMENTER's own, proportionate to its diff** (contract in
   `lane-implementer.md`): lenses self-selected by what the diff touches, with a **floor of one
   when the diff changes shared tooling, CI, or a security boundary**. A one-line fix may warrant
@@ -464,8 +468,8 @@ The task list is not frozen: a new task enters when the **user asks**, **changed
 invalidate a plan, or an orchestrator **notices** a real gap (a carve-out, a "done task with an
 unmet DoD"). Always a **suggestion to the user first — never self-approved**, gated on
 `CLAUDE.md`'s observed-problems rule: what/why, where it slots (dependencies), rough size. On
-approval the main orchestrator writes the spec (`create-task` conventions) and updates the
-CLAUDE.md roadmap (short task names only). Small/bug-shaped work goes to lane B instead.
+approval the main orchestrator writes the spec (`create-task` conventions); task metadata
+supplies the roadmap shown by `./scripts/tasks`. Small/bug-shaped work goes to lane B instead.
 
 **A gap your change is about to widen is yours to close (DECISIONS #15).** The trigger is narrow
 and checkable: the defect is live before your diff AND your diff is what extends it to a new

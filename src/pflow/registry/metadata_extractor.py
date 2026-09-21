@@ -34,12 +34,8 @@ class PflowMetadataExtractor:
             node_class: A class that should inherit from BaseNode
 
         Returns:
-            Dictionary containing:
-                - description: First line of docstring or 'No description'
-                - inputs: List of input keys (empty for subtask 7.1)
-                - outputs: List of output keys (empty for subtask 7.1)
-                - params: List of parameter names (empty for subtask 7.1)
-                - actions: List of action names (empty for subtask 7.1)
+            Dictionary containing the first-line description and normalized
+            interface metadata: inputs, outputs, params, and actions.
 
         Raises:
             ValueError: If node_class is not a valid node class

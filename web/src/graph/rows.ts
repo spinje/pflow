@@ -19,20 +19,18 @@ import type { LoopSpec, RFNode, RFParam } from "../types";
 // reads the same values as injected CSS vars); the widths/paddings below are
 // TS-only (CSS doesn't pin them). Re-tune live against the real DOM if it drifts.
 export const DETAILED_WIDTH = 320;
-// MOCK trial (2026-06-11): 230 → 258 → 280 — longer compact cards (more room for
-// the 2-line description; the name label above gains runway too). The collapsed
-// container / IO cards grow in step (below) to keep their width lead over a
-// plain step — the hierarchy must not invert.
+// Collapsed container and IO cards stay wider than a compact leaf so the visual
+// hierarchy does not invert.
 export const COMPACT_WIDTH = 280;
 export const HEADER_HEIGHT = METRICS.nodeHeaderH; // tile + small padding (both densities)
 export const ROW_HEIGHT = METRICS.rowH;
 export const ROW_PADDING = 14;
 export const END_SIZE = 46;
 // The root IO card with rows visible (single column, slightly wider than compact
-// so long port names breathe). MOCK trial: 260 → 300, in step with COMPACT_WIDTH.
+// so long port names breathe).
 export const IO_CARD_WIDTH = 300;
-// A collapsed group card showing its IO area sizes to CONTENT (MOCK, 2026-06-11 —
-// replaced the fixed 380): wide enough that no row truncates, but never narrower
+// A collapsed group card showing its IO area sizes to content: wide enough that
+// no row truncates, but never narrower
 // than the plain collapsed card and never past the max. Mono rows make the
 // estimate exact — counting characters IS measuring a fixed-advance font.
 export const GROUP_IO_MAX_WIDTH = 480;
@@ -53,7 +51,7 @@ function ioColNeed(ports: Port[]): number {
 /** Width of a collapsed group card with IO rows: both columns' content + the
  *  column gap + the area's side padding, clamped to
  *  [COLLAPSED_GROUP_WIDTH, GROUP_IO_MAX_WIDTH] — "prefer the unexpanded card's
- *  width when possible" (user decision 2026-06-11). */
+ *  width when possible. */
 export function groupIoWidth(io: { inputs: Port[]; outputs: Port[] }): number {
   const inNeed = ioColNeed(io.inputs);
   const outNeed = ioColNeed(io.outputs);
@@ -64,12 +62,12 @@ export function groupIoWidth(io: { inputs: Port[]; outputs: Port[] }): number {
 }
 // The collapsed group renders as a leaf-anatomy CARD (GroupNode): compact height,
 // slightly wider than a leaf so the count pill fits beside the titles.
-// MOCK trial: 260 → 300, keeping the lead over COMPACT_WIDTH (280).
+// It stays wider than COMPACT_WIDTH.
 export const COLLAPSED_GROUP_WIDTH = 300;
 export const COLLAPSED_GROUP_HEIGHT = HEADER_HEIGHT;
 
 /** Row count of a two-column IO area. Outputs are BOTTOM-ANCHORED, at least one
- *  row below the inputs' start — even at equal counts (user decision 2026-06-10):
+ *  row below the inputs' start — even at equal counts:
  *  the top-left → bottom-right diagonal IS the information (in flows to out).
  *  GroupNode pushes the outputs column down by `ioRowsCount − nOut` rows — the
  *  original fixed one-row stagger whenever counts are balanced (nOut + 1 ≥ nIn),

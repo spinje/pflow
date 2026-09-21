@@ -77,17 +77,7 @@ class TestReadFileNode:
             os.unlink(temp_path)
 
     def test_encoding_error(self):
-        """Test behavior when file has encoding issues.
-
-        FIX HISTORY:
-        - Removed dual testing approach (exception testing + behavior testing)
-        - Fixed string assertion fragility with more robust checking
-        - UPDATED for Task 82: Binary files now fallback instead of error
-
-        BEHAVIOR CHANGE (Task 82): Files that fail UTF-8 decoding now fallback
-        to binary mode instead of returning an error. This test now verifies
-        the fallback works correctly.
-        """
+        """Invalid UTF-8 falls back to binary content instead of failing."""
         # Write binary data that's not valid UTF-8
         with tempfile.NamedTemporaryFile(mode="wb", delete=False) as f:
             f.write(b"\x80\x81\x82\x83")

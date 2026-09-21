@@ -1,272 +1,155 @@
 # Runtime Module
 
-Compilation and execution infrastructure. Compiles workflow IR into `CompiledWorkflow` (bare nodes + per-node configs), then executes via `WorkflowEngine`.
+Compiles workflow IR into bare nodes plus `NodeConfig`, then executes it through
+`WorkflowEngine`. Normal application entry points live in `execution/runner.py`.
 
-## File Structure
+## Find the owner
 
-```
-src/pflow/runtime/
-├── __init__.py              # Exports: compile_workflow(), WorkflowEngine, CompiledWorkflow, etc.
-├── compilation/             # IR→CompiledWorkflow compiler (see compilation/CLAUDE.md)
-├── engine/                  # Orchestration engine (see engine/CLAUDE.md)
-├── node_state.py            # Canonical node state queries + failure bookkeeping
-├── cache.py                 # Persistent memoization cache (SQLite, cross-run)
-├── template_resolver.py     # Template variable detection and resolution
-├── template_validation/     # Template validation package (see template_validation/CLAUDE.md)
-├── workflow_executor.py     # Nested workflow executor node (with compile-once cache)
-├── workflow_trace.py        # Trace collection with thread-safe LLM interception
-├── resume_source.py         # Resume loader + snapshot seeder: load_resume_source, seed_snapshot_into_shared (Task 164/171)
-└── output_resolver.py       # Output declaration resolver
-```
+| Task or symptom | Start here |
+|---|---|
+| Compilation, node loading, input defaults | `compilation/CLAUDE.md` |
+| Routing, batching, caching, gates, loop execution | `engine/CLAUDE.md` |
+| Template rejected before execution | `template_validation/CLAUDE.md` |
+| Template resolves to the wrong value/type | `template_resolver.py::TemplateResolver` |
+| Failed node appears successful or loses its output | `node_state.py` |
+| Nested workflow inputs, isolation, or output exposure | `workflow_executor.py::WorkflowExecutor` |
+| Persistent cache lookup/history | `cache.py::MemoizationCache` |
+| Missing trace event or persistence failure | `workflow_trace.py::WorkflowTraceCollector` |
+| Read a trace file | `core/trace_io.py::load_trace_file` |
+| Snapshot restoration or resume refusal | `resume_source.py`; snapshot selection in `workflow_trace.py` |
+| Declared output cannot resolve | `output_resolver.py::populate_declared_outputs` |
+| Dry-run differs from execution | `engine/plan_node.py::plan_node`, then `execution/CLAUDE.md` → Dry-Run Planner |
 
-## Compilation Pipeline
+Bare filenames are local. Package paths such as `core/`, `execution/`, and
+`runtime/` start at `src/pflow/`; `tests/` and `architecture/` start at the repo root.
 
-See `compilation/CLAUDE.md` for details. Quick summary:
+## Shared state and reserved keys
 
-`compile_workflow()` → parse IR → resolve file refs → validate → instantiate bare nodes + `NodeConfig` → wire edges → `CompiledWorkflow`.
+A successful node has `shared[node_id]`; a failed node has an entry in
+`shared["__failures__"]` instead; neither means absent. Use `node_state`:
+`get_node_status`, `get_node_output` (live OR archived data), and
+`get_node_failure`. Reading only the live namespace loses failed-batch detail.
 
-**CompilationError** (in `core/exceptions.py`): fields `phase`, `node_id`, `node_type`, `details`, `suggestion`.
+`mark_node_failed` owns failure archival and its related execution/warning
+bookkeeping. Do not write parallel failure records. `clear_node_failure` is
+used on loop re-entry; there is no loop-commit transaction. Initialize execution
+state through `new_execution_state`, not a copied dictionary literal.
 
-## Execution Engine
+| Boundary | Owner and constraint |
+|---|---|
+| Execution/cache-hit state | `engine/instrumentation.py::initialize_execution_state`; engine stamps mode-specific fields |
+| Runtime warnings | `core.diagnostic.normalize_runtime_warning` handles legacy shapes; `runner._extract_runtime_warnings` preserves existing `Diagnostic` objects |
+| Services propagated into children | `WorkflowExecutor._PROPAGATED_KEYS`; inspect this list before adding a cross-workflow service |
+| Child-local state | Execution, cache-hit, failure, template-error, and prompt-cache maps must not leak from parent to child |
+| Prompt-cache render context | `engine/engine.py::build_prompt_cache_dict` and `WorkflowEngine.run` install/save/restore `__pflow_prompt_cache__` per workflow; absent restores to an empty frozen map, not `None` |
 
-See `engine/CLAUDE.md` for full architecture. Quick summary:
+Internal `__*__` keys are reserved. The child propagation list deliberately
+excludes `__failures__` and `__pflow_prompt_cache__`: parent node IDs and cache
+chunks are not valid in the child's scope.
 
-`WorkflowEngine(metrics, trace, only_node).run(workflow, shared)` → walks graph, handles template resolution, namespacing, batch, caching, tracing, progress per node.
+## Template resolution
 
-### Node Execution State Invariant
+`TemplateResolver` preserves values' types for simple `${var}` templates and
+nested object values; complex interpolation such as `"Hello ${name}"` always
+produces a string. Resolution uses the shared store. Path traversal auto-parses
+JSON containers, but keeps numeric identifier strings intact. See
+`architecture/core-concepts/data-type-coercion.md` for the coercion boundaries.
 
-```python
-shared[node_id]            # node executed successfully
-shared["__failures__"][id] # node executed and failed
-# neither key present       # node did not execute
-```
+`$${var}` prevents resolution but retains the extra `$` in the result. Nested
+index templates such as `${results[${item.index}].response}` resolve the inner
+expression first; one nesting level is supported. Unresolved references remain
+literal at the resolver layer; engine strict/permissive handling is separate.
 
-Never both. To query state, use `pflow.runtime.node_state`:
+Carried loop inputs must affect both resolution and cache hashing. Their shared
+entry is `engine/plan_node.py::plan_node`, using
+`engine/loop_control.py::carry_effective_config`; do not apply carry only at execution.
 
-- `get_node_status(shared, node_id) -> NodeStatus` (`ABSENT`/`SUCCEEDED`/`FAILED`)
-- `get_node_output(shared, node_id) -> Optional[dict]` — succeeded OR failed data
-- `get_node_failure(shared, node_id) -> Optional[dict]` — failure record only
-- `node_succeeded(shared, node_id) -> bool`
-- `mark_node_failed(shared, node_id, *, category, error=None, warning=None)` — **single write site**
-- `clear_node_failure(shared, node_id)` — wired into loop re-entry only
+## Nested workflows
 
-All 5 engine failure paths funnel through `mark_node_failed`: `cache_result` (action="error" → handled in engine.py step 17.5), `handle_api_warning`, `_handle_no_successor`, exception path, defensive paths. Direct writes to `__failures__`/`failed_node`/`__warnings__[id]` are contract violations — they drift from the canonical record shape.
+`WorkflowExecutor` owns the child boundary. Consult `ALLOWED_PARAMS` for the
+accepted host parameters and `_validate_child_params` for declared-input checks.
+`workflow` accepts a path or saved name; relative paths use the parent workflow
+file. `_pflow_stack` and `_pflow_depth` guard cycles/depth.
 
-`__failures__` entries persist for the workflow lifetime; cleared only on loop re-entry and memo cache hits. Long-running loops with heavy retry accumulate entries until the loop commits.
+Children always receive isolated storage. Declared child outputs are exposed
+back through the host namespace; without declarations,
+`is_exposable_child_key` governs fallback exposure, excluding internal keys and
+child inputs. There is no shared-storage mode.
 
-## Template System
+The compile-once cache is keyed by resolved child path, so heterogeneous batches
+can reuse each distinct child. Supplied registries are intentionally reused.
+Recoverable prep and exec failures honor `error_action`; `_PREP_RECOVERABLE`
+excludes `CompilationError`. Broken definitions are not routable failures.
+The engine's API-warning detector respects deliberate non-clean actions; see
+`engine/engine.py::_CLEAN_SUCCESS_ACTIONS` before changing that boundary.
 
-### TemplateResolver (`template_resolver.py`)
+## Persistent cache
 
-**Regex**: `TEMPLATE_PATTERN = re.compile(rf"(?<!\$)\$\{{({_COALESCE_EXPR_PATTERN})\}}")` — the capture group is the composed coalesce sub-grammar (literal-or-var-path operands separated by `??`), not a bare variable path. Negative lookbehind `(?<!\$)` guards `$${var}` escapes.
+`compilation/compiler.py::_default_cache_for_node_type` owns the per-node default: LLM nodes opt
+in by default; other types require `cache: true`. `MemoizationCache` stores
+cross-run entries; `read_enabled=False` disables reads while allowing writes.
+Engine cache application and loop exclusions are documented in the engine guide.
 
-**Path support**: `${data.user.name}`, `${items[0].title}`, `${data[5].users[2]}`
+History lookups must carry workflow identity. `execution/runner.py::workflow_path_id`
+uses the resolved file path or a synthetic `ir-hash:` identity for inline runs.
+`get_latest_for_node_with_cache_key` uses an explicitly unscoped lookup when
+identity is absent, which can pool unrelated nodes' history. A scoped miss does
+not fall back to unscoped history.
 
-**Escape syntax**: `$${var}` prevents resolution via regex negative lookbehind. Partially implemented: prevents resolution but does NOT strip the extra `$` (output contains literal `$${var}`).
+## Traces, snapshots, and resume
 
-**Nested index templates**: `${results[${item.index}].response}` — inner resolved first. One level of nesting supported.
+Use `core.trace_io.load_trace_file` to reconstruct current marker-bearing JSONL
+traces and blobs. Consumers checking the reconstructed format accept major
+version 2 (`startswith("2.")`), not an exact minor version. Automatic discovery
+can skip unreadable candidates; explicit `analyze-cache --from-trace` input
+raises a load error instead. Do not invent a universal catch-and-skip policy.
 
-**JSON auto-parsing**: Path traversal auto-parses JSON strings. Only dict/list results used — numeric strings like Discord snowflake IDs preserved as strings.
+`workflow_trace._iter_workflow_traces` excludes `only_node` traces but must not
+filter `final_status`: snapshot loading and cache analysis own different status
+policies, including analysis fallback to non-successful runs.
 
-**Type behavior**:
-- Simple templates (`${var}`): preserve original type
-- Complex templates (`"Hello ${name}"`): always string
-- Inline objects (`{"key": "${dict_var}"}`): preserve inner types
-- Unresolved: remain as-is for debugging
+Trace disk I/O is best-effort: `_disable_streaming` retains in-memory events and
+prevents persistence faults from changing execution outcomes. `finalize` closes
+the stream and returns no path when persistence is disabled or has failed.
+A truncated final line can reconstruct as `incomplete`; resume eligibility and
+full-run snapshot eligibility are separate policies.
 
-**Resolution context**: `dict(shared)` — shared store is the single source of runtime data. No `initial_params` override.
+`WorkflowExecutor._open_child_trace` shares the run-scoped collector outside
+batch items; batch items and already-buffered descendants use child buffers.
+Keep that distinction when changing correlation or worker-thread tracing.
 
-> For JSON auto-parsing and type coercion details, see `architecture/core-concepts/data-type-coercion.md`.
+LLM trace content is canonical in `llm_prompt`/`llm_system`; redundant prompt and
+system copies are stripped from persisted node output. The memo blob retains
+full node output, so memo restoration and trace-based snapshot restoration are
+not interchangeable. A snapshot cannot restore `${node.prompt}`/`${node.system}`
+from the stripped node-output fields. See `_strip_redundant_llm_trace_fields`
+and `_add_llm_data`; do not infer identical type handling for every capture path.
 
-### Template Validation (`template_validation/`)
+`final_events_by_node` owns final-state aggregation under loops. Executed counts
+are per visit (excluding restored events); failed counts are per final failed
+node. Synthetic warmup cost/count treatment is canonical in `engine/CLAUDE.md`
+→ Synthetic Cache Warmup Item.
 
-Pre-execution validation. See `template_validation/CLAUDE.md`.
+`load_snapshot_or_raise` selects a reusable full run for `--only` and fails loudly
+when none exists. A degraded snapshot carries a warning advisory; do not restore
+potentially partial upstream data silently. `resume_source.load_resume_source` owns resume selection,
+gate-resolution folding, and refusal checks. `seed_snapshot_into_shared` never
+seeds the target or failed-final nodes: it uses eligible events before the target
+when present, otherwise all eligible captured nodes. Derive restored-node lists
+from its returned map, not a second event scan. Restored nodes are successful for
+data lookup but relabelled not-executed by `execution_state.build_execution_steps`.
 
-## Planner (Dry-Run)
+`engine/engine.py::_prepare_resume` re-records restored upstream events as
+`cached=True, restored=True`, preserving even `{}` outputs. Later resumes and
+`--only` must seed from the newest eligible attempt alone; `resumed_from` is
+lineage, not a data dependency.
 
-Dry-run planning is split across two files:
+## Declared outputs and API warnings
 
-- `runtime/engine/plan_node.py` — shared per-node decision primitive (`plan_node(node, config, shared) -> NodePlan`)
-- `execution/plan.py` — graph walker that builds typed `Plan` results via an explicit `Transition` state machine
+`output_resolver._is_all_absent_coalesce` skips a declared coalesce only when
+all operands are absent. Failed/path-error operands must remain visible errors.
 
-**Load-bearing invariant**: `plan_node()` is the single authoritative source for cache-hit semantics. Both the engine and the planner call it. Changes to cache-key computation, template resolution, or cache-enable rules MUST live in `plan_node()`, not in `engine._execute_node()` or `execution/plan.py`.
-
-**Walker shape** (`execution/plan.py`): transitions are a discriminated union — `Transition.FOLLOW` / `STOP` / `BOUNDARY` / `ROUTING_ERROR`. `_classify(entry, curr) -> Decision` is the one authoritative mapping from `PlanEntry.status` to transition; `_advance(...)` is a `match` dispatch that acts on the decision. Extending the planner with a new status means: add a `PlanEntry.status` literal, add an entry builder in `_plan_standard_node`, add a `_classify` case, add the `match` arm in `_advance`. In that order. See `execution/CLAUDE.md` → "Dry-Run Planner" for the full walker documentation.
-
-**Sub-workflow recursion is parameterized, not duplicated**: `_plan_sub_workflow(..., cause="no_cache_match" | "downstream")` is the single recursion point. Pre-boundary walker dispatches `WorkflowExecutor` via `_plan_one_node` with default `cause`; post-boundary BFS (`_make_downstream_entry`) dispatches with `cause="downstream"`, which threads `_force_downstream=True` into `_build_plan_with_shared` so the child uses `_bfs_from_start` over its entire graph. Both produce a nested `sub_plan` so `estimated_cost_usd_including_nested` rolls up correctly regardless of which path reached the sub-workflow.
-
-Parity is enforced by `tests/test_execution/test_plan_drift.py`. State-machine transitions are unit-tested in `tests/test_execution/test_plan_classify.py`. If either test fails, fix the divergence instead of weakening the test.
-
-## Other Components
-
-### WorkflowExecutor (`workflow_executor.py`)
-
-Runtime node for nested workflow execution. Child outputs auto-expose via namespace.
-
-- **`workflow` param**: file path or saved workflow name. The only sub-workflow reference mechanism.
-- **`inputs` param**: dict of values passed to the child's declared `## Inputs`. Every key must be declared; extras rejected at parse time (Step 7 + sub-workflow validator, both directions) and at runtime (`_validate_child_params`).
-- **Closed schema via `ALLOWED_PARAMS`** (`ClassVar[frozenset[str]]`): `workflow`, `inputs`, `error_action`, `max_depth`. Validator Step 8 reads this attribute to reject unknown top-level fields — forward-compatible shape for the planned schema-declaration refactor (see task list).
-- **Auto-outputs**: child's `## Outputs` exposed via namespace. No declarations → all non-internal keys exposed.
-- **Child storage is always isolated**: the child gets a fresh store and exposes its `## Outputs` back to the parent. There is no `storage_mode` param — a former `storage_mode: shared` aliased the child store to the parent and leaked child failures/depth into it (issues #254/#231), so the param was removed entirely. Any `storage_mode:` line is now an unknown param rejected by the validator's unknown-param step.
-- **Compile-once cache**: `_compiled_workflow_cache` (dict keyed by resolved workflow path) + `_loaded_ir_cache` (dict keyed by raw workflow ref) — compiles once per unique child, reuses for sequential batch items. Heterogeneous batches (`${item.workflow}` varies per item) correctly cache each child independently.
-- **Circular detection** via `_pflow_stack`, **max depth** via `_pflow_depth` (default 10).
-- **Relative paths** resolve from parent workflow directory via `_pflow_workflow_file`.
-- **Cross-cutting key propagation**: `_PROPAGATED_KEYS` — `__registry__`, `__progress_callback__`, `__mcp_pool__`, `__warnings__`, `__parser_diagnostics__`, `__memoization_cache__`, `__trace_collector__`, `__loop_active__` (issue #445: a looped sub-workflow body inherits the active loop depth so its inner nodes also suppress memo reads for the iteration; the planner mirrors this in `execution/plan.py::create_planner_shared`). Per-workflow keys (`__execution__`, `__cache_hits__`, `__template_errors__`, `__failures__`, `__pflow_prompt_cache__`) NOT propagated — child gets its own. Adding `__failures__` here would leak child node IDs into parent state.
-- **`error_action` covers BOTH prep and exec failures** (GH #284). Prep-time failures (missing required inputs, undeclared extras, non-dict `inputs:`, missing file, circular ref, max depth) are captured into a `_prep_error` marker in `prep_res` so `exec()`/`post()` dispatch them uniformly through `error_action`. The recoverable exception set is `_PREP_RECOVERABLE` — `CompilationError` is explicitly excluded (broken workflow definitions are not routable). The api_warning detector now DEFERS to a node's deliberate verdict: it only runs on a clean-success action (`_CLEAN_SUCCESS_ACTIONS`), so an `error_action` route like `continue` is no longer overridden back to `"error"` even when the failure text matches a detector pattern (e.g. "not found"). GH #301 closed.
-
-### MemoizationCache (`cache.py`)
-
-Persistent cross-run caching. SQLite at `~/.pflow/cache/cache.db`, WAL journal, zlib-compressed BLOBs.
-
-- **Cache key**: `md5(config_hash + resolved_inputs)`. Batch nodes add semantic config + resolved items.
-- **TTL**: 24h. **`read_enabled=False`**: writes still happen, reads return None (`--no-cache`).
-- **Per-node cache default is type-based** (`compiler._default_cache_for_node_type`): only `llm` nodes default to `cache_enabled=True`; every other node type (shell, code, http, file ops, mcp, agent) defaults to `cache_enabled=False` because they side-effect or read external state. Per-node `cache: true` opts a node back in. `--no-cache` (`read_enabled=False`) is the run-wide escape hatch.
-- **Test isolation**: `conftest.py::isolate_pflow_config` monkey-patches to temp paths.
-- **Integration**: Created by Runner, stored as `shared["__memoization_cache__"]`, consumed by `engine/instrumentation.py`.
-- **Workflow scoping**: `workflow_path` column scopes `get_latest_for_node` lookups so unrelated workflows with overlapping node IDs don't pool cost/duration history. File/library runs use the resolved absolute path; inline runs (dict IR, content-string markdown, MCP-inline) use a synthetic `ir-hash:<md5>` identifier injected by `runner._prepare_workflow`. Never write NULL `workflow_path` from new code paths — `WHERE workflow_path = NULL` matches zero rows in SQL and the scoped lookup silently falls back to unscoped, pooling history across distinct submissions. `get_latest_for_node` guards against NULL input with an unscoped fallback, which is load-bearing for pre-synthesis legacy rows.
-
-### WorkflowTraceCollector (`workflow_trace.py`)
-
-- **Format 2.x shape**: Tree-structured events with `node_output`, `template_resolutions`, `node_params`, `batch_items`, `sub_workflow_events`. Top-level `workflow_path` (resolved file path or `ir-hash:<md5>` for inline runs — symmetric with `MemoizationCache.workflow_path` scoping). Per-event cache-correlation fields on LLM events: `cache_key` / `cache_source` (`"memo" | "in_process"`) / `cache_age_sec` / `cache_chunks_skipped` flowing through `event["llm_call"]` via the existing `llm_usage` channel. Per-event `llm_system` carrying the effective system content the LLM saw — `str` for plain system params, `list[dict]` for cache-rendered prefixes (with provider-specific `cache_control` markers). Sourced from `prep_res["system_blocks"]` when prep built one, else `prep_res["system"]`; captured via the adapter's `trace_hook` `before_call` event. Surfaced in `--report` per-node markdown as `## Cached System` (before `## Prompt` to match API call order; list shape emits a fenced JSON block so `cache_control` markers stay visible). Cache-metadata fields are gated by `_should_write_cache_metadata(node_type_name)` — currently allowlisted to `LLMNode` only; `AgentNode` is INTENTIONALLY excluded because its backend cache-token fields describe Claude/Codex context caching, not pflow's memo cache. Consumer rule: gate on `format_version.startswith("2.")` — additive minor bumps are forward-compat. Batch parity: `LLMNode.post()` mirrors prompt + effective system into `shared["prompt"]` / `shared["system"]` so per-item batch traces capture them; `batch_executor._capture_item_trace` pair-copies `system → llm_system` (accepts `(str, list)`).
-- Per-event `event["node_id"]` and `event["llm_call"]["model"]` are consumed by `prompt_cache_analysis.trace_loading` for trace autoload/listing and model-drift notes. The existing trace shape is sufficient; no producer-side fingerprint or format bump is required for those consumers.
-- **2.4.0 `only_node` (issue #443)**: a top-level field — `None` for a full run, the `--only` target name for an `--only` run. The engine stamps it at `run()` start (only the ROOT collector's value is saved). It's the snapshot-source filter: `_iter_workflow_traces` (the shared candidate iterator used by BOTH the `--only` snapshot loader AND `analyze-cache` autoload via `_collect_candidate_traces`) excludes any trace where `only_node is not None`, because an `--only` run records only its target and isn't a coherent full-run snapshot. **Invariant**: `_iter_workflow_traces` MUST NOT filter `final_status` — each consumer owns its status policy.
-- **2.5.0 — interning + canonical LLM prompt/system (issue #382)**. Two shape changes, both reading-transparent on older 2.x traces:
-  - **blob interning (disk-only)** — *(2.5.0-era shape; the on-disk encoding is now inline-first-occurrence `blob` lines per Task 172 — see that bullet below; this describes the original 2.5.0 form.)* every large string leaf (≥ `INTERN_MIN_BYTES`, ~1 KB) is replaced by `{"$pflow_blob": "<md5>"}` and the unique content is stored once (2.5.0: a top-level **`blobs` trailer**, last key; Task 172: an inline `blob` line). **In-memory is always plain content; blobs exist only on disk.** All trace-content reads go through the single seam `pflow.core.trace_io.load_trace_file` (the 3 readers: `_iter_workflow_traces`, `prompt_cache_analysis.trace_loading._load_trace_explicit`, `trace_report.generate_report`). *(#531: this paragraph is historical 2.5.0 detail. `resolve_blobs`/`intern_blobs` and the legacy single-object read path were removed — `load_trace_file` is JSONL-only and reconstructs inline `blob` lines via `substitute_refs`; see the Task 172 bullet. A pre-Task-172 single-object trace no longer loads: it raises `json.JSONDecodeError` and the 3 readers skip it gracefully.)*
-  - **Canonical LLM prompt/system**: an LLM event surfaces the rendered prompt in **one** field, `llm_prompt` (`str | list[dict]`), and the effective system in `llm_system`. The redundant copies are stripped — `prompt`/`system` from `node_output` + `template_resolutions`, and the dead `node_params.prompt` — at the node-aware recording layer (`record_node_execution` for parent events, `_capture_item_trace` for batch items), gated on `is_llm_node_type` (`instrumentation.py`), **after** `llm_prompt`/`llm_system` promotion. `node_params.system` is **kept** (the `## System` config line, distinct from the effective `llm_system`). Batch `_capture_item_trace` **copies** `template_resolutions` before stripping (it's a caller-owned reference). Readers are union-tolerant: `## Prompt` prefers `template_resolutions.prompt.resolved` (present on old traces) and falls back to `llm_prompt` (new traces) — so old traces render identically.
-  - **(C) cache-block prompt capture**: for a prewarm batch, `LLMNode.post` mirrors `prep_res["user_message_blocks"]` into `shared["user_message_blocks"]`; `_capture_item_trace` is the single blocks-or-flat writer of `llm_prompt` (the `("prompt","llm_prompt")` entry was removed from the generic promotion loop). Each item's `llm_prompt` becomes the cache-rendered blocks, so the byte-identical shared static-prefix block dedupes to **one blob** under interning. Batch-only; the non-batch trace_hook path and `llm_client.py` are untouched.
-  - **`--only` caveat**: because `node_output.prompt`/`system` are no longer persisted **in the trace file** (stripped by `_strip_redundant_llm_trace_fields`; canonical in `llm_prompt`/`llm_system`), an `--only` snapshot — which re-seeds from the *trace* — can't re-seed `${node.prompt}`/`${node.system}`. Live runs are unaffected — `post` still writes `shared["prompt"]` at runtime; only re-seeding from a trace is affected. No workflow references `${node.prompt}` downstream. **Store boundary (easy to over-extrapolate):** "no longer persisted" is true ONLY of the trace file. The **memo cache blob** still stores the full `shared[node_id]` including `prompt`/`system`, so on a cache HIT `apply_memo_hit` restores them and `_add_llm_data`'s `node_output.get("prompt"/"system")` fallback repopulates `llm_prompt`/`llm_system` (str AND list/block forms) — a cached LLM event therefore carries the prompt/system identically to a fresh one, even though the live `trace_hook` never fired. Same field, two stores, opposite retention.
-  - **Forward-compat**: 2.5.0 is NOT purely additive (it removes the redundant LLM copies), but every consumer gates on `format_version.startswith("2.")`, all in-repo readers ship together, and old traces still render — so the bump is safe. (Old code reading a *new* trace would see raw `$pflow_blob` refs, but there are no external/persisted old readers.)
-- **Task 133 — JSONL transport (on-disk encoding; `format_version` stays `2.x`)**: `save_to_file` now writes the trace as **JSONL** — a `meta` line (carrying a `pflow_trace` marker), one line per flattened event (`id`/`parent_id`/`seq`/`run_id` derived from the nested tree at save time, single-threaded), then `run.complete` and `blobs` **trailer lines**. The "blobs trailer (last key)" described above is now a `blobs` *line*, not a dict key. `load_trace_file` detects the marker and **reconstructs the exact nested dict** every reader expects (strips the correlation keys; a cleanly-parsed but `run.complete`-less line set → `final_status="incomplete"`, never silent success; corrupt → `JSONDecodeError` so the 3 readers degrade). In-memory shape and all readers are unchanged. Reconstruct lives in `core/trace_io.py`; the whole-file `flatten` was relocated to `tests/shared/trace_jsonl.py` (#531 — production has ONE writer, the streaming collector), and the save→load round-trip is the test oracle (`tests/test_core/test_trace_io.py`). **Old single-object traces no longer load** — the dual-read was removed (#531); they raise `json.JSONDecodeError` and skip gracefully. **Superseded by Task 172 (next bullet)** — incremental streaming, inline blobs (the `blobs` trailer line is replaced by inline `blob` lines), and robust crash-tail tolerance are now shipped, so the "deferred Phase D" / "A–C crash-tail skips the whole trace" framing above is historical.
-- **Task 172 — emit-time streaming (on-disk encoding evolves; `format_version` stays `2.x`)**: the run-scoped collector now **streams** one JSONL line per node AS the run executes (so a live overlay can tail it; ADR-0008), gated by `RunnerConfig.trace_enabled` (CLI and MCP both stream — Task 171 flipped MCP, a durable gate pause needs the trace; only `--no-trace` passes `stream_to_disk=False` → no file). Correlation (`id`/`seq`/`parent_id`/`run_id`) is assigned at **emit** time (reserve-at-descent) rather than derived at save; `ancestor_path`/`port` are emit-stamped and stripped on read. Blobs are **inline-first-occurrence `blob` lines** (`{kind, md5, value}`, written before the first event that references them — backward-only, so a crash-truncated tail stays self-consistent), replacing the `blobs` trailer: ONE representation produced by the streaming writer (`WorkflowTraceCollector._flush_event`, via `intern_event_leaves`) — the SOLE production trace writer (#531). The whole-file `flatten_trace_to_lines` (+ `_inline_blobs`) was relocated to the test-only `tests/shared/trace_jsonl.py` for writing JSONL trace fixtures; it shares `intern_event_leaves` so the two paths can't drift. `finalize()` writes the `run.complete` trailer + closes (idempotent; the runner owns it for every caller since Task 171 — the CLI opts out via `finalize_trace=False` and finalizes itself post-mutation). The reader's `_rebuild_event_tree` is **two-pass** — dedup-by-`id` last-wins (so a routing-dead-end re-flush of a corrected line wins) + lenient **transitive** orphan-drop when there's no `run.complete` (crash mid-sub-workflow recovers everything well-formed). `load_trace_file` **tolerates a single truncated final line** → `final_status="incomplete"` (ONLY before a `run.complete` has been parsed — any content *after* `run.complete` is corruption and raises, both at the line-parse layer and in `_partition_trace_lines`); a malformed *earlier* line still raises. **The streamed file is a best-effort tail of the in-memory trace, never a source that can alter execution:** the first disk I/O fault (`open`/`write`/`flush` — e.g. a full or read-only `~/.pflow/debug`) is caught at the `_open_stream`/`_flush_line` seam, logs once, sets `_stream_failed`, and disables streaming for the rest of the run — the in-memory trace stays complete and the run is unaffected (it never turns a successful node into a failure or masks a real node error). `finalize()` always leaves the stream CLOSED (a `try/finally` around the trailer write) and returns `None` (no path) when streaming was gated off or disabled mid-run. **A hard interrupt (Ctrl+C) now leaves an `incomplete`-but-readable streamed trace** (pre-Task-172 it left no file); consumers reject it as a snapshot/cache source, so a leftover `incomplete` trace is expected behavior, not a bug. Producer surface: `_open_stream`/`_flush_event`/`_flush_line`/`_disable_streaming`/`finalize`/`mark_last_event_failed` (re-flush) in `runtime/workflow_trace.py`.
-- **2.6.0 — resume lineage + restored events (Task 164, additive)**: the meta line gains `resumed_from` (the SOURCE run's `execution_id` when this run resumed a prior failed attempt; `null` otherwise — set at collector construction, before `start_streaming`, and listed in `core/trace_io.META_KEYS`). A resumed attempt **re-records** each restored upstream node's final event via `record_node_execution(..., cached=True, restored=True)` — `status: "cached"` keeps every cost/UI consumer correct with zero change; `restored: true` marks it and excludes it from `nodes_executed`. This makes the attempt trace **self-contained** (Decision 6): resume-of-a-resume and later `--only` runs seed from the newest attempt's trace alone (`resumed_from` stays pure lineage, never a data dependency). Restored events stamp `node_output` on `is not None` (not truthiness) so a real `{}` output survives re-record and re-seeds as `{}`.
-- **2.7.0 — durable gate pause (Task 171, additive)**: a top-level gate that fires with no human channel and tracing ON finalizes the trace with `final_status: "paused"` plus `paused_node_id` + the full `gate_request` payload on the `run.complete` trailer (plain trailer keys — generic round-trip, deliberately NOT in `META_KEYS`). The ONLY producer decision point is the engine's gate except arm (`engine/CLAUDE.md` — nested/originating/`_gate_pausable` conjuncts; pause = a promise the resume path accepts). Consumers: `resume_source.py`'s paused arm turns the token (= `execution_id`) + a `--approve`/`--choose` answer into a resume entry (approval → entry at the never-run gated node; escalation → the between-nodes successor shape with the decision folded into the completed step's event); `list_paused_runs` backs `pflow resume list`; a token is consumed by attempt-chain lineage (`_find_consuming_attempt` — the ONE consumption policy). Exit code 4; `--no-trace` gates keep the hard error.
-- **`--only` snapshot helpers** (`load_snapshot_or_raise` / `load_full_run_events` in `workflow_trace.py`; `seed_snapshot_into_shared` + the resume loader `load_resume_source`/`_seedable_final_events`/`_apply_gate_resolutions` moved to `resume_source.py` in Task 171): `--only` runs the target against a frozen snapshot of the most recent full successful run instead of re-walking (which would re-fire side-effecting upstream). `load_full_run_events` returns the newest reusable run's `(nodes, status)` (accepts `success`/`degraded`, rejects `failed`, treats empty `nodes` as no-match); its `"degraded"` status fires only on a genuinely degrading WARNING/ERROR warning (an INFO-only advisory like an empty batch is reported `success`). `load_snapshot_or_raise` is the single home for the "no usable snapshot → `OnlySnapshotMissingError`" decision (falsy check — an EMPTY list raises). `seed_snapshot_into_shared` writes each UPSTREAM node's terminal `node_output` to `shared[node_id]` — scope is nodes that ran BEFORE the target in execution order (templates only reach earlier steps, so this covers everything the target can read; downstream nodes are excluded so their stale output isn't addressable) — filtering the EXACT `apply_memo_hit` reserved set (`__pflow_stats__`/`__pflow_warnings__`, keeping `__metrics__`) and NEVER seeding the target. **Seed fidelity (Task 164 review fix):** the seedable set is derived ONCE by `_seedable_final_events(events, entry)` — each node's final event before the entry, minus failed-final-status nodes (their data lived in `__failures__`, never the store; seeding them would resolve coalesce paths `${primary.x ?? fallback.x}` the original run resolved to the fallback). `seed_snapshot_into_shared` writes from it and returns it; the resume loader's escalation/binary guards scan its values (never the raw pre-entry slice — a superseded loop iteration's contents must not refuse a resume); `restored_nodes` and the re-record loop derive from the returned map. This matters for resume tails downstream of an on-error chain and for `--only` against a DEGRADED snapshot. **Escalation fold (deep-review fix):** a node's event freezes its `result.escalation` marker BEFORE the gate writes the human's decision into the live store (engine step 16 vs 17.7); the decision persists only as a disk-only `kind:"gate"` resolution line. `load_resume_source` folds resolutions back into the events at load time (`_apply_gate_resolutions`, last resolution wins) so guards/seed/re-record all see the decided store — an undecided marker refuses only when the run genuinely never resolved it. Child (sub-workflow) collectors never stream, so only TOP-LEVEL gate lines exist on disk — the fold cannot cross-match a nested gate's node_id. Engine seeding imports `seed_snapshot_into_shared` from `runtime.resume_source` — a light edge (no LiteLLM).
-- **LLM prompt + system capture**: Engine.run installs `self.trace` into `shared["__trace_collector__"]`; LLMNode.prep resolves a per-node `trace_hook` via `collector.get_trace_hook(node_id)` and threads it explicitly through the inner ThreadPoolExecutor. The hook writes to `self.llm_prompts[node_id]` AND `self.llm_systems[node_id]`; `_add_llm_data` reads-and-**consumes** them (`.pop`, Task 172 C4) so a captured prompt belongs only to the node execution that triggered the hook — a later node sharing the same bare `node_id` (e.g. a parent node named like a child sub-workflow's LLM node, now that one run-scoped collector is shared) can't inherit the stale prompt. Save+restore around `engine.run` swaps in child collectors for sub-workflows so child LLM calls land in the child's dicts.
-- **Batch item tracing**: via `_batch_trace` shared-store accumulator (GIL-safe for parallel)
-- **Sub-workflow tracing**: Child collectors created by `WorkflowExecutor`, events embedded as `sub_workflow_events`
-- **Per-node aggregation rule — "last event per `node_id` = final state"**: Status determination and the `failed_node_ids` list (written to the trace file by `save_to_file`) both derive from `final_events_by_node(events)` (module-level helper, also imported by `core/trace_report.py::_collect_errors`). Loop recovery records two events for the same node_id; only the later one counts for workflow-level aggregation. Single source of truth — if the rule changes, it changes in one place. See GH #240.
-- **`nodes_executed` vs `nodes_failed` semantics**: `nodes_executed` counts **per-visit** (total invocations), excluding `restored` events (Task 164: a resumed attempt's re-recorded upstream did not execute this run). `nodes_failed = len(failed_node_ids)` counts **per-node** (unique failed nodes). Under loop recovery the two diverge: 2 visits, 0 failed nodes → `nodes_executed=2, nodes_failed=0`. `failed_node_ids` is sorted alphabetically for deterministic JSON output.
-- **`mark_last_event_failed(node_id, *, error)`**: mutation API used by the engine's `_handle_no_successor` in the non-error-action branch. Flips the most recent event for `node_id` to `success=False` so the trace and `__failures__` agree for routing failures on custom actions. See GH #250.
-- **Synthetic cache warmup item (`is_warmup: True`)**: When a parallel batch LLM node prewarms the provider cache, the warmup's `complete()` usage is captured as a synthetic `batch_items[]` entry with `llm_call.is_warmup = True`. Cost-summing consumers include this entry (warmup cost is real); call-counting consumers (`total_calls`, `unavailable_models`, analyzer per-node counts) MUST filter `is_warmup` to avoid inflating user-facing counts. See `engine/CLAUDE.md` → "Synthetic Cache Warmup Item" for the full filtering convention and the 8 sites that apply it.
-
-### Output Resolver (`output_resolver.py`)
-
-`populate_declared_outputs()` maps namespaced outputs to root level. Raises `OutputResolutionError` when a source can't be resolved.
-
-**Coalesce semantics — easy to regress**: `_is_all_absent_coalesce` distinguishes legitimate branch-convergence fallthrough from real errors. A coalesce silently skips ONLY when every operand has `status == "absent"`. Any FAILED or PATH_ERROR operand forces an error — that's the "primary failed via on-error → recovery handler" case the system has to surface, not swallow.
-
-## Reserved Shared Store Keys (Canonical Reference)
-
-```python
-# Execution tracking (managed by engine/instrumentation.py).
-# The 5-key core shape below is constructed ONLY via
-# node_state.new_execution_state() — never re-inline this literal.
-shared["__execution__"] = {
-    "completed_nodes": [],     # Successfully executed nodes
-    "node_actions": {},        # Actions returned by each node
-    "node_hashes": {},         # MD5 config hashes for cache validation
-    "failed_node": None,       # Node that caused workflow failure
-    "node_visit_counts": {},   # Per-node visit counter (loop guard)
-    "only_node": None,         # --only target (set by engine; flat only — dotted rejected, issue #443)
-    "restored_nodes": [],      # issue #443 + Task 164: nodes seeded from a snapshot (--only) or a
-                               # resume's source trace (NOT executed this run). get_node_status reports
-                               # them SUCCEEDED (data-flow-correct), but build_execution_steps relabels
-                               # them not_executed so the summary + --report agree on what ran.
-    # Task 164 resume-only stamps (engine-only, written by _prepare_resume — never in
-    # new_execution_state()): "resumed_from" = source run's execution_id (lineage),
-    # "resume_entry_node" = the failed node K the walk re-entered at. The display/JSON
-    # surface (success_formatter execution dict + the ⤷ Resumed indicator) reads all three.
-}
-
-# Failure archive (managed by runtime/node_state.py::mark_node_failed)
-shared["__failures__"] = {
-    "node_id": {
-        "data": {...},        # what was at shared[node_id] before the move (may be {})
-        "category": "shell_failure" | "http_failure" | "mcp_failure" | "llm_failure" | "node_action_error" | "api_warning" | "routing_error" | "exception" | "template_error",
-        "error": "...",       # human-readable error (optional)
-        # NOTE: warning text is NOT stored here — structured warnings (api_warning
-        # + on-error recovery) live only in shared["__warnings__"][node_id].
-    }
-}
-
-# System keys
-shared["__trace_collector__"] = WorkflowTraceCollector
-shared["__progress_callback__"] = func
-shared["__gate_resolver__"] = func            # Task 125: resolver(request, *, allow_prompt) -> GateResolution.
-                                              # Installed by the CLI/MCP layer (execution/gate_prompt.py via
-                                              # runner.run(gate_resolver=...)); absent → any gate raises
-                                              # GateNotInteractiveError (loud, payload-carrying). In
-                                              # _PROPAGATED_KEYS so nested gates prompt through the same channel.
-shared["__gate_prompt_allowed__"] = bool      # Task 125: False ONLY inside parallel-batch worker stores (set by
-                                              # batch_executor.process_item) — the resolver may still auto-approve
-                                              # from its flag set but must not prompt. Propagated so the ban
-                                              # reaches grandchildren. Absent = True.
-shared["__warnings__"] = {}               # Node warnings → DEGRADED status.
-                                          # Values may be legacy strings,
-                                          # structured warning dicts, or
-                                          # Diagnostic instances. Consumers use
-                                          # normalize_runtime_warning(), except
-                                          # runner._extract_runtime_warnings
-                                          # preserves Diagnostic values as-is.
-shared["__cache_hits__"] = []             # Nodes served from cache
-shared["__template_errors__"] = {}        # Permissive mode errors
-shared["__mcp_pool__"] = MCPConnectionPool
-shared["__memoization_cache__"] = MemoizationCache
-shared["__index__"] = int                 # 0-based batch item index
-shared["__pflow_prompt_cache__"] = MappingProxyType[node_id, CacheRenderContext]
-                                          # Task 159 B3.2: per-workflow prompt cache rendering map.
-                                          # Read-only proxy over a dict keyed by node_id.
-                                          # Engine-installed at WorkflowEngine.run() entry,
-                                          # save+restore mirrors __trace_collector__. Restore
-                                          # from absent writes _EMPTY_PROMPT_CACHE (a frozen
-                                          # empty proxy), NEVER None. Consumers use the
-                                          # canonical (shared.get(K) or {}).get(node_id)
-                                          # defensive pattern. NOT in _PROPAGATED_KEYS — each
-                                          # .pflow.md scopes its own ## Cache (DD#12); leaking
-                                          # parent → child would break cache scoping AND the
-                                          # CacheBlockIR freeze guarantee.
-
-# Nested workflow keys
-shared["_pflow_depth"] = int
-shared["_pflow_stack"] = list[str]
-shared["_pflow_workflow_file"] = str
-shared["_pflow_child_only_node"] = str   # DORMANT plumbing for dotted --only sub-workflow targeting.
-                                         # _run_node_with_child_only() can write it (engine.py) and
-                                         # WorkflowExecutor.exec() reads it, but the walk currently
-                                         # passes child_only=None, so it is never actually written.
-                                         # Kept for the deferred nested-targeting follow-up.
-```
-
-## Critical Behaviors
-
-### Cache Invalidation (Two Levels)
-
-**In-process cache** (within a single `engine.run()`): Node in `completed_nodes` AND config hash matches → skip re-execution. Invalidated on parameter change (hash mismatch) or revisited nodes (loops).
-
-**Memoization cache** (cross-run, SQLite-backed): `cache_key = hash(config + resolved_inputs)` → hit returns cached output without executing. Invalidated when: config changes (edited node params, different template text), resolved inputs change (upstream produced different output, CLI override changed), or TTL expires (24h default). **Skipped for revisited nodes** (`visit_count > 1`) — memoization is for cross-run caching, not loop caching. **Skipped for workflow nodes** — sub-workflow files may change between runs; inner nodes are individually cached via the propagated `__memoization_cache__`. Error results are never cached. **Cost aggregation** (`collect_llm_calls()`, `_collect_llm_summary()`) excludes cached events — only nodes that actually executed contribute to the run's reported cost.
-
-### Error Categorization (API Warning Detection)
-
-**Validation errors** (parameter format issues, ~40 patterns checked):
-- `validation_error` — bad request, invalid parameter, schema error
-- `template_error` — unresolved variables (triggers ValueError)
-
-**Resource errors** (external state, ~30 patterns):
-- `resource_error` — not found, forbidden
-- API warnings: Slack `"ok": false`, Discord errors, GraphQL `"errors": []`
-- HTTP status codes: 401, 403, 404, 429
-- MCP canonical payloads: explicit failure flags under `${node.result}` (`status: "error"`, `ok: false`,
-  `success: false`, etc.) are trusted even when the message text does not match known resource phrases.
-  Bare `error` keys without a failure flag still use the conservative phrase checks.
-
-**Ambiguity rule**: When an error matches BOTH validation and resource patterns, it's treated as **validation** (validation wins).
-
-## Gotchas
-
-- **Batch nodes skip top-level template resolution** — engine guards on `not config.batch_config`
-- **Fresh Registry instance** — always pass a new one to `compile_workflow()` per execution
-- **`__` prefixed params are reserved** — never use for user parameters
-- **Don't modify `__execution__` structure** — checkpoint integrity is critical for resume
-- **`_source_line` keys NOT filtered in split_params** — `python_code.py` reads them
-- **Compile-once cache is keyed by resolved workflow path** (`_compiled_workflow_cache`). Heterogeneous batches with `${item.workflow}` varying per item correctly cache each child separately.
-- **Two validation files** — `compilation/ir_preparation.py` (compiler-time) vs `core/workflow/validator.py` (pre-execution). Don't confuse them.
+`engine/api_warning_detector.py::detect_api_warning` owns output classification.
+Validation patterns win when they overlap resource patterns. Pass the node type:
+MCP `result` wrapper inspection is type-gated for both dict and JSON-string
+payloads; top-level explicit failure flags remain type-agnostic.

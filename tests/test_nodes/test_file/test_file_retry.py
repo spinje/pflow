@@ -95,13 +95,7 @@ class TestFileNodeRetryBehavior:
                 os.unlink(temp_path)
 
     def test_error_messages_are_user_friendly(self):
-        """Test that different error conditions produce helpful messages.
-
-        BEHAVIOR: Users should get actionable error messages, not technical details.
-
-        UPDATE (Task 82): Binary files now fallback instead of error, so removed
-        encoding error test case.
-        """
+        """Missing-file errors include actionable context."""
         node = ReadFileNode()
         node.wait = 0  # Speed up tests by removing retry delays
         node.set_params({"file_path": "/nonexistent/path/file.txt"})

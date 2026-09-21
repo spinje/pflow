@@ -27,7 +27,7 @@ Prioritize reading these files when they appear in the changes or are related to
 
 | File | Why it's prone | Fixes |
 |---|---|---|
-| `runtime/engine/batch_executor.py` | Complex error semantics (continue/abort, partial/total fail, compile vs runtime errors) | 7 of 20 post-merge fixes |
+| `runtime/engine/batch_executor.py` | Complex error semantics (continue/fail_fast, partial/total fail, compile vs runtime errors) | 7 of 20 post-merge fixes |
 | `runtime/workflow_executor.py` | Parent/child workflow boundary — signals lost in transit | 3 fixes |
 | `runtime/output_resolver.py` | Output sources from non-executed branches silently absent | 2 fixes |
 | `runtime/template_resolver.py` + `runtime/engine/template_resolution.py` | Template resolution returning `None` on missing data | Multiple |
@@ -107,7 +107,7 @@ Ask for each exception handler:
 - Is the exception logged at a level the user will see?
 - Should this be re-raised or converted to a user-visible warning?
 - Is the `except` too broad? Should it catch specific exception types?
-- Does the exception type hierarchy create surprises? (`TimeoutError` is a subclass of `OSError` on Python 3.11+ — catching `OSError` for transport errors also catches timeouts, Task 127)
+- Does the exception type hierarchy create surprises? (built-in `TimeoutError` is an `OSError` subclass on all supported versions; `concurrent.futures.TimeoutError` aliases it from 3.11 — catching `OSError` for transport errors can also catch timeouts, Task 127)
 
 Historical examples:
 - `except Exception: pass` suppressed all settings errors without logging (Task 80)
@@ -162,11 +162,11 @@ When data or signals cross a component boundary, they can be lost in transit. **
 | Boundary | What flows | What gets lost |
 |---|---|---|
 | Parent → child workflow | `_create_child_storage()` propagates keys from `_PROPAGATED_KEYS` | Any cross-cutting key NOT in that list (fix ce8920de) |
-| Child → parent workflow | Output values via `output_mapping` or auto-outputs; error status via action strings | Error action strings — only exceptions were checked (fix 284a5934) |
+| Child → parent workflow | Child declared outputs or filtered child-store fallback values; error status via action strings | Error action strings — only exceptions were checked (fix 284a5934) |
 | Node → namespaced store | `set_params()` writes params on the node instance | Historical: pre-wrapper-removal, params didn't forward to wrapper chain (Task 96). Current architecture is bare nodes — verify if any new wrapping layer is added. |
 | Root store ↔ namespaced store | Templates resolve through `TemplateResolver` | Ad-hoc code reading `shared[key]` directly misses namespaced data |
 | Runtime → CLI display | Execution results formatted for display | CLI has its own `_display_execution_summary()` in `cli/workflow_output.py` separate from `success_formatter.py` — updating one misses the other (Task 96) |
-| Runtime → MCP server | Execution results returned as tool responses | MCP path may skip side effects that CLI path includes (Task 107: batch variable registration) |
+| Runtime → MCP server | Execution results returned as tool responses | Check validation coverage across entry points. Historical Task 107: batch-variable registration was missed; current runtime item/index injection is independent of validation metadata. |
 | Any error → JSON output | Errors unified through `cli/error_output.py` (Task 149) — verify all new error paths route through it | Pre-Task 149 history: per-path JSON branching with 72% gap (Task 115 context) |
 | Runtime → trace/metrics | Execution events collected for reporting | Cached results still reporting phantom costs (fix c4721dfa) |
 
@@ -189,14 +189,14 @@ The system appears to work but uses outdated data. This is distinct from "data d
 - Cached LLM events still contributed to cost aggregation → phantom costs (fix c4721dfa)
 
 **Instance state across iterations**:
-- `copy.copy()` in the engine's graph traversal loop shares mutable instance attributes → `_resolved` from iteration 1 consumed in iteration 2 (Task 106)
-- Any `self.X` set in `prep()` or `exec()` persists across shallow-copied loop iterations
+- Historical, before wrapper removal: shallow-copy reuse in graph traversal contributed to stale `_resolved` values from iteration 1 being consumed in iteration 2 (Task 106).
+- If shallow-copy reuse is reintroduced, distinguish shared mutable referents from attribute rebinding; also check stale cached fields on a reused instance or a copy made after caching.
 
 If the diff touches caching, memoization, registry, or any state that persists across invocations — check invalidation conditions.
 
 ### 7. Batch-Specific Silent Failures
 
-Batch processing is the #1 bug attractor (7 of 20 post-merge fixes). If the diff touches batch code, run the batch scenario matrix owned by `.claude/agents/review-feature-interactions.md` (§Batch Processing Interactions), asking the silent-outcome question for each scenario — 0 items; all fail + continue; some fail + continue; compile error in item; all succeed + abort; sub-WF returns "error" action: does it produce a visible error/DEGRADED status, or does it look like success?
+Batch processing is the #1 bug attractor (7 of 20 post-merge fixes). If the diff touches batch code, run the batch scenario matrix owned by `.claude/agents/review-feature-interactions.md` (§Batch Processing Interactions), asking the silent-outcome question for each scenario — 0 items; all fail + continue; some fail + continue; compile error in item; all succeed + fail_fast; sub-WF returns "error" action: does it produce a visible error/DEGRADED status, or does it look like success?
 
 ### 8. Validation Gaps
 

@@ -95,7 +95,6 @@ def extract_metadata(cls: type, module_path: str, file_path: Path, extractor: An
     if extractor is None:
         extractor = get_metadata_extractor()
 
-    # Get basic metadata (current implementation)
     metadata: dict[str, Any] = {
         "module": module_path,
         "class_name": cls.__name__,
@@ -104,7 +103,6 @@ def extract_metadata(cls: type, module_path: str, file_path: Path, extractor: An
         "file_path": str(file_path.absolute()),
     }
 
-    # NEW: Parse interface from docstring
     try:
         parsed = extractor.extract_metadata(cls)
 
@@ -117,8 +115,7 @@ def extract_metadata(cls: type, module_path: str, file_path: Path, extractor: An
             "actions": parsed.get("actions", []),
         }
     except Exception:
-        # For MVP: Fail fast on parsing errors - fix the node!
-        # Provide actionable error messages with file location
+        # Fail fast with the node location so malformed interfaces are fixed at the source.
         logger.exception(
             f"Failed to parse interface for {cls.__name__} at {file_path}:\n"
             f"  Fix: Check Interface section formatting in docstring"

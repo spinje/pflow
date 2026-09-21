@@ -70,7 +70,7 @@ This produces three file outputs:
 - `docs/changelog.mdx` — Mintlify `<Update>` component
 - `releases/<version>-context.md` — full context for verification
 
-The CLI output includes a `suggested_version` (computed from entry verbs: Removed/Changed = major, Added = minor, else patch). Capture this from the output.
+The CLI output includes a `suggested_version` (major only when `is_major_release=true`; otherwise Added = minor, else patch). Capture this from the output.
 
 ### 4. Review
 
@@ -109,7 +109,7 @@ The version bump in `pyproject.toml` makes `uv.lock` stale. CI runs `uv lock --l
 
 ### 5b. Check roadmap
 
-Read `docs/roadmap.mdx` and check if any items listed under "Now" or "Next" were completed in this release. If the roadmap looks stale, ask the user if they want to update it before committing.
+Read `docs/roadmap.mdx` and check if any items listed under "Now" or "Later" were completed in this release. If the roadmap looks stale, ask the user if they want to update it before committing.
 
 ### 6. Commit
 

@@ -39,7 +39,7 @@ Trace `from pflow.X import Y` to understand dependencies. Check `__init__.py` fo
 
 Project docs are loaded as CLAUDE.md context — read them first instead of restating from memory. Point at specific sections when citing, not just the file.
 
-- **Project status, conventions, planned features** → root `CLAUDE.md`
+- **Current capabilities, conventions, and task navigation** → root `CLAUDE.md`; planned work → current task/issue records
 - **Architecture navigation** → `architecture/CLAUDE.md` (full doc inventory + reading paths by goal)
 - **Current system architecture** → `architecture/architecture.md` (canonical execution flow)
 - **Implementation-level docs** (load automatically when reading source in those dirs):
@@ -91,7 +91,7 @@ Project docs are loaded as CLAUDE.md context — read them first instead of rest
 **Understand how a CLI command works end-to-end:**
 1. `grep "command_name" src/pflow/cli/main.py src/pflow/cli/commands/*.py` → find entry point
 2. Follow imports to the handler (likely `cli/commands/<command>.py`)
-3. Trace through `execution/runner.py` (`WorkflowRunner.run`) → validation → compilation → engine
+3. For workflow execution, trace `execution/runner.py` (`WorkflowRunner.run`) → validation → compilation → engine; otherwise follow the command's service.
 4. Check `tests/test_cli/` for CLI-level tests
 
 **Trace the validation pipeline for a workflow:**

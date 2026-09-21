@@ -1,45 +1,34 @@
 # Cache Analysis Stages
 
-Each file is one analytical concern with a single entry point, called from
-`analyze()` or from `per_call_pipeline`. Per-file responsibility and the
-"where do I add X?" routing live in the parent `../CLAUDE.md`; this file only
-covers what spans the stages and is easy to get wrong.
+Task→stage routing lives in the parent `../CLAUDE.md`. This file covers
+dependencies and helper placement across stages.
 
-## Import DAG -- the one rule that matters
+## Dependency boundary
 
-Stages import downward only. `row_builder.py` is the leaf.
+`row_builder.py` is the leaf: keep it independent of sibling stages. Multi-stage
+row/warning/cross-workflow orchestration belongs in `per_call_pipeline.py`.
+If a row-builder caller needs another stage's result, move that orchestration up
+rather than introducing a reverse import.
 
-    per_call_pipeline    ─▶ row_builder, cross_workflow, warnings   (orchestrator)
-    warnings             ─▶ row_builder, suggestions
-    cross_workflow       ─▶ row_builder, suggestions
-    partial_declarations ─▶ row_builder, suggestions
-    fragmentation        ─▶ suggestions
-    suggestions          ─▶ row_builder
-    row_builder          ─▶ (nothing)   ← leaf; NEVER import a sibling here
-    summary              ─▶ (nothing)
+Keep sibling-stage dependencies one-way: `per_call_pipeline` →
+`warnings`/`cross_workflow` → `suggestions` → `row_builder`.
+`partial_declarations` uses `suggestions`/`row_builder`; `fragmentation` uses
+`suggestions`; `summary` imports no sibling stages. Higher stages may also
+import `row_builder` directly; avoid reverse edges when moving helpers.
 
-**Never make `row_builder` import a sibling stage.** Almost everything imports
-its row/IR primitives, so a back-edge is an instant cycle. This is exactly why
-the multi-stage row + warning + cross-workflow orchestrator lives in
-`per_call_pipeline.py` (which may import all three) and not in `row_builder.py`.
-If you find yourself wanting a sibling's logic from inside `row_builder`, move
-the *caller* up to `per_call_pipeline` — don't pull the helper down.
+`row_builder.py` and `suggestions.py` both define live `_batch_aliases` and
+`_is_batch_scoped_ref` helpers. Do not resolve this duplication by importing
+suggestions into row_builder: suggestions already imports row_builder, creating
+a cycle. This constraint does not make every possible consolidation invalid.
 
-## Why `_batch_aliases` / `_is_batch_scoped_ref` exist in two files
+## Helper ownership
 
-Both `row_builder.py` and `suggestions.py` define them, and both copies are live.
-This is deliberate, not drift: `row_builder` (the leaf) needs them but cannot
-import them from `suggestions` without creating the cycle above, so it keeps its
-own copy. Do NOT consolidate them — same forced-duplication pattern as the copies
-in `core/cache_overlap.py`.
+Shared IR helpers stay with their primary consumers; a generic helper module was
+rejected because these functions had mixed responsibilities.
 
-## Where the shared IR helpers live
+- `row_builder.py`: `_node_inputs`, `_total_observed_invocations`, `_static_excerpt`.
+- `suggestions.py`: `_cache_items`, `_cache_item_names`.
 
-They sit with their primary consumer (one `_ir_helpers.py` was considered and
-rejected — heterogeneous, low leverage):
-
-- `row_builder.py`: `_node_inputs`, `_total_observed_invocations`, `_static_excerpt`
-- `suggestions.py`: `_cache_items`, `_cache_item_names`
-
-`stages/__init__.py` is intentionally docstring-only so importing one stage never
-eagerly loads the others. `discrepancy/` is a sub-package with its own `CLAUDE.md`.
+`stages/__init__.py` stays docstring-only so importing one stage does not eagerly
+load the others. Prediction/diagnosis boundaries and test surfaces live in
+`discrepancy/CLAUDE.md`.

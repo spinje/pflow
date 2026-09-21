@@ -51,21 +51,16 @@ def format_execution_errors(
         formatted["errors"][0]["raw_response"]  # sanitized
         formatted["execution"]["steps"]         # per-node execution state
     """
-    # Extract checkpoint from shared store
     checkpoint = result.shared_after.get("__execution__", {})
 
-    # Process each error
     formatted_errors = []
     for error in result.errors:
-        # Create copy to avoid modifying original
         formatted_error = error.to_display_dict() if isinstance(error, Diagnostic) else error.copy()
 
-        # Apply sanitization if requested
         if sanitize:
             # Lazy import to avoid circular dependencies
             from pflow.core.security_utils import sanitize_parameters
 
-            # Sanitize sensitive fields
             if "raw_response" in formatted_error:
                 formatted_error["raw_response"] = sanitize_parameters(formatted_error["raw_response"])
 
@@ -74,25 +69,21 @@ def format_execution_errors(
 
         formatted_errors.append(formatted_error)
 
-    # Build result dictionary
     result_dict: dict[str, Any] = {
         "errors": formatted_errors,
         "checkpoint": checkpoint,
     }
 
-    # Extract metrics summary if collector provided
     metrics_summary = None
     if metrics_collector and shared_storage:
         trace = shared_storage.get("__trace_collector__")
         llm_calls = trace.collect_llm_calls() if trace else []
         metrics_summary = metrics_collector.get_summary(llm_calls)
 
-    # Add execution state if workflow IR and shared storage provided
     if ir_data and shared_storage:
         steps = build_execution_steps(ir_data, shared_storage, metrics_summary)
         if steps:
             steps = _compact_batch_error_details(steps)
-            # Count nodes by status
             completed_count = sum(1 for s in steps if s["status"] == "completed")
             nodes_total = len(steps)
 
@@ -103,9 +94,7 @@ def format_execution_errors(
                 "steps": steps,
             }
 
-    # Add metrics summary if available
     if metrics_summary:
-        # Extract workflow node count
         workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
         node_count = workflow_metrics.get("nodes_executed", 0)
 

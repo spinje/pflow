@@ -400,8 +400,7 @@ class _LLMSummaryAccumulator:
         if self.unavailable_models or self.unavailable_models_unnamed_count:
             result["total_cost_usd"] = None
             result["partial_cost_usd"] = round(self.priced_cost, 6) if self.priced_cost > 0 else None
-            # Bundle 7 / F#17 deferred: emit per-model call counts so renderers
-            # can render "model (N calls)" without rebuilding the count from
+            # Per-model call counts let renderers show "model (N calls)" without rebuilding them from
             # individual call events. Additive within trace 2.x — consumers
             # gate on ``format_version.startswith("2.")``.
             result["unavailable_models"] = [

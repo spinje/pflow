@@ -1,96 +1,29 @@
-# MCP Server Tools
+# MCP Tools
 
-**Purpose**: MCP tools are the public API for AI agents (Claude Desktop, Continue, etc.). Tool docstrings and parameter descriptions are directly visible to LLMs — they ARE the interface documentation.
+Tool docstrings and `Annotated`/`Field` descriptions are the public API seen by
+agents. Tools delegate business logic to services; the parent guide owns the
+async/thread and error-boundary contracts.
 
-## Architecture
+## Navigation
 
-**Tools are thin async wrappers** around services. Never put business logic in tools.
+- `discovery_tools.py`: workflow/component discovery.
+- `execution_tools.py`: execute, validate, plan, save, probe, cached-field reads,
+  and cache analysis.
+- `registry_tools.py`: node descriptions/listing.
+- `workflow_tools.py`: saved workflow listing/descriptions.
+- `__init__.py`: imports tool modules to trigger decorator registration.
 
-```python
-@mcp.tool()
-async def tool_name(param: Annotated[Type, Field(description="...")]) -> str:
-    """Docstring visible to LLMs."""
-    def _sync_operation():
-        return Service.method(param)  # Delegate to service
-    return await asyncio.to_thread(_sync_operation)
-```
+## Public-schema conventions
 
-## Docstring Rules (LLMs See This)
+- Explain parameter purpose and supported forms through Field descriptions and
+  examples; avoid a redundant Args section.
+- Document meaningful return variants, including errors and durable gate pauses.
+- Use generic example names so examples do not imply a saved workflow/tool exists.
+- Discovery tools need the complete user request, not an abbreviated technical query.
+- `workflow_execute` can pause at an unapproved gate. Pre-approval represents the
+  human's authorization; it is not a workaround for MCP's lack of interactive prompts.
 
-### Parameter Descriptions
-```python
-Field(description="Role/purpose of parameter")  # ✓ Clear, concise
-Field(description="Input parameters as key-value pairs")  # ✓ Format explained
-
-Field(description="Parameters dict")  # ✗ Too vague
-Field(description="List of node IDs to describe")  # ✗ Redundant (type is obvious)
-```
-
-### Examples Section
-**Show ALL parameter variants**:
-```python
-Examples:
-    # Variant 1: Simple case
-    param="value"
-
-    # Variant 2: Complex structure (use {...} placeholders)
-    param={"inputs": {...}, "nodes": [...], "edges": [...]}
-
-    # Variant 3: With context comment
-    param="other-format"  # When to use this
-```
-
-**Always generic**:
-- ✓ `"my-workflow"`, `"node-type"`, `"keyword"`
-- ✓ `{"param": "value"}`, `{...}`, `[...]`
-- ✗ `"pr-analyzer"`, `"github-create-issue"` (looks real, but arbitrary)
-
-**Include output context**:
-```python
-# Search for nodes (returns matching nodes in table format)
-pattern="keyword"
-```
-
-### Structure
-```python
-"""One-line summary.
-
-Extended description with key behaviors.
-
-IMPORTANT: Critical usage notes (for discovery tools: pass full user requests).
-
-Examples:
-    # Comment explaining variant
-    param=value
-
-Returns:
-    What format is returned
-"""
-```
-
-**No Args: section** — redundant with Field() descriptions.
-
-## Discovery Tools Special Rules
-
-`workflow_discover` and `registry_discover` expect **full, detailed user requests**:
-```python
-# ✓ Good: Full context, natural language
-query="I need to check GitHub for PRs every hour, analyze changes, and post summaries to Slack"
-
-# ✗ Bad: Abbreviated technical summary
-query="check PRs and notify"
-```
-
-**Why**: LLM-powered discovery needs complete context to understand intent.
-
-## Common Mistakes
-
-1. **Arbitrary examples** — `"github-pr-analyzer"` looks like a real workflow but isn't
-2. **Missing variants** — Multi-type parameters must show ALL types
-3. **Business logic in tools** — Always delegate to services
-4. **Overly technical examples** — Discovery tools need user-like descriptions
-5. **Inconsistent formatting** — Use `{...}` and `[...]` for brevity
-
-## Testing
-
-All tools tested in `tests/test_mcp_server/test_tool_registration.py` — ensures FastMCP can load them and schema is valid.
+`tests/test_mcp_server/test_tool_registration.py` checks registration/import wiring,
+a critical tool-name subset and minimum count, workflow_validate's input schema,
+and selected async definitions. Extend the relevant coverage when changing the API;
+a passing service test alone does not verify tool exposure.

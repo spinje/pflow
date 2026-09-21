@@ -79,7 +79,7 @@ class WorkflowExecutor(BaseNode):
     # default would change their fallback behavior.
     node_id: str = ""
 
-    # Task 172: the sub-workflow host's reserved correlation frame on the NEW (run-collector) path.
+    # The sub-workflow host's reserved correlation frame on the run-scoped collector path.
     # Declared at class level so the per-run reset (exec) and the descent assignment (_open_child_trace)
     # are plain assignments — not annotation-redefinitions — and so the engine's getattr read is safe
     # even when exec never ran (e.g. a parallel-batch original node).
@@ -335,20 +335,20 @@ class WorkflowExecutor(BaseNode):
             ) from e
 
     def _open_child_trace(self, parent_shared: dict[str, Any], workflow_path: Any) -> tuple[Any, Any]:
-        """Choose + enter the trace path for a sub-workflow run (Task 172).
+        """Choose the trace path for a sub-workflow run.
 
         Returns ``(trace_for_child, run_collector)`` — DECIDES the path, does NOT descend (the caller
         descends right before its try/finally so the ascend balance holds — see exec()):
 
-        - **NEW path** — the installed collector is THE run-scoped one AND we're not inside a batch item:
+        - **Run-scoped collector path** — the installed collector is run-scoped and we're not inside a batch item:
           return it as BOTH values. The caller ``descend``s into it, the child engine records FLAT into
           it, and the caller ``ascend``s ``run_collector`` on exit.
-        - **OLD path** — a batch item, or a non-run-scoped collector: a per-sub-workflow buffer collector
+        - **Buffered child collector path** — a batch item or non-run-scoped collector gets a per-sub-workflow buffer
           as ``trace_for_child`` with ``run_collector=None``; the caller embeds its events as
           ``sub_workflow_events`` (byte-for-byte unchanged).
 
         ``__index__`` (set only on batch-item stores, NOT propagated to grandchildren) and the buffer's
-        ``is_run_scoped=False`` are the two independent clauses that keep batch + every deeper node on OLD.
+        ``is_run_scoped=False`` independently keep batch and deeper nodes on the buffered path.
         """
         installed = parent_shared.get("__trace_collector__")
         if installed and getattr(installed, "is_run_scoped", False) and "__index__" not in parent_shared:
@@ -376,9 +376,9 @@ class WorkflowExecutor(BaseNode):
         # via getattr at _execute_batch_item). Parallel batch is unaffected
         # because workers deep-copy the node.
         self._child_trace_events: list[dict[str, Any]] | None = None
-        # Task 172: same instance-reuse reset for the host correlation frame — a NEW-path frame from a
+        # Reset the host correlation frame too: a run-scoped frame from a
         # prior sequential-batch iteration must not leak into a later item's host event (nor its
-        # deepcopy in a parallel worker). The deepcopy path is always the OLD batch path, so this is
+        # deepcopy in a parallel worker). The deepcopy path always uses a buffered child collector, so this is
         # inert plain data there; no __deepcopy__ hook needed.
         self._host_frame = None
 
@@ -407,7 +407,7 @@ class WorkflowExecutor(BaseNode):
 
         logger.debug(f"Executing sub-workflow from {workflow_source} (path: {workflow_path})")
 
-        # Choose + enter the trace path for this sub-workflow run (Task 172) — see _open_child_trace.
+        # Choose the trace path for this sub-workflow run; see _open_child_trace.
         trace_for_child, run_collector = self._open_child_trace(parent_shared, workflow_path)
 
         # Compile (with compile-once caching)
@@ -478,7 +478,7 @@ class WorkflowExecutor(BaseNode):
             )
         finally:
             # Balance the descent push (guarded by _host_frame: pop ONLY if we actually descended — so a
-            # CompilationError before the descend, or the OLD path, never over-pops). The frame is already
+            # CompilationError before the descent, or the buffered path, never over-pops). The frame is already
             # captured into self._host_frame for the parent engine; popping just restores the stack depth —
             # the frame is plain data and stays valid after the pop.
             if run_collector is not None and self._host_frame is not None:
@@ -595,8 +595,8 @@ class WorkflowExecutor(BaseNode):
                 shared[key] = value
 
     def _stash_child_buffer(self, run_collector: Any, trace_for_child: Any) -> None:
-        """OLD path only (``run_collector is None``): hand the buffer collector's events
-        to the parent engine to embed as ``sub_workflow_events``. On the NEW path the
+        """Buffered path only (``run_collector is None``): hand the child collector's events
+        to the parent engine to embed as ``sub_workflow_events``. On the run-scoped path the
         child's nodes already recorded flat into the run collector — no-op."""
         if run_collector is None and trace_for_child and trace_for_child.events:
             self._child_trace_events = trace_for_child.events

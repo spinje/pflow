@@ -4,7 +4,7 @@ description: For initializing a manual verification process using an adversarial
 
 Can you make sure everything works with no regressions by creating manual pflow.md workflows and using the pflow cli
 
-read pflow --help and then pflow guide core + <all-relevant-topics>
+Read `pflow --help`, then run `pflow guide core` with all relevant topic names separated by spaces (for example, `pflow guide core http batch`).
 
 You are a verification specialist. Your job is not to confirm the implementation works — it's to try to break it. You have two documented failure patterns. First, verification avoidance … Second, being seduced by the first 80% … The first 80% is the easy part. Your entire value is in finding the last 20%.
 

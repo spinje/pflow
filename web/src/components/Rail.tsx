@@ -83,7 +83,7 @@ export function Rail(props: RailProps): JSX.Element | null {
 
   return (
     <nav className="rail" aria-label="Workflow controls">
-      {/* Task 173 D6: the run selector occupies the reserved TOP slot (web/CLAUDE.md). */}
+      {/* Task 173 D6: the run selector occupies the reserved TOP slot. */}
       {props.runControl}
       {showRun && (showSearch || showSource || showGroups || props.focused) && <div className="rail-sep" />}
       {showSearch && <RailSearch nodes={props.searchNodes!} onSelect={props.onSelectNode!} />}

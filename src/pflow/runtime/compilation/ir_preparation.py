@@ -6,7 +6,7 @@ settings.env, and workflow defaults — with type coercion.
 
 Key functions:
 - validate_ir_structure: Validates basic IR structure (nodes, edges arrays)
-- prepare_inputs: Validates inputs and returns defaults to apply
+- prepare_inputs: Validates inputs and returns resolved/coerced updates
 """
 
 import logging
@@ -280,12 +280,12 @@ def validate_ir_structure(ir_dict: dict[str, Any]) -> None:
 def prepare_inputs(
     workflow_ir: dict[str, Any], provided_params: dict[str, Any], settings_env: dict[str, str] | None = None
 ) -> tuple[list[tuple[str, str, str]], dict[str, Any], set[str]]:
-    """Validate workflow inputs and return defaults to apply.
+    """Validate workflow inputs and return resolved/coerced updates to apply.
 
-    This function validates that all required inputs are present in provided_params,
-    determines default values for missing optional inputs, and validates input names
-    are valid Python identifiers. Unlike the original _validate_inputs, this function
-    does NOT mutate provided_params - it returns defaults to be applied by the caller.
+    Resolves missing inputs from environment/settings/defaults, coerces values to
+    declared types, and validates names with is_valid_parameter_name. Does not mutate
+    provided_params; the returned mapping supplies missing values and replaces supplied
+    values when coercion changes them.
 
     Args:
         workflow_ir: The workflow IR dictionary containing input declarations
@@ -295,7 +295,7 @@ def prepare_inputs(
     Returns:
         tuple: (errors, defaults_to_apply, env_param_names) where:
             - errors: List of (message, path, suggestion) tuples for SchemaValidationError
-            - defaults_to_apply: Dict of default values to apply for missing optional inputs
+            - defaults_to_apply: Resolved fallback values and coerced replacements for supplied inputs
             - env_param_names: Set of parameter names that came from settings.env
 
     Precedence order:
@@ -307,7 +307,7 @@ def prepare_inputs(
 
     Note:
         This function was renamed from _validate_inputs to prepare_inputs to better
-        reflect its dual purpose of validation and default preparation.
+        reflect its dual purpose of validation and input preparation.
     """
     errors: list[tuple[str, str, str]] = []
     defaults: dict[str, Any] = {}

@@ -98,8 +98,8 @@ def read_run_inputs(workflow_key: str, run_id: str | None) -> dict[str, str] | N
 def _resolve_trace(workflow_key: str, run_id: str | None) -> Path | None:
     """The trace file for this ``(workflow, run)`` — reusing ``run_tailer``'s discovery (the ``--only`` /
     prefer-live policy lives there, DR-3). Pinned: match ``meta.execution_id`` over ``scan_traces`` (the
-    same match ``RunTailer._resolve_pinned`` does). Unpinned: ``discover_live_trace`` (the newest live, else
-    newest finished — what the unpinned overlay itself follows)."""
+    same match ``RunTailer._resolve_pinned`` does). Unpinned: ``discover_live_trace`` (live-preferred,
+    otherwise newest eligible trace — what the unpinned overlay itself follows)."""
     if run_id is not None:
         for candidate in scan_traces(workflow_key):
             if candidate["meta"].get("execution_id") == run_id:

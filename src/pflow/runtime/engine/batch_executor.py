@@ -1225,7 +1225,7 @@ def _push_batch_warnings(
     is emitted as a non-degrading ``Severity.INFO`` advisory — visible in
     ``--report`` / CLI output but not flipping the workflow to DEGRADED. The
     runtime cannot tell "empty because the work is done" from "empty because
-    upstream broke" (there is no loop construct), so it surfaces the fact
+    upstream broke", so it surfaces the fact
     without asserting wrongdoing. The genuinely anomalous cases — items that
     ran but produced empty output, or per-item errors — stay degrading.
     """

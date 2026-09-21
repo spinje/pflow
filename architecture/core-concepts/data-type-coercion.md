@@ -228,5 +228,5 @@ Convenience wrapper for when you don't need to distinguish success from failure.
 - [Template Variables Reference](../reference/template-variables.md) — full template syntax and resolution rules
 - [Shared Store Pattern](./shared-store.md) — how nodes communicate through the shared store
 - `src/pflow/core/json_utils.py` — shared JSON parsing utility (source of truth for parsing logic)
-- `src/pflow/runtime/CLAUDE.md` — runtime module documentation (wrapper chain, template system)
+- `src/pflow/runtime/CLAUDE.md` — runtime module documentation (engine and template resolution)
 - `scratchpads/json-parse-bug/bug-report.md` — the bug that prompted this documentation

@@ -82,7 +82,6 @@ def _add_from_json_string(manager: MCPServerManager, json_str: str) -> list[str]
         return manager.add_servers_from_config(config)
 
     # Format 2 & 3: Direct server map (one or more servers)
-    # Check if all values are server configs (have command or url)
     if all(isinstance(v, dict) and _is_server_config(v) for v in config.values()):
         wrapped = {"mcpServers": config}
         return manager.add_servers_from_config(wrapped)

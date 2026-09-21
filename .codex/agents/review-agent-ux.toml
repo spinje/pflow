@@ -19,7 +19,7 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 
 ## Available Infrastructure
 
-Before flagging a UX issue, check if infrastructure already exists. New code should use existing patterns. **Canonical reference: `src/pflow/core/CLAUDE.md`** — the "When to use which exception" table maps every error context to its structured exception class.
+Before flagging a UX issue, check if infrastructure already exists. New code should use existing patterns. **Canonical reference: `src/pflow/core/CLAUDE.md`** — see its `exceptions.py` section for diagnostic guidance, then the class definitions in `core/exceptions.py` and `core/user_errors.py` for the appropriate structured exception.
 
 | Infrastructure | Location | Purpose |
 |---|---|---|
@@ -97,7 +97,6 @@ Errors should include contextual information that helps the agent locate and fix
 Historical examples of missing context:
 - `"Empty command string"` — which MCP server? which config? (current code)
 - `"HTTP 404"` — no URL, no response body, no suggestion (current code)
-- `"LLM returned empty response"` — no model name, no prompt context (current code)
 - `"Unknown error"` — 7+ locations fall back to this (current code)
 - `"Missing required 'file_path' parameter"` — no node ID or workflow context (current code)
 
@@ -156,7 +155,8 @@ Check that errors use the appropriate mechanism:
 | User input errors | `UserFriendlyError` subclass with what/why/how | Bare `ValueError` |
 | Compilation errors | `CompilationError` with suggestion field | Generic `RuntimeError` |
 | Parse errors | `MarkdownParseError` with suggestion | Generic `ValueError` |
-| Validation warnings | Accumulated in `__warnings__` list | `print()` or `click.echo()` directly |
+| Validation warnings | Returned `Diagnostic` values | `print()` or `click.echo()` directly |
+| Runtime warnings | `shared["__warnings__"]` dict keyed by node ID | `print()` or `click.echo()` directly |
 | CLI errors | `ctx.exit(1)` with message when Click context is in scope; `sys.exit(1)` outside Click context (both patterns exist in codebase) | `raise SystemExit` |
 
 ### 9. "Did You Mean?" and Suggestions

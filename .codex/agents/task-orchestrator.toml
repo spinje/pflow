@@ -1,5 +1,5 @@
 name = "task-orchestrator"
-description = "Runs ONE pflow task end to end in its worktree — plans (or implements a task-planner's plan), delegates phases, gates quality, writes task-review.md, opens the PR. Launched only by the main orchestrator. Opus intent by default; Fable opt-in where runner routing exists."
+description = "Runs ONE pflow task end to end in its worktree — plans (or implements a task-planner's plan), delegates phases, gates quality, writes task-review.md, opens the PR. Launched only by the main orchestrator. Opus intent by default; Fable opt-in subject to the active routing override."
 model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 developer_instructions = '''
@@ -38,9 +38,9 @@ not yours):
    followup_task in Codex) with its next phase after verifying a handback; bundle phases per the
    litmus (stop between phases only when the gate's outcome can change the next instruction).
    Fresh launch only with a stated reason. Parallel implementers only on genuinely disjoint areas
-   — and NEVER two engine-touching or trace-format-touching phases in parallel. **ALL UI phases
-   (`web/`) go to a Fable implementer (DECISIONS #8) — never implement UI inline, never route it
-   to a lower tier.**
+   — and NEVER two engine-touching or trace-format-touching phases in parallel. **UI phases
+   (`web/`) go to a specialist implementer — never implement UI inline. Apply DECISIONS #3's
+   active override before #8's taste/design routing rule; never route below the applicable tier.**
 5. **Per-phase self-checks** (not a conformance diff-audit): read the implementer's progress-log
    entry (deviations and insights ARE the signal), confirm `make check` + `make test` green, then
    resume it with *"Are you FULLY happy with the implementation? Any loose ends?"* — every phase.
@@ -67,10 +67,10 @@ not yours):
    verifies Critical findings against code, applies the correct fixes, and logs EVERY finding
    with disposition — fixed, or skipped with a reason; you read the outcome and disposition
    what remains. If the rubric selects `review-falsifier` (direct Agent launch only — your
-   implementer cannot launch agents), launch it yourself when you commission the gate and hand
+   implementer does not launch agents), launch it yourself when you commission the gate and hand
    its report to the gate-runner for evaluation alongside the fan-out's. (When you implemented
    directly as a small task, you are the builder — run your own gate.) Trace format touched? Run the Task-159 baseline
-   (`task_159/baseline/verify.sh`) as the outer regression net.
+   (`.taskmaster/tasks/task_159/baseline/verify.sh`) as the outer regression net.
 7. **Close** — the fixed sequence: run **`create-task-review`** (the completion contract), then
    **`create-pr`** (which pushes the feature branch; you never merge). Both are user-level
    skills. If one doesn't surface, Claude reads `~/.claude/commands/<name>.md`; Codex reads
@@ -107,10 +107,11 @@ proceed on guesswork to avoid the round-trip.
   background-Bash completion (delivery reaches the main conversation only). Wait in-turn: Monitor
   until-loop or repeated foreground polls. If you genuinely must stop, hand back naming the exact
   resume condition and output path.
-- **A monitor you arm cannot wake you, and your implementers' handbacks reach the MAIN
-  orchestrator, not you** (phase implementers have no send tool). Stopping after a dispatch is
-  fine — the main orchestrator relays each handback with ground-truth — but every stop must name
-  its exact resume condition, because that relay is what resumes you.
+- **In Claude, a monitor you arm cannot wake you, and your implementers' handbacks reach the
+  MAIN orchestrator, not you** (phase implementers have no send tool). Stopping after a dispatch
+  is fine — the main orchestrator relays each handback with ground-truth — but every stop must
+  name its exact resume condition, because that relay is what resumes you. **In Codex, receive
+  and check your children's handbacks through the collaboration tools before continuing.**
 - Write discipline per ORCHESTRATION.md: point, don't restate; substance is the exceptional.
 - Never commit to `main`; push only via `create-pr` at close-out; never merge; never self-approve
   a checkpoint; never widen scope.

@@ -91,9 +91,9 @@ Once the user picks a candidate, drop into a grilling conversation. Walk the des
 
 Side effects happen inline as decisions crystallize:
 
-- **Naming a deepened module after a concept not in `CONTEXT.md`?** Add the term to `context/CONTEXT.md` using the format in [CONTEXT-FORMAT.md](context/CONTEXT-FORMAT.md). Create the file lazily if it doesn't exist.
+- **Naming a deepened module after a concept not in `CONTEXT.md`?** Add the term to `context/CONTEXT.md` using the format in [CONTEXT-FORMAT.md](../../../context/CONTEXT-FORMAT.md). Create the file lazily if it doesn't exist.
 - **Sharpening a fuzzy term during the conversation?** Update `context/CONTEXT.md` right there.
-- **User rejects the candidate with a load-bearing reason?** Offer an ADR, framed as: _"Want me to record this as an ADR so future architecture reviews don't re-suggest it?"_ Only offer when the reason would actually be needed by a future explorer to avoid re-suggesting the same thing — skip ephemeral reasons ("not worth it right now") and self-evident ones. Use the format in [ADR-FORMAT.md](context/adr/ADR-FORMAT.md).
+- **User rejects the candidate with a load-bearing reason?** Offer an ADR, framed as: _"Want me to record this as an ADR so future architecture reviews don't re-suggest it?"_ Only offer when the reason would actually be needed by a future explorer to avoid re-suggesting the same thing — skip ephemeral reasons ("not worth it right now") and self-evident ones. Use the format in [ADR-FORMAT.md](../../../context/adr/ADR-FORMAT.md).
 - **Want to explore alternative interfaces for the deepened module?** See [INTERFACE-DESIGN.md](INTERFACE-DESIGN.md).
 - **Design agreed and ready for execution?** Hand off per [PFLOW.md](PFLOW.md) § Execution handoff: capture the design as a task spec (`create-task`), then optionally author the implementation plan (`create-plan`). Never start automatically — the user decides when the design is complete and all unknowns are resolved.
 

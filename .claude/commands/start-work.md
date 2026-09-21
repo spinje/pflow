@@ -47,7 +47,7 @@ Present your findings and options to the user when you have a clear understandin
 The final plan must answer, explicitly:
 
 - **Purpose** — why is this needed?
-- **Scope** — does this belong now (see Project Status / Roadmap in CLAUDE.md)? Why?
+- **Scope** — does this belong now (see `./scripts/tasks` and the relevant task specs)? Why?
 - **Dependencies** — what does this depend on, and what depends on it?
 - **Is the task too big?** — if so, where does it split?
 - **Test strategy** — what tests will validate this? (Tests ship with implementation.)

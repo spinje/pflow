@@ -131,7 +131,7 @@ Historical examples of missed interactions:
 
 If the plan touches node-level code (BaseNode/Node lifecycle, wrappers, engine traversal), check for these known traps:
 
-- **`copy.copy()` shares mutable instance state** — the engine's graph traversal loop uses shallow copy for loop iterations. Any mutable instance attribute (`self.X`) set in one iteration carries over to the next. (Task 106: stale `_resolved` from iteration 1 consumed in iteration 2)
+- **Node reuse retains mutable instance state** — the engine reuses node instances during traversal and loop re-entry, so execution-derived instance attributes can leak between visits. Parallel batch deep-copies the node per worker. (Historical Task 106: stale `_resolved` from iteration 1 consumed in iteration 2.)
 - **`self.cur_retry` is instance state** — `for self.cur_retry in range(...)` races in parallel execution. (Task 96)
 - **Action strings vs exceptions** — the node lifecycle uses action strings (`"error"`, `"default"`) for flow control, not Python exceptions. Code that only checks for exceptions misses node error signaling. (Fix 284a5934: sub-workflow "error" action treated as success)
 - **`set_params()` mutates the node in place** — `BaseNode.set_params()` sets params on the node instance. Historically (pre-wrapper-removal), this didn't forward to wrapper-chain inner nodes; the wrapper architecture has been replaced by bare nodes + `NodeConfig` + parallel-batch `copy.deepcopy(node)`, but if anything reintroduces a wrapping layer, verify params reach the inner instance. (Task 96 history)
@@ -167,7 +167,7 @@ Historical examples:
 Common phases that plans forget:
 
 **Tests, at the right tier:**
-- Tests ship WITH implementation (root CLAUDE.md: a task without tests is incomplete) — the plan must say, per phase, which failure scenarios its tests catch and where they live; a plan whose testing story is "add tests at the end" is missing its test phases.
+- Tests ship WITH implementation — the plan must say, per phase, which failure scenarios its tests catch and where they live; a plan whose testing story is "add tests at the end" is missing its test phases.
 - A new everywhere-rule (one that must hold for every node type / every entry point) needs a meta-test, not N hand-written copies.
 
 **Documentation & agent instructions:**
@@ -233,7 +233,7 @@ Based on what the plan describes, is the scope realistic?
 
 Don't estimate time — but flag when a plan says "simple change" but the code path analysis shows it touches 5+ files across 3 layers.
 
-Two more scope questions: does the plan fit the CURRENT phase (root CLAUDE.md Project Status / Roadmap — building ahead of phase needs explicit justification)? And does anything in it duplicate what an existing system already does (the validator pipeline, the diagnostics system, the unified output pipeline, the template resolver) — a plan that rebuilds a house seam beside itself is a first-order defect here.
+Two more scope questions: does the plan fit the task's approved scope and current project priorities (use the task/issue and current task state, reached through root CLAUDE.md's `Capabilities and Task Navigation`; building ahead of an explicitly established phase needs justification)? And does anything in it duplicate what an existing system already does (the validator pipeline, the diagnostics system, the unified output pipeline, the template resolver) — a plan that rebuilds a house seam beside itself is a first-order defect here.
 
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 

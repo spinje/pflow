@@ -1094,9 +1094,8 @@ def _render_action_list(
 ) -> str:
     """Render ranked action rows with optional savings column.
 
-    Stage-1 final UX pass: dropped the ``[cache.X]`` bracket prefix (visually
-    coded category names as error codes — top-10% codebases like mypy/ruff
-    don't bracket long namespaced descriptors). Headline leads from the
+    The ``[cache.X]`` bracket prefix is omitted so advisory rows do not present
+    long namespaced descriptors as prose labels. Headline leads from the
     catalog's ``headline_template``; scope is on its own line; descriptive
     message is indented underneath as the reason. Blocking errors still show
     their diagnostic ID inline so validator failures remain searchable across

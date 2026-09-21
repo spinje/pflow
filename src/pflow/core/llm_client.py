@@ -82,7 +82,7 @@ def _normalize_model_name(model: str) -> str:
 # LiteLLM eagerly loads handlers and Pydantic types for every provider it
 # supports. Keeping the import inside the call sites means CLI invocations
 # that never call the LLM (pflow validate, --dry-run, fully-cached runs,
-# the future analyze-cache command) skip the cost entirely. The only path
+# the analyze-cache command) skip the cost entirely. The only path
 # that pays it is an actual LLM call — and there the cost is amortized.
 #
 # Side effect: the first complete() call in a process pays ~700ms which
@@ -1096,8 +1096,8 @@ def _opt_int(obj: Any, attr: str) -> int | None:
     ``cache_read_input_tokens``, ``prompt_tokens_details.cached_tokens``)
     so downstream consumers can tell "didn't expose telemetry" from
     "exposed telemetry that happens to be zero." Malformed values (non-int,
-    non-None) collapse to ``None`` for safe degradation — top-10% adapter
-    behavior is graceful tolerance of unexpected provider response shapes.
+    non-None) collapse to ``None`` so unexpected provider response shapes
+    degrade gracefully.
     """
     value = getattr(obj, attr, None)
     if value is None:

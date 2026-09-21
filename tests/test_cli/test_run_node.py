@@ -106,8 +106,8 @@ def test_returns_none_for_a_trace_corrupt_after_its_meta_line(tmp_path, monkeypa
 
 
 def test_unpinned_uses_discover_live_trace(tmp_path, monkeypatch) -> None:
-    """``run_id=None`` → ``discover_live_trace`` (the newest live, else newest finished) — the same trace the
-    unpinned overlay follows."""
+    """``run_id=None`` → ``discover_live_trace`` (live-preferred, otherwise newest eligible trace) — the
+    same trace the unpinned overlay follows."""
     debug = _debug(tmp_path, monkeypatch)
     wf = str(tmp_path / "wf.pflow.md")
     _write_trace(debug, wf, "20260101-000000-000001", [_event("greet", node_output={"stdout": "hi"})])

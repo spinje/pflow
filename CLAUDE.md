@@ -61,7 +61,7 @@ This file provides guidance to Claude Code when working with code and documentat
 
 ### Node Lifecycle Primitives
 
-pflow's node system is built on `BaseNode` and `Node` (~90 lines in `src/pflow/core/node.py`). These provide the lifecycle (prep/exec/post), retry logic, and graph wiring operators (`>>`, `-`). The `WorkflowEngine` (in `src/pflow/runtime/engine/`) handles graph traversal and all runtime concerns.
+pflow's node system is built on `BaseNode` and `Node` (in `src/pflow/core/node.py`). These provide the lifecycle (prep/exec/post), retry logic, and graph wiring operators (`>>`, `-`). The `WorkflowEngine` (in `src/pflow/runtime/engine/`) handles graph traversal and all runtime concerns.
 
 > When implementing features that use nodes, start by reading `src/pflow/core/node.py`, then `src/pflow/nodes/CLAUDE.md` for node implementation patterns.
 
@@ -80,7 +80,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 - **Shared Store Pattern**: All node communication through shared store
 - **Atomic Nodes**: Isolated, focused on business logic only
 - **Agent-Friendly CLI**: Primary interface for AI agents
-- **Structured Errors**: Raise `PflowError` subclasses from `src/pflow/core/exceptions.py`, never vanilla `ValueError`/`Exception`. In nodes, just raise — the engine handles retries. See `src/pflow/core/exceptions.py` for the hierarchy; `src/pflow/core/CLAUDE.md` → `exceptions.py` section for the usage table.
+- **Structured Errors**: Raise `PflowError` subclasses from `src/pflow/core/exceptions.py`, never vanilla `ValueError`/`Exception`. For node retry and error-routing contracts, see `src/pflow/nodes/CLAUDE.md`. See `src/pflow/core/exceptions.py` for the hierarchy; `src/pflow/core/CLAUDE.md` → `exceptions.py` section for diagnostic guidance.
 
 ### Technology Stack
 
@@ -92,7 +92,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 
 ### Project Structure
 
-> Every directory below has its own CLAUDE.md with file-level details.
+> Read the relevant directory’s CLAUDE.md for local navigation and gotchas.
 
 ```
 pflow/
@@ -104,6 +104,7 @@ pflow/
 ├── architecture/            # Architecture and design specs
 ├── examples/                # Example workflows and usage patterns
 ├── scripts/                 # Development and debugging scripts
+├── web/                     # Web UI frontend source and build configuration
 ├── src/pflow/
 │   ├── cli/                 # CLI entrypoints and subcommands
 │   ├── core/                # Schemas, settings, validation, utilities, LLM/prompt utils
@@ -116,6 +117,7 @@ pflow/
 │   ├── mcp/                 # MCP client integration (for MCP nodes in workflows)
 │   ├── mcp_server/          # pflow-as-MCP-server for AI agents
 │   ├── registry/            # Node registry, scanning, context building, discovery
+│   ├── ui/                  # Python web UI server and trace streaming
 │   └── guide/               # `pflow guide` content — agent instructions (core/nodes/features)
 ├── tests/                   # Test suite
 │   ├── fixtures/            # Shared test fixtures (e.g. cache_analysis workflows)
@@ -159,7 +161,7 @@ pflow/
 - Start small, build minimal components that can be expanded
 - Capture the test baseline before you change code — which tests pass and which fail, by name — then re-run `make test` and `make check` before finalizing and report the delta. "No regressions" means nothing without a baseline you captured to diff against.
 - Document decisions and tradeoffs
-- Create `CLAUDE.md` files in each code directory to document code and reasoning
+- Keep `CLAUDE.md` files focused on code navigation, verified gotchas, and durable rationale; avoid duplicating implementation details
 - Create scratch pads in `scratchpads/<conversation-subject>/` for deep thinking
 
 **Utilizing subagents**:
@@ -356,7 +358,7 @@ Full definitions and rejected framings: `.claude/skills/improve-codebase-archite
 # Run a workflow file
 uv run pflow workflow.pflow.md
 
-# Traces saved to ~/.pflow/debug/workflow-trace-<hash>-[name-]YYYYMMDD-HHMMSS.json
+# Traces saved under ~/.pflow/debug/
 uv run pflow my-workflow
 
 # Full agent usage context (only read if needed)

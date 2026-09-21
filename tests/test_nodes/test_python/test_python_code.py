@@ -135,12 +135,12 @@ class TestNativeObjectExecution:
 
 
 # ======================================================================
-# Type annotation contract (required for Task 107 markdown workflows)
+# Type annotation contract
 # ======================================================================
 
 
 class TestTypeAnnotationContract:
-    """Type annotations are required — strategic for IDE support in Task 107."""
+    """Inputs and results require type annotations."""
 
     def test_missing_input_annotation_rejected(self):
         """Input without type annotation in code is caught before execution."""
@@ -202,10 +202,7 @@ class TestTypeAnnotationContract:
             )
 
     def test_generic_type_validates_outer_only(self):
-        """list[dict] checks isinstance(value, list), ignores element types.
-
-        This is a design decision: deep validation deferred to Task 107.
-        """
+        """list[dict] checks the outer list type without validating elements."""
         shared: dict = {}
         # list[dict] with list of ints — passes because only outer type checked
         run_code_node(

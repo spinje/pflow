@@ -83,7 +83,7 @@ Base `http://127.0.0.1:<port>/` (default port 8765). Source: `web/src/utils/view
 | param | values | default | meaning |
 |---|---|---|---|
 | `workflow` | saved name, or `.pflow.md` path relative to the server's cwd | required | which workflow |
-| `direction` | `LR` \| `TD` | `LR` | layout direction |
+| `direction` | `LR` \| `TD` | auto (when omitted) | layout direction; auto chooses TD for dense pipelines, otherwise LR |
 | `density` | `beautiful` \| `advanced` | `beautiful` | node density |
 | `collapse` | `all` \| `none` | auto | initial container collapse override |
 | `source` | `1` \| `0` | `0` | open the left source pane on load |
@@ -169,7 +169,7 @@ Re-add the flag when done — headless is the standing default; do not leave hea
 ## Troubleshooting
 
 - `mcp-chrome-devtools-*` node error ("MCP tool not registered") → `pflow mcp sync chrome-devtools`.
-- `viewport` = the default `translate(0px, 0px) scale(1)` → nothing fit: empty graph, or `node=` named a node that isn't rendered.
+- `viewport` = the default `translate(0px, 0px) scale(1)` → check for an empty graph or incomplete settling. An unresolved `node=` falls back to framing the whole graph.
 - Stale output → you didn't rebuild after a `web/` change: `make ui-build`.
 - Stale output DESPITE a rebuild (old layout/styles, even mixed old+new) → the MCP Chrome's
   **HTTP cache** heuristically reused old `assets/*` (index.html itself now sends

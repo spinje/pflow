@@ -20,10 +20,12 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first) for scope, severity, 
 1. **Never a paid LLM call.** Never set, read, or export a real provider API key; never run tests marked `paid`; never `RUN_LLM_TESTS=1`. A promise that can only be attacked through a live LLM call is **UNTESTABLE HERE** — name it as a coverage gap. Workflows with `llm` nodes are attacked through their non-LLM structure (validation, template resolution, routing) or via the suite's existing mocks.
 - **Never touch real user state.** Workflow runs write traces, the iteration cache, and the saved-workflow library under `$HOME/.pflow/` — redirect HOME to a scratch dir for every run: `HOME=<scratchpad>/pflow-test-home uv run pflow …`. The redirect covers `pflow save` and run-by-saved-name too, so those surfaces are safely attackable.
 - **Probe files live in your scratchpad, never the repo tree.** Self-authored probe workflows, fixtures, and outputs all go there. At exit, `git status --porcelain` must show nothing of yours — you commit nothing, you leave nothing.
-- **Web-UI claims**: invoke the `screenshot-pflow-web-ui` skill; kill stale `pflow ui` servers first (a reuse-if-up probe serves old code), and kill only PIDs whose argv you started.
+- **Web-UI claims**: invoke the `screenshot-pflow-web-ui` skill and use a fresh server for the current checkout on an unused port. Restart/stop only server PIDs created by this review; do not reuse an unrelated existing server as proof of current code.
 - **Mutate only what you created.** Never edit repo files, delete shared fixtures, or leave background processes running.
 
 ## Execution Vehicles (prefer them in this order)
+
+In the Codex sandbox, read and apply `.agents/skills/sandbox-testing/SKILL.md` before tests or execution probes; its platform-specific executable and user-state-isolation instructions take precedence over the generic examples below, subject to the active session's permissions.
 
 1. **Real workflow runs** — `HOME=<scratch> uv run pflow <file.pflow.md> [inputs…]` from the repo root. Use `examples/` and `tests/fixtures/` workflows where one exercises the claim; author a minimal probe workflow in your scratchpad when none does. Assert on literal stdout, exit code, and (when the claim is about tracing/state) the trace file the run wrote under the redirected HOME.
 2. **The real CLI surfaces** — piped/non-TTY stdin (`echo … | uv run pflow …`), `--output-format`, `--dry-run`, exit codes, `pflow describe`/subcommands. The spec's promise usually names a surface; drive that exact surface, not the function behind it.

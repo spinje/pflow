@@ -233,7 +233,7 @@ result: dict = {"findings": findings, "gaps": gaps}
 
 ### merge
 
-Merge, don't adjudicate: deduplicate true duplicates, preserve every distinct finding with its evidence, and flag convergence. Runs as a codex agent (no API key is configured for plain `llm` nodes, and this keeps the whole workflow on one auth surface); it needs no repository access — everything it merges arrives in the prompt.
+Merge, don't adjudicate: deduplicate true duplicates, preserve every distinct finding with its evidence, and flag convergence. Runs as a Codex agent, keeping the default Codex-provider run on one auth surface without separate plain-LLM credentials. With `provider=claude`, the merge still requires Codex. It needs no repository access — everything it merges arrives in the prompt.
 
 - type: agent
 - backend: codex

@@ -33,7 +33,8 @@ between what documents claim and what code does.
    at each close). Treat every claim as a **pointer to verify, not a fact**.
 2. Verify reality: `git fetch` + `git log --oneline -15 origin/main` · `gh pr list --state merged
    --limit 10` · `gh issue list --state open --limit 40` (scan for new since the stamp) ·
-   `./scripts/tasks` · `git worktree list` · TaskList for live subagents.
+   `./scripts/tasks` · `git worktree list` · the runner's live-agent/task listing
+   (`TaskList` in Claude, `collaboration.list_agents` in Codex).
 3. Diff reality against `CURRENT-STATE.md`. Anything that moved → correct it first.
 4. Create your session file `sessions/session-NN.md`; open with a short state summary + your
    proposed next action, and let the user steer before acting.
@@ -44,8 +45,9 @@ body's, the state file's — decays. Verification is the job, not overhead.
 
 ## The operating loop
 
-1. **Pick**: roadmap order (CLAUDE.md "Next?") + open-issue audit + what the latest merges just
-   unblocked. Three work lanes: the **critical path**, **parallel-safe wins**, **hygiene/debt**.
+1. **Pick**: task board (`./scripts/tasks`) + verified programme priorities in `CURRENT-STATE.md`
+   + open-issue audit + what the latest merges just unblocked. Three work lanes: the **critical path**,
+   **parallel-safe wins**, **hygiene/debt**.
    Genuine forks → options + tradeoffs + ONE recommendation + importance (1–5); ≥3 is the user's.
    When a merge lands, scan its spawned follow-up issues before declaring "what's next".
 2. **Choose the procedure lane** (ORCHESTRATION "Lanes"): full task (and its shape — split vs
@@ -76,8 +78,8 @@ body's, the state file's — decays. Verification is the job, not overhead.
      reconcile (below). Trust the agents' gates — no independent re-review, no diff audit; but
      spot-check at the seams when something smells (builder summaries are accurate on their brief
      and wrong at the seams).
-6. **Reconcile on merge**: spawned follow-ups slotted into lanes; CLAUDE.md roadmap (move shipped
-   to ✅ — short task names only, no fluff); task Status lines; specs whose ground just moved; a
+6. **Reconcile on merge**: spawned follow-ups slotted into lanes; task Status lines (add the
+   `Completed` date when marking done); specs whose ground just moved; a
    one-line session-file entry. State docs are successor handoffs, not a journal (DECISIONS #16):
    write at real transitions only; CURRENT-STATE is rewritten at close/park, never patched
    incrementally; `BRAINDUMP.md` is touched ONLY at session close.
@@ -223,7 +225,7 @@ like a grant.
 ## Where things live (pointers, not copies)
 
 - **Process**: `.taskmaster/orchestration/ORCHESTRATION.md` · rulings: `DECISIONS.md`.
-- **State**: `CURRENT-STATE.md` + `sessions/` · CLAUDE.md roadmap · `./scripts/tasks [N]` ·
+- **State**: `CURRENT-STATE.md` + `sessions/` · `./scripts/tasks [N]` ·
   `gh issue list` / `gh pr list` · `git worktree list`.
 - **Pre-restructure history** (on-demand forensics only): `sessions/session-01.md` (the converted
   old log) · the **Genesis** section of `BRAINDUMP.md` (tacit layer from the system's founding —

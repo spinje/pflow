@@ -44,11 +44,12 @@ First acts: verify the base ref (`git log -1` vs `origin/main`) and `make instal
    phase's tests must catch**. pflow specifics a plan states explicitly where applicable: engine
    contact (`runtime/engine/`, `workflow_executor` — flag it; it triggers serialization and
    mid-task review), trace-format changes (version bump + run the Task-159 baseline
-   `verify.sh` as the outer regression net), platform-sensitive code (the blocking
-   `tests-windows` gate; ADR-0013), and how user-facing surfaces get exercised (real workflow
-   runs; **UI phases (`web/`) route to Fable — DECISIONS #8 — with the use case + look/feel
-   intent stated, and visual quality/UX as acceptance criteria verified via the
-   `screenshot-pflow-web-ui` skill**). Mark per phase **whether it triggers a mid-task review**
+   `.taskmaster/tasks/task_159/baseline/verify.sh` as the outer regression net), platform-sensitive
+   code (the blocking `tests-windows` gate; ADR-0013), and how user-facing surfaces get exercised (real workflow
+   runs; **UI phases (`web/`) retain the specialist handoff, with routing governed by DECISIONS
+   #3's active override before #8's taste/design rule. State the use case and, for design-bearing
+   phases, look/feel intent and visual quality/UX acceptance criteria. Verify every UI change
+   via the `screenshot-pflow-web-ui` skill**). Mark per phase **whether it triggers a mid-task review**
    — and when you name lenses, **assign each to the phase that INTRODUCES the risk, not the one
    that surfaces it** (a validator/runtime drift is introduced where the contract changes; the
    phase downstream merely exposes it). **Never assign `review-simplicity` to a mid-task phase**

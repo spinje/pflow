@@ -982,8 +982,8 @@ def _validate_cache_block(  # noqa: C901
     those produce a single jsonschema diagnostic at step 1 of WorkflowValidator
     OR a CompilationError on the compile path. No double-emit.
     """
-    # STEP 1: non-LLM-rejection (shape-agnostic; runs FIRST — see V5 fix in
-    # core/CLAUDE.md and the plan's Round 5 ordering note). The check is pure
+    # STEP 1: non-LLM rejection is shape-agnostic and runs first (see the ordering contract
+    # in _validate_cache_block's docstring above). The check is pure
     # key-presence + node-type-string discrimination — it does not inspect
     # the values of ``prompt_cache`` or ``prewarm``, so a malformed shape
     # on a non-LLM node still emits the structured "wrong target type"

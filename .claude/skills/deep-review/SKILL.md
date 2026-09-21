@@ -78,7 +78,7 @@ fan-out never grants. Code mode only.
 
 ## Deploy Agents (direct launch — the fallback path, and the falsifier's only path)
 
-Launch selected agents in capacity-aware parallel batches. Never exceed the runner's available child slots (Codex has four total slots, so an orchestrator can run at most three children at once). Fill the available slots in one parallel launch, wait for that batch, then launch any remainder. Keep prompts minimal — the agents have detailed built-in instructions and know the pflow codebase.
+Launch selected agents in capacity-aware parallel batches. Never exceed the runner's available child slots. Fill the available slots in one parallel launch, wait for that batch, then launch any remainder. Keep prompts minimal — the agents have detailed built-in instructions and know the pflow codebase.
 
 Include the standing noise rule in each prompt: `uv.lock` is not a review target — a lockfile change is a signal of a dependency change, not code to critique.
 
@@ -108,7 +108,7 @@ Pick by what the scope actually touches — every selected agent must earn its s
 Plan review — point at the actual file:
 ```
 Review the implementation plan for task 135 (Execution Core Compile-Once Redesign).
-Plan: .taskmaster/tasks/task_135/implementation/plan.md
+Plan: .taskmaster/tasks/task_135/implementation/implementation-plan.md
 ```
 
 Code review — the agents know git; they'll figure out the right commands:
