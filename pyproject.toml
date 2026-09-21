@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "click>=8.1,<8.2", # CLI framework (more flexible than Typer). Self-pinned to 8.1.x to DECOUPLE the click 8.x migration from the litellm bump: litellm 1.86.1 relaxed its transitive click constraint to <9.0, so without this ceiling uv would resolve click to 8.3.x — which removed CliRunner's mix_stderr kwarg, flipped stream-merging defaults (breaking ~128 mix_stderr=False sites + ~160 bare CliRunner() output assertions), and changed subgroup empty-invocation exit codes (0→2). Removing this ceiling is the job of GH #426 (click 8.x migration). <8.2 not <8.3 because 8.1.x is the only line empirically confirmed green.
+    "click>=8.1,<8.2", # CLI framework; keep 8.1 until GH #426 migrates CliRunner mix_stderr and CLI behavior.
     "jsonschema>=4.20.0", # JSON Schema validation for workflow IR
     "referencing>=0.28.4", # Offline JSON Schema reference registry for self-contained LLM output_schema validation
     "pydantic", # IR/metadata validation
@@ -33,17 +33,14 @@ dependencies = [
     "requests>=2.32.5", # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression). Slated for removal in favor of httpx — see GH #422.
     "claude-agent-sdk>=0.2.82", # Claude Agent SDK for agentic development node (>=0.2.82 for native structured output via output_format + ResultMessage.structured_output)
     "PyYAML>=6.0.0", # YAML parsing for markdown workflow format params and frontmatter
-    "litellm==1.86.1", # Provider-unified LLM client (the sole LLM seam — see src/pflow/core/llm_client.py and src/pflow/core/litellm_runtime.py). Pinned exactly because the bundled pricing-map backup is the determinism contract (LITELLM_LOCAL_MODEL_COST_MAP=True in litellm_runtime.py): the snapshot in this wheel must contain claude-opus-4-7 so offline cache-analysis stays reproducible, and bumping refreshes which models are "built-in" priced. Note: 1.86.1 RELAXED litellm's transitive click constraint to <9.0 (1.83.x hard-pinned click==8.1.8); click is now held at 8.1.x by pflow's own ceiling above — see GH #426 for the click 8.x migration. See GH #384 (offline pricing map) and GH #368 (Opus 4.7 reasoning_effort, fixed alongside this bump).
-    "openai>=1.0", # Already a transitive dep via litellm; declared directly because the LLM adapter catches `openai.OpenAIError` (the real base of LiteLLM's exception hierarchy — see src/pflow/core/llm_client.py). 1.0 is the floor where the modern openai exception hierarchy stabilized.
-    "httpx>=0.18", # Already a transitive dep via litellm; declared directly because src/pflow/core/litellm_runtime.py::ensure_model_priced calls httpx.get on cost-map miss to fetch the upstream model_cost JSON. This bypasses litellm.get_model_cost_map, which honors LITELLM_LOCAL_MODEL_COST_MAP=True (set by pflow) and would short-circuit a URL-form fetch to the bundled backup. 0.18 is the floor for raise_for_status + .json() + scalar timeout — the only httpx surface we use. GH #422 tracks consolidating HttpNode onto httpx so this becomes the only declared HTTP library.
+    "litellm==1.86.1", # Exact pin defines the bundled offline pricing snapshot; see src/pflow/core/litellm_runtime.py (GH #384).
+    "openai>=1.0", # Direct dependency: src/pflow/core/llm_client.py catches openai.OpenAIError.
+    "httpx>=0.18", # Direct upstream cost-map fetch bypasses LiteLLM bundled-only lookup; see src/pflow/core/litellm_runtime.py and GH #422.
 ]
 
 [project.optional-dependencies]
-# Web UI server (`pflow ui`, Task 168). NOTE: starlette + uvicorn are ALSO
-# pulled transitively by mcp[cli] today, so this extra adds no new wheel in
-# practice — but a feature must declare its own direct deps rather than lean on
-# another feature's transitive ones. The frontend bundle ships separately under
-# src/pflow/ui/static/ (built at release by `make ui-build`, gitignored in source).
+# Declare UI dependencies directly even though mcp[cli] also pulls them in.
+# The frontend bundle is built separately by `make ui-build` into src/pflow/ui/static/.
 ui = [
     "starlette>=0.40",
     "uvicorn>=0.30",
@@ -101,22 +98,14 @@ exclude = [
     "tox.ini",
     "uv.lock",
 ]
-# The web UI bundle (src/pflow/ui/static/, Task 168) is gitignored, so hatchling
-# excludes it from the sdist by default. `uv build` and `make build` build the
-# wheel FROM the sdist, so the wheel-target force-include below is silently
-# dropped (the sdist had no bundle to copy) and the published [ui] wheel ships
-# EMPTY → `pflow ui` 503s. This line must mirror the wheel target's `artifacts`.
-# Pinned by tests/test_packaging.py + a post-build wheel check in release CI.
+# The UI bundle is gitignored. Both sdist and wheel must include it: `uv build`
+# and `make build` build the wheel from the sdist. Without it, `pflow ui` returns 503.
+# Pinned by tests/test_packaging.py and the release CI wheel-content check.
 artifacts = ["src/pflow/ui/static/**/*"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pflow"]
-# The web UI bundle (Task 168) is a build artifact: gitignored, produced by
-# `make ui-build` at release time. Hatchling honors .gitignore by default, so
-# without this it would EXCLUDE src/pflow/ui/static/ from the wheel and ship an
-# empty [ui] bundle (`pflow ui` would 404 — plan §Review Hardening H1).
-# `artifacts` force-includes VCS-ignored build outputs. MUST be mirrored on the
-# sdist target above — `uv build`/`make build` build the wheel from the sdist.
+# Include the gitignored UI bundle; keep this in sync with the sdist target above.
 artifacts = ["src/pflow/ui/static/**/*"]
 
 [tool.mypy]

@@ -120,12 +120,12 @@ export function useCameraNavigation({
 
   // Chip navigation: focus always moves; the panel swaps only when the chip
   // names a selectable subject (an IO-port chip keeps this edge panel open).
-  // The camera FOLLOWS (user-caught 2026-06-11): a chip can name a card anywhere
+  // The camera follows because a chip can name a card anywhere
   // on the canvas — selecting it off-screen reads as a dead click. Generous
   // padding + a zoom cap make it "bring into view", not a hard close-up.
   //
-  // The follow is DEFERRED to the paint the click produces (user-caught
-  // 2026-06-12): in beautiful a focus change re-layouts (expansion), and a fit
+  // The follow is deferred to the paint the click produces: in beautiful a
+  // focus change re-layouts (expansion), and a fit
   // started at click time glides toward the target's PRE-layout position —
   // first click landed wrong, the second (cached layout, no repaint) landed
   // right. paintEpoch bumps on every completed paint — the advanced restyle
@@ -152,8 +152,8 @@ export function useCameraNavigation({
   // Hidden-tab camera re-frame. A focus that lands while the tab is hidden applies
   // its STATE (panel, dim/reveal) but never moves the camera: fitView is rAF-driven
   // and rAF is throttled/paused in a hidden tab, so the transition never runs and is
-  // not re-issued on return — the focused node ends up off-screen (user-confirmed
-  // 2026-06-23). Capture a focus that CHANGES while hidden and re-fit when the tab
+  // not re-issued on return, leaving the focused node off-screen. Capture a focus
+  // that changes while hidden and re-fit when the tab
   // is shown again, so an agent Point made while the user was away is actually framed.
   // Only a change-while-hidden re-frames — an ordinary tab return where focus didn't
   // move leaves the user's viewport alone. (Connection recovery must NOT key on

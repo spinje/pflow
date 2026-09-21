@@ -169,11 +169,6 @@ This accumulation pattern is fundamental - each node adds to the available data 
 **Why impossible**: Each workflow run is completely independent
 **Alternative**: "The workflow will process all current records. You could maintain a processed list externally"
 
-#### ❌ No User Interaction During Execution
-**User wants**: "Ask me to confirm before deleting files"
-**Why impossible**: Workflows run to completion without pausing
-**Alternative**: "I'll create a workflow that lists files to delete, then a separate one that performs deletion after your review"
-
 #### ❌ No Parallel Paths
 Conditional branching picks ONE path (not multiple simultaneously). Batch processing handles concurrent operations on multiple items (see `pflow guide batch`).
 

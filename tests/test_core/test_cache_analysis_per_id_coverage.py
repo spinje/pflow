@@ -5,8 +5,8 @@ emits it (dead-code regression). Iterates the catalog at test time so adding
 a new ID without a corresponding emission path fails CI.
 
 The full byte-exact text/JSON goldens are deferred to v1.x in favor of these
-structural checks: ``EXPECTED_CATALOG_COUNT`` ensures count drift can't hide,
-and the per-id round-trip locks the agent-facing JSON contract for every ID.
+structural checks. ``EXPECTED_CATALOG_COUNT`` is an auto-derived convenience
+export; the per-ID round-trip locks the agent-facing JSON contract for every ID.
 """
 
 from __future__ import annotations
@@ -463,8 +463,7 @@ def test_per_id_diagnostic_json_round_trip(warning_id: str) -> None:
     through json.dumps/loads cleanly and carries ``id`` at top level. Catches
     non-JSON-serializable values (Path, set, etc.) leaking into context, and
     the regression where ``id`` gets nested inside ``context`` instead of
-    surfacing at the top of the payload (top-10% diagnostic systems —
-    mypy/rustc/ruff — surface stable IDs at top level for filtering)."""
+    surfacing at the top of the payload, where stable IDs support filtering."""
     node_id, kwargs = _kwargs_for(warning_id)
     diag = make_diagnostic(warning_id, node_id=node_id, **kwargs)
     payload = diag.to_dict()

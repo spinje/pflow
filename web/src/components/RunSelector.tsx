@@ -1,4 +1,4 @@
-// Task 173 D6: the run selector — the Rail's reserved run-control slot (web/CLAUDE.md). Lists this
+// Task 173 D6: the run selector — the Rail's reserved run-control slot. Lists this
 // workflow's runs (/api/runs?workflow=X) and PINS one for replay / live-watch via the &run= overlay, or
 // follows the newest live run (unpinned, runId === null). Its OWN fetch + catch (DR-6): a runs-fetch
 // failure shows an empty list, never breaks the rail.

@@ -1156,8 +1156,8 @@ class WorkflowEngine:
         # (Step 1 — LLM trace registration — removed in Task 158 Phase A
         # post-cleanup. The trace collector is now installed by `run()`
         # into ``shared["__trace_collector__"]`` and resolved by
-        # ``LLMNode.prep()`` directly. Lifecycle step numbers below
-        # preserved for cross-reference with engine/CLAUDE.md.)
+        # ``LLMNode.prep()`` directly. Lifecycle step numbers below remain
+        # stable for existing source/test cross-references.)
 
         # 2. Execution state
         initialize_execution_state(shared)

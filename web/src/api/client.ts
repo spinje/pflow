@@ -1,6 +1,4 @@
-// The single data-loading seam. Today it hits the static /api/* endpoints; a
-// future live-run overlay (Task 168 deferred increment) adds an events
-// subscription HERE — the components never learn where data comes from.
+// Request/response API calls live here; SSE subscriptions live in events.ts.
 
 import type { ApiErrorBody, CatalogItem, GateInfo, RFGraph, RFRef, RunInfo, RunNodeDetail, SourceFiles } from "../types";
 
@@ -9,7 +7,7 @@ import type { ApiErrorBody, CatalogItem, GateInfo, RFGraph, RFRef, RunInfo, RunN
 export class ApiError extends Error {
   readonly status: number;
   readonly errors: ApiErrorBody["errors"];
-  // The RAW parsed refusal body (Task 176): /api/resume 4xxs carry a machine-readable
+  // The RAW parsed refusal body: /api/resume 4xxs carry a machine-readable
   // `refusal` discriminator + kind-specific extras (`newer_execution_id`, `node_id`/
   // `node_type`, `hash_known`) BESIDE `errors` — reachable here so the panels never
   // string-parse a diagnostic. Undefined for endpoints that only send `errors`.
@@ -33,8 +31,7 @@ async function parseErrorBody(response: Response): Promise<ApiErrorBody["errors"
     }
     // The server's OTHER error shape: shape-validation 4xxs send a singular {"error": "<text>"}
     // (house convention across /api/gate 404s, /api/command, the JSON-POST preflight …). Surface
-    // the text instead of collapsing it to the generic HTTP line — the panels render these inline
-    // (Task 176 review finding: /api/gate's "not paused" message was being dropped).
+    // the text instead of collapsing it to the generic HTTP line — the panels render these inline.
     if (typeof body?.error === "string" && body.error) {
       return [{ message: body.error }];
     }

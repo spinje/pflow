@@ -47,8 +47,7 @@ class Diagnostic:
     context: dict[str, Any] | None = None
     see_also: list[str] | None = None
     # Stable warning identifier (e.g. ``"cache.order-mismatch"``) — top-level field
-    # because top-10% diagnostic systems (mypy, rustc, ruff, eslint, clippy, TypeScript)
-    # all surface stable IDs at top level for filtering/suppression/identity dedup.
+    # for filtering, suppression, and identity deduplication.
     # When ``id`` is set it becomes the dedup key in the identity tuple; when ``None``
     # the tuple falls back to ``message`` (legacy null-safe behavior).
     id: str | None = None
@@ -87,7 +86,7 @@ class Diagnostic:
         # ``id or message`` (Task 159 DD#27): when ``id`` is set it becomes the
         # dedup key — agents can route on a stable warning ID and message
         # variants for the same finding collapse correctly. When ``id is None``
-        # (legacy/un-migrated diagnostics, all today's code paths) the tuple
+        # (legacy/un-migrated diagnostics) the tuple
         # falls back to ``message`` — byte-identical to the pre-Task-159 behavior.
         if not isinstance(other, Diagnostic):
             return NotImplemented

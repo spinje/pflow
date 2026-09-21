@@ -75,13 +75,13 @@ SANDBOX_AGENT_INSTRUCTIONS_PATH = _get_instructions_path("mcp-sandbox-agent-inst
     - The 10-step development loop (discover → design → build → test → save)
     - When to discover vs build new workflows (always discover first!)
     - Critical patterns (use templates for extraction, code nodes for transformation)
-    - Workflow structure (.pflow.md markdown format) and constraints (sequential execution only)
+    - Workflow structure (.pflow.md markdown format) and execution constraints
     - Template syntax and variables (${input}, ${node.output})
     - Node selection (code node > shell+jq for data transforms, LLM only for interpretation)
     - Authentication and credential management
     - Common patterns and complete examples (batch processing, pipelines, orchestration)
     - Troubleshooting and debugging techniques
-    - What workflows CANNOT do (no parallel paths, loops, or state) and what they CAN (conditional branching)
+    - Workflow capabilities and limits (conditional branching, parallel batches, and loops)
 
     The instructions are organized into sections:
     1. Foundation & Mental Model - Core concepts

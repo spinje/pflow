@@ -1208,7 +1208,6 @@ class LLMNode(Node):
         # passed explicitly through the pool boundary as a function arg —
         # unlike the previous monkey-patched lookup which read thread-local
         # state from the worker thread (where it was never registered).
-        # See plan: /Users/andfal/.claude/plans/magical-swinging-taco.md
         collector = shared.get("__trace_collector__")
         if collector is not None and node_id is not None:
             prep_res["_trace_hook"] = collector.get_trace_hook(node_id)

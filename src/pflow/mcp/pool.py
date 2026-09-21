@@ -34,11 +34,11 @@ _TRANSPORT_ERRORS = (BrokenPipeError, ConnectionError, OSError)
 def _is_transport_error(exc: BaseException) -> bool:
     """Check if an exception (or ExceptionGroup member) is a transport error.
 
-    TimeoutError is explicitly excluded even though it's an OSError subclass
-    on Python 3.11+. A timeout means the server is slow, not dead — retrying
+    Built-in TimeoutError is explicitly excluded even though it is an OSError subclass.
+    A timeout means the server is slow, not dead — retrying
     would kill the session (destroying state) and restart from scratch.
     """
-    # TimeoutError is an OSError subclass on Python 3.11+, but it's NOT
+    # Built-in TimeoutError is an OSError subclass, but it is NOT
     # a transport error — the server is alive, just slow. Retrying would
     # kill state (e.g., Playwright browser session) for no benefit.
     if isinstance(exc, TimeoutError):

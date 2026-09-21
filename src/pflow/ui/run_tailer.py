@@ -36,15 +36,10 @@ logger = logging.getLogger(__name__)
 
 _POLL_S = 0.25  # poll cadence; node-paced events make this comfortably fast for a local viewer
 
-# Task 175: a pinned run launched from the ▶ form is pinned by id BEFORE its detached process has written
-# its meta line. Retry the pinned resolve for this grace window so a fresh launch resolves once its trace
-# appears; a genuinely-stale bookmark still surfaces run-not-found, just after the grace (rare, and a few
-# seconds' delay is invisible). The window MUST exceed the child's worst-case time-to-meta: interpreter
-# start + `import pflow.cli` + resolve/parse + `compile_workflow` (an `llm` node cold-imports litellm, ~1-3s)
-# + prepare_inputs + engine start_streaming. 6s (the original) was tight enough that a cold/loaded machine
-# could exceed it → the pinned tailer ended and the overlay stuck on "run not found" while the run ran on
-# invisibly (deep-review, concurrency). 60 * 0.25s = 15s gives cold-start headroom. (A more robust future
-# fix is a one-time re-arm on a post-launch run-not-found; the wider window covers the concrete case now.)
+# A pinned run may be selected before its detached child writes the meta line.
+# Retry long enough to cover interpreter/import, resolve/parse, compile, input
+# preparation, and streaming startup. Fifteen seconds covers observed cold
+# starts; a stale bookmark still resolves to run-not-found after the grace.
 _PINNED_RESOLVE_ATTEMPTS = 60
 
 
@@ -339,9 +334,10 @@ def discover_live_trace(workflow_key: str, debug_dir: Path | None = None) -> Pat
 
     Matches on the recorded ``meta.workflow_path`` (robust to filename-hash details / path
     normalization). PREFERS a LIVE run — incomplete (NO ``run.complete``) AND its writer still holds the
-    advisory ``flock`` (``is_trace_locked``) — over a finished one, falling back to the newest finished trace
-    (for replay) only when none is live. The lock check is load-bearing: a CRASHED run is ALSO incomplete but
-    its lock is FREE, so without it a dead run would shadow a newer SUCCESSFUL rerun forever (PR #543, C1). On
+    advisory ``flock`` (``is_trace_locked``) — over other eligible traces, falling back to the newest eligible
+    trace (which may be incomplete) when none is live. The lock check is load-bearing: a CRASHED run is ALSO
+    incomplete but its lock is FREE, so without it a dead run would shadow a newer SUCCESSFUL rerun forever
+    (PR #543, C1). On
     a no-``fcntl`` FS (``is_trace_locked`` → ``None``) it falls back to "incomplete = live" (``is not False``,
     mirroring ``_run_is_live``/``_check_stopped``). Newest-by-mtime alone is WRONG: eager-``meta`` (Task 173
     A1) makes every run discoverable from t=0, so a just-finished run can have a newer mtime than a
@@ -354,7 +350,7 @@ def discover_live_trace(workflow_key: str, debug_dir: Path | None = None) -> Pat
     # Caller policy over the shared scanner (DR-3): drop --only traces (a partial run, not a coherent
     # overlay), then prefer a live run (incomplete AND lock-held, newest-first) so a just-finished run never
     # shadows a still-streaming one — and a CRASHED incomplete run never shadows a newer finished rerun (the
-    # lock gate below, PR #543); else the newest finished run (replay-a-finished-run).
+    # lock gate below, PR #543); else the newest eligible trace, whether complete or incomplete.
     candidates = [c for c in scan_traces(workflow_key, debug_dir) if c["meta"].get("only_node") is None]
     if not candidates:
         return None

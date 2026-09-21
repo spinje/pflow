@@ -10,7 +10,7 @@ Two checks:
 2. In-place mutation: self.X.append/extend/update/clear/pop/remove/insert(...)
    (catches self.some_list.append(item) which is equally dangerous)
 
-See: src/pflow/nodes/CLAUDE.md "Common Mistakes" #6
+See: src/pflow/nodes/CLAUDE.md "Execution-state and diagnostic gotchas"
 """
 
 import ast
@@ -270,7 +270,7 @@ def test_no_self_assignments_in_exec_or_post():
             f"Found {len(violations)} instance state violation(s) in exec/post/exec_fallback "
             f"(compile-once invariant):\n\n"
             + "\n\n".join(violations)
-            + "\n\nSee src/pflow/nodes/CLAUDE.md 'Common Mistakes' #6."
+            + "\n\nSee src/pflow/nodes/CLAUDE.md 'Execution-state and diagnostic gotchas'."
         )
         raise AssertionError(msg)
 

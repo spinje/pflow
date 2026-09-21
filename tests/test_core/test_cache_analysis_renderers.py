@@ -871,7 +871,8 @@ def test_text_render_confidence_footer_shows_stale_memo_counts() -> None:
     assert "1 memoized value skipped as stale" in text
     assert "using fresh estimates instead" in text
     assert "2 memoized values used but freshness could not be verified" in text
-    # Negative: pflow internals must not leak into agent-facing output (CLAUDE.md Priority #4)
+    # Internals must not leak into agent-facing output; see src/pflow/core/CLAUDE.md,
+    # "Agent-facing messages speak the authoring surface".
     assert "estimator-tier" not in text
     assert "cache_key" not in text
 
@@ -2871,8 +2872,8 @@ def test_text_recommended_actions_render_workflow_scope_for_workflow_level_findi
     assert "song-creator.pflow.md" in text
     # Per-node finding renders the node_id on its scope line.
     assert "emotional-reviews" in text
-    # The bracketed ID prefix is GONE from rank lines — top-10% codebases
-    # don't visually code long namespaced descriptors as error codes.
+    # Rank lines omit the bracketed ID prefix so advisory prose does not use
+    # long namespaced descriptors as labels.
     assert "[cache.shared-context-undeclared]" not in text
 
 

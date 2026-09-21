@@ -1,17 +1,12 @@
-// The chip RAIL — behavior modifiers (loop / batch) as chips straddling the card's
-// TOP border, right-aligned (user-picked via the 3-round batch-chip shoot-lab,
-// 2026-06-10; plan: task_168/implementation/batch-chip-rail-plan.md). Replaces the
-// header batch badge (it squeezed the 2-line description), the category-line ↻ mark,
-// and the looped sub-workflow tile-icon swap: identity (tile/category) never mutates —
-// behavior is additive chrome on the border.
+// Behavior modifiers (loop / batch) render as chips on the card border, keeping
+// node identity in the tile and category unchanged.
 //
 // Visual grammar: ROUND/capsule tinted chips = info; the SQUARE element a GroupNode
-// appends (the merged count-expander, `.group-toggle`) is the one button. (Live RUN-status
-// is NOT here — it shipped as the corner StatusBadge (StatusBadge.tsx); the rail's earlier
-// "reserved status-chip slot" was retired in favor of that overlay, Task 173.)
+// appends (the merged count-expander, `.group-toggle`) is the one button. Live
+// run status belongs to the corner StatusBadge, not this rail.
 //
-// A dynamic batch shows `×N` (the count is unknowable statically — a future run
-// overlay fills the real number); the iterated source rides the tooltip + read panel.
+// A dynamic batch shows `×N` because its count is unavailable from the authored
+// graph; the iterated source rides the tooltip + read panel.
 
 import type { ReactNode } from "react";
 
@@ -31,7 +26,7 @@ function batchTitle(batch: NonNullable<RFNode["batch"]>): string {
 /** The border rail. Children render AFTER the modifier chips (rightmost slot —
  *  GroupNode appends its merged count-expander there). Renders nothing when empty
  *  so a plain leaf adds zero DOM. `shifted` nudges the rail left so its rightmost
- *  chip / count-expander clears an overhanging corner StatusBadge (Task 173) — passed
+ *  chip / count-expander clears an overhanging corner StatusBadge — passed
  *  only when the node carries a run-status badge, so a badge-less node is unchanged. */
 export function ChipRail({
   node,

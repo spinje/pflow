@@ -21,7 +21,7 @@ class RunnerConfig:
     cache_enabled: bool = True
     verbose: bool = False
     only_node: str | None = None
-    # Task 175: force the run's execution_id instead of minting a fresh UUID. Set ONLY by a `pflow ui`
+    # Force the run's execution_id instead of minting a fresh UUID. Set ONLY by a `pflow ui`
     # ▶ launch (server mints the id, threads it via PFLOW_EXECUTION_ID → the CLI run command → here) so
     # the browser can PIN the overlay to the exact run it spawned. None (every other path) → mint.
     execution_id: str | None = None
@@ -105,7 +105,7 @@ class ExecutionResult:
 
     @property
     def is_durable_pause(self) -> bool:
-        """True when a PAUSED run's trailer actually reached disk (Task 171).
+        """True when a PAUSED run's trailer actually reached disk.
 
         A gate can stamp PAUSED in memory (``gate_outcome == "paused"``) while
         the streamed trace dies mid-run — a full or read-only ``~/.pflow/debug``
@@ -161,7 +161,7 @@ class PlanEntry:
     # The planner plans the body once and the summary multiplies this entry's
     # single-pass cost/duration (and its sub_plan rollup) by this factor.
     loop_iterations: int | None = None
-    # Task 125: this node declares `approval: required` — the run pauses for a
+    # This node declares `approval: required` — the run pauses for a
     # human before it executes. Stamped from NodeConfig in the planner's shared
     # annotate funnel (covers standard AND sub-workflow entries); dry-run is the
     # agent's gate-discovery surface, so plan-says-pause ⟺ engine-pauses is
@@ -215,7 +215,7 @@ class PlanSummary:
 
 @dataclass(frozen=True)
 class ResumePlanInfo:
-    """Resume context for a ``--dry-run`` of a resumed run (Task 164, Decision 2).
+    """Resume context for a ``--dry-run`` of a resumed run.
 
     A resumed plan starts AT the failed step K (upstream is restored, not planned),
     so the plan's entries + cost cover K onward ONLY. This carries the honesty

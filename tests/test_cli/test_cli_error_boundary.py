@@ -4,7 +4,7 @@ The boundary catches PflowError subclasses escaping subcommand callbacks
 and routes them through output_error() → format_diagnostic() so CLI
 errors render structured diagnostics instead of Python tracebacks.
 
-See GH #292 and tests/test_cli/CLAUDE.md for test patterns.
+See GH #292 and tests/CLAUDE.md, "Choosing a Workflow Test Pattern".
 """
 
 from __future__ import annotations

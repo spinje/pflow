@@ -296,7 +296,7 @@ def execute_json_workflow(  # noqa: C901
         # The CLI finalizes the trace itself (after set_json_output mutates it post-run), so the runner
         # must not finalize early — see _save_trace_file / _finalize_trace_and_report.
         finalize_trace=False,
-        # Task 175: a `pflow ui` ▶ launch sets PFLOW_EXECUTION_ID in this spawned process's env so the
+        # A `pflow ui` ▶ launch sets PFLOW_EXECUTION_ID in this spawned process's env so the
         # browser can pin the overlay to the run it just spawned. POP it (not get) so a node that itself
         # shells out to `pflow` doesn't inherit the id and collide. Absent (every hand-typed run) → mint.
         execution_id=os.environ.pop("PFLOW_EXECUTION_ID", None),
@@ -330,7 +330,7 @@ def execute_json_workflow(  # noqa: C901
             gate_resolver=gate_resolver,
             workflow_manager=WorkflowManager() if ctx.obj.get("workflow_source") == "library" else None,
             workflow_name=workflow_name,
-            # Task 164: `pflow resume` sets this before dispatching here; a normal
+            # `pflow resume` sets this before dispatching here; a normal
             # run leaves it absent (None) — the runner then behaves exactly as before.
             resume_source=ctx.obj.get("resume_source"),
         )
@@ -368,7 +368,7 @@ def execute_json_workflow(  # noqa: C901
 
 
 def _maybe_echo_resume_hint(ctx: click.Context, result: Any | None) -> None:
-    """After a FAILED run whose trace was saved, tell the agent how to resume (Task 164, §E step 10).
+    """After a FAILED run whose trace was saved, tell the agent how to resume.
 
     Discoverability where it is needed: the failed-run output gains one stderr
     line naming the exact ``pflow resume <execution-id>`` command. Gated on a
@@ -387,7 +387,7 @@ def _maybe_echo_resume_hint(ctx: click.Context, result: Any | None) -> None:
 
     if not result or result.success or result.status is WorkflowStatus.DENIED:
         return
-    # A durable pause has its own answer hint (Task 171: _display_paused_result
+    # A durable pause has its own answer hint (_display_paused_result
     # names the exact --approve/--choose command) — belt and braces beside the
     # has_resumable_step suppression below.
     if result.status is WorkflowStatus.PAUSED:
@@ -417,7 +417,7 @@ def _prepare_gate_resolver(
 ) -> Any:
     """Build this run's gate resolver + emit the gate pre-flight warnings.
 
-    Warnings (stderr, suppressed by -p) fire per Task 125 Decision 4:
+    Warnings (stderr, suppressed by -p) fire as follows:
     - an ``--auto-approve`` id matching no top-level step (typo guard — child
       gate ids are legitimate but invisible here, hence "top-level" phrasing);
     - declared gates that will fail because this run cannot prompt (fail-at-gate
@@ -462,7 +462,7 @@ def _prepare_gate_resolver(
         unapproved = [gate_id for gate_id in gated if gate_id not in auto_approve]
         if unapproved and not can_prompt(output_controller):
             flags = " ".join(f"--auto-approve={gate_id}" for gate_id in unapproved)
-            # Task 171: a non-interactive gate now pauses durably — EXCEPT when the
+            # A non-interactive gate pauses durably — EXCEPT when the
             # run cannot produce a resumable trace, where it hard-fails instead:
             # --no-trace (no trace at all) and --only (its snapshot trace is not a
             # resume source). Both mirror `_gate_pausable`'s producer refusals, so
@@ -475,7 +475,7 @@ def _prepare_gate_resolver(
                 err=True,
             )
 
-    # Task 171: `gate_deny` is set only by resume's `--approve no` (_dispatch_resume);
+    # `gate_deny` is set only by resume's `--approve no` (_dispatch_resume);
     # normal runs default it empty here via .get — there is no deny flag on `pflow run`.
     deny = frozenset(ctx.obj.get("gate_deny") or ())
     return build_gate_resolver(auto_approve, output_controller, deny=deny)
@@ -547,7 +547,7 @@ def _display_execution_result(
     from pflow.core.workflow.status import WorkflowStatus
 
     if result.status is WorkflowStatus.DENIED:
-        # A human's "no" at an approval gate (Task 125 Decision 5): clean stop,
+        # A human's "no" at an approval gate: clean stop,
         # its own rendering + exit code 3 — never the failure path (no ❌ tag,
         # no error formatter; a workflow must not read denial as a failure).
         _display_denied_result(ctx, result, output_format)
@@ -555,7 +555,7 @@ def _display_execution_result(
 
     if result.status is WorkflowStatus.PAUSED:
         if result.is_durable_pause:
-            # A gate held open on disk (Task 171): the trace is the checkpoint,
+            # A gate held open on disk: the trace is the checkpoint,
             # the execution_id is the resume token. Own rendering + exit code 4.
             _display_paused_result(result, output_format)
             ctx.exit(4)
@@ -619,7 +619,7 @@ def _resumable_execution_id(ctx: click.Context, result: Any) -> str | None:
 
 
 def _display_paused_result(result: Any, output_format: str) -> None:
-    """Render a durably PAUSED run (Task 171): token on stdout, gate content on stderr.
+    """Render a durably PAUSED run: token on stdout, gate content on stderr.
 
     The token line goes to stdout even under ``-p`` — it IS the paused run's
     data (a calling process must be able to capture it). The gate CONTENT goes
@@ -741,7 +741,7 @@ def _display_plan_result(
             verbose=False,
             only_node=ctx.obj.get("only_node"),
         ),
-        # Task 164: `pflow resume --dry-run` sets this; a normal --dry-run leaves it None.
+        # `pflow resume --dry-run` sets this; a normal --dry-run leaves it None.
         resume_source=ctx.obj.get("resume_source"),
     )
 
@@ -751,7 +751,7 @@ def _display_plan_result(
         # Gates already resolved by a flag this invocation — `--auto-approve`, or a
         # resume `--approve yes|no` (which primes auto_approve / gate_deny). Drop them
         # from the footer so the preview doesn't tell the agent to pre-approve a gate
-        # it has already answered (Task 171).
+        # it has already answered.
         answered_gate_ids = frozenset(ctx.obj.get("auto_approve") or ()) | frozenset(ctx.obj.get("gate_deny") or ())
         click.echo(format_plan_text(plan, answered_gate_ids=answered_gate_ids))
 
@@ -1343,7 +1343,7 @@ def run(
         ctx.obj["cache"] = cache
         ctx.obj["only_node"] = only_node
         ctx.obj["auto_approve"] = auto_approve
-        # Task 171: only resume's `--approve no` populates this (no deny flag on run).
+        # Only resume's `--approve no` populates this (no deny flag on run).
         ctx.obj["gate_deny"] = ()
 
         print_flag = ctx.obj.get("print_flag", False)

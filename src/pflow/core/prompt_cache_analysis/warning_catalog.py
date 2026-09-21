@@ -975,8 +975,7 @@ CACHE_WARNING_CATALOG: dict[str, CacheWarningSpec] = {
 }
 
 
-# Auto-derived count constant — defends against drift across docstrings,
-# tests, and MCP schemas. Adding a new ID requires zero count-update edits.
+# Auto-derived convenience count exported for consumers and tests.
 EXPECTED_CATALOG_COUNT: Final[int] = len(CACHE_WARNING_CATALOG)
 
 
@@ -1325,8 +1324,8 @@ def _ensure_workflow_scope(warning_id: str, node_id: str | None, context_kwargs:
     Same node id can appear in parent and child workflows; without
     ``affected_workflow`` the renderer would key warnings against the wrong
     row. Producers in ``analyze.py`` thread ``ctx.workflow_path`` directly;
-    tests must do the same. Top-10% codebases enforce workflow-scope at the
-    producer boundary, not in renderer fallbacks.
+    tests must do the same. Enforce workflow scope at the producer boundary,
+    not in renderer fallbacks.
     """
     if node_id is None:
         return

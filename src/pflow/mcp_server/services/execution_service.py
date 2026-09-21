@@ -276,9 +276,10 @@ class ExecutionService(BaseService):
         Args:
             workflow: Workflow name, path, or IR dict
             parameters: Execution parameters
-            auto_approve: Step names whose approval gates are pre-approved (Task 125).
-                MCP runs cannot prompt, so a gate NOT listed here fails loudly with
-                the ask-your-human remediation ladder. Escalations never pre-approve.
+            auto_approve: Step names whose approval gates are pre-approved. An
+                unlisted gate pauses durably when its checkpoint is persisted;
+                otherwise the response contains remediation guidance. Escalation
+                gates also pause and cannot be pre-approved.
 
         Returns:
             Formatted text output matching CLI (success or error)

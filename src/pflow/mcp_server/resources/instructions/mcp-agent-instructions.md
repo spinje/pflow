@@ -200,11 +200,6 @@ Result: Formatted output includes both extracted data and original context
 **Why impossible**: Each workflow run is completely independent
 **Alternative**: "The workflow will process all current records. You could maintain a processed list externally"
 
-#### ❌ No User Interaction During Execution
-**User wants**: "Ask me to confirm before deleting files"
-**Why impossible**: Workflows run to completion without pausing
-**Alternative**: "I'll create a workflow that lists files to delete, then a separate one that performs deletion after your review"
-
 #### ❌ No Dynamic Node Creation
 **User wants**: "Create one processing node for each item in the response"
 **Why impossible**: Workflow structure is fixed at creation time

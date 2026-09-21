@@ -184,7 +184,7 @@ def _prepare_compilation(
         extra={"phase": "validation", "mode": template_resolution_mode},
     )
 
-    # Input validation and defaults (5-tier resolution, writes defaults to initial_params)
+    # Input validation and preparation (5-tier resolution plus coerced replacements in initial_params)
     resolved_defaults: dict[str, Any] = {}
     resolved_env_param_names: set[str] = set()
     try:

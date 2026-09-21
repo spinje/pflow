@@ -100,7 +100,7 @@ def get_node_output(shared: dict[str, Any], node_id: str) -> Any | None:
     enrichment, get_upstream_stderr). Returns None only when the node
     did not execute. For failed nodes, returns the ``data`` field of
     the failure record — same shape consumers saw before the
-    step 17.5 archive move.
+    error-action archive move.
 
     Trusts the single-writer invariant: ``mark_node_failed`` is the
     only path that writes ``__failures__`` and always writes a dict
@@ -142,14 +142,9 @@ def mark_node_failed(
 ) -> None:
     """Archive a failed node's output and update execution state.
 
-    This is the SINGLE write site for "this node failed". All five
-    failure paths in the engine funnel through this function:
-
-    1. ``cache_result`` when the node returned an action starting with "error"
-    2. ``handle_api_warning`` when the API warning detector triggered
-    3. ``_handle_no_successor`` when the action has no matching edge
-    4. ``_execute_node`` except block when the node raised
-    5. Defensive paths in the runner
+    This is the single write site for failure archival. Engine routing failures,
+    error actions, raised exceptions, and detected API warnings all funnel through
+    this function.
 
     Effects:
     - Moves ``shared[node_id]`` to ``shared["__failures__"][node_id]``

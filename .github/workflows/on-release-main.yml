@@ -57,10 +57,8 @@ jobs:
         with:
           name: pyproject-toml
 
-      # The web UI bundle (src/pflow/ui/static/) is gitignored and built here, not
-      # committed. Without this step `uv build` would ship an EMPTY [ui] bundle and
-      # `pflow ui` would 404 (Task 168 plan §Review Hardening H1). End users never
-      # run Node — they install the prebuilt wheel produced below.
+      # Build the gitignored UI bundle before packaging; otherwise `pflow ui` returns 503.
+      # Users install the prebuilt wheel and do not need Node.
       - name: Set up Node
         uses: actions/setup-node@v4
         with:

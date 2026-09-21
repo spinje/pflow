@@ -2,8 +2,8 @@
 
 Locks the agent-facing contract: every catalog entry produces a Diagnostic with
 the documented severity / source / category / message / suggestions / context;
-adding a new ID without updating EXPECTED_CATALOG_COUNT (auto-derived) fails
-the integrity test.
+`EXPECTED_CATALOG_COUNT` is an auto-derived convenience export; the literal
+inventory and per-ID checks provide independent coverage.
 """
 
 from __future__ import annotations
@@ -32,8 +32,7 @@ from pflow.core.prompt_cache_analysis.warning_catalog import (
 
 
 def test_catalog_count_constant_is_auto_derived() -> None:
-    """EXPECTED_CATALOG_COUNT must equal len(CATALOG) — adding a new entry
-    cascades zero edits across the codebase."""
+    """The exported convenience count follows the catalog automatically."""
     assert len(CACHE_WARNING_CATALOG) == EXPECTED_CATALOG_COUNT
 
 

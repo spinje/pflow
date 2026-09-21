@@ -1,39 +1,10 @@
 """Starlette app backing ``pflow ui``.
 
-Endpoints:
-
-- ``GET /api/catalog`` — saved workflows as ``[{name, description, path}]``
-  (the registry list with ``ir`` stripped).
-- ``GET /api/graph?workflow=<name|path>`` — the React Flow contract
-  (``render_react_flow``) for one workflow, as JSON.
-- ``GET /api/source?workflow=<name|path>`` — source text for every authored
-  ``.pflow.md`` file reachable from the built graph.
-- ``GET /api/version?workflow=<name|path>`` — a cheap change-fingerprint over
-  the workflow's source files, so the frontend can poll it and re-fetch the
-  graph in place (no page reload) when the author edits the ``.pflow.md``.
-- ``GET /api/events?workflow=<name|path>`` — SSE commands for each open Viewer.
-- ``GET /api/health`` — liveness + identity probe for discovery/reuse; reports the
-  live window count when a resolvable ``workflow`` is supplied.
-- ``POST /api/command`` — validate and broadcast an agent Point command.
-- ``POST /api/interaction`` — record one deliberate Viewer interaction.
-- ``POST /api/visibility`` — update a Viewer's visible/backgrounded state.
-- ``POST /api/run`` — spawn a detached ``pflow run`` for a resolved workflow +
-  inputs (Task 175). The server stays a pure observer; the spawned run writes its
-  own streaming trace that the tailer/overlay pick up. No in-process execution.
-- ``POST /api/resume`` — answer a paused gate / resume a failed run by spawning
-  a detached ``pflow resume`` (Task 176). In-process pre-flight (the CLI's exact
-  refusal gates + the child's compile) refuses with 4xx BEFORE spawning — a
-  DEVNULL'd detached refusal would otherwise be a silent no-op.
-- ``GET /api/run-inputs?workflow=<name|path>&run=<id>`` — a past run's recorded
-  inputs as form-ready token strings, for the Run panel's re-run prefill (Task 175).
-  ``meta.inputs`` with sensitive-named keys omitted (server-side redaction).
-- ``GET /api/gate?run=<execution_id>`` — a paused run's gate payload for the gate
-  panel (Task 176), secret-masked. On-demand: the bulky ``gate_request`` never
-  rides the SSE wire or the runs listing.
-- ``GET /api/activity`` — read a newest-first snapshot of recent interactions.
-- ``/`` (+ assets) — the built frontend bundle, when present. Absent in a
-  source checkout (the bundle is gitignored, built by ``make ui-build``); the
-  server then serves a clear "not built" message instead of crashing.
+The app serves workflow graph/source data, Viewer interaction and narration,
+run history and overlays, detached run/resume launch, and the built SPA. See
+``create_app()`` for the authoritative route set; do not duplicate it here.
+Workflow execution is never hosted in-process: launch endpoints preflight and
+spawn the normal CLI, whose trace is observed by the server.
 
 Graph data remains **stateless per request**: every ``/api/graph`` call
 re-resolves, re-validates and re-builds the graph from disk. The live interaction
@@ -1092,7 +1063,7 @@ async def run(request: Request) -> Response:
     except PflowError as exc:
         return _json({"errors": [d.to_dict() for d in exception_to_diagnostics(exc)]}, status_code=400)
 
-    # Task 175: mint the run's execution_id HERE and force it onto the spawned run (via PFLOW_EXECUTION_ID),
+    # Mint the run's execution_id HERE and force it onto the spawned run (via PFLOW_EXECUTION_ID),
     # then return it — so the browser can PIN the overlay to the exact run it just spawned instead of
     # follow-newest (which reverts to an older still-live run when this one finishes). The child's CLI pops
     # the env var into RunnerConfig.execution_id (so a node that re-shells `pflow` can't inherit + collide).
@@ -1102,7 +1073,7 @@ async def run(request: Request) -> Response:
 
 
 def _spawn_detached_cli(cli_args: list[str], *, execution_id: str) -> None:
-    """Detached pflow CLI spawn (ADR-0008: launch, never host) — the ONE spawn seam (Tasks 175/176).
+    """Detached pflow CLI spawn (ADR-0008: launch, never host) — the ONE spawn seam.
 
     DEVNULL everything; the outcome surfaces only through the trace the child writes. ``execution_id``
     is forced via ``PFLOW_EXECUTION_ID`` (popped into ``RunnerConfig.execution_id`` by the child) so
