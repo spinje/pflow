@@ -18,6 +18,9 @@ edge routing, or focus policy.
 - Node callbacks and hover → `interaction.ts`, created by `../views/GraphView.tsx`.
 - Anchored overlays → `NodeCallout.tsx`; resume refusals/acknowledgement →
   `resumeAnswer.tsx:useResumeAnswer` and `RefusalNotice` (used by GateCallout/ResumeControl).
+- Canvas-anchored actions/search → `Rail.tsx`, `RailSearch.tsx`; labeled mode selectors →
+  `Toolbar.tsx`. Keep the rail inside `.canvas`; its actions/toggles do not replace the
+  toolbar's visible mode labels.
 - Source display → `SourcePane.tsx`, `../graph/sourceDecorate.ts`, `../utils/sourceMap.ts`.
 
 ## Node, handle, and edge constraints
@@ -56,6 +59,8 @@ edge routing, or focus policy.
   focus, expansion, or camera: `../graph/focus.ts:rowTouches` uses resolved flow edges. Clear marks
   on focus/selection/structure changes. `.hover-mark` must follow `.node.dimmed` in CSS; hover
   does not inherit selected-edge elevation.
+- `GateCallout` option clicks select without submitting. Submitting an answer can consume
+  the gate token, so preserve the separate Answer action as a deliberate confirmation step.
 - Resume refusal UI consumes machine-readable fields, not diagnostic text. Send `force: true`
   only after explicit acknowledgement through the shared resume-answer state machine.
 

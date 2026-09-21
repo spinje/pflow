@@ -25,7 +25,7 @@ These Mintlify docs are for people who install/configure pflow and want to under
 
 ## Writing standards
 
-Write in a direct, technical, second-person voice, as one developer explaining pflow to another. Explain the mechanism or rationale behind rules. Use concrete, verified errors and examples. Recommend the established pattern instead of presenting unnecessary menus, and skip definitions of familiar terms such as JSON, API, and stdin. Avoid marketing, corporate passive voice, repeated conclusions, and generic copy that could describe any product.
+Write in a direct, technical, second-person voice, as one developer explaining pflow to another. Explain the mechanism or rationale behind rules. Use concrete, verified errors and examples. Recommend the established pattern instead of presenting unnecessary menus, and skip definitions of familiar terms such as JSON, API, and stdin. Avoid marketing, corporate passive voice, repeated conclusions, and generic copy that could describe any product. Use natural sentence lengths; avoid dramatic fragments and long corporate compounds. Keep reference tables scannable, with explanatory voice in introductions, tips, and transitions.
 
 **Banned words and phrases** — never use these:
 - powerful, seamless, magic, revolutionary, game-changer, transformative, unlock, empower

@@ -15,6 +15,7 @@ and hand-mirrored in `src/types.ts`. Before changing the graph transform, read b
 - `src/hooks/CLAUDE.md` — layout snapshots, camera timing, panes, source reload.
 - `src/utils/CLAUDE.md` — colors/text, highlighting, URL and source mapping.
 - `src/views/CLAUDE.md` — selection, overlays, per-workflow defaults and reload remapping.
+- Shared stylesheet → `src/index.css`; layout-coupled values come from `src/graph/metrics.ts`.
 - HTTP → `src/api/client.ts`; SSE reconnect/catch-up → `src/api/events.ts:subscribe`;
   command handlers and run selection → `src/views/GraphView.tsx`.
 
@@ -48,6 +49,14 @@ and hand-mirrored in `src/types.ts`. Before changing the graph transform, read b
 - Register memoized React Flow components. Route SSE handlers through GraphView's stable
   handler ref rather than subscription dependencies; runtime targets use structural refs,
   because flat IDs can change on rebuild.
+- `say` captions persist per structural anchor ref in `src/views/GraphView.tsx` (`sayCallouts`):
+  a new say replaces that anchor's box; focus/frame/run selection keep captions, while
+  `dismissAllSays` handles `clear`. Narration callouts use `frameOnMount={false}` because
+  the preceding point owns the camera.
+- In `src/views/GraphView.tsx`, route first play/replay through `startClip` and interruption,
+  owning-box close, clear, and unmount through `stopCurrentClip`. Detached audio must pause
+  and send the `ended` beacon used to release current-clip server pacing. Preserve current-clip
+  guards on async callbacks; playback states and expired-clip behavior live beside these functions.
 - Point/run-selection epoch baselines in `src/api/events.ts` are separate per workflow/channel
   and survive re-subscription, so a replayed agent selection cannot undo a user's run switch.
   A new server boot ID resets them. This deduplication is not a rule for every SSE event.

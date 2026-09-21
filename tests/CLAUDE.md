@@ -29,6 +29,8 @@ Most unit tests follow `src/pflow/X/module.py` → `tests/test_X/test_module.py`
 
 Use real nodes/shared-store behavior for integration contracts rather than mocking the boundary under test. Keep subprocess cases focused and cover the broader scenario matrix in-process.
 
+Avoid maintaining both inline IR and a committed fixture for the same contract. Prefer the fixture when parser provenance or rendered text is under test; otherwise prefer inline IR. Keep both only when they assert distinct contracts.
+
 Use `tests/shared/markdown_utils.py::write_workflow_file` / `ir_to_markdown` for ordinary generated files. Deliberate malformed-syntax tests can write literal markdown. The helper is **not a general IR round-trip serializer**: it omits `edges`, `start_node`, and `ir_version`; reads `purpose` from the node, not `params`; and inline leading whitespace can be lost during parsing.
 
 Check `examples/CLAUDE.md` and references to a committed fixture before changing or moving it; rerun its bound tests. Source-line assertions can depend on prose and blank lines.
@@ -99,6 +101,8 @@ Keep the stub's `ResultMessage` a real annotated class, assigned into mocked `cl
 Synthetic traces can encode the same wrong assumption as production code. Start with `tests/shared/trace_fixture_builder.py::TraceFixtureBuilder`; `test_core/test_trace_tree.py::TestTraceFixtureBuilderShapeParity` compares covered event shapes against a real collector.
 
 Committed cache-analysis traces come from `tests/fixtures/cache_analysis/_generate.py`. `test_committed_cache_analysis_fixtures_match_generator_output` in `test_core/test_trace_tree.py` pins them to the generator and supplies the regeneration command. Preserve these producer/parity checks when changing trace shapes. CLI fixture coverage also exists in `test_cli/test_analyze_cache.py::test_analyze_cache_rolls_up_three_deep_sub_workflow_costs` (CliRunner).
+
+The per-test `@mutation_contract` / `mutation-audit` infrastructure was retired because marker upkeep outweighed its value. Prefer producer/parity and integration checks; focused mutation experiments do not require that infrastructure.
 
 ### 20. Cross-layer tests through WorkflowRunner
 

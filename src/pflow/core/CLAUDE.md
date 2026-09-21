@@ -7,6 +7,7 @@ Shared parsing, diagnostics, configuration, and execution utilities.
 | Task | Start here |
 |---|---|
 | Change markdown parsing or source attribution | `markdown_parser.py`; author-content YAML in `yaml_utils.py` |
+| Change external content inlining or file provenance | `file_resolver.py::resolve_file_references` mutates IR in place and records `_source_files`; `FILE_RESOLVABLE_PARAMS` allowlists content params |
 | Change IR shape or declared types | `ir_schema.py::FLOW_IR_SCHEMA`, `validate_ir`; `types.py::TypeSpec` |
 | Add an error or change diagnostic rendering | `exceptions.py`, `diagnostic.py`, `diagnostic_render.py` — see below |
 | Change node lifecycle/retry primitives | `node.py`; node patterns in `../nodes/CLAUDE.md` |
@@ -156,6 +157,7 @@ establish universal coverage.
 Redaction uses whole-word sensitive-name matching plus explicitly supplied keys.
 Use `security_utils` instead of substring matching. Arbitrary secrets embedded in
 values may remain visible; this is not universal secret detection.
+Value-level scanning was deliberately deferred in #183; verify an observed leak before broadening this contract.
 
 ## Other local constraints
 

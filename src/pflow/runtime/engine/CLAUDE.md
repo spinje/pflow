@@ -44,6 +44,9 @@ exception-path summaries.
 
 ### Gate control flow
 
+Cache hits return before approval. On a cache miss, approval precedes the start
+callback and `node.start` trace marker, so denied nodes never appear as started.
+
 Gate exceptions bypass ordinary failure archival. A sub-workflow host must still
 close the correlation frame reserved at descent. Resolver bugs are errors, not
 pauses. The escalation gate runs after trace/completion and before loop re-entry.
@@ -62,8 +65,7 @@ alone is insufficient.
 A `CompiledWorkflow` can be reused sequentially but is **not safe for concurrent
 `engine.run()` calls**: execution mutates `node.params`. Keep per-node transient
 resolution state in return values, not on the engine. `_execute_single_node`
-returns `(action, last_resolutions, template_errors)` to both normal execution
-and the batch callback.
+returns `(action, last_resolutions, template_errors)` to the batch executor.
 
 `resolve_templates` processes `inputs` first and merges their resolved values
 into context before other params; static inputs also enter context. Shared
@@ -89,6 +91,10 @@ under `--only` runs one iteration.
 item traces in `shared["_batch_trace"][node_id]`; the engine drains them on the
 winning success or exception path. Draining inside the batch function loses
 completed items when a later operation raises.
+
+Direct batch hosts have no per-item escalation gate. Keep
+`gate.scan_batch_escalations` after execution: undecided item markers fail loudly;
+already-decided markers from nested workflows may pass.
 
 `build_batch_output` is the shared runtime/planner output-shape authority.
 `results` contains only successes; `errors` is the authoritative failure list

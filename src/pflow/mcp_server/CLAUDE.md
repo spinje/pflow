@@ -4,6 +4,20 @@ Exposes pflow as MCP tools: async tool wrappers → synchronous request-scoped
 services → core execution/registry/workflow code. External MCP client integration
 belongs to `../mcp/`.
 
+## Directory map
+
+```text
+mcp_server/
+├── main.py                       # Startup
+├── server.py                     # Registration and exception boundary
+├── tools/                        # Tool schemas and wrappers
+├── services/                     # Request-scoped adapters
+├── utils/                        # Boundary checks and compatibility shims
+└── resources/
+    ├── instruction_resources.py  # Resource loader
+    └── instructions/             # Shipped instruction Markdown
+```
+
 ## Navigation
 
 | Concern | Owner |

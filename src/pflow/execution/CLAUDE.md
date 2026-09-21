@@ -93,6 +93,10 @@ the flat target; missing snapshots fail loudly. Resume uses the same seed/entry
 composition but plans the whole resumed tail. Seed scope and failed-final-node
 exclusion are owned by `runtime/resume_source.py::seed_snapshot_into_shared`.
 
+After a miss, ordinary child workflows still recurse in force-downstream mode;
+making them leaves hides nested cost. Keep first-miss and BFS execute entries on
+`_execute_entry` so downstream history is not lost.
+
 Preserve these estimation limits when changing recursion/aggregation:
 
 - A downstream batch sub-workflow is opaque when its item count cannot be known;

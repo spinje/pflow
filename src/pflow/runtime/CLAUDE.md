@@ -104,6 +104,10 @@ version 2 (`startswith("2.")`), not an exact minor version. Automatic discovery
 can skip unreadable candidates; explicit `analyze-cache --from-trace` input
 raises a load error instead. Do not invent a universal catch-and-skip policy.
 
+`workflow_trace._iter_workflow_traces` excludes `only_node` traces but must not
+filter `final_status`: snapshot loading and cache analysis own different status
+policies, including analysis fallback to non-successful runs.
+
 Trace disk I/O is best-effort: `_disable_streaming` retains in-memory events and
 prevents persistence faults from changing execution outcomes. `finalize` closes
 the stream and returns no path when persistence is disabled or has failed.
@@ -134,6 +138,11 @@ seeds the target or failed-final nodes: it uses eligible events before the targe
 when present, otherwise all eligible captured nodes. Derive restored-node lists
 from its returned map, not a second event scan. Restored nodes are successful for
 data lookup but relabelled not-executed by `execution_state.build_execution_steps`.
+
+`engine/engine.py::_prepare_resume` re-records restored upstream events as
+`cached=True, restored=True`, preserving even `{}` outputs. Later resumes and
+`--only` must seed from the newest eligible attempt alone; `resumed_from` is
+lineage, not a data dependency.
 
 ## Declared outputs and API warnings
 

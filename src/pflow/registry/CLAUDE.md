@@ -12,7 +12,7 @@ and agent-facing discovery. Storage is `~/.pflow/registry.json`.
 | Resolving user-typed node IDs | `node_id.py:normalize_node_id` |
 | Parsing node Interface docstrings | `metadata_extractor.py:PflowMetadataExtractor`; authoring rules in `nodes/CLAUDE.md` |
 | Rendering node specifications | `context_builder.py:build_component_context`, `build_nodes_context` |
-| LLM component selection | `discovery.py:find_components` |
+| LLM component selection and prompt | `discovery.py:find_components`, `prompts/component_browsing.md` |
 | Structure-field reduction | `smart_filter.py` |
 | Virtual MCP entries and reconciliation | `mcp/registrar.py:MCPRegistrar` |
 

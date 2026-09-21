@@ -8,10 +8,11 @@
 | Validate and save content, bundle dependencies | `save_service.py::save_workflow_with_options` |
 | Change pre-execution validation | `validator.py::WorkflowValidator.validate` |
 | Change dependencies or cache declaration rules | `data_flow.py::validate_data_flow`, `_validate_cache_block` |
+| Shared loop/gate validation rules | `loop_validation.py::check_loop_polarity`, `gate_validation.py::check_approval_allowed` (also used by the compiler) |
 | Resolve child workflows and external files | `sub_workflow_resolver.py`, `dependency_discovery.py` |
 | Change static graph construction or rendering | `graph/CLAUDE.md`; compatibility entry point in `mermaid/CLAUDE.md` |
 | Publish skills | `skill_service.py` |
-| Change status or workflow discovery | `status.py`, `context.py`, `discovery.py` |
+| Change status or workflow discovery | `status.py`, `context.py`, `discovery.py`; discovery prompt in `prompts/discovery.md` |
 
 `workflow/__init__.py` has no re-exports. Import from the specific submodule.
 
@@ -26,6 +27,10 @@ normalization, full validation, then bundling/persistence. **Callers must valida
 the workflow name** with `validate_workflow_name`; reserved names are owned by
 `RESERVED_WORKFLOW_NAMES`. Direct manager operations are persistence primitives,
 not a substitute for content validation.
+
+Published skills symlink to the saved workflow. Preserve the best-effort post-save
+`skill_service.py::re_enrich_if_skill` hook, which restores skill frontmatter and
+`## Usage` after replacement saves when a published skill is detected.
 
 ## validator.py
 

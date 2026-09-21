@@ -24,6 +24,18 @@ a startup import cycle. Resume refusal decisions are shared with the UI through
 `cli/find_errors.py:handle_discovery_error`. Execution-start MCP auto-sync is in
 `cli/mcp_sync.py`, not the MCP command handler.
 
+UI narration ordering lives in `ui.py:_resolve_narration` and
+`_await_narration_turn`: synthesize first, then wait for the previous clip before
+dispatch; autoplay-blocked playback holds up to the bounded polling limit, while
+`--no-wait` bypasses waiting. Synthesis failure degrades to captions without failing
+a delivered point. Ordering rationale and rejected alternatives are in the repository-root ADR
+`context/adr/0012-174-narration-pacing-closed-loop.md`.
+
+`save.py` delegates `--delete-draft` to
+`core/workflow/save_service.py:delete_draft_safely`: only resolved paths inside
+`.pflow/workflows/` under the home or current working directory qualify, and
+symlink files are refused.
+
 ## Model defaults
 
 Workflow LLM defaults are injected by `runtime/compilation/compiler.py` through

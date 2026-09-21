@@ -1,7 +1,17 @@
 # Guide Package
 
-Agent-facing content and composition for `pflow guide`. Implementation is in
-`__init__.py`; static prose lives beside it.
+Agent-facing content and composition for `pflow guide`.
+
+## Directory map
+
+```text
+guide/
+├── __init__.py  # Guide composition and topic detection
+├── entry.md     # Entry and navigation content
+├── core.md      # Framework fundamentals
+├── nodes/       # Node-topic prose
+└── features/    # Feature-topic prose
+```
 
 ## Navigation and composition
 
@@ -44,7 +54,6 @@ and are skipped. Keep those different failure policies when changing traversal.
 
 ## Content principles
 
-- `entry.md` provides orientation/navigation; `core.md` teaches fundamentals.
 - Each node/feature chunk must work independently of other chunks.
 - CLI help explains command mechanics; guide prose explains when/why.
 - Append dynamic interfaces after guidance; keep parameter inventories in node

@@ -32,6 +32,10 @@ resolution/validation/building lives in `execution/graph_service.py`.
 - Recorded values/input prefill → `run_node.py:run_node_detail`, `read_run_inputs`;
   gate masking → `server.py:gate`.
 - Point address resolution → `targets.py:resolve_target`.
+- Interaction delivery/replay → `server.py:_Hub`, `events`, `command` and
+  `web/src/api/events.ts:subscribe`. `sent_to` counts connection queues accepting the primary
+  command, not browser apply acknowledgements; for `/say`, it counts the Point broadcast,
+  not audio delivery.
 
 Keep these non-obvious contracts:
 
@@ -51,10 +55,16 @@ Keep these non-obvious contracts:
   and `port`). React Flow flat IDs are positional render IDs and may change after rebuilds.
 - Run-input and gate responses are server-redacted. Do not move secret masking exclusively to
   the browser or add bulky gate payloads to the run list/SSE stream.
-- `_Hub` is event-loop-owned and intentionally lock-free. Every handler that touches it must be
-  `async def`; blocking graph/trace work goes through a thread. Per-viewer queues are bounded,
-  and an overrun viewer is evicted so memory use and `sent_to` remain truthful. Keepalive writes,
-  rather than a second competing disconnect receive, detect dead SSE sockets.
+- `_Hub`, `_AudioStore`, and narration state are event-loop-owned and intentionally lock-free.
+  Every handler touching any of them must be `async def`, including `audio()` even though it
+  does no hub access or blocking I/O. Blocking graph/trace work goes through a thread.
+  Per-viewer queues are bounded, and an overrun viewer is evicted so memory use and `sent_to`
+  remain truthful. Keepalive writes, rather than a second competing disconnect receive, detect
+  dead SSE sockets.
+- Narration ordering/pacing lives in `server.py:say`, `narration`, and `command`: never `await`
+  between the Point and transient `say` broadcasts or latch `say` for replay. Only current-clip
+  `started`/`ended` beacons may move `narration_until`; stale ones still clear the blocked flag.
+  `clear` resets the whole narration rendezvous even with no viewers.
 - This local server relies on loopback binding, no CORS headers, and `_LoopbackOnly` middleware
   on every route to close DNS-rebinding reads/writes. Re-evaluate that boundary before adding
   CORS or bypassing the middleware. Keep it pure ASGI: `BaseHTTPMiddleware` would wrap the

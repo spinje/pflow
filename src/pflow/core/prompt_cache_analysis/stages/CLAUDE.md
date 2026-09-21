@@ -10,6 +10,12 @@ row/warning/cross-workflow orchestration belongs in `per_call_pipeline.py`.
 If a row-builder caller needs another stage's result, move that orchestration up
 rather than introducing a reverse import.
 
+Keep sibling-stage dependencies one-way: `per_call_pipeline` →
+`warnings`/`cross_workflow` → `suggestions` → `row_builder`.
+`partial_declarations` uses `suggestions`/`row_builder`; `fragmentation` uses
+`suggestions`; `summary` imports no sibling stages. Higher stages may also
+import `row_builder` directly; avoid reverse edges when moving helpers.
+
 `row_builder.py` and `suggestions.py` both define live `_batch_aliases` and
 `_is_batch_scoped_ref` helpers. Do not resolve this duplication by importing
 suggestions into row_builder: suggestions already imports row_builder, creating

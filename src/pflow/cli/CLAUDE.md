@@ -37,6 +37,11 @@ Validation happens **after stdin routing**, so piped data can satisfy required
 inputs. FIFO and StdinData behavior belong to `core/shell_integration.py` and
 `core/CLAUDE.md`.
 
+`--auto-approve` is repeatable per approval-gate ID, never blanket authorization or
+escalation approval. `commands/run.py:_prepare_gate_resolver` only scans top-level
+IDs, while `execution/gate_prompt.py:build_gate_resolver` matches names across nested
+workflows; an unmatched top-level ID must remain an advisory, not a validation error.
+
 ## Output contracts
 
 Results go to **stdout**; progress and diagnostics go to **stderr**. Data routing

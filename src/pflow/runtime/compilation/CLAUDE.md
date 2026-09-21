@@ -73,6 +73,10 @@ they therefore do not appear as ordinary registry nodes. MCP entries use the
 `virtual://mcp` marker. Server names can contain dashes, so MCP type parsing chooses
 the longest known server match rather than splitting at the first dash.
 
+`_parse_mcp_node_type` also serves
+`core/workflow/validator.py::_mcp_sync_hint_for_unknown_node_type` through a lazy
+import; preserve that core-to-runtime boundary when moving or changing the helper.
+
 Import `CompilationError` directly from `pflow.core.exceptions`, not through a
 heavy compiler/runtime module. Re-exports exist for callers; they are not the
 exception's ownership location.

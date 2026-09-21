@@ -4,6 +4,19 @@
 MCP analysis tool. External callers use package-level exports; report dataclasses
 live in `types.py`, not `analyze.py`.
 
+## Directory map
+
+```text
+prompt_cache_analysis/
+├── analyze.py          # Orchestration
+├── context.py          # Analysis inputs
+├── types.py            # Report contracts
+├── trace_loading.py    # Trace evidence
+├── stages/             # Analytical stages
+│   └── discrepancy/    # Memo-key prediction and diagnosis
+└── rendering/          # Output projections
+```
+
 ## Task Navigation
 
 | Task | Owner |
@@ -50,11 +63,16 @@ Keep these namespaces distinct:
 from trace evidence, so do not multiply it by invocation count again. Missing
 pricing is not zero cost.
 
-The configured/active/ready/opportunity projections describe different cache
-states; only `cache_active` feeds headline cost math. Read `CacheProjection` and
-row builders before changing their semantics. `PerCallRow.__post_init__` must not
-invent projections from token totals; tests needing projection state construct
-`CacheProjection` explicitly.
+`cache_configured` is what runtime is asked to cache before provider gates;
+`cache_active` is the subset believed provider-effective. `cache_ready` covers
+configured content and direct cache-edit candidates; `cache_opportunity` is
+the maximum estimated unrealized per-call upside, including structural-edit
+candidates. Only `cache_active` feeds headline cost math. Assembly and
+aggregation live in `stages/row_builder.py::_build_cache_projection_components`
+and `types.py::aggregate_projection`.
+
+`PerCallRow.__post_init__` must not invent projections from token totals; tests
+needing projection state construct `CacheProjection` explicitly.
 
 ## Trace Loading
 
@@ -69,6 +87,9 @@ Autoload prefers successful/degraded runs but can fall back to failed, incomplet
 and model-drift handling live in `trace_loading.py`; row evidence and the analyzer's
 misalignment fallback are separate checks. Do not silently ignore a user-selected
 invalid trace or treat a running stream as a completed run.
+
+`--list-traces` is discovery: an empty listing exits 0 in text and JSON modes
+(`src/pflow/cli/commands/analyze_cache.py`), because having no prior runs is valid.
 
 Evidence filtering belongs in `stages/summary.py`. A failed trace with unexecuted
 static rows is a truncated cohort: warnings marked `requires_complete_trace`

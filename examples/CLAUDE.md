@@ -2,6 +2,27 @@
 
 Workflow examples also serve as regression fixtures. Start with `examples/README.md` for the example index. Bundling and external-file-reference scenarios have local verification notes in `examples/bundling/TESTING.md` and `examples/file-references/TESTING.md`.
 
+## Directory map
+
+Selected starting points; fixture-specific test contracts follow below.
+
+```text
+examples/
+├── core/                  # Fundamental workflow patterns
+├── advanced/              # More involved patterns
+├── nodes/                 # Examples by node type
+├── nested/                # Parent/child workflows
+├── agent-orchestration/   # Multi-agent harnesses
+├── real-workflows/        # Larger task workflows
+├── bundling/              # Workflows with bundled assets
+├── file-references/       # External prompts, scripts, and config
+├── mcp-http/              # HTTP transport examples
+├── mcp-integration/       # MCP client integration
+├── mcp-pflow/             # pflow MCP server examples
+├── *.pflow.md             # Root workflow examples
+└── *_demo.py              # Python API demos
+```
+
 ## Test owners
 
 Test-owner paths below are repository-relative; fixture paths are relative to `examples/`. Check references to the particular fixture before changing, renaming, moving, or deleting it; this table is not an exhaustive consumer list.

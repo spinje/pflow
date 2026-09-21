@@ -37,6 +37,10 @@ useful unknown-type error with a validator exception.
   parsing and coalesce splitting; otherwise validation can accept a value that
   runtime leaves unresolved.
 
+Type, shell, batch-item, and code-annotation passes read the IR independently;
+they do not consume these extracted sets. When adding a template-bearing location,
+inspect those passes as well as the shared extractors.
+
 ## Output metadata and limits
 
 `extract_node_outputs` builds the metadata consumed by the passes and compiler.
