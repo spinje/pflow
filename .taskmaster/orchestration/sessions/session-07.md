@@ -174,3 +174,17 @@
   parse trap; local-only artifact pointers); CURRENT-STATE rewritten. Successor's first act:
   get the user's merge ruling on PR #610 — **main still carries the PRE-fold process contract
   until it merges.**
+
+## [2026-09-21] Outside-session addition — codebase correctness audit
+
+- Separate work outside session-07: investigated execution-state concerns, then broadened the audit across file operations, approvals/resume, concurrency, and validation at frozen revision `2ee91a77`. No production fixes were made.
+- Standard non-paid, non-e2e suite: **9,177 passed**. Three Astra reviewers independently verified the priority findings with local reproductions and controls; exact evidence and limits are in the report.
+- Filed [#615](https://github.com/spinje/pflow/issues/615) (resumed loop approvals), [#616](https://github.com/spinje/pflow/issues/616) (copy/move overwrite precedence), [#617](https://github.com/spinje/pflow/issues/617) (false deletion confirmation), and [#618](https://github.com/spinje/pflow/issues/618) (parallel Python stream capture). Published issue bodies were read back and verified.
+- [Audit report](../../../scratchpads/codebase-audit-2026-09-21/report.md). It ranks these findings above the original warning-scope concern and distinguishes reproduced behavior from untested cases.
+
+## [2026-09-27] Outside-session addition — issues from a consumer repo's browser-driving evaluation
+
+- Separate work outside session-07: a consumer repo evaluated pflow for agent-invoked UI verification (browser MCP drivers). Every claim was reproduced against pflow 0.15.1 @ `b6f0c29f` before filing; no pflow code changed.
+- Filed #620–#625 (see CURRENT-STATE). Checked and **not** filed: MCP timeout message (already clear), `probe` hiding values (it doesn't), a Codex quota error surface (unreproducible). Also verified: external-file `- code:` works; `timeout:` + `on-error` salvage recovers partial evidence; a long-lived HTTP MCP server keeps some state across runs (#624's workaround).
+- Owner framing: browser driving is one of many uses — prefer general capabilities/concepts over browser-specific docs.
+
