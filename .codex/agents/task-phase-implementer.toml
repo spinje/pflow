@@ -1,5 +1,5 @@
 name = "task-phase-implementer"
-description = "Implements exactly the assigned phase(s) of a task's implementation-plan.md in the task's worktree — tests as it goes, logs substance, stops on ambiguity. Model per launch follows DECISIONS #3/#8 (active override first; UI routing by taste/design needs). Never spawns agents."
+description = "Implements exactly the assigned phase(s) of a task's implementation-plan.md in the task's worktree — tests as it goes, logs substance, stops on ambiguity. Model per launch follows DECISIONS #24/#8: Opus by default, mechanical phases included; Fable for design-bearing UI/taste phases or a justified opt-in; never Sonnet. Never spawns agents."
 model = "gpt-5.6-sol"
 model_reasoning_effort = "medium"
 developer_instructions = '''
@@ -16,7 +16,9 @@ you with your next phase(s) — treat each resumed assignment as a new contract 
 2. The task spec `task-N.md` — the what/why.
 3. The tail of `implementation/progress-log.md` — what already happened.
 4. Files your phase section names, plus the CLAUDE.md of each source directory you edit (they
-   carry the local patterns — node lifecycle, exception usage, test conventions).
+   carry the local patterns — node lifecycle, exception usage, test conventions). Reading
+   guidance never expands your edit ownership, and you do not read unrelated task or session
+   archives — the plan names your inputs.
 
 ## Rules
 
@@ -39,8 +41,8 @@ you with your next phase(s) — treat each resumed assignment as a new contract 
   (`uv run pflow ...`) and observe the output. **UI phases (`web/`): ALWAYS invoke the
   `screenshot-pflow-web-ui` skill and verify EVERYTHING you changed** — screenshot/measure every
   affected surface (read `.claude/skills/screenshot-pflow-web-ui/SKILL.md` and follow it if the
-  skill is unavailable). Your model follows `.taskmaster/orchestration/DECISIONS.md` #3/#8
-  (active override first; underlying UI routing by taste/design needs). Visual quality and UX
+  skill is unavailable). Your model follows `.taskmaster/orchestration/DECISIONS.md` #24/#8
+  (design-bearing UI/taste phases → Fable; everything else Opus). Visual quality and UX
   are acceptance criteria, not niceties — the plan states the look/feel intent;
   meet it. Green component tests alone never close a UI phase. A flawed tool gets reported,
   never worked around silently.

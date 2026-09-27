@@ -30,12 +30,14 @@ guidance to the goal, "but these tasks will be less and less common."
 
 Home: `ORCHESTRATION.md` "Lanes"
 
-### 3 — Model routing (2026-07-12; amended 2026-07-13, 2026-07-14, 2026-07-15)
+### 3 — Model routing (2026-07-12; amended 2026-07-13, 2026-07-14, 2026-07-15) — SUPERSEDED by #24 (2026-09-27)
 
-**CURRENT OVERRIDE (2026-07-15, user ruling): Fable is BANNED for all subagents; use Opus for
-everything, never Sonnet.** Every launch, UI or not, routes Opus until the user lifts it.
+Historical. The 2026-07-15 override ("Fable BANNED for all subagents; Opus for everything, never
+Sonnet") ran ten weeks and was replaced by the standing policy in #24. The text below is kept as
+the record of what the override sat on; the live launch-mechanics sentences (runner-specific
+model, Codex `reasoning_effort`, forks cannot override) still hold and live at the Home.
 
-Underlying (dormant) policy: Opus = default for judgment, **including task planners** (moved
+Underlying (then-dormant) policy: Opus = default for judgment, **including task planners** (moved
 Fable→Opus 2026-07-13, `647d86f9`); Fable = ALL web-UI implementation phases (#8) + opt-in with a
 one-line justification; Sonnet = zero-ambiguity mechanical. Every dynamic launch passes the
 runner-specific model; **Codex launches also pass explicit `reasoning_effort`** — both overrides
@@ -97,13 +99,13 @@ care: the plan states the phase's use case + look/feel intent, and visual qualit
 acceptance criteria. **UI work ALWAYS invokes the `screenshot-pflow-web-ui` skill and verifies
 everything changed** — green component tests never close a UI phase. User ruling (correcting the
 initial port, which had skipped the sibling system's equivalent rule on the wrong premise that pflow's web
-UI is a mere dev tool). **Dormant under #3's override** (the routing half; the
-screenshot-verification half stands regardless of tier). **Clarified 2026-08-15 (re-audit, #22;
+UI is a mere dev tool). Was dormant under #3's override 2026-07-15 → 2026-09-27; **active again
+under #24** (the screenshot-verification half stood regardless of tier). **Clarified 2026-08-15 (re-audit, #22;
 adopting the sibling programme's later ruling on the same rule): the trigger is TASTE — a
 look/feel judgment the spec cannot settle, not the file location.** If there is no look/feel
 intent for the plan to state, the phase was never this rule's target; fixing a broken
-interaction is not designing one. Frontend work with no such judgment routes like any other
-implementation once the override lifts.
+interaction is not designing one. Frontend work with no such judgment routes Opus like any other
+implementation.
 
 Home: `ORCHESTRATION.md` "Model routing"
 
@@ -126,13 +128,15 @@ session files are color, not state.
 
 Home: `ORCHESTRATION.md` "Artifacts and ownership"; the role prompt boot sequence
 
-### 11 — Session close is a ritual, not a filing chore (2026-07-12; amended 2026-07-15)
+### 11 — Session close is a ritual, not a filing chore (2026-07-12; amended 2026-07-15, 2026-09-27)
 
-Drain — nothing closes hot; retrospect; make state true; refresh the rolling `BRAINDUMP.md`;
-propose process edits; verify boot-readiness; hand off. Session close does not authorize a commit;
-commit authority remains governed by #5. Ported from the sibling system at the user's ask; pflow
-adaptations: lane-C terminal agents don't drain (record their state in CURRENT-STATE); the
-braindump joins the boot stack after the session file.
+Drain — nothing closes hot; retrospect; make state true; **reconcile `RECURRENCE.md`; promotions +
+process evolution (small edits applied per #25, the rest proposed); append the `sessions/INDEX.md`
+entry; write the session `## Braindump`** (amended 2026-09-27 under #23 — replaces "refresh the
+rolling braindump"); verify boot-readiness (print the boot-set size); hand off. Session close does
+not authorize a commit; commit authority remains governed by #5. Ported from the sibling system at
+the user's ask; pflow adaptations: lane-C terminal agents don't drain (record their state in
+CURRENT-STATE).
 
 Home: `.claude/skills/close-orchestrator-session/SKILL.md`
 
@@ -176,8 +180,10 @@ Home: `ORCHESTRATION.md` "New tasks (scope changes)"
 
 Orchestration state docs serve the NEXT main orchestrator only — not crash resilience. Write at
 real state transitions (ruling/launch/ship/course-change), one-line entries, batch the rest to
-session close; CURRENT-STATE is rewritten at close/park, never patched incrementally;
-BRAINDUMP.md is touched ONLY at session close. The orchestrator's working state lives in its
+session close; CURRENT-STATE is rewritten at close/park, never patched incrementally (work done
+OUTSIDE a numbered session appends a dated top block that the next boot folds — added 2026-09-27,
+see ORCHESTRATION "Artifacts"); the tacit layer (`STANDING-KNOWLEDGE.md` since #23) is touched
+ONLY at session close. The orchestrator's working state lives in its
 context window. **Supersedes the prior "written as events land" text** in the role prompt.
 Imported via the fold (#19; source ledger row #30), user-approved.
 
@@ -203,9 +209,7 @@ Home: `ORCHESTRATION.md` "Review policy"; `.claude/agents/task-orchestrator.md`
 Effort tracks the residual ambiguity the agent must absorb: spelled-out phases route `medium`;
 `high` only for self-designed steps, design-bearing UI, subtle seams, gnarly debugging; agents
 authoring their own plan of attack route `high`. Pass explicit `effort` on every launch; the
-def's frontmatter is the contract. Frontmatter re-pinned to match (2026-08-14): implementers +
-the four heaviest lenses (impact-completeness, concurrency-safety, silent-failures,
-validation-consistency) → `medium`; planner/orchestrator stay `high`; searcher stays `low`.
+def's frontmatter is the contract — the per-agent values live there, not here.
 Imported via the fold (#19; source ledger row #48).
 
 Home: `ORCHESTRATION.md` "Model routing"
@@ -216,8 +220,8 @@ User-approved import of the sibling orchestration programme's post-fork general 
 the 2026-08-14 audit). Landed in this pass: this ledger's format; constraint-not-incident +
 verified-or-dropped (ORCHESTRATION "Write discipline"); absence-needs-presence (Definition of
 done); autonomy grants, relay craft, question discipline, failure modes 9–11 (role prompt);
-theme-organized braindump doctrine + session-file spent-category cut (close skill; BRAINDUMP
-restructured to match); ADR adversarial review (`context/adr/ADR-FORMAT.md`); the
+theme-organized braindump doctrine + session-file spent-category cut (close skill; the braindump
+file — now `STANDING-KNOWLEDGE.md`, #23 — restructured to match); ADR adversarial review (`context/adr/ADR-FORMAT.md`); the
 `review-falsifier` execution lens (`.claude/agents/review-falsifier.md`); the pflow-fan-out
 review dispatch + codex searcher offload (`workflows/review/`, `workflows/search/`, wired into
 the `deep-review` skill); rows #15–#18. **Standing user ruling from the same session: the sibling
@@ -252,8 +256,8 @@ class; measured against the remaining roadmap, never aesthetics); **capacity gra
 confirmed-at-grant, applied per-role visibly, snapped back on close — a restoration arrives with
 a scope, not a budget; **a guard proposed to avoid a crash means the crash is the finding**; and
 the #5 prep-commit refinement (no producer-facing change ⇒ no prep commit). "Every task gets a
-planner" (source ledger #31) was considered and HELD — pflow keeps the stated-judgment-call
-split shape. Source ledger rows #53, #28, #52, #2/#35.
+planner" (source ledger #31) was considered and HELD here — **the hold was lifted by #24
+(2026-09-27)**. Source ledger rows #53, #28, #52, #2/#35.
 
 Home: `improve-codebase-architecture` skill "Process"; role prompt "Interpreting an autonomy
 grant"; `lane-implementer.md` (evaluate step); row #5
@@ -272,3 +276,88 @@ lines, promoted only on a real pflow instance. All imports remain imported-not-e
 
 Home: `scratchpads/cross-repo-knowledge-transfer/re-audit-report.md` (local-only); the homes
 named per item
+
+### 23 — Three-tier memory: session braindump → RECURRENCE → STANDING-KNOWLEDGE (2026-09-27)
+
+User ruling on the sibling-comparison forks (*"a. yes"* to the memory architecture, then *"you
+will fix everything else right, like STANDING knowledge etc"* — the full shape, not a reduced
+one). Per-session residue lives in the session file's `## Braindump`; `RECURRENCE.md` counts
+recurrences and promotes at threshold; `BRAINDUMP.md` becomes `STANDING-KNOWLEDGE.md` with
+**entry by promotion only** (pre-existing lines grandfathered, drained via the close skill's
+downward exit); `sessions/INDEX.md` routes to old sessions and is never a boot read. The
+mechanics — entry bar, ramps, formats, boot stack — live at the Homes. **Declined with triggers:**
+the DECISIONS index/archive split (revisit at ~60 rows or when this file outweighs CURRENT-STATE);
+an agent-file fact checker beyond `tests/test_docs/test_agent_references.py` (revisit when a
+searcher def crosses ~30 KB). The 20-session decay is inherited, unmeasured here (#19).
+
+Home: `ORCHESTRATION.md` "Artifacts and ownership"; `RECURRENCE.md` header;
+`STANDING-KNOWLEDGE.md` header; close skill steps 3–6
+
+### 24 — Model routing policy: Fable by role, Opus everything else, Sonnet retired (2026-09-27)
+
+**User ruling, verbatim:** *"fable is for main orch, planning, and ui / taste, everything else is
+opus, never sonnet"* · *"fable planner is for task planning, not lanes"*. Supersedes #3's override
+(2026-07-15) as standing policy: the main orchestrator (the user's session) and **every task
+planner** run Fable; design-bearing UI/taste phases route Fable per #8 (active again); lanes,
+task orchestrators, implementers, searchers and lenses run Opus; **Sonnet is retired — never
+launched, never pinned** (mechanical phases route Opus; the zero-ambiguity bar is plan
+discipline). Consequence, ruled in the same breath: **every task gets a planner** — Fable
+`task-planner` → Opus `task-orchestrator`, sequentially in one worktree; the planner may offer to
+implement a small task itself; too small for a planner ⇒ lane B. Lifts the #21 hold on the
+source's #31. Lane B stays Opus with #9's per-launch-approval Fable exception.
+
+Home: `ORCHESTRATION.md` "Model routing", "Lanes", "Roles"; `.claude/agents/task-planner.md`
+frontmatter
+
+### 25 — Small instruction edits at importance ≤2 are APPLIED at close, not proposed (2026-09-27)
+
+User ruling (*"d. yes apply"*) adopting the sibling's rule: at the close ritual, an instruction
+edit that is BOTH ≤2/5 AND sentence-sized (adding or modifying a sentence or clause) is applied
+directly and named in the session log. Everything above that bar still goes to the user with a
+recommendation: a 3+/5 call, a rule changing what a role may DO (routing, gates, authority,
+destructive-op boundaries), a deletion of standing guidance, or a multi-paragraph rewrite.
+Retires "editing your own role definition is never a unilateral act" for this class only.
+Mirror sync (`scripts/sync_claude_assets.py --write`) is part of applying.
+
+Home: `.claude/skills/close-orchestrator-session/SKILL.md` step 4
+
+### 26 — A point-fix-shaped issue gets a step-back before it gets a fix (2026-09-27)
+
+Adopted from the sibling (its #66) on the user's "go ahead". Before building, the lane asks
+whether the issue is ONE INSTANCE of a wider class, enumerates what it finds, and hands back a
+genuinely bigger class rather than growing the lane around it; the answer is recorded in the PR
+body either way — "I looked and it is a point fix" is itself the finding. Binds the main
+orchestrator at filing/pick time too: **an issue names the CLASS it closes and the closing
+mechanism** (ratchet / compile-time / parity / convention); instances are evidence; unsure
+whether it is a class ⇒ targeted investigation first, and a proven not-closable verdict is itself
+the durable artifact. Sharpens #20's critical-evaluation step and #21's crash-is-the-finding.
+
+Home: `.claude/agents/lane-implementer.md` (evaluate step); role prompt "GH-issue lane"
+
+### 27 — State docs land per #5; no docs-PR lane (2026-09-27)
+
+User ruling (*"we keep this as simple as possible for this repo (no docs prs)"*). The sibling's
+pure-docs self-merge, "CLOSED means the state PR is merged", and one-close-PR batching were
+considered and declined: pflow's `main` takes the main orchestrator's commits under #5 (the
+user's word), and orchestration state does not ride a PR. Re-raise only if #5's stall (session
+05/07: state waiting on a merge word) recurs — a `RECURRENCE.md` candidate, not a rule.
+
+Home: row #5
+
+### 28 — Worktrees are provisioned by `scripts/worktree`; the pre-task commands are retired (2026-09-27)
+
+User ruling ("go ahead" on the replacement plan, after asking for the sibling's shape). The
+LLM-driven worktree workflow is replaced by a bash script + a slash command in which the agent
+derives the branch name itself — the calling agent is already an LLM, the launch quoting is
+kept inside one runfile, and teardown (the squash-safe merged-PR check, the rooted-process
+refusal) lives in code where a rule violated twice belongs. Kept from pflow's version: the
+base-ref guard in code. Retired with it, each superseded under #24: `start-work` (the pre-task
+session is the main orchestrator's freshness check + spec review; its glossary discipline moved
+to `create-task`), `implement-plan` (every task gets a planner → orchestrator), `manual-
+verification` (`review-falsifier` + the real-surface DoD), `test-writer-fixer` (implementers
+write their own tests; `code-implementer` takes test-only briefs), the `create-plan` skill (the
+planner def owns plan doctrine). The `git-worktree-task-creator` example stays as an example
+only, decoupled from process vocabulary (it is also a Task-159 baseline fixture).
+
+Home: `scripts/worktree` header; `.claude/commands/worktree.md`; `ORCHESTRATION.md` "Worktree &
+git flow" steps 1 and 6

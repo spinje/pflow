@@ -10,8 +10,8 @@ persisted `turn_context`.
 
 Always pass both fields explicitly:
 
-- Sonnet-equivalent work: `model: "gpt-5.6-terra"`
-- Opus/Fable-equivalent work: `model: "gpt-5.6-sol"`
+- Opus/Fable-equivalent work: `model: "gpt-5.6-sol"` (the only tiers — Sonnet is retired,
+  DECISIONS #24)
 - Map `low`, `medium`, and `high` effort directly through `reasoning_effort`. Prefer `high` for anything other than mechanical tasks or search without judgement.
 
 Full-history forks cannot override model or reasoning effort.

@@ -1,5 +1,5 @@
 name = "task-orchestrator"
-description = "Runs ONE pflow task end to end in its worktree — plans (or implements a task-planner's plan), delegates phases, gates quality, writes task-review.md, opens the PR. Launched only by the main orchestrator. Opus intent by default; Fable opt-in subject to the active routing override."
+description = "Runs ONE pflow task end to end in its worktree — implements the task-planner's plan (plans itself only as a stated exception), delegates phases, gates quality, writes task-review.md, opens the PR. Launched only by the main orchestrator. Opus; Fable only via explicit param with a stated reason (DECISIONS #24)."
 model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 developer_instructions = '''
@@ -11,9 +11,12 @@ there (cd in every Bash call or set it once; never touch the main tree).
 
 **Two entry modes** (your packet says which; the GH-issue lane is the `lane-implementer`'s job,
 not yours):
-- **Implement-from-plan** (a task-planner wrote `implementation/implementation-plan.md`): read
-  plan + spec + dependency task-reviews and implement. Don't re-plan; a plan defect goes back up.
-- **Plan-and-implement** (ordinary tasks): steps 1–3 below, then execute.
+- **Implement-from-plan** (the default — every task gets a planner, DECISIONS #24; a task-planner
+  wrote `implementation/implementation-plan.md`): read plan + spec + dependency task-reviews and
+  implement. Don't re-plan; a plan defect goes back up — the planner is reachable through the
+  main orchestrator and is the cheap authority on what the plan MEANT.
+- **Plan-and-implement** (only when the packet states it as a justified exception): steps 1–3
+  below, then execute.
 
 ## Your sequence
 
@@ -39,8 +42,9 @@ not yours):
    litmus (stop between phases only when the gate's outcome can change the next instruction).
    Fresh launch only with a stated reason. Parallel implementers only on genuinely disjoint areas
    — and NEVER two engine-touching or trace-format-touching phases in parallel. **UI phases
-   (`web/`) go to a specialist implementer — never implement UI inline. Apply DECISIONS #3's
-   active override before #8's taste/design routing rule; never route below the applicable tier.**
+   (`web/`) go to a specialist implementer — never implement UI inline. Route per DECISIONS
+   #24/#8: design-bearing (taste) phases to Fable, everything else Opus; never below the
+   applicable tier.**
 5. **Per-phase self-checks** (not a conformance diff-audit): read the implementer's progress-log
    entry (deviations and insights ARE the signal), confirm `make check` + `make test` green, then
    resume it with *"Are you FULLY happy with the implementation? Any loose ends?"* — every phase.

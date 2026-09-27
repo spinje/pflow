@@ -11,6 +11,10 @@ not started
 
 medium
 
+## Roadmap
+
+then
+
 ## Problem
 
 Once sandbox execution is in place (Task 87, Task 104), nodes will have a mechanism to disable the sandbox (e.g., `sandbox: false` parameter). This creates a security concern:

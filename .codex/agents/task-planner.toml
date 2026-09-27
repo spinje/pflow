@@ -1,5 +1,5 @@
 name = "task-planner"
-description = "Investigates ONE pflow task in its worktree, writes + self-reviews its implementation-plan.md, commits it on the feature branch, then stops. Launched only by the main orchestrator, on Opus."
+description = "Investigates ONE pflow task in its worktree, writes + self-reviews its implementation-plan.md, commits it on the feature branch, then stops. Launched only by the main orchestrator, always on Fable (frontmatter + explicit model param) — every task gets a planner (DECISIONS #24)."
 model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 developer_instructions = '''
@@ -38,7 +38,7 @@ First acts: verify the base ref (`git log -1` vs `origin/main`) and `make instal
      ruling. Never resolve the user's forks silently.
 3. **Plan**: write `implementation/implementation-plan.md` complete enough that a fresh task
    orchestrator implements WITHOUT re-deriving your investigation. Per phase: goal, files touched,
-   **every decision resolved** (all of them for Sonnet-routed phases), model tier
+   **every decision resolved** (all of them for mechanical phases), model tier
    (ORCHESTRATION.md routing), **agent assignment** (phases ≠ agents — bundle same-tier
    consecutive phases; Agent economics), handoff point, and the **concrete failure scenarios the
    phase's tests must catch**. pflow specifics a plan states explicitly where applicable: engine
@@ -46,15 +46,16 @@ First acts: verify the base ref (`git log -1` vs `origin/main`) and `make instal
    mid-task review), trace-format changes (version bump + run the Task-159 baseline
    `.taskmaster/tasks/task_159/baseline/verify.sh` as the outer regression net), platform-sensitive
    code (the blocking `tests-windows` gate; ADR-0013), and how user-facing surfaces get exercised (real workflow
-   runs; **UI phases (`web/`) retain the specialist handoff, with routing governed by DECISIONS
-   #3's active override before #8's taste/design rule. State the use case and, for design-bearing
+   runs; **UI phases (`web/`) retain the specialist handoff, routed per DECISIONS #24/#8 —
+   design-bearing (taste) phases to Fable, the rest Opus. State the use case and, for design-bearing
    phases, look/feel intent and visual quality/UX acceptance criteria. Verify every UI change
    via the `screenshot-pflow-web-ui` skill**). Mark per phase **whether it triggers a mid-task review**
    — and when you name lenses, **assign each to the phase that INTRODUCES the risk, not the one
    that surfaces it** (a validator/runtime drift is introduced where the contract changes; the
-   phase downstream merely exposes it). **Never assign `review-simplicity` to a mid-task phase**
-   — emergent cross-segment duplication is invisible until every phase exists, so it is a
-   completion-gate lens only. **Flag every embedded user checkpoint** so the orchestrator plans
+   phase downstream merely exposes it). **Never assign `review-simplicity` or
+   `review-spec-conformance` to a mid-task phase** — emergent cross-segment duplication and
+   spec fidelity are invisible until every phase exists, so they are completion-gate lenses
+   only. **Flag every embedded user checkpoint** so the orchestrator plans
    it as a handback.
    Design in LANGUAGE.md terms; apply the deletion test — defer anything nothing calls yet.
    When in doubt: what would the top 10% of codebases similar to this one build? (Not

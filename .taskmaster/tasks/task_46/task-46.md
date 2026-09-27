@@ -21,6 +21,10 @@ not started
 ## Priority
 medium
 
+## Roadmap
+
+later
+
 ## Details
 The Workflow Export feature will compile pflow workflows (represented as IR JSON) into standalone code files that execute without requiring pflow as a dependency. This addresses a critical concern about vendor lock-in and enables new use cases like embedding workflows in production applications, CI/CD pipelines, and serverless functions.
 

@@ -12,8 +12,8 @@ epistemic rules live there; this file does not repeat them.
 | Role | Model | Definition | Job |
 |------|-------|-----------|-----|
 | **Main orchestrator** | user's session | `start-orchestration` workflow | Cross-task view: pick lane + work, verify spec freshness (fix staleness itself — spec accuracy is its job; implementation detail is not), provision the worktree, launch planners/task-orchestrators with a context packet, handle handbacks/escalations, talk to the user, **merge the PR and reconcile**, keep `CURRENT-STATE.md` + its session file + the ledgers current. **Never writes plans, never reads plans, never runs deep-review — trust the agents' gates** |
-| **Task planner** | **Opus** | `.claude/agents/task-planner.md` | Investigate ONE task (via searchers) IN the task's worktree + write `implementation/implementation-plan.md`, **self-review it** (plan-mode `deep-review` — mandatory when the plan touches the engine or the trace format, its judgment otherwise), commit it on the feature branch, then STOP. May offer to implement small tasks itself (see Model routing) |
-| **Task orchestrator** | Opus intent by default; Fable opt-in subject to Model routing | `.claude/agents/task-orchestrator.md` | One task end to end in the same worktree: (plan +) delegate phases → per-phase self-checks → when FULLY happy: commission the code-mode `deep-review` gate (DECISIONS #17) → `create-task-review` → `create-pr` → minimal handback |
+| **Task planner** | **Fable, always** (frontmatter + explicit param) | `.claude/agents/task-planner.md` | Investigate ONE task (via searchers) IN the task's worktree + write `implementation/implementation-plan.md`, **self-review it** (plan-mode `deep-review` — mandatory when the plan touches the engine or the trace format, its judgment otherwise), commit it on the feature branch, then STOP. May offer to implement small tasks itself (see Model routing) |
+| **Task orchestrator** | Opus; Fable only via explicit param with a one-line justification | `.claude/agents/task-orchestrator.md` | One task end to end in the same worktree, from the planner's plan: delegate phases → per-phase self-checks → when FULLY happy: commission the code-mode `deep-review` gate (DECISIONS #17) → `create-task-review` → `create-pr` → minimal handback |
 | **Lane implementer** | Opus floor (DECISIONS #9) | `.claude/agents/lane-implementer.md` | ONE GitHub issue end to end in a provisioned worktree (lane B): critically evaluate → fix with tests → proportionate gate → PR → CI green + auto-reviewers → merge it itself. May delegate MECHANICAL execution to leaf subagents; never judgment |
 | **Phase implementer** | per launch (routing table) | `.claude/agents/task-phase-implementer.md` | Implement exactly the assigned phase(s); tests as it goes; substance to the progress-log; minimal handback; stop on ambiguity |
 | **Searcher** | pinned (opus) | `pflow-codebase-searcher` | Read-only investigation, cited findings. Never the generic `Explore` or `general-purpose`. **Two channels, disambiguate by name**: the NATIVE searcher (this def, Agent tool — the default) vs the SEARCHER OFFLOAD (`workflows/search/run-searcher.pflow.md`, Codex — cross-model verification for Claude callers or capacity relief; Codex callers use it for capacity relief; offload is never the default) |
@@ -25,18 +25,20 @@ implementers/searchers/review agents; lane implementers use the delegation allow
 role contract. A **lane implementer may launch `code-implementer` leaves for MECHANICAL execution
 only** — work with no judgment left in it — and never delegates evaluation, design, or its
 completion gate (contract in `lane-implementer.md`). Phase implementers and other leaf agents
-never spawn further. The planner→orchestrator split is a SEQUENCE, not a third level. **Small tasks don't split**: one
-task orchestrator plans and implements (or the planner implements itself — Model routing).
+never spawn further. The planner→orchestrator split is a SEQUENCE, not a third level. **Small tasks
+don't split**: the planner implements itself (Model routing).
 
 ## Lanes — which procedure a piece of work gets
 
 The main orchestrator picks the lane at pick time and states the call. When in doubt between A and
 B, pick A; between A and C, ask the user.
 
-- **Lane A — full task procedure** (the default for `.taskmaster` tasks): split shape (a
-  dedicated Opus planner → Opus task orchestrator) when the task's PLANNING needs its own top-tier
-  pass — hard architecture, subtle seam design, a high-complexity spec; single task-orchestrator
-  that plans and implements for ordinary tasks. The shape is a stated judgment call, made visibly.
+- **Lane A — full task procedure** (the default for `.taskmaster` tasks): **every task gets a
+  planner (DECISIONS #24)** — a Fable `task-planner` → an Opus `task-orchestrator` into the SAME
+  worktree, sequentially. The planner may offer to implement a small task itself (ruled at its
+  handback via token usage). Work too small to deserve a planner is lane B, not a task. A task
+  orchestrator that plans-and-implements is no longer a default shape — only on an explicit
+  packet instruction the main orchestrator states and justifies.
 - **Lane B — GH-issue lane** (bug fixes & small self-contained tasks — DECISIONS #7, #20): these
   do NOT become tasks. Write a GH issue if none exists (correct root cause, verified against
   code), then launch ONE **`lane-implementer`** end to end in a provisioned worktree. The stable
@@ -51,8 +53,9 @@ B, pick A; between A and C, ask the user.
   The Definition of done and UI routing (DECISIONS #8) still
   govern. **Model by assessed complexity (DECISIONS #9): the main orchestrator assesses at pick
   time; Opus is the floor — never lower for an end-to-end agent; genuinely complex issues (hard
-  debugging, subtle root cause) warrant Fable, but ONLY with the user's per-launch approval and
-  subject to Model routing's active override.** No task folder, no task-review — the issue and PR body are the record. The main orchestrator
+  debugging, subtle root cause) warrant Fable, but ONLY with the user's per-launch approval.
+  Lanes get no planner — the Fable planner is a task-lane role.** No task folder, no
+  task-review — the issue and PR body are the record. The main orchestrator
   still provisions/tears down, relays any escalation, and reconciles. **Excluded regardless of
   size** (always lane A): anything touching `runtime/engine/`/`workflow_executor` or the trace
   format.
@@ -73,7 +76,7 @@ Per task, `.taskmaster/tasks/task_N/`:
   (those go up).
 - **Plan** (`implementation/implementation-plan.md`) — how, in phases. Written by the task planner
   or task orchestrator, **never by the main orchestrator**. Per phase: goal, files touched, every
-  decision resolved (ALL of them for Sonnet-routed phases), model tier, **agent assignment**
+  decision resolved (ALL of them for mechanical phases), model tier, **agent assignment**
   (Agent economics), handoff point (what is true/verified when the phase ends), the concrete
   failure scenarios the phase's tests must catch, **whether it triggers a mid-task review**
   (Review policy), and **every embedded user checkpoint flagged** so the orchestrator plans it as
@@ -97,16 +100,29 @@ session-start read; reflects the RESUME PICTURE — the test: *would a successor
 crash act differently because of this event?* — and is **rewritten at close/park, never patched
 incrementally**) + `sessions/session-NN.md` (the main orchestrator's per-session
 log — append-only mid-session; the close ritual's spent-category cut is the ONE sanctioned
-rewrite (close skill); a new session creates its own file and reads the latest predecessor — **if that
-file is thin** (a short check-in, an aborted session), **read one further back until you hit a
-substantive one** (DECISIONS #10); older files are on-demand forensics; NO session-end digest —
-the file boundary does that job; session-01 is the converted pre-restructure log).
+rewrite (close skill); a new session creates its own file and reads the latest predecessor in
+full — **if that file is thin** (a short check-in, an aborted session), **read one further back
+until you hit a substantive one** (DECISIONS #10) — plus the previous THREE sessions'
+`## Braindump` sections only; older files are on-demand forensics routed through
+`sessions/INDEX.md`; NO session-end digest — the file boundary does that job — but the file DOES
+end in a **`## Braindump`** section written as the close ritual's last content step: tacit
+residue, not a summary of events (sessions 01–07 predate this and carry none; session-01 is the
+converted pre-restructure log). Log entries use a small tag vocabulary so a successor can scan:
+`[GRANT]` / `[RULING]` quote the user verbatim; `ESCALATED (n/5)`; `MERGED`; `SHIPPED`.
+**Work done outside a numbered session** appends a dated block at the TOP of CURRENT-STATE under
+`## Outside-session — folded at next rewrite`; the next boot's reality diff folds it into the
+body and removes the block (this is a successor handoff, not #16's mid-session patching).
 
-**`BRAINDUMP.md`** — the main-orchestrator role's rolling tacit layer (user's exact words,
-overturned calls, mechanisms, marked uncertainties), refreshed in place at each session close via
-the `/close-orchestrator-session` skill; part of the boot stack. Its top section is the live
-layer; a frozen **Genesis** section below the `---` holds the 2026-07-02 founding rationale
-(on-demand forensics, never refreshed).
+**Three-tier memory (DECISIONS #23)** — the session `## Braindump` (per-session residue, read for
+free by the next three boots) → **`RECURRENCE.md`** (one-line counters with session pointers,
+read at boot, reconciled mechanically at close; its header owns the entry bar and the exit ramps
+— promotion at n=2, decay after 20 sessions, severity override) → **`STANDING-KNOWLEDGE.md`**
+(promoted long-term memory: the user model, recurred patterns with their tells, standing gotchas
+with no trigger-point home; **entry by promotion only**; must shrink as knowledge becomes durable
+elsewhere; AMENDED, never overwritten). **`sessions/INDEX.md`** is the routing table — one
+routing-grade entry per session appended at close; never a boot read; grepped when work touches
+an old arc. The frozen **Genesis** section at the bottom of STANDING-KNOWLEDGE holds the
+2026-07-02 founding rationale (on-demand forensics, never refreshed).
 
 **`DECISIONS.md`** — the numbered ledger of settled programme/process decisions below the ADR bar.
 Not re-litigated; contradicting information is a user escalation; when a decision changes, the row
@@ -140,17 +156,15 @@ merged PR and point the packet there instead; almost all recent tasks have revie
 
 ## Worktree & git flow
 
-1. **Provision:** the main orchestrator runs the worktree workflow with the terminal agent
-   suppressed (that agent is lane C's tool, not this lane's):
+1. **Provision:** the main orchestrator runs `scripts/worktree` with no agent and no Cursor
+   (a terminal agent is lane C's tool, not this lane's):
    ```
-   uv run pflow examples/real-workflows/git-worktree-task-creator/workflow.pflow.md \
-     task_description='<Task N — title | #NNN — title>' \
-     open_cli=false open_cursor=false \
-     [work_type=issue] [copy_folder=scratchpads/<subject>] [base_branch=main]
+   ./scripts/worktree new <type>/task-<N>-<slug> --no-open [--copy scratchpads/<subject>]
    ```
-   → creates `~/projects/pflow-worktrees/<branch-slug>/` on a feature branch. NEVER the Agent
-   tool's `isolation: "worktree"` — an unmanaged tree with no packet, whose auto-cleanup fights
-   this process. Create worktrees sequentially, never in one parallel shot.
+   (branch naming and the base-ref rule: `.claude/commands/worktree.md`) → creates
+   `../pflow-worktrees/<branch-slug>/` on the feature branch and runs `make install`. NEVER the
+   Agent tool's `isolation: "worktree"` — an unmanaged tree with no packet, whose auto-cleanup
+   fights this process. Create worktrees sequentially, never in one parallel shot.
 2. **Launch:** planner and task orchestrator are Agent-tool subagents pointed at the worktree's
    ABSOLUTE path; they work only there — **sequentially, never two agents concurrently in one
    worktree**. Launch only into a FULLY provisioned worktree — an agent in a half-provisioned
@@ -161,8 +175,11 @@ merged PR and point the packet there instead; almost all recent tasks have revie
    orchestrator commits as phases complete (deliberate staging, never blanket `-A`;
    scratchpads/briefs are gitignored and stay out). **An orchestrator and its implementer share
    one worktree, so the orchestrator does not commit while an implementer is live** — pre-commit's
-   stash/restore cycle runs over the child's uncommitted edits; batch log entries to phase
-   boundaries. Never to `main`. Task docs merge to `main`
+   stash/restore cycle runs over the child's uncommitted edits. Only the COMMIT batches to the
+   phase boundary: **write each ruling, gate outcome and checkpoint obligation INTO the progress
+   log when it happens**, never into a separate notes file — an agent's context is gone the
+   moment it stops, the log is the only thing a replacement resumes from, and a stop is exactly
+   the moment that never arrives. Never to `main`. Task docs merge to `main`
    WITH the code, via the PR. Pre-commit hooks enforce repo conventions (including the task-Status
    vocabulary) — never bypass with `--no-verify`. **PR review marker (DECISIONS #12):** the first
    commit on each PR branch uses a normal message; EVERY later commit on that branch (follow-up,
@@ -173,11 +190,12 @@ merged PR and point the packet there instead; almost all recent tasks have revie
 5. **The gate must pass on the merged result:** if `main` moved while the task was in flight,
    merge main into the branch and re-run `make check` + `make test` before the PR — a
    branch-green / merge-red gap is exactly what this catches.
-6. **Teardown:** after merge, the main orchestrator prunes worktree + branch. **Squash merges make
-   commit-id checks LIE** (`git branch --merged` / `git cherry` mark merged branches unmerged; this
-   trap has bitten twice): the reliable check is `gh pr list --state merged --head <branch>` and
-   compare its `headRefOid` to the branch tip — equal + clean tree = safe to prune. Never `-f`
-   blind.
+6. **Teardown:** after merge, the main orchestrator runs `./scripts/worktree rm <branch>`. The
+   script owns the squash-safe check — **squash merges make commit-id checks LIE** (`git branch
+   --merged` / `git cherry` mark merged branches unmerged), so it compares the merged PR's
+   `headRefOid` (via `gh`) to the branch tip and requires a clean tree, and it refuses while any
+   process is rooted inside the worktree (a stale `pflow ui` server). Never `-f` blind: `-f`
+   skips the checks and keeps the branch, and its reason goes in the session log.
 7. **Parallel tasks** require the collision analysis below; at most one in-flight task may need a
    live `pflow ui` server; prefer a no-checkpoint task as the parallel companion (checkpoints
    serialize on the user's attention).
@@ -206,23 +224,22 @@ it rebase ONCE onto final `main` rather than per sibling ship. When `main` moves
 producer, send it the TEXT deltas that touch what it will author — the rebase carries the file;
 it does not make the agent re-read it.
 
-## Model routing (supersedes the 2026-07-03 rulings — DECISIONS #3; user may override any launch)
+## Model routing (DECISIONS #24 — Opus default, Fable by role, Sonnet retired)
 
-Apply the active override in DECISIONS #3 before the underlying routing policy below; UI routing
-follows #8's taste clarification. Explicit user launch instructions take precedence.
+**Only Opus or Fable, ever. The Sonnet tier is RETIRED — never launched, never pinned.**
+Mechanical phases route Opus; the zero-ambiguity bar survives as plan discipline, not a routing
+tier. Explicit user launch instructions take precedence.
 
 | Tier | Use for | Rule |
 |------|---------|------|
-| **Sonnet** | Mechanical phases: scaffolding from an exact spec, config wiring, repetitive table-driven tests. Also grep-shaped searcher lookups | Phase text must contain ZERO ambiguity. A Sonnet phase requiring judgment is a planning bug — fix the plan, not the routing |
-| **Opus** | **The default for everything with real judgment**: task planners, task orchestrators, most implementer phases, searchers (pinned) | Plans state decisions; bounded judgment may be left to the implementer |
-| **Fable** | **Design-bearing UI phases under DECISIONS #8, subject to #3's active override**: the trigger is unsettled taste/look-and-feel judgment, not the file location. UI phases retain the specialist `task-phase-implementer` handoff — never implemented inline by the task orchestrator, never below the applicable tier. Design-bearing phases receive **deliberate design/UX care**: the plan states the use case + look/feel intent, and visual quality/UX acceptance criteria. Every UI change is verified via the `screenshot-pflow-web-ui` skill. Otherwise opt-in with a one-line justification: hard architecture, subtle seam design (engine, trace, resume/gate semantics), gnarly debugging. Lane C's terminal builder is the historical Fable home and stays one | Never an ambient default for non-UI implementation |
+| **Opus** | **The default for everything else**: task orchestrators, lane implementers, every implementer phase that is not design-bearing (mechanical phases included), searchers and review lenses (pinned) | Plans state decisions; bounded judgment may be left to the implementer |
+| **Fable** | **The main orchestrator (the user's session). Task planners — always.** **Design-bearing UI/taste phases (DECISIONS #8)**: the trigger is an unsettled look/feel judgment the spec cannot settle, not the file location; such phases retain the specialist `task-phase-implementer` handoff — never implemented inline by the task orchestrator, never a lower tier — with **deliberate design/UX care**: the plan states the use case + look/feel intent, and visual quality/UX acceptance criteria; every UI change is verified via the `screenshot-pflow-web-ui` skill. Otherwise opt-in via the explicit `model` param with a one-line justification: hard architecture, subtle seam design (engine, trace, resume/gate semantics), gnarly debugging. Lane B: only with the user's per-launch approval (DECISIONS #9). Lane C's terminal builder is the historical Fable home and stays one | Never an ambient default for non-design implementation |
 
 Runner model names are an execution detail; plans continue to use the tier names above. The
 names below apply to generated configuration defaults and explicit dynamic-launch overrides:
 
 | Contract tier | Claude launch model | Codex launch model |
 |---------------|---------------------|--------------------|
-| Sonnet | `sonnet` | `gpt-5.6-terra` |
 | Opus | `opus` | `gpt-5.6-sol` |
 | Fable | `fable` | `gpt-5.6-sol` |
 
@@ -244,13 +261,15 @@ Claude agent `effort` maps directly to the same Codex reasoning level: `low` →
   live lever: pass explicit `effort` on every launch like `model`. Plans state effort per phase
   alongside the model tier.
 - **Lane B**: Opus floor, never lower; Fable for complex/hard-debugging issues only with the
-  user's per-launch approval (DECISIONS #9), subject to #3's active override.
-- **Planner-implements exception:** when a planner finds the implementation small, it may offer in
-  its handback to implement directly (itself, in-context — NOT by spawning implementers). The main
-  orchestrator decides using the handback's token-usage report: ample headroom → resume the
-  planner to implement (it keeps its investigation context, and the task-orchestrator close-out —
-  self-checks, code-mode review, `create-task-review`, `create-pr` — becomes its); tight →
-  launch an Opus task orchestrator on the finished plan.
+  user's per-launch approval (DECISIONS #9).
+- **Every task gets a planner (DECISIONS #24):** the shape is Fable `task-planner` → Opus
+  `task-orchestrator`, sequentially, same worktree. **Planner-implements exception:** when the
+  planner finds the implementation small, it may offer in its handback to implement directly
+  (itself, in-context — NOT by spawning implementers). The main orchestrator decides using the
+  handback's token-usage report: ample headroom → resume the planner to implement (it keeps its
+  investigation context, and the task-orchestrator close-out — self-checks, code-mode review,
+  `create-task-review`, `create-pr` — becomes its); tight → launch an Opus task orchestrator on
+  the finished plan. Work too small to deserve a planner is lane B.
 - **Limit recovery** (empirical, inherited from a predecessor system's Fable exhaustion): NEVER
   resume an agent whose model tier is exhausted — it re-dies on its next inference
   call. **MODEL-TIER caps only**: an agent killed by a GENERAL session limit resumes fine
@@ -309,8 +328,8 @@ The `review-*` specialists + `deep-review` skill (selection rubric, tiers, sever
 skill and `REVIEW-PROTOCOL.md`). **The main orchestrator never runs deep-review and never reads
 plans — the agents own their own quality:**
 
-- **Plan self-review — the PLAN AUTHOR's duty** (the planner in the split shape; the task
-  orchestrator itself when it plans-and-implements) on its own finished plan (plan-mode
+- **Plan self-review — the PLAN AUTHOR's duty** (the planner; the task orchestrator only in the
+  explicitly-instructed plans-and-implements exception) on its own finished plan (plan-mode
   `deep-review`, scaled to the plan): **mandatory when the plan touches `runtime/engine/`/
   `workflow_executor` or the trace format** — pflow's highest-risk seams; the author's judgment
   otherwise (big/risky plans get the battery; small ones skip). The author verifies Critical
@@ -348,7 +367,6 @@ plans — the agents own their own quality:**
   candidate phases ("triggers review"). Same ownership split as the completion gate.
 - **Focused seam/area review** on demand — when a shared pattern or a hot seam changed, regardless
   of which task did it. The main orchestrator may also commission cross-task area reviews.
-- Never review Sonnet mechanical output alone — if it seems to need review, the routing was wrong.
 
 ## Definition of done
 
@@ -403,7 +421,9 @@ Subagents cannot talk to the user — the main orchestrator is the channel.
   orchestrator/planner pauses at a clean point, writes a progress-log entry capturing state +
   exact resume point, and hands back with the artifacts/options + its recommendation. The main
   orchestrator surfaces it to the user, then **resumes the SAME agent** with the ruling
-  (SendMessage in Claude, followup_task in Codex) — context intact.
+  (SendMessage in Claude, followup_task in Codex) — context intact. **Send a resumed agent ONE
+  job per message**; when two are unavoidable, ask it to acknowledge both before working — a
+  resumed agent reliably executes the first job and silently drops the second.
 - **Checkpoint artifacts travel by file path** — the user works locally and can open files, run
   the CLI, or use the worktree's `pflow ui` directly. For comparisons the main orchestrator may
   publish an Artifact page; **publishing and user conversation never delegate down.**
@@ -431,7 +451,8 @@ Subagents cannot talk to the user — the main orchestrator is the channel.
 - The task folder path (or issue number for lane B) + instruction to read the spec fully,
   including `starting-context/`.
 - The **worktree's absolute path** (all work happens there) + the entry mode
-  (plan-and-implement / implement-from-plan / plan-only).
+  (plan-only for the planner / implement-from-plan for the task orchestrator;
+  plan-and-implement only as a stated, justified exception).
 - The `task-review.md` paths of every dependency task (a missing one means that dependency isn't
   actually done — resolve before launching).
 - Pointers: this file, `context/CONTEXT.md`,

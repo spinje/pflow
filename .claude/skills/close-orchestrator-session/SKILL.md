@@ -9,9 +9,10 @@ The main orchestrator's session close is a **retrospection event, not a filing c
 entries capture real transitions; `CURRENT-STATE.md` is rewritten at close/park (DECISIONS #16).
 This moment also adds the look BACK across the whole session — the corrections, overturned calls,
 improvised mechanisms, and the user's exact words — before they age out with your context window.
-A successor boots on
-`ORCHESTRATION.md + DECISIONS.md → CURRENT-STATE.md → latest session file (thin-file rule,
-DECISIONS #10) → BRAINDUMP.md` and nothing else; this ritual makes that stack sufficient.
+A successor boots on `ORCHESTRATION.md + DECISIONS.md → CURRENT-STATE.md → the latest session
+file in full (thin-file rule, DECISIONS #10) + the previous three sessions' braindumps →
+STANDING-KNOWLEDGE.md → RECURRENCE.md` (INDEX.md is grepped when an arc surfaces, never skimmed),
+plus its own reality verification; this ritual makes that stack sufficient.
 
 **Ground rule: verify, then write.** Every claim entering a durable file gets checked against
 reality first (`git log`, `gh`, `./scripts/tasks`, `git worktree list`, the filesystem) — a
@@ -48,8 +49,8 @@ Walk the session start-to-end and answer, honestly:
 5. **What is ASKED-NOT-ANSWERED, UNCLEAR, or ASSUMED — and what did I mean to ask the user but
    never did?** Mark them as such — an unmarked assumption reads as fact to a successor.
 6. **Did any standing watch item / open thread close this session?** Closed means struck
-   EVERYWHERE it appears (CURRENT-STATE, braindump, session file) — a survived stale line
-   re-litigates itself next boot.
+   EVERYWHERE it appears (CURRENT-STATE, STANDING-KNOWLEDGE, RECURRENCE, session file) — a
+   survived stale line re-litigates itself next boot.
 7. **What almost broke, and why didn't it?** Near-misses are the purest tacit knowledge — no
    log records the disaster that was narrowly avoided.
 8. **What cross-task connections or seams did I notice that aren't recorded anywhere?** Seams
@@ -66,7 +67,11 @@ Rewrite `CURRENT-STATE.md` from verified current reality; audit the other ledger
 - **CURRENT-STATE.md** — as-of line current; In flight / candidates / Watch reflect reality;
   closed items struck (`~~…~~` with a one-line verdict), not silently deleted. No session digest —
   the session file boundary does that job. Respect the ~80-line budget: every line a pointer to
-  verify, not a fact.
+  verify, not a fact. **Apply the tier test at the rewrite**: a line that is KNOWLEDGE rather
+  than resume state (a gotcha, a mechanism, a standing fact) goes to its trigger-point home, to
+  STANDING-KNOWLEDGE by promotion, or to RECURRENCE as a counter — never rides the rewrite.
+  CURRENT-STATE is not the overflow home for knowledge that lacks one. Any
+  `## Outside-session` block at the top is folded into the body here and removed.
 - **Session file** — entries were appended as events landed; add nothing at close except what
   step 1 surfaced that belongs to the journey (an overturned call, a ruling). No summary rewrite.
   Then **reread it once and CUT the three spent categories**: post-ship evidence (SHAs beyond the
@@ -80,86 +85,112 @@ Rewrite `CURRENT-STATE.md` from verified current reality; audit the other ledger
 - **DECISIONS.md** — every settled-decision-grade user ruling from this session has a row
   (same-breath rule); if one is missing, that's a discipline failure to note AND fix.
 
-## 3. Refresh the braindump (the introspection core)
+## 3. Reconcile RECURRENCE.md (mechanical, never optional)
 
-Update the **rolling tacit layer** — the top section of
-`.taskmaster/orchestration/BRAINDUMP.md`, above the `---` that precedes the frozen **Genesis**
-section (2026-07-02; never refreshed) — **in place, minimal deltas**, extending its header with
-this session's marker. **The rolling layer is organized BY THEME, not by session: merge each new
-line into the section that owns it and tag it `(sNN)`. Never append a dated session section** —
-chronology hides duplication (the same lesson restated in several places reads as several
-lessons), which is how a braindump silently grows tenfold. If a new line has no home, that is a
-signal it may be a new theme — or that it belongs in DECISIONS instead. This is a knowledge
-transfer to yourself, returning with no memory. The doctrine, customized for this role:
+Walk this session's incidents, overturned calls, and observations against the ledger and apply
+its header's exit ramps — increment / add / decay / propose, including the `→ wait n=3` marker.
+**The header owns the mechanics AND the entry bar; do not re-derive them here** (the bar: a
+plausible recurrence mechanism AND recognition-would-change-something — never merely that it
+happened). Substance stays in the session braindump (step 6); the ledger holds only the counter
++ pointer. The exit ramps are what keep the ledger from becoming a second braindump — apply them
+every close, mechanically.
 
-**The one test, applied line by line to the EXISTING file first:**
-> "Could the next agent find this by reading files?" If yes — cut it.
+## 4. Promotions + process evolution (never silent; self-applied only below the bar)
 
-Knowledge migrates: what was tacit last session may now live in a skill, a task-review, a
-DECISIONS row, or a gotcha that got fixed in code. **The braindump must shrink as knowledge
-becomes durable elsewhere** — pruning stale lines is as important as adding new ones. Delete
-verified "needs verification" items; rewrite bullets whose advice was superseded — never leave
-an old bad habit standing next to its correction.
+**Small edits at importance ≤2 — adding or modifying a sentence or clause — are APPLIED here, not
+proposed (DECISIONS #25), and the session log names each one.** Everything above that bar goes to
+the user with a recommendation: a 3+/5 call, a rule changing what a role may DO (routing, gates,
+authority, destructive-op boundaries), a deletion of standing guidance, or a multi-paragraph
+rewrite. After editing any `.claude/` asset, run the mirror sync:
+`uv run python scripts/sync_claude_assets.py --write`.
 
-**Prune previous sessions' lines as deliberately as you add — and prefer EDITING an existing line
-over adding one beside it** (two lines making the same point are worse than one, because a reader
-cannot tell whether the second is a distinct case). Four categories earn removal, each on PROOF,
-not impression:
+Take the rest to the user, with a recommendation each:
+
+- **`→ PROPOSED` ledger entries and any severity-override n=1**: propose the durable home per
+  RECURRENCE.md's promotion ramp (trigger-point homes — a skill or agent def read at the moment
+  of use — always preferred when one exists). On ruling, write the rule at its home and apply the
+  ramp's disposition.
+- **Process evolution**: if the session changed how this role operates — a new failure mode, a
+  mechanism worth standardizing, a rule the user stated — edit `start-orchestration` or
+  `ORCHESTRATION.md` directly when it clears #25's bar (≤2 and sentence-sized, logged);
+  otherwise propose it and let the user rule.
+
+**STANDING-KNOWLEDGE.md hygiene rides this step.** It only ever holds the user model, recurred
+patterns with their tells, and standing gotchas with no trigger-point home; it must SHRINK as
+knowledge becomes durable elsewhere. Line by line, on PROOF, not impression:
 
 - **Migrated** — it now lives in ORCHESTRATION / DECISIONS / a skill / the code. *Proof: open the
-  destination and confirm it says so.*
+  destination and confirm it says so.* Delete.
 - **Resolved** — a marked `ASSUMPTION:` / `UNCLEAR:` / `ASKED-NOT-ANSWERED:` that got answered,
-  or a sharp edge fixed at its source. *Proof: the answer, or the fix.*
+  or a sharp edge fixed at its source. *Proof: the answer, or the fix.* Delete.
 - **HARMFUL — the sharpest category and the easiest to miss.** A line that is false, or
   true-but-scoped-so-narrowly that it models the wrong thing. It reads as helpful for exactly as
-  long as nobody tests it, and it is being believed the entire time. *Proof: check it against the
-  system, not against your memory of writing it.*
-- **Restatement** — the same lesson already stated elsewhere in the file. But **merge, don't
-  delete**: where two lines share a lesson and differ in the TELL (what made it detectable), the
-  tells are the transferable part and both survive as sub-bullets.
+  long as nobody tests it. *Proof: check it against the SYSTEM, never against your memory of
+  writing it.* Delete or rewrite in place — never leave an old bad habit standing next to its
+  correction.
+- **Restatement** — the same lesson stated elsewhere in the file. **Merge, don't delete**: where
+  two lines share a lesson and differ in the TELL (what made it detectable), the tells are the
+  transferable part and both survive as sub-bullets.
+- **The downward exit** — an entry that turns out to be a single-instance process observation
+  (no recurrence, no ruling, not an environmental fact) is DEMOTED to a `RECURRENCE.md` counter
+  line; the substance stays findable via the session log and INDEX. This is how content that
+  entered under the older, ungated bar drains out instead of squatting as precedent.
 
-**The proof bar is deliberately ASYMMETRIC.** Cutting a restatement is cheap and git-recoverable;
-cutting a DISTINCT lesson loses tacit knowledge nobody can reconstruct — and merged lessons look
-exactly like restatements until you check. So merge freely, delete a lesson only with proof of
-its durable home, and **after any large cut, verify what actually survived instead of trusting
-your intent**: extract the user quotations from the pre-edit copy and grep the new file for each,
-whitespace-normalized — quotes wrap across lines, and a naive line-based grep reports losses that
-never happened.
+Additions go into the section that owns the theme, tagged `(sNN)`, as `trigger → action; why:
+mechanism` — never a dated section, never a line beside one that says the same thing (prefer
+EDITING the existing line). **The proof bar is deliberately ASYMMETRIC.** Cutting a restatement is
+cheap and git-recoverable; cutting a DISTINCT lesson loses tacit knowledge nobody can
+reconstruct — and merged lessons look exactly like restatements until you check. So merge freely,
+delete a lesson only with proof of its durable home, and **after any large cut, verify what
+actually survived instead of trusting your intent**: extract the user quotations from the
+pre-edit copy and grep the new file for each, whitespace-normalized — quotes wrap across lines,
+and a naive line-based grep reports losses that never happened.
 
-**What belongs (add from step 1):**
-- The **user's mental model in their exact words** — phrasing for key concepts, sensitivities
-  observed (what they hard-stopped, what they waved through), the direction their trust/rules are
-  moving.
-- **Overturned diagnoses** with the lesson shape, owned plainly.
-- **Mechanisms that worked**, specific enough to reuse; dead ends with the exact reason.
-- **Local-only artifacts** a successor cannot discover (gitignored briefs in `scratchpads/`,
-  machine state, unpushed commits, pending external steps) — with where they live and what to do
-  if missing.
-- Markers: `UNCLEAR:` · `ASSUMPTION:` · `ASKED-NOT-ANSWERED:` · `NEEDS VERIFICATION:` — explicit
-  uncertainty beats implied confidence.
+## 5. Append the session's INDEX entry
 
-**What does NOT belong:**
-- What shipped, task status, PR numbers, board state (CURRENT-STATE / session files / reviews).
-- Process rules and rulings (ORCHESTRATION.md / DECISIONS.md — link, never restate).
-- Generic advice, summaries, anything re-derivable from the repo.
+One routing-grade entry (1–3 lines) to `sessions/INDEX.md`: what shipped (task/PR/issue numbers),
+what was ruled (DECISIONS numbers), major arcs/incidents, and a "Read for:" clause. Enough for a
+future agent to decide WHETHER to read this session — never a summary.
 
-Keep the closing note-to-next-agent line intact (read fully → summarize → proceed).
+## 6. Write the session braindump (the LAST content step)
 
-## 4. Propose process evolution (never silent)
+Append a `## Braindump` section to your own `sessions/session-NN.md`. It comes last
+deliberately: your context window is ending, and this is the capture of what only it holds. It
+is read for free by the next three boots, then stays findable via INDEX.md. This is a knowledge
+transfer to yourself, returning with no memory.
 
-If the session changed how this role operates — a new failure mode hit, a mechanism worth
-standardizing, a rule the user stated — **propose** the edit to `start-orchestration` (the role
-prompt) or `ORCHESTRATION.md` and let the user rule. Editing your own role definition is never a
-unilateral act. (A skill/tooling gap you can fix in-repo — a script hardening, a stale agent def —
-is normal work, not this. Remember the mirror sync: `uv run python
-scripts/sync_claude_assets.py --write` after editing any `.claude/` asset.)
+**What belongs** (from step 1's retrospective): the user's mental model in their exact words this
+session — phrasing for key concepts, sensitivities observed (what they hard-stopped, what they
+waved through), the direction their trust/rules are moving; overturned diagnoses with the lesson
+shape, owned plainly; mechanisms that worked, specific enough to reuse; dead ends with the exact
+reason; local-only artifacts a successor cannot discover (gitignored briefs in `scratchpads/`,
+machine state, unpushed commits, pending external steps) — with where they live and what to do
+if missing; promotion nominations you already raised in step 4; markers — `UNCLEAR:` ·
+`ASSUMPTION:` · `ASKED-NOT-ANSWERED:` · `NEEDS VERIFICATION:` — explicit uncertainty beats
+implied confidence.
 
-## 5. Boot-readiness and handoff
+**What does NOT belong**: what shipped, task status, PR numbers, board state (CURRENT-STATE /
+the session log's own entries / reviews own those); process rules and rulings (link, never
+restate); generic advice; anything re-derivable from the repo. The test: "could the next agent
+find this by reading files?" If yes — skip it.
+
+**No quota, no floor.** Nothing here repeats what exists anywhere else — and a session that left
+no genuine residue writes `## Braindump — nothing beyond the log` and stops. Padding is worse
+than absence: length is earned by content (rarely ~200 lines, often ~30, sometimes 0). This
+section is tacit residue, not a digest — the role prompt's "no session-end digest" rule is about
+summarizing the session's events, which this must not do.
+
+## 7. Boot-readiness and handoff
 
 - **Boot-readiness check, the final gate:** re-read your last state as a cold successor would —
-  ORCHESTRATION → CURRENT-STATE → session file → braindump. If acting correctly would require a
-  fact that exists only in your head, it isn't written yet; go back to step 3.
-  (Boot stack: ORCHESTRATION + DECISIONS → CURRENT-STATE → session file → BRAINDUMP.)
+  ORCHESTRATION + DECISIONS → CURRENT-STATE → this session file (braindump included) → the
+  previous three sessions' braindumps → STANDING-KNOWLEDGE → RECURRENCE. If acting correctly
+  would require a fact that exists only in your head, it isn't written yet; go back to step 6.
+- **Measure the boot set and print the total in your closing message** — `./scripts/tasks --boot`.
+  It prints a per-file lines/bytes/est-tokens table and a TOTAL, and caps nothing: the judgement
+  is yours, not a threshold's. Name the file that grew most since the last close. A total that
+  climbs two closes running is a finding for step 4, not a shrug. The same command lints the
+  newest session log for bare SHAs, and THAT can fail.
 - Session close does not authorize a commit. Report the exact uncommitted files; any commit or
   push follows DECISIONS #5.
 - Tell the user the session is closed and what the successor will pick up first.

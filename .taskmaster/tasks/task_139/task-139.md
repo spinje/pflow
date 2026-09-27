@@ -12,6 +12,10 @@ not started
 
 medium
 
+## Roadmap
+
+later
+
 ## Problem
 
 Every structural task (137, 138, 134) requires manually capturing smoke test baselines, running workflows by hand, and eyeballing output diffs. For Task 138 alone, we spent significant time:

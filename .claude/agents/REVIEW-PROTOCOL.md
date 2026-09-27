@@ -17,12 +17,13 @@ Shared mechanics for every `review-*` agent. Your agent file gives you the **len
 - **Read sequentially, one file at a time.** After each file, stop and apply your lens before moving on. Parallel reading skips the compounding step.
 - **Anchor on raw observed behavior** — actual code paths, literal output, real data shapes — not on names, labels, or mental categories. Where possible, run the scenario and read what actually happens.
 - **Codebase facts cited in your lens file can go stale** (paths, tables, pipelines, key lists). When one is load-bearing for a finding, verify it against the code or the canonical CLAUDE.md it cites before relying on it.
-- **Your lens's checklist is the floor, not the ceiling.** After completing it, take one dedicated pass asking how THIS change could fail in a way no listed item names — the off-checklist find is a review's highest-value outcome.
+- **Your lens's checklist is the floor, not the ceiling.** After completing it, take one dedicated pass asking how THIS change could fail in a way no listed item names — the off-checklist find is a review's highest-value outcome. Your lens file names what that pass hunts.
 
 ## What NOT to flag (all lenses)
 
 Signal over noise: a flood of speculative findings teaches the deploying agent to ignore you. Before reporting, filter against this list — your lens file adds its own.
 
+- **Lock files and generated artifacts** (`uv.lock`, the `.codex/agents/*.toml` and `.agents/skills/` mirrors, any generated TOML/JSON) — a regenerated artifact is a *signal* of an interface change, not code to critique; critique the source it was generated from.
 - **Anything `make check` already enforces** (ruff, mypy, deptry, lockfile, fences). The pipeline catches it mechanically; a manual flag is noise. Mention at most once if it blocks merge.
 - **Recorded project decisions.** ADRs in `context/adr/`, constraints in the architecture skill's `PFLOW.md`, documented allowlists and "INTENTIONALLY excluded" notes in code/CLAUDE.md, and "known gaps" sections in your own lens file. Don't re-litigate; flag only when the change makes a recorded decision materially worse — and say which decision.
 - **Pre-existing issues the change doesn't touch or depend on.** (Consumers of a changed pattern ARE change-anchored — that lens is exempt for those.)

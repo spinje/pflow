@@ -13,6 +13,10 @@ not started
 ## Priority
 medium
 
+## Roadmap
+
+later
+
 ## Details
 This feature introduces a two-tier model for pflow's MCP capabilities:
 

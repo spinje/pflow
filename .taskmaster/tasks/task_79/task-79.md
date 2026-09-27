@@ -8,3 +8,6 @@ We should use the same structure as the MCP protocol for tool definitions in cla
 Needs research for how this looks like.
 
 We are currently showing tools as markdown.
+## Roadmap
+
+later

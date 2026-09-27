@@ -23,6 +23,10 @@ low
 > "cool, nice-for-the-developers-using-it-now" feature, not a core need. Do not invest in the full
 > server (Tier B) unless human authoring of `.pflow.md` in an editor is a confirmed real use case.
 
+## Roadmap
+
+later
+
 ## Problem
 
 pflow already understands its own DSL deeply — the validator parses `.pflow.md` and emits rich

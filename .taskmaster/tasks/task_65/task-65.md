@@ -12,6 +12,10 @@ not started
 ## Priority
 medium
 
+## Roadmap
+
+then
+
 ## Details
 MCP gateways act as "AI service meshes" that sit between pflow and multiple MCP services, providing unified endpoints, OAuth handling, container isolation, and enterprise observability. Our research shows that pflow's current HTTP transport (from Task 47) is already gateway-compatible - gateways appear as standard HTTP MCP servers to pflow.
 

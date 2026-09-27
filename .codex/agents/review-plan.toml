@@ -143,6 +143,8 @@ Check the plan's internal logic:
 - If the plan has numbered steps, does the ordering make sense?
 - Does the plan/spec carry unresolved "Open Questions"? A plan isn't implementation-ready while open questions block phases — name which questions block which phases.
 
+- A spec marked **Draft** is not implementation-ready: name which open questions block which phases, and which can safely be deferred.
+
 Historical examples:
 - Plan corrections described newly-created code as "already exists" (Task 108)
 - Plan specified blocklist approach, but implementation required allowlist — 20 test failures (Task 129)
@@ -232,8 +234,14 @@ Don't estimate time — but flag when a plan says "simple change" but the code p
 
 Two more scope questions: does the plan fit the task's approved scope and current project priorities (use the task/issue and current task state, reached through root CLAUDE.md's `Capabilities and Task Navigation`; building ahead of an explicitly established phase needs justification)? And does anything in it duplicate what an existing system already does (the validator pipeline, the diagnostics system, the unified output pipeline, the template resolver) — a plan that rebuilds a house seam beside itself is a first-order defect here.
 
+### 12. Spec Fidelity
+
+The finding is never "plan differs from spec"; it is **"plan and spec disagree and neither says so."** Map every spec requirement and acceptance line to the phase that delivers it — an unmapped line is missing coverage. A phase delivering something no spec line asks for is scope growth. Every deviation must be stated in the plan with its reason AND reflected in the spec — quote both lines. Recorded deviations are what stop `review-spec-conformance` from re-arguing, at the completion gate, corrections already made at planning time.
+
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 
+- **Whole-shape and trajectory questions when the caller says `review-architecture-fit` is also deployed** — cede them in one line; you own structural integrity.
+- **Extraction of apparent copies before checking they are thin callers of an existing seam** — verify first; a wrapper is not duplication.
 - **Phases for work `make check` or the meta-tests enforce mechanically** (lint, types, lockfile, agent-path freshness, example validation) — the pipeline is the phase.
 - **Detail the plan explicitly defers with rationale.** A stated "out of scope: X because Y" is a decision to evaluate, not a gap to flag — challenge the rationale only if the code contradicts it.
 - **Scope beyond the task's stated boundaries.** Don't demand the plan fix adjacent debt it didn't cause; one Suggestion line at most.
@@ -243,7 +251,7 @@ Two more scope questions: does the plan fit the task's approved scope and curren
 
 ## Output Format
 
-REVIEW-PROTOCOL.md skeleton. Title: `Plan Review`. Critical = plan errors that will cause implementation failures (what the plan claims vs what the code shows). Verified-clear section: **Verified Assumptions** (plan claims confirmed CORRECT — builds trust in the rest of the plan). Summary states whether the plan is ready for implementation.
+REVIEW-PROTOCOL.md skeleton. Title: `Plan Review`. Critical = plan errors that will cause implementation failures — each finding carries what the plan claims, what the code actually shows, and the recommended fix. The off-checklist pass here hunts what would make this plan fail that no section names. Verified-clear section: **Verified Assumptions** (plan claims confirmed CORRECT — builds trust in the rest of the plan). Summary states whether the plan is ready for implementation.
 
 ## Important
 

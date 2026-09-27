@@ -29,7 +29,7 @@ CLAUDE_AGENT_EFFORT_TO_CODEX = {
 
 # Skills that live under .agents/skills but are hand-authored for Codex only — they have no
 # Claude source by design, so the orphan sweep must NOT treat them as stale mirrors. Consumers:
-# AGENTS.md and examples/real-workflows/git-worktree-task-creator/workflow.pflow.md.
+# AGENTS.md and scripts/worktree (the Codex launch prompt).
 CODEX_ONLY_SKILLS = frozenset({"sandbox-testing"})
 
 

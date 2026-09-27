@@ -59,6 +59,8 @@ Historical examples:
 - 3 tests expected unresolved `${templates}` to pass through silently — encoding the exact bug being fixed (Task 85)
 - Formatter test fixtures used `{"metadata": {"description": ...}}` while `WorkflowManager.load()` returns flat `{"description": ...}` — description silently missing from production output (Task 92)
 
+- Is the behavior a test enshrines still current — and is that decision RECORDED (an ADR, a spec decision ledger, a documented allowlist)? An unrecorded decision a test silently enforces is a finding.
+
 ### 2. Fixture Data Shape Mismatch
 
 Test fixtures should match the ACTUAL data shapes from production code, not idealized or simplified versions.
@@ -140,6 +142,8 @@ Historical examples:
 - `registry_run` bypassed the compiler, creating nodes directly — all 43 MCP nodes failed because compiler-injected params were missing (Task 72)
 - Binary pipeline had unit tests for individual nodes but no integration test for HTTP → write-file → read-file chain (Task 82)
 
+- When behavior MOVES between layers (validator → runtime, CLI → shared pipeline), a test must hit the new layer through its real entry point — the old test passing proves nothing about the new home.
+
 ### 7. Regression Tests for Bug Fixes
 
 **If the diff fixes a bug, there MUST be a test that prevents THIS SPECIFIC bug from recurring.** A fix without a regression test is incomplete — the same bug will come back when someone refactors.
@@ -212,8 +216,12 @@ If the diff only has happy-path tests, flag it. The bugs in this codebase live i
 
 If the diff adds or edits a check that guards the codebase — a meta-test (`tests/test_docs/`), lint rule, make target, CI step, pre-commit hook — demand the demonstrated red case: what input makes it fail, and has that been shown? **A green check is evidence of nothing until you've seen it red** — a typechecker verifying 0 files and a linter linting 0 files both pass beautifully. If none is demonstrated, that absence IS the finding; the deploying agent constructs the violating input, not you.
 
+- A safety check that checks nothing (an assertion that cannot fail, a sweep over an empty population) is Critical. If the diff establishes a new everywhere-rule, ask whether it should be a meta-test.
+
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 
+- **Test style preferences** (parametrization vs loops, fixture taste) — only fidelity is in scope.
+- **Absence of tests the conventions ban** (framework behavior, generated shapes, per-case duplicates of a tested archetype) — their absence is correct, not a gap.
 - **Semantic assertions on error-message text** (`assert "exist" in msg.lower()`) — that's the preferred convention; message prose is deliberately not pinned. "Exact match when deterministic" applies to data outputs, not error wording.
 - **Test deletions and count reductions** — reducing weak tests is the established direction (Tasks 104/105/106/119). Flag a deletion only when the removed test guarded a real regression.
 - **Mocking at sanctioned boundaries** (LLM via the autouse mock, HTTP at `requests.request`, MCP at the server boundary, the claude SDK stub) — doctrine. The findings are mocks of node primitives, the shared store, or things that run real here (shell, filesystem).
@@ -222,7 +230,7 @@ If the diff adds or edits a check that guards the codebase — a meta-test (`tes
 
 ## Output Format
 
-REVIEW-PROTOCOL.md skeleton. Title: `Test Fidelity Review`. Critical = tests that encode wrong behavior or give false confidence — for this lens that IS the battery's Critical, because it lets breakage ship unseen; never deflate it to Warning for being "only a test". Suggestions include removals (bloat). Verified-clear section: **Good Tests** (behavior-focused, production-matching, high-value). Summary answers: do these tests provide real confidence, and is there bloat?
+REVIEW-PROTOCOL.md skeleton. Title: `Test Fidelity Review`. Each finding carries: the test, what it asserts, what it SHOULD assert, and the bug it would miss; the off-checklist pass here hunts the false confidence no item names. Critical = tests that encode wrong behavior or give false confidence — for this lens that IS the battery's Critical, because it lets breakage ship unseen; never deflate it to Warning for being "only a test". Suggestions include removals (bloat). Verified-clear section: **Good Tests** (behavior-focused, production-matching, high-value). Summary answers: do these tests provide real confidence, and is there bloat?
 
 ## Key Principle
 

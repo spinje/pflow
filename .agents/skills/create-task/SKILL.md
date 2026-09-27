@@ -53,6 +53,10 @@ Don't guess at fundamentals. It's better to ask than to document assumptions.
 
 <high | medium | low>
 
+## Roadmap
+
+<next | then | later>
+
 ## Problem
 
 What's wrong today? Why do we need this?
@@ -125,12 +129,18 @@ If something is both a requirement and a test scenario, put it in Requirements. 
    trust as Verified / Assumed / Unable-to-verify. Groundings are point-in-time — flag that they
    must be re-checked when the task starts (the re-verify-at-start rule).
 10. **Use canonical domain terms** — `context/CONTEXT.md` owns the vocabulary; don't mint a
-    second name for an existing noun.
+    second name for an existing noun. When the user's term conflicts with the glossary, say so
+    immediately ("CONTEXT.md defines X as …, but you seem to mean Y — which is it?"); when a
+    term is vague or overloaded, propose the precise canonical one; when a term is resolved,
+    update `CONTEXT.md` right there (format: `context/CONTEXT-FORMAT.md`), never batched.
 11. **Offer to record an ADR** (`context/adr/`) when a discussed decision is hard to reverse,
     surprising, and carries a real trade-off — never file one silently.
 12. **The headings are a tool contract** — `./scripts/tasks` reads `## Status` (and sorts done
-    tasks by `## Completed`); when the task is later finished, Status becomes `done` and a
-    `## Completed` heading gets the date (`YYYY-MM-DD`), or the board files it under "Undated".
+    tasks by `## Completed`) and groups pending tasks by `## Roadmap` (`next` | `then` | `later`
+    — the sequencing slot, distinct from `## Priority`'s intrinsic importance; `--check` requires
+    it on every pending task, so ask the user which slot a new task takes); when the task is
+    later finished, Status becomes `done` and a `## Completed` heading gets the date
+    (`YYYY-MM-DD`), or the board files it under "Undated".
 13. **Far-phase / large tasks may defer the design (the carved-stub pattern)** — capture
     *Problem / Design intent (confirm at start, NOT a locked spec) / Current state (verified vs
     main, path:line) / Dependencies*, and leave one deferred line: "Solution / Requirements /
@@ -155,6 +165,10 @@ not started
 ## Priority
 
 medium
+
+## Roadmap
+
+then
 
 ## Problem
 

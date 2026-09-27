@@ -18,6 +18,10 @@ not started
 ## Priority
 medium
 
+## Roadmap
+
+next
+
 ## Details
 When invoking a Claude Code node, users should be able to specify a list of pflow nodes and/or saved workflows to expose as MCP tools:
 

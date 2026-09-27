@@ -14,6 +14,10 @@ not started
 
 medium
 
+## Roadmap
+
+then
+
 ## Problem
 
 After Task 151 lands, CLI and MCP are out of sync:

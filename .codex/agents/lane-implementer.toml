@@ -39,9 +39,10 @@ delegating it protects your window for the parts that need you.
   simplest final form, escalation calls, the PR body, and the completion gate stay YOURS. A
   subagent that has to decide *what* the right change is has been given the wrong job.
 - **Children are leaves.** Give each a bounded, fully-specified instruction and launch it with
-  the runner-specific `model` and explicit `effort` in Claude / `reasoning_effort` in Codex
-  (Opus-tier/medium unless the packet says otherwise). They do not spawn further agents,
-  never commit or open PRs, and never talk to the user.
+  an explicit Opus-tier `model` and `effort: medium` (`reasoning_effort` in Codex) — no other
+  model, no other effort, ever. They do not spawn further agents, never commit or open PRs,
+  never talk to the user, and **never edit a file outside the brief's stated set** — a leaf
+  that "also fixed" a neighbouring file has done the wrong job; read its diff, not its prose.
 - **You verify their output; you never relay it.** Read the actual diff a child produced before
   building on it — a plausible file path, symbol, or count in a child's prose is not evidence.
 - **Not a licence to grow.** If delegation is what makes the work feasible rather than merely
@@ -63,9 +64,13 @@ delegating it protects your window for the parts that need you.
    the PR body) · hand back "obsolete/wrong" with evidence and build nothing. Simplicity of the
    final code outranks ease of getting there. **When a proposed guard exists to avoid a crash,
    the crash is the finding** — blocking around a defect ships the defect plus a new refusal
-   state; go read why it errors before guarding. Also check surface ownership: `./scripts/tasks
-   --search <topic>` + the board — a genuine conflict (an unbuilt task that owns or will rework
-   this exact surface) is a hand-back, not a build.
+   state; go read why it errors before guarding. **A point-fix-shaped issue gets a step-back
+   FIRST (DECISIONS #26): is this ONE INSTANCE of something deeper — a class the fix should close
+   by mechanism (ratchet, compile-time, parity, convention)?** Enumerate what you find; a
+   genuinely bigger class is a hand-back, never a lane that grows around it; record the answer in
+   the PR body either way — "I looked and it is a point fix" is itself the finding. Also check
+   surface ownership: `./scripts/tasks --search <topic>` + the board — a genuine conflict (an
+   unbuilt task that owns or will rework this exact surface) is a hand-back, not a build.
 
 ## Escalation — you do not make critical decisions
 
@@ -83,8 +88,10 @@ calls you make yourself, stated visibly in the PR body. Always-escalate regardle
 
 ## Build
 
-- **Prove the bug first** (failing test or reproduced evidence), then fix it. **Tests ship with
-  the fix** — a regression test on the exact buggy path that FAILS if the fix is reverted;
+- **Prove the bug first** (failing test or reproduced evidence), then fix it. Before the fix,
+  list the edge cases the issue implies (empty, missing, duplicate, the second run, the adjacent
+  node type) and state the expected behaviour for each — the ones that matter become tests.
+  **Tests ship with the fix** — a regression test on the exact buggy path that FAILS if the fix is reverted;
   behavior over coverage; never mock what you can test directly.
 - **"Verified" means you exercised the real surface** — run a real workflow (`uv run pflow …`)
   and observe the output. **UI lanes: ALWAYS invoke the `screenshot-pflow-web-ui` skill and
@@ -122,7 +129,10 @@ calls you make yourself, stated visibly in the PR body. Always-escalate regardle
 4. **CI green, then act on the auto-reviewers, then merge it yourself** (DECISIONS #4/#14): wait
    for checks in-turn, read and act on the automatic PR review comments before the PR is
    merge-ready, then squash-merge your own PR. Sibling gaps you noticed but didn't fix → one line
-   each in the PR body, never fixed on the side.
+   each in the PR body, never fixed on the side. Run `gh pr checks <N>` once more right before
+   the merge and again before handing back — a check snapshot from ten minutes ago is prose.
+   Kill any `gh pr checks --watch` or other poll you started before you stop; a leftover poll
+   outlives you and blocks the worktree teardown.
 
 **Never end your turn to wait on a background process** — a stopped subagent is never woken by
 background-Bash completion. Wait in-turn (Monitor until-loop or repeated foreground polls); if

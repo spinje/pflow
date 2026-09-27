@@ -12,6 +12,10 @@ not started
 ## Priority
 medium
 
+## Roadmap
+
+later
+
 ## Details
 Currently, pflow's batch processing operates in **map** mode - each iteration receives the same input and produces independent outputs that are collected into a results array. This works well for parallel transformations but fails for use cases requiring sequential accumulation.
 

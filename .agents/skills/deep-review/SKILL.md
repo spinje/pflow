@@ -90,6 +90,7 @@ Pick by what the scope actually touches — every selected agent must earn its s
 | Agent type | Pick when the scope involves... |
 |---|---|
 | `review-plan` | **Always slot 1 in plan mode** (plans only) |
+| `review-architecture-fit` | Plans/specs whose shapes downstream roadmap work inherits: on-disk or agent-facing contracts, trace/workflow/resume formats, store keys, node interfaces — one-way doors and trajectory fit (plan/spec mode only) |
 | `review-silent-failures` | Empty/null guards, exception handling, ignored returns, dropped data — strong default for most scopes |
 | `review-impact-completeness` | Changes to shared patterns with multiple consumers — strong default for most scopes |
 | `review-validation-consistency` | Validator or runtime behavior changes (drift between them) |
@@ -98,9 +99,10 @@ Pick by what the scope actually touches — every selected agent must earn its s
 | `review-concurrency-safety` | Threads, executors, copy semantics, asyncio, shared mutable state |
 | `review-test-fidelity` | Substantial new test coverage, regression tests for bug fixes |
 | `review-simplicity` | Multi-phase implementations at Full tier+ (integrated code only, code mode) |
+| `review-spec-conformance` | Full-tier multi-phase implementations: does the integrated code do what the spec + plan asked, no less, no more — the reading counterpart of `review-falsifier` (integrated code only, code mode; never mid-task) |
 | `review-falsifier` | The spec makes testable behavioral promises and a dev environment can run them — the only lens that EXECUTES (real workflow runs, targeted pytest). Direct launch only, code mode only |
 
-`review-plan` only reviews plans; `review-simplicity` and `review-falsifier` only review integrated code — never deploy them in the wrong mode.
+`review-plan` and `review-architecture-fit` only review plans/specs; `review-simplicity`, `review-spec-conformance` and `review-falsifier` only review integrated code — never deploy them in the wrong mode.
 
 ### Prompts
 

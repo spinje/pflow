@@ -27,13 +27,28 @@ between what documents claim and what code does.
 ## Boot sequence (every session, before anything else)
 
 1. Read `ORCHESTRATION.md` + `DECISIONS.md` (the settled-rulings ledger — you cannot route,
-   merge, or reconcile without it), then `CURRENT-STATE.md` + the LATEST `sessions/session-NN.md`
-   — if that file is thin (a short check-in, an aborted session), read one further back until you
-   hit a substantive one (DECISIONS #10) — then `BRAINDUMP.md` (the role's tacit layer, refreshed
-   at each close). Treat every claim as a **pointer to verify, not a fact**.
+   merge, or reconcile without it), then **in full** `CURRENT-STATE.md` (~80 lines — every claim
+   a **pointer to verify, not a fact**; fold any `## Outside-session` block at its top into the
+   body at step 3) + the LATEST `sessions/session-NN.md` in full — if that file is thin (a short
+   check-in, an aborted session), read one further back until you hit a substantive one
+   (DECISIONS #10) — + the previous THREE sessions' `## Braindump` sections only, then
+   `STANDING-KNOWLEDGE.md` (the ONE boot-read memory file — promoted long-term memory, all cues,
+   once) + `RECURRENCE.md` (the counters — recognize repeats in the moment, reconcile at close).
+   `sessions/INDEX.md` is never skimmed at boot — grep it when work touches an old arc, then
+   read THAT session.
+1b. **Ask the predecessor, then launch the boot fork** (once four sessions carry a braindump —
+   skip until then). If the predecessor session is still live (the runner's session listing),
+   message it ONE bounded question — anything live or pending its log does not hold. Then launch
+   a `fork` subagent (it inherits your context, answer included) to read the `## Braindump` of
+   the sessions before the three you read, route through `sessions/INDEX.md` to any older arc
+   bearing on the resume picture, and read related task-reviews, specs and issues as needed. It
+   GATHERS, it does not rank; it writes its report under `scratchpads/session-NN/` and returns
+   the path + ~25 lines — read the file only when it changes a decision.
 2. Verify reality: `git fetch` + `git log --oneline -15 origin/main` · `gh pr list --state merged
    --limit 10` · `gh issue list --state open --limit 40` (scan for new since the stamp) ·
-   `./scripts/tasks` · `git worktree list` · the runner's live-agent/task listing
+   `./scripts/tasks` (the board folds done tasks older than six months — widen with `--done`
+   or `--since DATE` only when the user's stated focus reaches back further) ·
+   `git worktree list` · the runner's live-agent/task listing
    (`TaskList` in Claude, `collaboration.list_agents` in Codex).
 3. Diff reality against `CURRENT-STATE.md`. Anything that moved → correct it first.
 4. Create your session file `sessions/session-NN.md`; open with a short state summary + your
@@ -50,17 +65,24 @@ body's, the state file's — decays. Verification is the job, not overhead.
    **parallel-safe wins**, **hygiene/debt**.
    Genuine forks → options + tradeoffs + ONE recommendation + importance (1–5); ≥3 is the user's.
    When a merge lands, scan its spawned follow-up issues before declaring "what's next".
-2. **Choose the procedure lane** (ORCHESTRATION "Lanes"): full task (and its shape — split vs
-   single, a stated judgment call), GH-issue, or manual. Say which and why.
+2. **Choose the procedure lane** (ORCHESTRATION "Lanes"): full task — **every task gets a
+   planner (DECISIONS #24)**: Fable `task-planner` → Opus `task-orchestrator`, the planner may
+   offer to implement a small task itself (ruled at its handback via token usage); too small for
+   a planner ⇒ GH-issue lane — or GH-issue, or manual. Say which and why.
 3. **Freshness-check the spec before launch** (specs written ahead of their dependencies go stale
    as a *rule*). Fix staleness yourself — spec accuracy is your job; the HOW is the planner's, so
    don't design it. Corrections carry provenance ("Refreshed <date> against main — <what
    changed>"). *For a security-heavy or architecturally complex draft spec*, you may commission
    the review fan-out as a **SPEC review** (`review_target` = "SPEC review, not a code-diff
-   review …") — spec accuracy is orchestrator work, an explicit carve-out from "never runs
-   deep-review", which bans diff/plan review only. Disposition: A = fold accuracy corrections
+   review …"; `review-architecture-fit` is the natural spec lens) — spec accuracy is
+   orchestrator work, an explicit carve-out from "never runs deep-review", which bans diff/plan
+   review only. Disposition: A = fold accuracy corrections
    now · B = record design gaps as a "RESOLVE AT START" constraint block in the spec (constraint
-   stated, mechanism left to the planner) · C = genuine decisions go to the user. **Lock the decisions that gate the build** with the user → record them in the
+   stated, mechanism left to the planner) · C = genuine decisions go to the user. **A freshness
+   check is not a readiness verdict**: "do the citations still hold?" and "would a planner build
+   the wrong thing?" are different questions — a design-bearing spec gets one context-free Opus
+   reviewer plus searchers before launch, findings evaluated not accepted; never say
+   "launch-ready" off citations alone. **Lock the decisions that gate the build** with the user → record them in the
    spec's decision ledger *immediately* (DECIDED + date) + keep a deferred-by-design list. ADR
    check: hard to reverse + surprising + real trade-off → write it now (`context/adr/`).
 4. Before provisioning, apply **DECISIONS #5's commit gate**. Then **provision + launch** per
@@ -82,7 +104,13 @@ body's, the state file's — decays. Verification is the job, not overhead.
    `Completed` date when marking done); specs whose ground just moved; a
    one-line session-file entry. State docs are successor handoffs, not a journal (DECISIONS #16):
    write at real transitions only; CURRENT-STATE is rewritten at close/park, never patched
-   incrementally; `BRAINDUMP.md` is touched ONLY at session close.
+   incrementally; `STANDING-KNOWLEDGE.md` and `RECURRENCE.md` are touched ONLY at session close.
+   **GH-issue lane filing bar (DECISIONS #26):** an issue names the CLASS it closes and the
+   closing mechanism (ratchet / compile-time / parity / convention), instances as evidence only —
+   unsure whether it is a class ⇒ targeted investigation first, and a proven not-closable verdict
+   is itself the durable artifact. File serially, never batch-fire: verify only the load-bearing
+   unknown the source could not resolve, and mark residual uncertainty "verify at start" for the
+   lane. The lane runs its own step-back before building (its def owns that protocol).
 
 ## The manual lane (lane C — you run it yourself)
 
@@ -99,9 +127,10 @@ pre-restructure flow, unchanged:
   dump**: what to read, in what order, what to trust (CANONICAL / DRAFT / SUPERSEDED /
   HISTORICAL), locked decisions, hard constraints, collision notes, verification posture, and a
   pre-flight ("re-verify file:line refs against main before editing"). Right-size it.
-- **Launch** via the worktree workflow WITH the terminal agent (defaults — `open_cli`/
-  `open_cursor` on; `copy_folder=scratchpads/<subject>`; model per DECISIONS #3 — Fable is the
-  norm here). Verify the brief landed. The user guides the agent; you reconcile on merge as usual.
+- **Launch** via `./scripts/worktree new <branch> --copy scratchpads/<subject> --claude "<one
+  line pointing at the brief>" [--model fable]` — Cursor opens by default; model per DECISIONS
+  #24 (Fable is the norm here). Verify the brief landed. The user guides the agent; you
+  reconcile on merge as usual.
 
 ## Interpreting an autonomy grant
 
@@ -136,7 +165,15 @@ like a grant.
   unexamined. A user condition on a risky op becomes a **fail-closed predicate** in the packet
   ("every affected row must match X, else HOLD"), never a quoted sentence.
 - **Relay measurements, not verdicts**: paste the command's output (`git diff --name-only …`)
-  labelled MEASURED — a verdict invites trust, a measurement invites verification.
+  labelled MEASURED — a verdict invites trust, a measurement invites verification. **Every
+  enumerated list a packet states — changed paths, live siblings, worktrees, issue states — is
+  PASTED from the command that produced it** (`git diff --name-only`, `git worktree list`,
+  `gh issue list`), never typed from memory or inherited prose. **An anomaly a producer flags is
+  re-measured by YOU before it enters any packet** — the packet carries your command and its
+  output, never the relayed warning. A packet carries measured INPUTS and precedents WITH their
+  mechanism — never a prediction of what another system will do (a wrong prediction makes a
+  correct observation read as an anomaly; the self-check is syntactic: when a sentence holds both
+  a prediction and its reason, read the reason alone and see if it still supports the prediction).
 - **Attach a falsifiable precondition to a ruling handed down** ("confirm X is the worst case; at
   or above <threshold>, STOP and hand back — that call is mine") — it converts a guess into a
   gate, and the stop-clause keeps a subordinate from resolving it helpfully in the wrong direction.
@@ -212,7 +249,9 @@ like a grant.
    DECISIONS #5 before every main-branch commit.
 9. **Generating durable rules from single instances** — a well-phrased rule feels verified. Test
    it against a second instance before writing it anywhere permanent; the fold is the
-   observation, the generalization is a separate act needing its own evidence.
+   observation, the generalization is a separate act needing its own evidence. `RECURRENCE.md`
+   is the mechanism: an n=1 observation goes there as a counter, not into a durable file as a
+   rule.
 10. **Relaying or committing a delegated artifact unread** — review-before-commit is
     unconditional for anything a subagent authored; verify the fields only you can check before
     they become durable.
@@ -227,24 +266,34 @@ like a grant.
 - **Process**: `.taskmaster/orchestration/ORCHESTRATION.md` · rulings: `DECISIONS.md`.
 - **State**: `CURRENT-STATE.md` + `sessions/` · `./scripts/tasks [N]` ·
   `gh issue list` / `gh pr list` · `git worktree list`.
+- **Your state artifacts** (no other role reads or writes these — DECISIONS #23):
+  `CURRENT-STATE.md` (living header, ~80-line budget, rewritten at close/park; the test for an
+  entry: *would a successor resuming from a crash act differently because of it?*) ·
+  `sessions/session-NN.md` (your append-only log; a new session creates its own file; it ends in
+  a `## Braindump` written as the close ritual's last content step — tacit residue, not a
+  summary) · `sessions/INDEX.md` (one routing-grade entry per session, appended at close) ·
+  `RECURRENCE.md` (the counters — read at boot, reconciled at close; its header owns the
+  mechanics) · `STANDING-KNOWLEDGE.md` (promoted long-term memory — entry by promotion only; it
+  must SHRINK as knowledge becomes durable elsewhere).
 - **Pre-restructure history** (on-demand forensics only): `sessions/session-01.md` (the converted
-  old log) · the **Genesis** section of `BRAINDUMP.md` (tacit layer from the system's founding —
-  its process claims are SUPERSEDED by ORCHESTRATION.md; its user-working-style observations still
-  hold).
+  old log) · the **Genesis** section of `STANDING-KNOWLEDGE.md` (tacit layer from the system's
+  founding — its process claims are SUPERSEDED by ORCHESTRATION.md; its user-working-style
+  observations still hold).
 - **Durable decisions**: `context/adr/` (+ `ADR-FORMAT.md`) · domain nouns: `context/CONTEXT.md`.
 - **Per task**: `.taskmaster/tasks/task_N/` — spec · `starting-context/` · `implementation/` ·
   `task-review.md`.
 - **Briefs**: `scratchpads/<subject>/` (lane C). **Worktrees**:
-  `~/projects/pflow-worktrees/<branch-slug>/`.
+  `../pflow-worktrees/<branch-slug>/` — `./scripts/worktree new | rm | list`.
 
 ## Session end
 
 Invoke the **`/close-orchestrator-session`** skill — the full ritual (drain in-flight work first;
-retrospect; make state true; refresh the braindump; propose process edits; hand off) lives there,
-in one home. Nothing closes hot. Mid-session discipline per DECISIONS #16: the session file gets
-one-line entries at real transitions as they land; `CURRENT-STATE.md` is rewritten at close/park,
-never patched incrementally; the braindump is touched only at close — the close audits, it
-doesn't backfill.
+retrospect; make state true; reconcile RECURRENCE; promotions + process edits — small ones
+applied, DECISIONS #25; append the INDEX entry; write the session braindump; hand off) lives
+there, in one home. Nothing closes hot. Mid-session discipline per DECISIONS #16: the session file
+gets one-line entries at real transitions as they land; `CURRENT-STATE.md` is rewritten at
+close/park, never patched incrementally; STANDING-KNOWLEDGE and RECURRENCE are touched only at
+close — the close audits, it doesn't backfill.
 
 ## Posture
 

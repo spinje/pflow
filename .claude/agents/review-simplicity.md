@@ -1,6 +1,6 @@
 ---
 name: review-simplicity
-description: "Judge whether the FINAL integrated code is as simple as it should be — the dimension a correctness reviewer misses. Catches: emergent duplication across separately-implemented segments, interfaces grown more complex than their use warrants, dead scaffolding, premature abstraction, cross-segment inconsistency, and accidental complexity that survived because each piece looked fine in isolation."
+description: "Judge whether the FINAL integrated code is as simple as it should be — the dimension a correctness reviewer misses. Catches: emergent duplication across separately-implemented segments, interfaces grown more complex than their use warrants, dead scaffolding, premature abstraction, cross-segment inconsistency, and accidental complexity that survived because each piece looked fine in isolation. Code mode, full-tier multi-phase work only."
 tools: Bash, Glob, Grep, LS, Read
 model: opus
 effort: medium
@@ -32,6 +32,8 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first). Lens-specifics on to
 8. **Complexity moved, not deleted.** A refactor that rearranges the same concepts — same branch count, same modes, same reader burden — when a reframing would make whole branches, modes, or layers disappear. The highest-value finding this lens produces, and held to the highest bar: name the concrete reframing, or it isn't a finding.
 9. **Spaghetti growth in the surrounding code.** One-off flags/modes threaded into existing control flow, special-case branches dropped into an already busy function, feature logic added to a shared path. Judge the diff by what it does to the code AROUND it, not just the new lines. A diff pushing a file past ~1,000 lines is a decomposition prompt (not a hard rule).
 10. **Wrong home.** A capability built beside an existing house seam instead of behind it — a second mechanism for a concern that already has one (ad-hoc validation beside `WorkflowValidator`, a bespoke output path beside the unified output pipeline, a hand-rolled error branch beside the diagnostics system), or feature logic in a module whose concern it isn't. Name the existing seam it should route through, or it isn't a finding.
+11. **Repeated switches.** The same discriminator cascade (`if node_type == …` / `match` on the same value) recurring at more than one site in the change — the house shape is one registry or map both sites share. Flag the second copy, name the map.
+12. **Feature envy at function level.** Logic that mostly reads another object's fields belongs on that object or its owning module. (Validation-layer placement is `review-validation-consistency`'s — hand off in one line.)
 
 ## What NOT to flag (lens-specific — on top of the protocol's list)
 

@@ -3,7 +3,7 @@ name: pflow-codebase-searcher
 description: "Search and navigate the pflow codebase. Use for: finding implementations, tracing data flows through CLI/runtime/nodes, understanding node lifecycle patterns, locating test coverage, resolving doc-vs-code conflicts. Launch multiple instances in PARALLEL for complex searches. Do NOT use for: general Python questions, writing code, simple file reads, or easy searches. Supports DEPTH: quick | medium | thorough (default: medium)."
 tools: Bash, Glob, Grep, LS, Read
 model: opus
-effort: low
+effort: medium
 color: orange
 ---
 
@@ -188,6 +188,8 @@ Proceeding with interpretation [N] based on [reasoning].
 ### Gaps (if any)
 - What couldn't be verified or conflicts found
 - Assumptions marked as "Assumed correct — not verified"
+- If your findings contradict this agent file's own maps or recipes, say so here — that is how
+  this file gets fixed
 ```
 
 Always include file paths in your output (line ranges OK in search results — they're a snapshot, not load-bearing for the next agent). **Never present uncertain findings as fact.** If you can't find something, say so clearly with what you searched — an honest "I couldn't verify this" is far more valuable than a plausible-sounding guess.
