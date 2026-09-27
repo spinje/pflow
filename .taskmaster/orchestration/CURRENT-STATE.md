@@ -22,8 +22,10 @@ How-it-got-here: latest `sessions/session-NN.md` (+ the previous three braindump
   **`make install` FAILED in every worktree until now** (`core.hooksPath` in the shared
   `.git/config` makes `pre-commit install` refuse) — fixed in the Makefile, but a worktree
   checks out committed `main`, so the fix only works for worktrees once it has landed there.
-  **Both batches are UNCOMMITTED at write time** — `git status` shows them; landing is the
-  user's word (#5). Comparison + plans: `scratchpads/orchestration-comparison/` (local-only).
+  **Both batches are on PR #626** (`chore/orchestration-fold-batch-3`), user-authorized; merge
+  waits on CI + the auto-reviewer comments acted on (#14) + the user's word. Comparison + plans:
+  `scratchpads/orchestration-comparison/`; handover for the next agent:
+  `scratchpads/handoffs/handover-orchestration-fold-2026-09-27.md` (both local-only).
 - Earlier fold (2026-08-14/15, #15–#22, session-07): completion gate is one job owned by the
   gate-runner via the pflow fan-out (#17); effort routing (#18); lane B on `lane-implementer`
   (#20); `review-falsifier` (direct launch only).
@@ -37,8 +39,9 @@ How-it-got-here: latest `sessions/session-NN.md` (+ the previous three braindump
 
 ## In flight
 
-- Nothing. No worktrees beyond `main`, no live subagents, no open PRs. `main == origin/main ==
-  02fcf160`; the fold-batch-3 edit set sits uncommitted on top (above).
+- **PR #626 open** (fold batch 3 + worktree script + CLAUDE.md restructure; 113 paths). No
+  worktrees beyond `main`, no live subagents. `origin/main == 02fcf160`; the main checkout sits
+  on the PR branch until it merges.
 
 ## Recently shipped / filed
 
