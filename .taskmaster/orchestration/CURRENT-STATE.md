@@ -1,5 +1,13 @@
 # CURRENT-STATE.md (last verified: 2026-08-23 outside any numbered session — main @ 3892b8d2)
 
+## Outside-session filing — 2026-09-27
+
+- Filed from a consumer repo's browser-driving toolkit evaluation (reproductions verified; no fixes implemented; **triage is the orchestrator's + user's call**): [#620](https://github.com/spinje/pflow/issues/620) bug — documented `$${…}` escape broken (docs example fails verbatim) · [#621](https://github.com/spinje/pflow/issues/621) non-template `${` (shell expansion, JS template literals) rejected everywhere · [#622](https://github.com/spinje/pflow/issues/622) no code sharing (list `code` passes validate, then `TypeError`) · [#623](https://github.com/spinje/pflow/issues/623) docs: choosing MCP tools for deterministic steps (+ comment: undocumented MCP `timeout:`, `on-error` salvage) · [#624](https://github.com/spinje/pflow/issues/624) MCP state lost between invocations · [#625](https://github.com/spinje/pflow/issues/625) prose-wrapped MCP JSON. #620–#622/#625 extend the #550/#551/#552 `evaluate_script` cluster. Tacit notes: [braindump](../../scratchpads/handoffs/braindump-issues-620-625.md).
+
+## Outside-session audit — 2026-09-21
+
+- Audited `2ee91a77`; Astra-verified findings filed as [#615](https://github.com/spinje/pflow/issues/615), [#616](https://github.com/spinje/pflow/issues/616), [#617](https://github.com/spinje/pflow/issues/617), and [#618](https://github.com/spinje/pflow/issues/618). No fixes implemented. [Report](../../scratchpads/codebase-audit-2026-09-21/report.md); details appended to session-07 as outside-session work.
+
 ## Outside-session override — 2026-08-23
 
 - PRs #610, #613, and #614 are merged; issues #611 and #612 are closed. #612 shipped per-server MCP config fingerprints, failure-preserving retry, exact canonical ownership, one coherent registry commit, and bounded discovery. No producer remains after standard lane teardown.
