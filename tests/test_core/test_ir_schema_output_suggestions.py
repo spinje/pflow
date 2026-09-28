@@ -40,6 +40,21 @@ class TestOutputSchemaSuggestions:
             # Should show it's a replacement
             assert "did you mean" in error_msg.lower() or "instead of" in error_msg.lower()
 
+    def test_missing_source_names_output_and_fix(self):
+        """A sourceless output is rejected with a hint naming the output and the source line (issue #628)."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "llm", "params": {}}],
+            "outputs": {"summary": {"description": "Never populated", "type": "string"}},
+        }
+
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+
+        assert exc_info.value.path == "outputs.summary"
+        assert "Add a source line to output 'summary'" in str(exc_info.value)
+        assert "- source: ${node_id.output_key}" in str(exc_info.value)
+
     def test_wrong_type_shows_wrapping(self):
         """CRITICAL: Agent using string instead of object gets wrapping example.
 

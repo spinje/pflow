@@ -84,7 +84,7 @@ class TestWorkflowInterfaces:
             ir = {
                 "ir_version": "0.1.0",
                 "nodes": [{"id": "n1", "type": "test"}],
-                "outputs": {"result": {"description": "Processing result", "type": "string"}},
+                "outputs": {"result": {"description": "Processing result", "type": "string", "source": "${n1.result}"}},
             }
             validate_ir(ir)
 
@@ -94,9 +94,9 @@ class TestWorkflowInterfaces:
                 "ir_version": "0.1.0",
                 "nodes": [{"id": "n1", "type": "test"}],
                 "outputs": {
-                    "summary": {"description": "Generated summary", "type": "string"},
-                    "word_count": {"description": "Total words", "type": "number"},
-                    "metadata": {"description": "Additional info", "type": "object"},
+                    "summary": {"description": "Generated summary", "type": "string", "source": "${n1.summary}"},
+                    "word_count": {"description": "Total words", "type": "number", "source": "${n1.word_count}"},
+                    "metadata": {"description": "Additional info", "type": "object", "source": "${n1.metadata}"},
                 },
             }
             validate_ir(ir)
@@ -106,7 +106,7 @@ class TestWorkflowInterfaces:
             ir = {
                 "ir_version": "0.1.0",
                 "nodes": [{"id": "n1", "type": "test"}],
-                "outputs": {"result": {"type": "string"}},
+                "outputs": {"result": {"type": "string", "source": "${n1.result}"}},
             }
             validate_ir(ir)
 
@@ -122,8 +122,12 @@ class TestWorkflowInterfaces:
                     "language": {"description": "Language code", "required": False, "type": "string", "default": "en"},
                 },
                 "outputs": {
-                    "analysis": {"description": "Analysis results", "type": "object"},
-                    "confidence": {"description": "Confidence score", "type": "number"},
+                    "analysis": {"description": "Analysis results", "type": "object", "source": "${analyzer.analysis}"},
+                    "confidence": {
+                        "description": "Confidence score",
+                        "type": "number",
+                        "source": "${analyzer.confidence}",
+                    },
                 },
             }
             validate_ir(ir)
@@ -134,7 +138,7 @@ class TestWorkflowInterfaces:
                 "ir_version": "0.1.0",
                 "nodes": [{"id": "n1", "type": "test"}],
                 "inputs": {"text": {"description": "Text to process 文本处理 🌍", "type": "string"}},
-                "outputs": {"result": {"description": "Result 结果 ✨", "type": "string"}},
+                "outputs": {"result": {"description": "Result 结果 ✨", "type": "string", "source": "${n1.result}"}},
             }
             validate_ir(ir)
 
@@ -145,7 +149,7 @@ class TestWorkflowInterfaces:
                 "ir_version": "0.1.0",
                 "nodes": [{"id": "n1", "type": "test"}],
                 "inputs": {"input1": {"description": long_desc, "type": "string"}},
-                "outputs": {"output1": {"description": long_desc, "type": "string"}},
+                "outputs": {"output1": {"description": long_desc, "type": "string", "source": "${n1.output1}"}},
             }
             validate_ir(ir)
 
@@ -260,7 +264,13 @@ class TestWorkflowInterfaces:
             ir = {
                 "ir_version": "0.1.0",
                 "nodes": [{"id": "n1", "type": "test"}],
-                "outputs": {"result!data": {"description": "Result with special character", "type": "string"}},
+                "outputs": {
+                    "result!data": {
+                        "description": "Result with special character",
+                        "type": "string",
+                        "source": "${n1.result}",
+                    }
+                },
             }
 
             # This currently passes - documents current behavior
@@ -330,7 +340,7 @@ class TestWorkflowInterfaces:
             ir = {
                 "ir_version": "0.1.0",
                 "nodes": [{"id": "n1", "type": "test", "params": {"value": "${input}"}}],
-                "outputs": {"result": {"type": "string"}},
+                "outputs": {"result": {"type": "string", "source": "${n1.result}"}},
             }
             # Should work - inputs field is optional
             validate_ir(ir)
@@ -379,7 +389,7 @@ class TestWorkflowInterfaces:
                 "ir_version": "0.1.0",
                 "nodes": [{"id": "n1", "type": "test"}],
                 "inputs": {"text": {"description": "", "type": "string"}},
-                "outputs": {"result": {"description": "", "type": "string"}},
+                "outputs": {"result": {"description": "", "type": "string", "source": "${n1.result}"}},
             }
             validate_ir(ir)
 

@@ -400,6 +400,7 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                         "description": "Markdown source line for the output source declaration (internal parser metadata)",
                     },
                 },
+                "required": ["source"],
                 "additionalProperties": False,
             },
             "default": {},
@@ -491,6 +492,16 @@ def _format_path(path: list) -> str:
     return formatted or "root"
 
 
+def missing_output_source_suggestion(output_name: str) -> str:
+    """Fix hint for a declared output without ``source`` (schema and compile paths share it)."""
+    return (
+        f"Add a source line to output '{output_name}' naming the value it returns, e.g.:\n"
+        f"  ### {output_name}\n\n"
+        "  - source: ${node_id.output_key}\n"
+        "Without a source nothing populates the output, so it would be silently missing from the result."
+    )
+
+
 def _get_output_suggestion(error: JsonSchemaValidationError, path_str: str) -> str:
     """Get a helpful suggestion for output-specific validation errors.
 
@@ -501,11 +512,20 @@ def _get_output_suggestion(error: JsonSchemaValidationError, path_str: str) -> s
     Returns:
         Suggestion string for fixing the output-related error
     """
-    # Case 1: Additional properties (wrong field names like 'value', 'from')
-    if error.validator == "additionalProperties":
+    # Case 1: Missing source — nothing would populate the output (issue #628).
+    # A misspelled source (`value:`, `from:`) also trips `required`; Case 2's hint fits it better.
+    unknown_fields: list[str] = []
+    if error.validator == "required" and len(error.absolute_path) == 2 and isinstance(error.instance, dict):
+        known_fields = FLOW_IR_SCHEMA["properties"]["outputs"]["additionalProperties"]["properties"]
+        unknown_fields = [key for key in error.instance if key not in known_fields]
+        if not unknown_fields:
+            return missing_output_source_suggestion(str(error.absolute_path[1]))
+
+    # Case 2: Additional properties (wrong field names like 'value', 'from')
+    if error.validator == "additionalProperties" or unknown_fields:
         # Extract which field was unexpected
-        unexpected_field = None
-        if hasattr(error, "message"):
+        unexpected_field = unknown_fields[0] if unknown_fields else None
+        if unexpected_field is None and hasattr(error, "message"):
             import re
 
             match = re.search(r"'([^']+)' was unexpected", error.message)
@@ -513,7 +533,7 @@ def _get_output_suggestion(error: JsonSchemaValidationError, path_str: str) -> s
                 unexpected_field = match.group(1)
 
         # Build helpful message
-        lines = ["Output definitions can only have: description, type, source, stdout (all optional)"]
+        lines = ["Output definitions can only have: source (required), description, type, stdout"]
 
         # Suggest replacement for common mistakes
         if unexpected_field == "value":
@@ -536,7 +556,7 @@ def _get_output_suggestion(error: JsonSchemaValidationError, path_str: str) -> s
 
         return "\n".join(lines)
 
-    # Case 2: Wrong type (string instead of object)
+    # Case 3: Wrong type (string instead of object)
     if error.validator == "type" and "object" in str(error.validator_value):
         return (
             "Each output must be a section with parameters, not a plain string.\n\n"

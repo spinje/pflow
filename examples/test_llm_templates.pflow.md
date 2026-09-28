@@ -50,9 +50,11 @@ Write a ${style} explanation about ${topic} in exactly ${max_words} words. Be co
 The LLM's response.
 
 - type: string
+- source: ${generate.response}
 
 ### llm_usage
 
 Token usage information.
 
 - type: object
+- source: ${generate.llm_usage}

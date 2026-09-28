@@ -1,6 +1,11 @@
-"""Tests for workflow output validation in the compiler."""
+"""Tests for workflow output validation in the compiler.
 
-import logging
+Compile-only callers (web UI pre-flight, cache-key prediction, programmatic
+``compile_workflow``) never run the IR schema, so ``_validate_outputs`` must
+reject a sourceless output itself (issue #628).
+"""
+
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -10,216 +15,68 @@ from pflow.runtime import compile_workflow
 from pflow.runtime.compilation.compile_validation import _validate_outputs
 
 
+def _ir(outputs: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ir_version": "0.1.0",
+        "nodes": [{"id": "n1", "type": "test-node", "params": {}}],
+        "edges": [],
+        "outputs": outputs,
+    }
+
+
 class TestOutputValidation:
     """Test the _validate_outputs function."""
 
-    def test_no_outputs_declared(self, caplog):
-        """Test that no validation occurs when no outputs are declared."""
-        workflow_ir = {"ir_version": "0.1.0", "nodes": [{"id": "n1", "type": "test-node"}]}
-        registry = Mock()
+    def test_no_outputs_declared(self):
+        _validate_outputs({"ir_version": "0.1.0", "nodes": [{"id": "n1", "type": "test-node"}]})
 
-        with caplog.at_level(logging.DEBUG):
-            _validate_outputs(workflow_ir, registry)
-
-        # Should log that no outputs were declared
-        assert "No outputs declared for workflow" in caplog.text
-        # Registry shouldn't be called
-        registry.get_nodes_metadata.assert_not_called()
+    def test_sourced_outputs_pass(self):
+        _validate_outputs(_ir({"result": {"source": "${n1.result}"}, "raw": {"source": "n1"}}))
 
     def test_invalid_output_name(self):
-        """Test that output names with shell special characters raise SchemaValidationError."""
-        workflow_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [{"id": "n1", "type": "test-node"}],
-            "outputs": {
-                "my$output": {"description": "Contains dollar sign"},
-                "valid_name": {"description": "Valid identifier"},
-            },
-        }
-        registry = Mock()
-        # Mock get_nodes_metadata to avoid TypeError
-        registry.get_nodes_metadata.return_value = {"test-node": {"interface": {"outputs": []}}}
-
+        """Output names with shell special characters raise SchemaValidationError."""
         with pytest.raises(SchemaValidationError) as exc_info:
-            _validate_outputs(workflow_ir, registry)
+            _validate_outputs(_ir({"my$output": {"source": "${n1.result}"}}))
 
         assert "Invalid output name 'my$output'" in str(exc_info.value)
-        assert "shell special characters" in str(exc_info.value) or "template syntax" in str(exc_info.value)
 
-    def test_traceable_outputs(self, caplog):
-        """Test validation when outputs can be traced to nodes."""
-        workflow_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [{"id": "n1", "type": "test-node"}],
-            "outputs": {"result": {"description": "Test result"}},
-        }
+    @pytest.mark.parametrize(
+        "output_spec",
+        [{"description": "No source"}, {"description": "Empty source line", "source": None}, "plain string"],
+        ids=["missing", "null", "not-a-section"],
+    )
+    def test_output_without_source_raises(self, output_spec: Any):
+        """A sourceless output would silently produce nothing at runtime, so compilation rejects it."""
+        with pytest.raises(SchemaValidationError) as exc_info:
+            _validate_outputs(_ir({"ok": {"source": "${n1.result}"}, "summary": output_spec}))
 
-        # Mock registry with node that produces 'result'
-        registry = Mock()
-        registry.get_nodes_metadata.return_value = {
-            "test-node": {"interface": {"outputs": [{"key": "result", "type": "string"}]}}
-        }
-
-        with caplog.at_level(logging.DEBUG):
-            _validate_outputs(workflow_ir, registry)
-
-        # Should log successful validation
-        assert "Output 'result' can be produced by workflow nodes" in caplog.text
-        # Should not have warnings
-        assert "cannot be traced to any node" not in caplog.text
-
-    def test_untraceable_outputs_warning(self, caplog):
-        """Test that untraceable outputs produce warnings, not errors."""
-        workflow_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [{"id": "n1", "type": "test-node"}],
-            "outputs": {"dynamic_key": {"description": "Written dynamically"}},
-        }
-
-        # Mock registry with node that doesn't produce 'dynamic_key'
-        registry = Mock()
-        registry.get_nodes_metadata.return_value = {
-            "test-node": {"interface": {"outputs": [{"key": "other_key", "type": "string"}]}}
-        }
-
-        with caplog.at_level(logging.WARNING):
-            # Should NOT raise an exception
-            _validate_outputs(workflow_ir, registry)
-
-        # Should have warning about untraceable output
-        assert "Declared output 'dynamic_key' cannot be traced to any node" in caplog.text
-        assert "This may be fine if nodes write dynamic keys" in caplog.text
-
-    def test_nested_workflow_dynamic_outputs(self, caplog):
-        """Test that unresolvable workflow nodes produce warning, not error."""
-        workflow_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "nested",
-                    "type": "workflow",
-                    "params": {"workflow": "some-saved-workflow"},
-                }
-            ],
-            "outputs": {"parent_result": {"description": "From nested workflow"}},
-        }
-
-        # Mock registry - workflow type doesn't need interface
-        registry = Mock()
-        registry.get_nodes_metadata.return_value = {"workflow": {"interface": {"outputs": []}}}
-
-        with caplog.at_level(logging.DEBUG):
-            # Should NOT raise — dynamic workflow outputs produce warning, not error
-            _validate_outputs(workflow_ir, registry)
-
-        # Workflow outputs can't be statically traced when child is unresolvable
-        assert "cannot be traced to any node" in caplog.text
-
-    def test_multiple_outputs_mixed_validity(self, caplog):
-        """Test workflow with mix of traceable and untraceable outputs."""
-        workflow_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [{"id": "n1", "type": "test-node"}],
-            "outputs": {
-                "known_output": {"description": "Can be traced"},
-                "dynamic_output": {"description": "Cannot be traced"},
-                "another_known": {"description": "Also traceable"},
-            },
-        }
-
-        registry = Mock()
-        registry.get_nodes_metadata.return_value = {
-            "test-node": {
-                "interface": {
-                    "outputs": [{"key": "known_output", "type": "string"}, {"key": "another_known", "type": "number"}]
-                }
-            }
-        }
-
-        with caplog.at_level(logging.DEBUG):  # Changed to DEBUG to capture all logs
-            _validate_outputs(workflow_ir, registry)
-
-        # Should have debug logs for traceable outputs
-        assert "Output 'known_output' can be produced" in caplog.text
-        assert "Output 'another_known' can be produced" in caplog.text
-
-        # Should have warning for untraceable output
-        assert "Declared output 'dynamic_output' cannot be traced" in caplog.text
-
-    def test_simple_output_format(self):
-        """Test handling of simple string output format from interfaces."""
-        workflow_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [{"id": "n1", "type": "test-node"}],
-            "outputs": {"simple_output": {"description": "Test output"}},
-        }
-
-        registry = Mock()
-        registry.get_nodes_metadata.return_value = {
-            "test-node": {
-                "interface": {
-                    "outputs": ["simple_output"]  # Simple string format
-                }
-            }
-        }
-
-        # Should handle simple format without errors
-        _validate_outputs(workflow_ir, registry)
+        error = exc_info.value
+        assert error.path == "outputs.summary"
+        assert "Output 'summary' has no source" in error.message
+        assert "- source: ${node_id.output_key}" in (error.suggestion or "")
 
 
 class TestOutputValidationIntegration:
     """Test output validation as part of compile_workflow."""
 
-    def test_compile_with_hyphenated_output_names_now_allowed(self):
-        """Test that compilation succeeds with hyphenated output names."""
-        ir_dict = {
-            "ir_version": "0.1.0",
-            "nodes": [{"id": "n1", "type": "test-node", "params": {}}],
-            "edges": [],
-            "outputs": {"valid-name": {"description": "Contains hyphen - now allowed"}},
-        }
-
+    @pytest.fixture
+    def registry(self) -> Mock:
         registry = Mock()
         registry.load.return_value = {"test-node": {"module": "test", "class_name": "ExampleNode"}}
-        # Mock get_nodes_metadata to avoid TypeError
         registry.get_nodes_metadata.return_value = {"test-node": {"interface": {"outputs": []}}}
-
-        # Import the mock node class
-        with patch("pflow.runtime.compilation.compiler.import_node_class") as mock_import:
-            mock_import.return_value = type("ExampleNode", (Mock,), {})
-
-            # Should compile successfully now
-            workflow = compile_workflow(ir_dict, registry)
-            assert workflow is not None  # Compilation succeeded
+        return registry
 
     @patch("pflow.runtime.compilation.compiler.import_node_class")
-    def test_compile_with_output_warnings(self, mock_import, caplog):
-        """Test that compilation continues with warnings for untraceable outputs."""
-        ir_dict = {
-            "ir_version": "0.1.0",
-            "nodes": [{"id": "n1", "type": "test-node", "params": {}}],
-            "edges": [],
-            "outputs": {"maybe_dynamic": {"description": "Might be written dynamically"}},
-        }
-
-        # Mock node class
+    def test_compile_with_hyphenated_output_names(self, mock_import, registry):
         mock_import.return_value = type("ExampleNode", (Mock,), {})
 
-        # Mock registry
-        registry = Mock()
-        registry.load.return_value = {"test-node": {"module": "test", "class_name": "ExampleNode"}}
-        registry.get_nodes_metadata.return_value = {
-            "test-node": {
-                "interface": {
-                    "outputs": []  # Node doesn't declare this output
-                }
-            }
-        }
+        workflow = compile_workflow(_ir({"valid-name": {"source": "${n1.result}"}}), registry)
 
-        with caplog.at_level(logging.WARNING):
-            # Should compile successfully despite warning
-            workflow = compile_workflow(ir_dict, registry)
-            assert workflow is not None
+        assert workflow is not None
 
-        # Should have warning about untraceable output
-        assert "Declared output 'maybe_dynamic' cannot be traced" in caplog.text
+    @patch("pflow.runtime.compilation.compiler.import_node_class")
+    def test_compile_rejects_output_without_source(self, mock_import, registry):
+        mock_import.return_value = type("ExampleNode", (Mock,), {})
+
+        with pytest.raises(SchemaValidationError, match="Output 'summary' has no source"):
+            compile_workflow(_ir({"summary": {"description": "Never populated"}}), registry)

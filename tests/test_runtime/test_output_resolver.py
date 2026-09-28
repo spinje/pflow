@@ -115,20 +115,6 @@ class TestPopulateDeclaredOutputs:
         assert shared["node1"]["result"] == "value1"
         assert shared["node2"]["data"] == "value2"
 
-    def test_skips_outputs_without_source_field(self):
-        """Test that outputs without source field are skipped."""
-        shared = {"existing": "value"}
-
-        workflow_ir = {
-            "outputs": {"output1": {"description": "Output without source"}, "output2": "simple_string_output"}
-        }
-
-        original_keys = set(shared.keys())
-        populate_declared_outputs(shared, workflow_ir)
-
-        # No new keys should be added
-        assert set(shared.keys()) == original_keys
-
     def test_handles_missing_workflow_ir(self):
         """Test that function handles None or missing workflow_ir gracefully."""
         shared = {"test": "value"}

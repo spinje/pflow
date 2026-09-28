@@ -1,8 +1,8 @@
 # Template Validation Package
 
 `validate_workflow_templates` checks templates before execution. Its production
-caller is `core/workflow/validator.py::WorkflowValidator`; compilation imports
-`extract_node_outputs` but does not run these passes.
+caller is `core/workflow/validator.py::WorkflowValidator`; compilation does not
+run these passes.
 
 ## Find the check
 
@@ -43,7 +43,7 @@ inspect those passes as well as the shared extractors.
 
 ## Output metadata and limits
 
-`extract_node_outputs` builds the metadata consumed by the passes and compiler.
+`extract_node_outputs` builds the metadata consumed by the passes.
 Read it for the shape rather than introducing a second metadata recipe.
 `is_batch_output` controls batch path behavior; `is_batch_item` and
 `is_inputs_context` record provenance, not pass-selection logic.
