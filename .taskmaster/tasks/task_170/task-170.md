@@ -263,7 +263,9 @@ them blocked; say so at any park.
 - **A dynamic-index template is one Reference.** `${a[${i}].x}` is *simple* (type-preserving:
   a dict param gets a dict, not a JSON string) and any failure inside it — inner absent,
   non-int, out of range, outer path missing — makes the whole reference unresolved (strict
-  mode errors; `??` falls through; Optional inputs get `None`; declared outputs skip). This is
+  mode errors; `??` falls through; Optional inputs get `None`; a non-coalesce unresolved
+  declared output is an `OutputResolutionError`, skipped only for an all-absent `??` — a silent
+  skip is the failure class this task ends; wording amended 2026-09-28, session-08). This is
   the task's deliberate user-visible delta set, recorded per consumer in the phase-1
   characterization tests. The `${results[str]}` partial rewrite pinned by
   `test_nested_templates.py:54-59` flips.
@@ -282,6 +284,14 @@ them blocked; say so at any park.
   Both flip; corpus rows record the before-values.
 - **Task 118 waits** (moved to `then`, blocked-by recorded in its spec); the #621/#550 ruling is
   taken once after phase 5 (Out of scope).
+- **The runtime-only `$node.x` output-source form is removed** (`output_resolver._normalize_source`
+  drops its `$`-prefix branch) so validator and runtime agree by rejecting it. The validator always
+  rejected it, so no saved workflow can use it; admitting it would add a surface nothing calls.
+  DECIDED 2026-09-28 (session-08).
+- **A `??` chain as a `## Cache` chunk var is rejected explicitly at parse.** Today the runtime
+  silently drops such chunks (`_resolve_chunk_value` gates on the whole var's root) even when the
+  validator accepts the dotted form — loud beats silent. Lift only if the runtime ever resolves
+  chunk vars per operand. DECIDED 2026-09-28 (session-08).
 
 ## Dependencies
 
@@ -420,6 +430,9 @@ sources) is removed rather than admitted.
 - Unifying the validator's structure walk with the value walk (ADR-0006).
 - Migrating the string-helper long tail to the AST; the ~40 lexical `"${" in x` presence checks.
 - The type-compatibility matrix's *content* (only its home consolidates).
+- Unresolved elements of an inline-list `batch.items` stay literal (never flagged, as today);
+  the completion handback files a lane-B issue for it together with the cache-var-typo INFO
+  advisory (chunk silently ABSENT). DECIDED 2026-09-28 (session-08).
 - The web UI's TypeScript grammar mirrors beyond `scan.ts` (three lack the `$$` lookbehind:
   `batchItems.ts:26`, `format.ts:9`, `sourceDecorate.ts:32` — a separate issue).
 - `prompt_refs.first_per_item_position` tearing a nested index (`'Static text. ${results[${item.i}].x}'`
@@ -448,6 +461,8 @@ sources) is removed rather than admitted.
 - The batch warm-up `system` path (`engine._resolve_template_string` → `batch_executor.py:628-637`)
   re-scans output: a `$${x}` in `system` would drop the user system prompt and warm a different
   cache prefix (read, not executed — verify in phase 1).
+- Phase 4d (the `web/src/graph/scan.ts` mirror) needs `npm ci` in `web/` first — the worktree
+  carries no `node_modules`; then `npx vitest run src/graph/scan.test.ts`.
 - Stale-doc fixes in passing: `template_validation/CLAUDE.md`'s regex table (add the current
   patterns, then rewrite as views in phase 3); `template_validation/CLAUDE.md`'s "`data_flow`
   still checks their roots" (false under a dynamic index + `??`).
