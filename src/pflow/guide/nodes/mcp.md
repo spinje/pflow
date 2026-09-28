@@ -99,6 +99,48 @@ MCP failure paths:
 | `isError: true` | Tool set the MCP tool-error flag | Returns `error`, so `on-error` can route it |
 | `result.status: "error"`, `result.ok: false`, etc. | Service failure inside a successful MCP payload | Stored under `${node.result}`; pflow surfaces explicit failure flags as API warnings |
 
+### Choosing Tools for Deterministic Steps
+
+Many MCP servers are built for an LLM taking turns. One server often offers two
+styles of tool, and they behave very differently as fixed workflow steps:
+
+- **Observe-then-act tools** return handles (element uids, cursor or session ids)
+  that the next call uses after reading this result: `take_snapshot` → `click(uid)`.
+  They fit a step count known up front, with handles threaded through templates.
+  When the list of steps is runtime data, they need an `agent` node in the loop.
+- **Whole-program tools** take a complete script, query or form and return its
+  result in one call (`evaluate_script`, a SQL `query`, `fill_form`). Prefer them
+  when the steps are data, or when you would otherwise chain observe-then-act calls.
+
+Then check three things before building on a tool:
+
+- **Where the program runs.** Code that runs *inside* the target (a script
+  evaluated in a web page) can only do what the target lets its own code do: in a
+  page, no trusted input events and no request interception. A tool that drives the
+  target *from the host* (a browser-automation API) can do both. If you need that,
+  pick the host-side tool first; rebuilding it inside the target is a long detour.
+- **What comes back.** Prefer tools, or programs you write, that return JSON over
+  prose or markdown meant for an LLM (log listings, console dumps). For one fenced
+  JSON block inside prose, use `result_format: json_block`. If you must parse
+  prose, pin the server version and treat output changes as breaking.
+- **What it can do, not just what it returns.** `pflow probe` shows the output
+  shape. Also test the one capability the workflow depends on (does the input
+  reach the field? is the request visible?). Each probe starts a fresh server, so
+  use a small workflow when the test needs earlier state.
+
+**Slow calls.** A call is abandoned after `timeout` seconds. The server stays up
+for the rest of the run, so an `on-error:` handler can call the same server and
+read what the slow program left behind (e.g. results it pushed to a global as it
+went). If the server runs one call at a time, the handler waits until the
+abandoned call actually finishes, so give a long program its own deadline and
+have it return early with what it has.
+
+**Server lifetime.** pflow starts a stdio server for each run or probe and stops
+it at the end, so every run starts clean, which is what a reusable workflow wants.
+A server you run yourself over HTTP outlives pflow runs and may keep some state
+between them (server-dependent): useful for step-by-step exploration, at the cost
+of that isolation.
+
 ### Node Creation Pattern
 
 `````markdown
@@ -177,7 +219,7 @@ Email the analysis report to the recipient.
 | "Returns array" | `{"items": [...], "metadata": {...}}` | Access via `.items` |
 | "String parameter" | Needs specific format | Test with examples |
 | "Async endpoint" | Might support Prefer:wait | Try header first |
-| "Returns immediately" | Actually takes 5-10 seconds | Add timeout handling |
+| "Returns immediately" | Actually takes 5-10 seconds | Raise `timeout` (see Slow calls) |
 
 ### When to Probe MCP Nodes
 
