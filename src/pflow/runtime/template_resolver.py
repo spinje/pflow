@@ -56,8 +56,12 @@ class TemplateResolver:
     _COALESCE_EXPR_PATTERN = rf"{_OPERAND_PATTERN}(?:\s*\?\?\s*{_OPERAND_PATTERN})*"
 
     # Pattern for finding templates in strings (can match multiple)
-    # Must not be preceded by $ (to avoid $${var} escapes)
+    # Must not be preceded by $: `$${` is the escape for a literal `${`.
     TEMPLATE_PATTERN = re.compile(rf"(?<!\$)\$\{{({_COALESCE_EXPR_PATTERN})\}}")
+
+    # Single-pass interpolation: each match is either an escape (`$${` -> `${`) or a
+    # template. One left-to-right pass means resolved values are never re-scanned.
+    _INTERPOLATION_PATTERN = re.compile(rf"(?P<escape>\$\$\{{)|(?<!\$)\$\{{(?P<expr>{_COALESCE_EXPR_PATTERN})\}}")
 
     # Loose extraction pattern for validation/diagnostics code.
     # Captures everything between ${ and } (including coalesce ??).
@@ -78,18 +82,20 @@ class TemplateResolver:
 
     @staticmethod
     def has_templates(value: Any) -> bool:
-        """Check if value contains template variables.
+        """Check if value contains template syntax that resolution rewrites.
 
-        Recursively checks nested dictionaries and lists for template strings.
+        That is a template variable or a `$${` escape — an escape-only value still
+        needs resolving to become its literal `${...}`. Recursively checks nested
+        dictionaries and lists.
 
         Args:
             value: The value to check for templates (string, dict, list, or any)
 
         Returns:
-            True if value contains template variables anywhere in its structure
+            True if value contains template syntax anywhere in its structure
         """
         if isinstance(value, str):
-            return bool(TemplateResolver.TEMPLATE_PATTERN.search(value))
+            return "$${" in value or bool(TemplateResolver.TEMPLATE_PATTERN.search(value))
         elif isinstance(value, dict):
             return any(TemplateResolver.has_templates(v) for v in value.values())
         elif isinstance(value, list):
@@ -677,6 +683,7 @@ class TemplateResolver:
         For simple templates (entire string is "${var}"), preserves the original type.
         For complex templates (text around variables), returns a string.
         Template variables that cannot be resolved are left unchanged for debugging.
+        Each `$${` escape becomes a literal `${`.
 
         Args:
             template: String containing template variables
@@ -737,67 +744,60 @@ class TemplateResolver:
                 return template
 
         # Complex template - do string interpolation
-        result = template
-        for match in TemplateResolver.TEMPLATE_PATTERN.finditer(template):
-            result = TemplateResolver._resolve_complex_match(match.group(1), result, context)
-        return result
+        def interpolate(match: re.Match[str]) -> str:
+            if match.group("escape"):
+                return "${"
+            resolved = TemplateResolver._resolve_inline_expr(match.group("expr"), context)
+            return match.group(0) if resolved is None else resolved
+
+        return TemplateResolver._INTERPOLATION_PATTERN.sub(interpolate, template)
 
     @staticmethod
-    def _resolve_complex_match(var_expr: str, result: str, context: dict[str, Any]) -> str:
-        """Resolve a single template match within a complex template string.
+    def _resolve_inline_expr(var_expr: str, context: dict[str, Any]) -> str | None:
+        """Resolve one template expression embedded in a complex template.
 
         Args:
             var_expr: The variable expression captured from ${...}
-            result: Current result string being built
             context: Resolution context
 
         Returns:
-            Updated result string with this match resolved (or unchanged if unresolvable)
+            The value stringified for interpolation, or None if unresolvable
+            (the caller then leaves the template text unchanged)
         """
         # Handle coalesce expressions
         if TemplateResolver.is_coalesce_expression(var_expr):
             value, status = TemplateResolver.resolve_coalesce(var_expr, context)
-            if status == "resolved":
-                value_str = TemplateResolver._convert_to_string(value)
-                result = result.replace(f"${{{var_expr}}}", value_str)
-                logger.debug(
-                    f"Resolved coalesce template '${{{var_expr}}}' -> '{value_str}'",
-                    extra={"var_name": var_expr, "value_type": type(value).__name__},
-                )
-            # unresolved (no operand resolved): leave template as-is
-            return result
+            if status != "resolved":
+                return None  # no operand resolved: leave template as-is
+            value_str = TemplateResolver._convert_to_string(value)
+            logger.debug(
+                f"Resolved coalesce template '${{{var_expr}}}' -> '{value_str}'",
+                extra={"var_name": var_expr, "value_type": type(value).__name__},
+            )
+            return value_str
 
         # Bare literal in an inline template (Optional A): "Hello ${0}".
         if TemplateResolver.is_literal_operand(var_expr):
             ok, value = try_parse_json(var_expr)
-            if ok:
-                value_str = TemplateResolver._convert_to_string(value)
-                result = result.replace(f"${{{var_expr}}}", value_str)
-            return result
+            return TemplateResolver._convert_to_string(value) if ok else None
 
         # Non-coalesce: existing resolution logic
         var_name = var_expr
-        resolved_value = TemplateResolver.resolve_value(var_name, context)
-
         if "." in var_name or "[" in var_name:
             # Path traversal - check if we successfully resolved
             base_var = TemplateResolver._ROOT_SPLIT_PATTERN.split(var_name)[0]
-            if base_var in context and TemplateResolver.variable_exists(var_name, context):
-                value_str = TemplateResolver._convert_to_string(resolved_value)
-                result = result.replace(f"${{{var_name}}}", value_str)
-                logger.debug(
-                    f"Resolved template variable '${{{var_name}}}' -> '{value_str}'",
-                    extra={"var_name": var_name, "value_type": type(resolved_value).__name__},
-                )
-                return result
-        elif var_name in context:
+            resolved = base_var in context and TemplateResolver.variable_exists(var_name, context)
+        else:
+            resolved = var_name in context
+
+        if resolved:
+            resolved_value = TemplateResolver.resolve_value(var_name, context)
             value_str = TemplateResolver._convert_to_string(resolved_value)
-            result = result.replace(f"${{{var_name}}}", value_str)
             logger.debug(
                 f"Resolved template variable '${{{var_name}}}' -> '{value_str}'",
                 extra={"var_name": var_name, "value_type": type(resolved_value).__name__},
             )
-            return result
+            return value_str
 
         # Variable doesn't exist - leave template as-is for debugging
         if ".response." in var_name:
@@ -809,7 +809,7 @@ class TemplateResolver:
         else:
             logger.debug(f"Template variable '${{{var_name}}}' could not be resolved", extra={"var_name": var_name})
 
-        return result
+        return None
 
     @staticmethod
     def resolve_nested(value: Any, context: dict[str, Any]) -> Any:
