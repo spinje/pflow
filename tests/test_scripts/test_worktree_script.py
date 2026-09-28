@@ -9,9 +9,11 @@ suppressed with `WORKTREE_NO_LAUNCH=1`.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -223,18 +225,79 @@ def test_rm_refuses_a_detached_head_unless_forced(repo: dict[str, Path]) -> None
     forced = run(repo, "rm", "feat/detached", "-f")
     assert forced.returncode == 0, forced.stderr
     assert not wt.exists()
+    assert "no branch to delete" in forced.stdout
+    assert "feat/detached" in branches(repo, "feat/detached")  # the branch it left is untouched
 
 
-def test_rm_force_skips_checks_and_keeps_the_branch(repo: dict[str, Path]) -> None:
+def test_rm_dirty_refusal_lists_the_dirty_paths(repo: dict[str, Path]) -> None:
+    assert run(repo, "new", "feat/scratchy", "--no-open").returncode == 0
+    wt = repo["worktrees"] / "feat-scratchy"
+    (wt / ".lane-scratch").mkdir()
+    (wt / ".lane-scratch" / "notes.md").write_text("x", encoding="utf-8")
+    (wt / "README.md").write_text("edited\n", encoding="utf-8")
+
+    result = run(repo, "rm", "feat/scratchy", merged_head=git(wt, "rev-parse", "HEAD"))
+
+    assert result.returncode == 1
+    assert "    ?? .lane-scratch/" in result.stderr  # untracked scratch vs...
+    assert "     M README.md" in result.stderr  # ...an uncommitted edit — the reader can tell them apart
+    assert wt.exists()
+
+
+def test_rm_force_on_a_dirty_tree_still_deletes_a_merged_branch(repo: dict[str, Path]) -> None:
+    assert run(repo, "new", "feat/merged-dirty", "--no-open").returncode == 0
+    wt = repo["worktrees"] / "feat-merged-dirty"
+    (wt / "dirty.txt").write_text("x", encoding="utf-8")
+
+    result = run(repo, "rm", "feat/merged-dirty", "-f", merged_head=git(wt, "rev-parse", "HEAD"))
+
+    assert result.returncode == 0, result.stderr
+    assert "?? dirty.txt" in result.stdout  # what was discarded is on the record
+    assert not wt.exists()
+    assert branches(repo, "feat/merged-dirty") == ""
+
+
+@pytest.mark.parametrize(
+    ("gh", "reason"),
+    [
+        ({"gh_fail": True}, "could not query gh"),
+        ({"merged_head": ""}, "no MERGED PR"),
+        ({"merged_head": "0" * 40}, "branch moved"),
+    ],
+    ids=["gh-unavailable", "no-merged-pr", "tip-moved"],
+)
+def test_rm_force_keeps_an_unverified_branch_and_says_why(
+    repo: dict[str, Path], gh: dict[str, Any], reason: str
+) -> None:
     assert run(repo, "new", "feat/keep", "--no-open").returncode == 0
     wt = repo["worktrees"] / "feat-keep"
     (wt / "dirty.txt").write_text("x", encoding="utf-8")
 
-    result = run(repo, "rm", "feat/keep", "-f")
+    result = run(repo, "rm", "feat/keep", "-f", **gh)
 
     assert result.returncode == 0, result.stderr
     assert not wt.exists()
     assert "feat/keep" in branches(repo, "feat/keep")
+    assert "branch 'feat/keep' kept" in result.stderr and reason in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("lsof") is None, reason="the live-process guard needs lsof")
+def test_rm_force_never_overrides_a_live_process_inside_the_tree(repo: dict[str, Path]) -> None:
+    assert run(repo, "new", "feat/busy", "--no-open").returncode == 0
+    wt = repo["worktrees"] / "feat-busy"
+    (wt / "dirty.txt").write_text("x", encoding="utf-8")  # everything -f overrides, set up to proceed
+    sleeper = subprocess.Popen(["sleep", "30"], cwd=wt)
+    try:
+        result = run(repo, "rm", "feat/busy", "-f", merged_head=git(wt, "rev-parse", "HEAD"))
+    finally:
+        sleeper.kill()
+        sleeper.wait()
+
+    assert result.returncode == 1
+    assert f"pid={sleeper.pid}" in result.stderr
+    assert "discarding" not in result.stdout
+    assert (wt / "dirty.txt").exists()
+    assert "feat/busy" in branches(repo, "feat/busy")
 
 
 def test_rm_refuses_the_main_checkout(repo: dict[str, Path]) -> None:
