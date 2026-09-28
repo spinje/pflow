@@ -58,9 +58,11 @@ Open the URL in a fresh tab in the MCP-managed Chrome. This is a REAL rendering 
 ### page
 
 Read the new tab's page id from `new_page`'s result — a prose page list
-(`## Pages` / `1: about:blank` / `2: <url> [selected]`) in which the page just opened is
-the `[selected]` one. Fails loudly if the list has no selected page, rather than letting a
-later step guess.
+(`## Pages` / `1: about:blank` / `2: <title> (<url>) [selected]`) in which the page just
+opened is the `[selected]` one. The marker must END the line (a page title may contain the
+text `[selected]`; the ` (<url>)` after it keeps such a title off the line end), and exactly
+one line may carry it — anything else fails loudly rather than letting a later step act on
+the wrong tab.
 
 - type: code
 - inputs:
@@ -71,11 +73,11 @@ pages: str
 
 import re
 
-match = re.search(r"^(\d+): .* \[selected\]", pages, re.MULTILINE)
-if match is None:
-    raise ValueError(f"new_page result lists no [selected] page: {pages!r}")
+selected = re.findall(r"^(\d+): .* \[selected\]$", pages, re.MULTILINE)
+if len(selected) != 1:
+    raise ValueError(f"expected exactly one [selected] page in the new_page result: {pages!r}")
 
-result: int = int(match.group(1))
+result: int = int(selected[0])
 ```
 
 ### settle
