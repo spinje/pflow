@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel
+
 from pflow.core.exceptions import PflowError
 from pflow.core.node import Node
 from pflow.mcp.auth_utils import build_auth_headers, expand_env_vars_nested
@@ -674,31 +676,6 @@ class MCPNode(Node):
         text = str(content.text)
         return self._safe_parse_json(text)
 
-    def _extract_image_content(self, content: Any) -> dict[str, Any]:
-        """Extract image data from image content block."""
-        return {
-            "type": "image",
-            "data": content.image.data if hasattr(content.image, "data") else str(content.image),
-            "mime_type": content.image.mime_type if hasattr(content.image, "mime_type") else "image/png",
-        }
-
-    def _extract_resource_link_content(self, content: Any) -> dict[str, Any]:
-        """Extract resource link from content block."""
-        return {
-            "type": "resource_link",
-            "uri": content.resource_link.uri if hasattr(content.resource_link, "uri") else str(content.resource_link),
-            "metadata": getattr(content.resource_link, "metadata", {}),
-        }
-
-    def _extract_resource_content(self, content: Any) -> dict[str, Any]:
-        """Extract embedded resource from content block."""
-        return {
-            "type": "resource",
-            "uri": content.resource.uri if hasattr(content.resource, "uri") else str(content.resource),
-            "contents": getattr(content.resource, "contents", None),
-            "metadata": getattr(content.resource, "metadata", {}),
-        }
-
     def _extract_unknown_content(self, content: Any) -> Any:
         """Extract unknown content, preserving structured data.
 
@@ -718,36 +695,22 @@ class MCPNode(Node):
                     return str(content.text)
         return "Tool execution failed"
 
+    def _extract_content_block(self, content: Any) -> Any:
+        """Turn one MCP content block into a result value, dispatching on the SDK's ``type``.
+
+        Text is JSON-parsed when it holds JSON. Every other SDK block (image, audio, resource_link,
+        resource) becomes its MCP wire JSON — ``{"type": "image", "data": ..., "mimeType": ...}`` — so
+        its fields resolve as ``${node.result.data}`` and nothing reads a guessed attribute.
+        """
+        if getattr(content, "type", None) == "text":
+            return self._extract_text_content(content)
+        if isinstance(content, BaseModel):
+            return content.model_dump(mode="json", by_alias=True, exclude_none=True)
+        return self._extract_unknown_content(content)
+
     def _process_content_blocks(self, mcp_result: Any) -> Any:
         """Process content blocks and extract results."""
-        # Map content types to their handlers
-        content_handlers = {
-            "text": self._extract_text_content,
-            "image": self._extract_image_content,
-            "resource_link": self._extract_resource_link_content,
-            "resource": self._extract_resource_content,
-        }
-
-        contents = []
-        for content in mcp_result.content or []:
-            # Determine content type by checking attributes
-            content_type = None
-            if hasattr(content, "text"):
-                content_type = "text"
-            elif hasattr(content, "image"):
-                content_type = "image"
-            elif hasattr(content, "resource_link"):
-                content_type = "resource_link"
-            elif hasattr(content, "resource"):
-                content_type = "resource"
-
-            # Apply appropriate handler
-            if content_type in content_handlers:
-                extracted = content_handlers[content_type](content)
-                contents.append(extracted)
-            else:
-                # Unknown content type, use fallback
-                contents.append(self._extract_unknown_content(content))
+        contents = [self._extract_content_block(content) for content in mcp_result.content or []]
 
         # Return single item if only one, otherwise list
         if len(contents) == 1:
