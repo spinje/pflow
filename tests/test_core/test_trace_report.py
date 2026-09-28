@@ -1879,10 +1879,7 @@ class TestSubscriptionBilledCost:
             _make_event(node_id="review", node_type="AgentNode", llm_call=_agent_llm_call("gpt-x", None)),
         ])
 
-        assert (
-            "- Total cost: subscription (1 agent call) · API-equivalent: unavailable (no pricing for: gpt-x (1 call))"
-            in md
-        )
+        assert "- Total cost: subscription (1 agent call) · API-equivalent: unavailable for: gpt-x (1 call)" in md
         assert self._cost_cell(md, "review") == "—"
 
     def test_batch_item_rows_show_per_item_estimate(self) -> None:

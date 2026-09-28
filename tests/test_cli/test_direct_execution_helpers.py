@@ -390,10 +390,7 @@ class TestCostLinesSubscriptionBilling:
     def test_agent_model_without_pricing_names_it_on_the_estimate(self) -> None:
         lines = self._lines([_agent_call("gpt-x", None)])
 
-        assert (
-            lines[0]
-            == "💰 Cost: subscription (1 agent call) · API-equivalent: unavailable (no pricing for: gpt-x (1 call))"
-        )
+        assert lines[0] == "💰 Cost: subscription (1 agent call) · API-equivalent: unavailable for: gpt-x (1 call)"
 
     def test_partially_estimated_agent_calls_mark_the_estimate_partial(self) -> None:
         lines = self._lines([
@@ -405,8 +402,31 @@ class TestCostLinesSubscriptionBilling:
         # No API-equivalent *total* when part of it is unknown.
         assert lines[0] == (
             "💰 Cost: $0.4200 + subscription (2 agent calls) · "
-            "API-equivalent: $1.0000+ (partial — no pricing for: gpt-x (1 call))"
+            "API-equivalent: $1.0000+ (partial — unavailable for: gpt-x (1 call))"
         )
+
+    def test_cli_summary_prints_subscription_line_to_stderr(self) -> None:
+        """The CLI summary routes through the shared cost lines (not a local copy)."""
+        from pflow.core.metrics import MetricsCollector
+
+        summary = MetricsCollector().get_summary([_agent_call("gpt-6-astra", 5.9507)])
+        formatted = {
+            "duration_ms": 100,
+            "total_cost_usd": summary["total_cost_usd"],
+            "metrics": summary["metrics"],
+            "status": "success",
+            "workflow": {"name": "wf", "action": "unsaved"},
+            "execution": {"steps": [], "cache_hits": 0, "nodes_executed": 1},
+        }
+
+        @click.command()
+        def cmd() -> None:
+            _display_execution_summary(formatted, verbose=False, warning_diagnostics=[])
+
+        cli_result = click.testing.CliRunner(mix_stderr=False).invoke(cmd)
+        assert cli_result.exit_code == 0, cli_result.output
+        assert "💰 Cost: subscription (1 agent call) · API-equivalent: $5.9507" in cli_result.stderr
+        assert "pricing data missing" not in cli_result.output
 
 
 class TestDisplayExecutionSummaryAdvisories:

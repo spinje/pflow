@@ -739,6 +739,7 @@ class TestSubscriptionBilledCost:
         assert output["total_cost_usd"] is None
         assert "pricing_available" not in output
         assert output["subscription"] == {"calls": 1, "api_equivalent_cost_usd": 5.95}
+        assert output["partial_cost_usd"] == 0.42
         assert output["metrics"]["total"]["partial_cost_usd"] == 0.42
         text = format_success_as_text(output)
         assert "💰 Cost: $0.4200 + subscription (1 agent call) · API-equivalent total: $6.3700" in text

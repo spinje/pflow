@@ -173,15 +173,12 @@ def _mirror_pricing_tri_state(result: dict[str, Any], metrics_summary: dict[str,
     ``result["metrics"]["total"]``. ``subscription`` is mirrored for the same
     reason: subscription-billed agent calls also leave the paid total null.
     """
-    subscription = metrics_summary.get("subscription")
-    if subscription:
-        result["subscription"] = subscription
+    for key in ("partial_cost_usd", "subscription"):
+        if metrics_summary.get(key) is not None:
+            result[key] = metrics_summary[key]
     if metrics_summary.get("pricing_available") is not False:
         return
     result["pricing_available"] = False
-    partial_cost = metrics_summary.get("partial_cost_usd")
-    if partial_cost is not None:
-        result["partial_cost_usd"] = partial_cost
     unavailable = metrics_summary.get("unavailable_models")
     if unavailable:
         result["unavailable_models"] = list(unavailable)

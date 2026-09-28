@@ -81,7 +81,9 @@ def format_subscription_phrase(subscription: Mapping[str, Any], *, paid_cost: fl
     shown instead of a "pricing missing" warning (nothing is missing). Pass
     ``paid_cost`` for a mixed run: when every agent call has an estimate the
     figure becomes the run's ``API-equivalent total`` (paid + estimate).
-    Agent calls whose model has no pricing are named, like unpriced API calls.
+    Agent calls without an estimate are named, like unpriced API calls. The
+    wording stays neutral about why: the backend may lack pricing for the
+    model, the model may be omitted, or no usage telemetry arrived.
     """
     calls = int(subscription.get("calls", 0) or 0)
     label = f"subscription ({calls} agent call{'s' if calls != 1 else ''})"
@@ -95,8 +97,8 @@ def format_subscription_phrase(subscription: Mapping[str, Any], *, paid_cost: fl
             return f"{label} · API-equivalent total: ${paid_cost + estimate:.4f}"
         return f"{label} · API-equivalent: ${estimate:.4f}"
     if estimate is None:
-        return f"{label} · API-equivalent: unavailable (no pricing for: {missing_phrase})"
-    return f"{label} · API-equivalent: ${estimate:.4f}+ (partial — no pricing for: {missing_phrase})"
+        return f"{label} · API-equivalent: unavailable for: {missing_phrase}"
+    return f"{label} · API-equivalent: ${estimate:.4f}+ (partial — unavailable for: {missing_phrase})"
 
 
 @dataclass
@@ -454,8 +456,9 @@ class MetricsCollector:
             summary["pricing_available"] = False
             summary["unavailable_models"] = cost_data.get("unavailable_models", [])
             summary["unavailable_models_unnamed_count"] = cost_data.get("unavailable_models_unnamed_count", 0)
-        if "subscription" in cost_data:
-            summary["subscription"] = cost_data["subscription"]
+        for key in ("partial_cost_usd", "subscription"):
+            if cost_data.get(key) is not None:
+                summary[key] = cost_data[key]
 
         # Add performance summaries
         self._add_cache_performance(summary, total_tokens)
