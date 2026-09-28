@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .constants import MCP_CANONICAL_OUTPUT
+from .constants import MCP_CANONICAL_OUTPUT, MCP_NODE_PARAMS
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -115,7 +115,7 @@ class Registry:
 
             # Try to load from file
             nodes = self._load_from_file()
-            self._normalize_mcp_output_namespaces(nodes)
+            self._normalize_mcp_entries(nodes)
 
             # Check if core nodes need refresh (version change)
             if self._core_nodes_outdated(nodes):
@@ -141,14 +141,16 @@ class Registry:
             return nodes
 
     @staticmethod
-    def _normalize_mcp_output_namespaces(nodes: dict[str, dict[str, Any]]) -> None:
-        """Normalize cached MCP entries to the runtime's canonical output.
+    def _normalize_mcp_entries(nodes: dict[str, dict[str, Any]]) -> None:
+        """Normalize cached MCP entries to the runtime's canonical output and pflow params.
 
         Older registries copied outputSchema properties into top-level outputs,
         even though MCPNode has always stored successful payloads under
-        ``result``. Normalize on read so probe, validation, and describe repair
-        existing installations in memory without requiring a network resync.
-        A later registry write persists the normalized shape.
+        ``result``; entries synced before a pflow-level param existed lack it and
+        would fail unknown-param validation. Normalize on read so probe,
+        validation, and describe repair existing installations in memory without
+        requiring a network resync. A later registry write persists the
+        normalized shape.
         """
         for node_name, node_data in nodes.items():
             is_mcp_entry = node_data.get("type") == "mcp" or (
@@ -159,6 +161,10 @@ class Registry:
                 # Intentionally unconditional: this is an idempotent repair for
                 # both stale and already-canonical entries.
                 interface["outputs"] = [MCP_CANONICAL_OUTPUT.copy()]
+                # Key-matched: never shadow a tool-schema param of the same name.
+                params = interface.setdefault("params", [])
+                present = {p.get("key") for p in params if isinstance(p, dict)}
+                params.extend(param.copy() for param in MCP_NODE_PARAMS if param["key"] not in present)
 
     def _load_from_file(self) -> dict[str, dict[str, Any]]:
         """Load registry from JSON file without auto-discovery.
