@@ -121,8 +121,9 @@ calls you make yourself, stated visibly in the PR body. Always-escalate regardle
 ## Ship
 
 1. Deliberate staging — never `git add -A`; no scratch/temp files in the commit; scratch files go
-   under YOUR worktree or carry a lane-unique filename (the session scratchpad is shared across
-   parallel lanes).
+   under the worktree's gitignored `scratchpads/<lane>/`, never an ad-hoc directory (the session
+   scratchpad is shared across parallel lanes, and an untracked directory dirties the tree and
+   blocks `./scripts/worktree rm`).
 2. **Merged-result gate:** if `origin/main` moved while you worked, merge main into the branch
    and re-run `make check` + `make test` before the PR — a branch-green / merge-red gap is
    exactly what this catches.

@@ -14,8 +14,10 @@
 #       off unmerged work. A local main behind origin/main is warned about, not refused.
 #   ./scripts/worktree rm <branch|path> [-f]
 #       Remove a worktree whose PR has MERGED — squash-safe: the merged PR's head SHA (via gh) must
-#       equal the branch tip, and the tree must be clean; the branch is deleted too. -f skips both
-#       checks and keeps the branch. Refuses while any process has its cwd inside the worktree
+#       equal the branch tip, and the tree must be clean (a refusal lists the dirty paths); the
+#       branch is deleted too. -f discards local state only: it removes the tree even when dirty,
+#       but still deletes the branch only when the merge verifies — otherwise it keeps the branch
+#       and says why. Refuses (even with -f) while any process has its cwd inside the worktree
 #       (a stale `pflow ui` server is the usual one) — stop it first; never kill it from here.
 #   ./scripts/worktree list
 #       Worktrees of this repo with branch, tip, and merged-PR state.
@@ -53,6 +55,15 @@ merged_head() { # branch -> head SHA of its MERGED PR, or empty (squash merges m
   # caller never reports an unanswerable query as "unmerged".
   command -v gh >/dev/null 2>&1 || return 2
   gh pr list --state merged --head "$1" --json headRefOid -q '.[0].headRefOid // empty' 2>/dev/null || return 2
+}
+
+merge_problem() { # <branch> <tip> -> empty when the branch's merged PR head == tip, else why not (one line)
+  local merged rc=0
+  merged="$(merged_head "$1")" || rc=$?
+  if [ "$rc" -ne 0 ]; then echo "could not query gh for a merged PR of '$1' (gh missing, unauthenticated, or offline)"
+  elif [ -z "$merged" ]; then echo "no MERGED PR found for branch '$1' (gh)"
+  elif [ "$merged" != "$2" ]; then echo "merged PR head $merged != branch tip $2 — the branch moved after the merge"
+  fi
 }
 
 cwd_blockers() { # dir -> "pid=N cwd=PATH" lines for processes rooted inside dir (read-only: report, never signal)
@@ -239,30 +250,39 @@ cmd_rm() {
   blockers="$(cwd_blockers "$dir")"
   [ -z "$blockers" ] || die "a process is running inside $dir — stop it first (never kill a sibling's server from here):"$'\n'"$blockers"
 
-  local branch tip merged
+  local branch tip dirty problem
   branch="$(git -C "$dir" branch --show-current)"
   tip="$(git -C "$dir" rev-parse HEAD)"
+  dirty="$(git -C "$dir" status --porcelain | sed 's/^/    /')"
 
-  if [ "$force" = "-f" ]; then
-    echo "▸ removing worktree $dir (forced — branch '$branch' kept)"
-    git -C "$REPO_ROOT" worktree remove --force "$dir"
+  if [ "$force" != "-f" ]; then
+    [ -n "$branch" ] || die "worktree is on a detached HEAD — no branch to check a merged PR for; inspect, or -f to remove the tree"
+    [ -z "$dirty" ] \
+      || die "worktree is dirty — commit or stash there, or re-run with -f to discard these:"$'\n'"$dirty"
+    problem="$(merge_problem "$branch" "$tip")"
+    [ -z "$problem" ] || die "$problem; resolve it, or -f to remove the tree and keep the branch"
+    echo "▸ removing worktree $dir (PR merged at $tip)"
+    git -C "$REPO_ROOT" worktree remove "$dir"
+    git -C "$REPO_ROOT" branch -D "$branch" >/dev/null
+    echo "▸ branch $branch deleted"
     return 0
   fi
 
-  [ -n "$branch" ] || die "worktree is on a detached HEAD — no branch to check a merged PR for; inspect, or -f"
-  [ -z "$(git -C "$dir" status --porcelain)" ] \
-    || die "worktree is dirty — commit or stash there, or re-run with -f to discard"
-  local rc=0
-  merged="$(merged_head "$branch")" || rc=$?
-  [ "$rc" -eq 0 ] || die "could not query gh for a merged PR of '$branch' (gh missing, unauthenticated, or offline) — fix gh, or -f to remove and keep the branch"
-  [ -n "$merged" ] || die "no MERGED PR found for branch '$branch' (gh) — merge it first, or -f to remove and keep the branch"
-  [ "$merged" = "$tip" ] \
-    || die "merged PR head $merged != branch tip $tip — the branch moved after the merge; inspect, or -f"
-
-  echo "▸ removing worktree $dir (PR merged at $merged)"
-  git -C "$REPO_ROOT" worktree remove "$dir"
-  git -C "$REPO_ROOT" branch -D "$branch" >/dev/null
-  echo "▸ branch $branch deleted"
+  # Forced: discard the working files, but the branch still goes only when its merge verifies —
+  # force never leaves a merged branch behind, and never deletes an unverified one.
+  [ -z "$dirty" ] || echo "▸ discarding local changes:"$'\n'"$dirty"
+  problem=""
+  [ -z "$branch" ] || problem="$(merge_problem "$branch" "$tip")"
+  echo "▸ removing worktree $dir (forced)"
+  git -C "$REPO_ROOT" worktree remove --force "$dir"
+  if [ -z "$branch" ]; then
+    echo "▸ detached HEAD — no branch to delete"
+  elif [ -n "$problem" ]; then
+    echo "warning: branch '$branch' kept — $problem" >&2
+  else
+    git -C "$REPO_ROOT" branch -D "$branch" >/dev/null
+    echo "▸ branch $branch deleted (PR merged at $tip)"
+  fi
 }
 
 cmd_list() {
