@@ -546,11 +546,7 @@ class WorkflowValidator:
 
             source = output_def.get("source")
 
-            # Skip if no source specified (outputs without source are valid)
-            if source is None:
-                continue
-
-            # Validate source is non-empty string
+            # Validate source is non-empty string (a missing source is a schema error)
             if not isinstance(source, str) or not source.strip():
                 diagnostics.append(
                     Diagnostic(

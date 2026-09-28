@@ -78,8 +78,12 @@ class TestOutputSourceValidation:
         assert "fetch" in errors[0].context.get("available_fields", [])
         assert "process" in errors[0].context.get("available_fields", [])
 
-    def test_valid_output_without_source_field(self):
-        """✅ Valid: Output without source field is allowed."""
+    def test_invalid_output_without_source_field(self):
+        """❌ Invalid: Output without source field is rejected (issue #628).
+
+        Bug prevented: a sourceless output passed validation, then the run
+        reported success with the output silently missing from the result.
+        """
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "node1", "type": "shell", "params": {}}],
@@ -88,7 +92,10 @@ class TestOutputSourceValidation:
         }
 
         errors, _ = split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
-        assert len(errors) == 0
+        assert len(errors) == 1
+        assert errors[0].context["path"] == "outputs.result"
+        assert "'source' is a required property" in errors[0].message
+        assert "Add a source line to output 'result'" in errors[0].suggestions[0]
 
     def test_valid_output_with_template_input_field_access(self):
         """✅ Valid: Template referencing declared input field passes.

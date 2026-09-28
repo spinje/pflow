@@ -147,11 +147,7 @@ def populate_declared_outputs(
     failures: list[dict[str, Any]] = []
 
     for output_name, output_config in outputs.items():
-        # Sourceless outputs are schema-valid (source is optional and the validator
-        # accepts them), but under namespacing nothing writes them to root: skip.
-        if not isinstance(output_config, dict) or "source" not in output_config:
-            continue
-
+        # Every output has a source: the schema and compile_validation reject sourceless ones.
         source_expr = output_config["source"]
         normalized = _normalize_source(source_expr)
 

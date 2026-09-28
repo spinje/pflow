@@ -1,6 +1,6 @@
 # Hover a canvas row and capture the result
 
-One-off verification harness: open a pflow-UI URL, settle, dispatch a real
+One-off verification harness: open a pflow-UI URL, settle, dispatch a synthetic
 `mouseover` on the first row whose text starts with `row_name` (React's
 onMouseEnter delegates through native mouseover, so this drives the production
 hover path), then COUNT the hover marks + edge halos and screenshot.
@@ -46,9 +46,10 @@ Open + settle (the shared core the skill workflows use).
 
 ### hover
 
-Dispatch a real mouseover on the named row, then count marks/halos.
+Dispatch a synthetic mouseover on the named row, then count marks/halos.
 
 - type: mcp-chrome-devtools-evaluate_script
+- pageId: ${prepare.page_id}
 - function: |
     async () => {
       const name = "${row_name}";
@@ -69,6 +70,7 @@ Dispatch a real mouseover on the named row, then count marks/halos.
 Capture the hovered state.
 
 - type: mcp-chrome-devtools-take_screenshot
+- pageId: ${prepare.page_id}
 - fullPage: true
 - format: png
 - filePath: ${out_path}

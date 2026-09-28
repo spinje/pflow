@@ -12,9 +12,11 @@ fetches `/api/graph`, runs ELK, React Flow measures nodes via ResizeObserver,
 `useNodesInitialized` flips, then `fitView` frames the canvas). Acting before that chain
 finishes captures/measures a half-built, un-fit canvas.
 
-Both tools depend on this sub-workflow leaving the MCP Chrome on the opened, settled page
-(the page persists in the MCP server across the workflow-call boundary — that shared
-browser state IS the contract here, not just the returned transform).
+Callers depend on this sub-workflow leaving the opened, settled page in the MCP Chrome
+(the page persists in the MCP server across the workflow-call boundary) AND on its
+`page_id` output: chrome-devtools-mcp ≥ 1.8 requires `pageId` on every page-scoped tool
+(`evaluate_script`, `take_screenshot`, …) instead of acting on an implicitly selected
+page, so every caller step that touches the page passes `pageId: ${prepare.page_id}`.
 
 ## Inputs
 
@@ -27,6 +29,13 @@ Full pflow-UI URL to open, including the view params — e.g.
 - required: true
 
 ## Outputs
+
+### page_id
+
+The opened tab's chrome-devtools page id — pass it as `pageId` to every later
+page-scoped call so it acts on this page, not whichever one the server has selected.
+
+- source: ${page.result}
 
 ### transform
 
@@ -46,6 +55,31 @@ Open the URL in a fresh tab in the MCP-managed Chrome. This is a REAL rendering 
 - type: mcp-chrome-devtools-new_page
 - url: ${url}
 
+### page
+
+Read the new tab's page id from `new_page`'s result — a prose page list
+(`## Pages` / `1: about:blank` / `2: <title> (<url>) [selected]`) in which the page just
+opened is the `[selected]` one. The marker must END the line (a page title may contain the
+text `[selected]`; the ` (<url>)` after it keeps such a title off the line end), and exactly
+one line may carry it — anything else fails loudly rather than letting a later step act on
+the wrong tab.
+
+- type: code
+- inputs:
+    pages: ${open.result}
+
+```python code
+pages: str
+
+import re
+
+selected = re.findall(r"^(\d+): .* \[selected\]$", pages, re.MULTILINE)
+if len(selected) != 1:
+    raise ValueError(f"expected exactly one [selected] page in the new_page result: {pages!r}")
+
+result: int = int(selected[0])
+```
+
 ### settle
 
 Poll the React Flow viewport transform until it is non-default AND stable across
@@ -54,6 +88,7 @@ load-bearing step: it waits out the async chain so the downstream verb is determ
 instead of a race.
 
 - type: mcp-chrome-devtools-evaluate_script
+- pageId: ${page.result}
 - function: |
     async () => {
       const start = Date.now();

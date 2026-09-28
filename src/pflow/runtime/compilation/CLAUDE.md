@@ -41,10 +41,10 @@ shared validation owners rather than changing just one entry path.
 ## Validation and input boundaries
 
 `core/workflow/validator.py::WorkflowValidator` owns pre-execution template
-validation. This package uses `extract_node_outputs` for output checking but
-does not run the template-validation passes. `_prepare_compilation` still owns
-structure, data-flow, input, and output checks; compilation is not validation-free.
-Its output-declaration checks can warn about dynamic outputs without rejecting them.
+validation. This package does not run the template-validation passes.
+`_prepare_compilation` still owns structure, data-flow, input, and output checks;
+compilation is not validation-free. `_validate_outputs` mirrors the schema's
+required output `source` because compile-only callers never run the schema.
 
 `_validate_data_flow_at_compile_time` passes `check_inputs=False`, since supplied
 compiler params need not be declared IR inputs. Structured validation errors
