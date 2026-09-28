@@ -62,6 +62,8 @@ Follow component patterns in nearby MDX pages. Use Lucide icons, callouts sparin
 
 Literal pflow templates such as `${input}` belong in inline or fenced code. Bare templates in rendered prose become JavaScript expressions and can crash the page even when `mint validate` passes. When an example contains fenced blocks, give the outer fence more backticks than any nested fence that could close it (typically four around a three-backtick workflow example). `scripts/check_mdx_fences.py` and `tests/test_docs/test_mdx_fences.py` pin this boundary; ordinary JSX braces remain valid.
 
+A fenced block containing `## Steps` is a complete-workflow claim: `tests/test_docs/test_guide_example_validation.py` extracts it (indented fences inside components included) and validates it the way `pflow --validate-only` does. When one fails there, fix the example, not the test. Single-node fragments without `## Steps` are not checked.
+
 ## Update policy
 
 Update affected docs in the same PR as user-facing behavior changes: CLI flags in their reference page, new core nodes in the node reference, and changed behavior in its guides. Add a `<Warning>` callout for breaking changes.
