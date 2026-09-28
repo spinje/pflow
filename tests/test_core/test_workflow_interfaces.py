@@ -324,13 +324,17 @@ class TestWorkflowInterfaces:
                     "result": {
                         "description": "Result",
                         "type": "string",
+                        "source": "${n1.result}",
                         "required": True,  # Not allowed for outputs
                     }
                 },
             }
 
-            with pytest.raises(SchemaValidationError):
+            with pytest.raises(SchemaValidationError) as exc_info:
                 validate_ir(ir)
+
+            assert "'required' was unexpected" in str(exc_info.value)
+            assert "Unknown field: 'required'" in (exc_info.value.suggestion or "")
 
     class TestBackwardCompatibility:
         """Test workflows without declarations still work."""
