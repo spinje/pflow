@@ -96,6 +96,7 @@ Read the settled state: rendered node count, viewport transform, the focused car
 text, source-pane marker, banner/full-screen flags.
 
 - type: mcp-chrome-devtools-evaluate_script
+- pageId: ${opened.page_id}
 - result_format: json_block
 - function: |
     async () => {
@@ -136,6 +137,7 @@ Let the poll detect the change, re-fetch, and re-layout.
 Re-read on the SAME page after the append.
 
 - type: mcp-chrome-devtools-evaluate_script
+- pageId: ${opened.page_id}
 - result_format: json_block
 - function: |
     async () => {
@@ -181,6 +183,7 @@ Re-read: focus must still be `done` (Finalize…), and the source pane must now 
 the marker.
 
 - type: mcp-chrome-devtools-evaluate_script
+- pageId: ${opened.page_id}
 - result_format: json_block
 - function: |
     async () => {
@@ -222,6 +225,7 @@ Re-read: the non-blocking banner is present, the full-screen error is NOT, and t
 node count is unchanged (last valid canvas held).
 
 - type: mcp-chrome-devtools-evaluate_script
+- pageId: ${opened.page_id}
 - result_format: json_block
 - function: |
     async () => {
@@ -243,6 +247,7 @@ node count is unchanged (last valid canvas held).
 Capture the final state (banner over the last valid canvas).
 
 - type: mcp-chrome-devtools-take_screenshot
+- pageId: ${opened.page_id}
 - fullPage: true
 - format: png
 - filePath: ${out_path}

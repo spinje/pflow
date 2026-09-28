@@ -12,16 +12,18 @@ canvas has settled** (ELK + fitView) before acting. Pass a full UI URL.
 - **`inspect.pflow.md`** → JSON geometry: every node's box/tile/connector/handle rect +
   every edge's path rect + the viewport `scale`. Measure exact pixels (e.g. does an edge
   endpoint land on its target handle? is a connector flush with the tile?).
-- **`hover.pflow.md`** → dispatch a REAL `mouseover` on the first row whose text starts
-  with `row_name` (React's onMouseEnter delegates through native mouseover, so this
-  drives the production hover path — the state `focus=` deep links cannot capture),
+- **`hover.pflow.md`** → dispatch a synthetic in-page `mouseover` (`isTrusted: false`) on
+  the first row whose text starts with `row_name` (React's onMouseEnter delegates through
+  native mouseover, so this drives the production hover path — the state `focus=` deep
+  links cannot capture),
   return `{ringedNodes, haloedEdges}` counts, and screenshot the hovered state:
   ```bash
   uv run pflow examples/real-workflows/screenshot-pflow-web-ui/hover.pflow.md \
     url='http://127.0.0.1:8765/?workflow=<…>&density=advanced&node=<node_id>' \
     row_name='inputs' out_path=/tmp/pflow-shots/hover.png
   ```
-- **`click.pflow.md`** → dispatch a REAL `click` on the first `selector` match
+- **`click.pflow.md`** → dispatch a synthetic in-page `click` (`isTrusted: false` —
+  enough for React handlers, not for real input) on the first `selector` match
   (optionally narrowed by exact trimmed `text`), wait for the consequences, return
   `{panel, before, after, visible, transform}` (`measure_id` = a flat node id to
   rect-report — e.g. the expected camera-follow target) + screenshot. Deep links
@@ -123,7 +125,9 @@ uv run pflow examples/real-workflows/screenshot-pflow-web-ui/inspect.pflow.md \
   -p -o geometry | jq '<filter>'
 ```
 
-Both reuse `shared/open-and-settle.pflow.md` (open + poll-until-settled).
+All six reuse `shared/open-and-settle.pflow.md` (open + poll-until-settled). It also
+returns the opened tab's `page_id`; every later `evaluate_script`/`take_screenshot` step
+passes it as `pageId` (the pinned server requires it — see "Pinned server version").
 
 ## inspect output
 
@@ -152,6 +156,29 @@ A connector gap = the edge's `pathRect` end vs the node's `connTop`/`connBottom`
 its `tile` edge. **Before/after a fix:** save each run (`… -p -o geometry > /tmp/before.json`),
 then `diff` (or `jq`) the rects to prove the gap closed.
 
+## Pinned server version
+
+The `chrome-devtools` registration pins `chrome-devtools-mcp@1.10.1` — never `@latest`.
+An unpinned server under a verification tool drifts silently: 1.8.0 made `pageId`
+required on page-scoped tools, and every workflow here broke until someone noticed
+mid-lane (GH #639). Registration line (`~/.pflow/mcp-servers.json`):
+
+```json
+"chrome-devtools": {"command": "npx", "args": ["-y", "chrome-devtools-mcp@1.10.1", "--headless=true"]}
+```
+
+Missing or different → set it (upserts that one entry in place), then re-sync the tool schemas:
+
+```bash
+uv run pflow mcp add '{"chrome-devtools": {"command": "npx", "args": ["-y", "chrome-devtools-mcp@1.10.1", "--headless=true"]}}'
+uv run pflow mcp sync chrome-devtools
+```
+
+**Bumping it is a deliberate change:** read the upstream changelog for the new version,
+re-register with the new version, `pflow mcp sync chrome-devtools`, check
+`uv run pflow mcp describe mcp-chrome-devtools-evaluate_script` for new required params,
+run all six workflows against a live `pflow ui`, then update the version in this section.
+
 ## Headless by default (user decision 2026-06-10)
 
 The MCP Chrome runs with `--headless=true` (`~/.pflow/mcp-servers.json`, `chrome-devtools`
@@ -169,6 +196,10 @@ Re-add the flag when done — headless is the standing default; do not leave hea
 ## Troubleshooting
 
 - `mcp-chrome-devtools-*` node error ("MCP tool not registered") → `pflow mcp sync chrome-devtools`.
+- `Invalid arguments for tool …: pageId: … expected number, received undefined` → a step lacks
+  `pageId: ${prepare.page_id}` (required on page-scoped tools since chrome-devtools-mcp 1.8).
+- `Access denied: path … is not within any of the configured workspace roots` → the server only
+  writes files under its temp dir: keep `out_dir`/`out_path` under `/tmp` (the defaults are).
 - `viewport` = the default `translate(0px, 0px) scale(1)` → check for an empty graph or incomplete settling. An unresolved `node=` falls back to framing the whole graph.
 - Stale output → you didn't rebuild after a `web/` change: `make ui-build`.
 - Stale output DESPITE a rebuild (old layout/styles, even mixed old+new) → the MCP Chrome's

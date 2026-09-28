@@ -1,6 +1,6 @@
 # Click a UI element and capture the result
 
-One-off verification harness: open a pflow-UI URL, settle, dispatch a real `click`
+One-off verification harness: open a pflow-UI URL, settle, dispatch a synthetic `click`
 on the first element matching `selector` (optionally narrowed to the match whose
 trimmed text equals `text`), wait for the click's consequences (re-layout, camera
 follow), then report the open panel title + an optional canvas node's rect
@@ -73,9 +73,10 @@ Open + settle (the shared core the skill workflows use).
 
 ### click
 
-Dispatch a real click on the target, then report panel + rects.
+Dispatch a synthetic click on the target, then report panel + rects.
 
 - type: mcp-chrome-devtools-evaluate_script
+- pageId: ${prepare.page_id}
 - function: |
     async () => {
       const sel = '${selector}';
@@ -120,6 +121,7 @@ Dispatch a real click on the target, then report panel + rects.
 Capture the post-click state.
 
 - type: mcp-chrome-devtools-take_screenshot
+- pageId: ${prepare.page_id}
 - fullPage: true
 - format: png
 - filePath: ${out_path}

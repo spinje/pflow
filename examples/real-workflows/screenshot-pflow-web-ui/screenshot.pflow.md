@@ -100,6 +100,7 @@ persists across the sub-workflow boundary in the shared MCP browser).
 Full-page PNG of the now-settled canvas, written to the path from `derive`.
 
 - type: mcp-chrome-devtools-take_screenshot
+- pageId: ${prepare.page_id}
 - fullPage: true
 - format: png
 - filePath: ${derive.result}
