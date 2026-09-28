@@ -116,7 +116,7 @@ The optional `outputs` field declares what the workflow produces:
 |---|---|---|
 | `type` | string | Data type of the output |
 | `description` | string | Human-readable description |
-| `source` | string | Template reference to the node output using `${node-id.key}` syntax |
+| `source` | string | **Required.** Template reference to the node output using `${node-id.key}` syntax |
 
 > **Template Syntax**: For complete template variable syntax and resolution rules, see [Template Variables Reference](./template-variables.md).
 

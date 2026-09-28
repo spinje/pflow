@@ -9,10 +9,9 @@ import logging
 from typing import Any
 
 from pflow.core.exceptions import CompilationError, SchemaValidationError
+from pflow.core.ir_schema import missing_output_source_suggestion
 from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
-from pflow.registry import Registry
 
-from ..template_validation import extract_node_outputs
 from .ir_preparation import prepare_inputs, validate_ir_structure
 
 logger = logging.getLogger(__name__)
@@ -143,7 +142,6 @@ def _validate_data_flow_at_compile_time(ir_dict: dict[str, Any], workflow_path: 
 
 def _prepare_compilation(
     ir_dict: dict[str, Any],
-    registry: Registry,
     initial_params: dict[str, Any],
 ) -> tuple[dict[str, Any], list[Any], dict[str, Any], set[str]]:
     """Prepare IR for compilation: validate structure, check data flow, resolve inputs.
@@ -202,9 +200,9 @@ def _prepare_compilation(
         logger.debug("Input validation failed", extra={"phase": "input_validation"}, exc_info=True)
         raise
 
-    # Output validation (validates output names can trace to node outputs)
+    # Output validation (valid names, every output names a source)
     try:
-        _validate_outputs(ir_dict, registry)
+        _validate_outputs(ir_dict)
     except SchemaValidationError:
         logger.debug("Output validation failed", extra={"phase": "output_validation"}, exc_info=True)
         raise
@@ -212,75 +210,29 @@ def _prepare_compilation(
     return initial_params, [], resolved_defaults, resolved_env_param_names
 
 
-def _validate_outputs(workflow_ir: dict[str, Any], registry: Registry) -> None:
-    """Validate declared workflow outputs can be produced by nodes.
+def _validate_outputs(workflow_ir: dict[str, Any]) -> None:
+    """Validate declared workflow outputs: valid names, and every output names a source.
 
-    This function validates that declared outputs CAN be produced by nodes in the workflow.
-    Since nodes may write dynamic keys at runtime, this only issues warnings, not errors.
+    The IR schema also requires ``source``, but compile-only callers (web UI
+    pre-flight, cache-key prediction, programmatic ``compile_workflow``) never run
+    the schema, so the rule is enforced here too with the same fix hint.
 
     Args:
         workflow_ir: The workflow IR dictionary containing output declarations
-        registry: Registry instance for accessing node metadata
 
     Raises:
-        SchemaValidationError: If output names are invalid identifiers
+        SchemaValidationError: If an output name is invalid or an output has no source
     """
-    # Extract output declarations (backward compatible with workflows without outputs)
-    outputs = workflow_ir.get("outputs", {})
-
-    # If no outputs declared, nothing to validate
-    if not outputs:
-        logger.debug("No outputs declared for workflow", extra={"phase": "output_validation"})
-        return
-
-    logger.debug(
-        "Validating workflow outputs", extra={"phase": "output_validation", "declared_outputs": list(outputs.keys())}
-    )
-
-    # First validate all output names are valid Python identifiers
-    for output_name, _output_spec in outputs.items():
+    for output_name, output_spec in workflow_ir.get("outputs", {}).items():
         if not is_valid_parameter_name(output_name):
-            error_msg = get_parameter_validation_error(output_name, "output")
             raise SchemaValidationError(
-                message=error_msg,
+                message=get_parameter_validation_error(output_name, "output"),
                 path=f"outputs.{output_name}",
                 suggestion="Avoid shell special characters like $, |, >, <, &, ;",
             )
-
-    # Get all possible outputs from nodes in the workflow
-    all_node_outputs = extract_node_outputs(workflow_ir, registry)
-
-    logger.debug(
-        f"Found {len(all_node_outputs)} possible outputs from nodes",
-        extra={"phase": "output_validation", "available_outputs": sorted(all_node_outputs.keys())},
-    )
-
-    # Validate each declared output can be produced
-    for output_name, output_spec in outputs.items():
-        # If output has a 'source' field, it will be resolved from that expression
-        if isinstance(output_spec, dict) and "source" in output_spec:
-            logger.debug(
-                f"Output '{output_name}' uses source expression: {output_spec['source']}",
-                extra={"phase": "output_validation", "output": output_name},
+        if not isinstance(output_spec, dict) or output_spec.get("source") is None:
+            raise SchemaValidationError(
+                message=f"Output '{output_name}' has no source",
+                path=f"outputs.{output_name}",
+                suggestion=missing_output_source_suggestion(output_name),
             )
-            continue  # Skip validation for outputs with source field
-
-        # Check if output can be traced to any node
-        if output_name not in all_node_outputs:
-            # Issue warning, not error, since nodes may write dynamic keys
-            logger.warning(
-                f"Declared output '{output_name}' cannot be traced to any node in the workflow. "
-                f"This may be fine if nodes write dynamic keys.",
-                extra={
-                    "phase": "output_validation",
-                    "output": output_name,
-                    "available_outputs": sorted(all_node_outputs.keys()),
-                },
-            )
-        else:
-            logger.debug(
-                f"Output '{output_name}' can be produced by workflow nodes",
-                extra={"phase": "output_validation", "output": output_name},
-            )
-
-    logger.debug("Output validation complete", extra={"phase": "output_validation"})

@@ -49,7 +49,7 @@ def sample_ir():
     """Sample workflow IR for testing."""
     return {
         "inputs": {"text": {"type": "string", "description": "Input text"}},
-        "outputs": {"result": {"type": "string", "description": "Processed result"}},
+        "outputs": {"result": {"type": "string", "description": "Processed result", "source": "${echo1.result}"}},
         "nodes": [
             {
                 "id": "echo1",
@@ -72,7 +72,7 @@ def another_ir():
     """Another sample workflow IR for testing multiple workflows."""
     return {
         "inputs": {"name": {"type": "string", "description": "User name"}},
-        "outputs": {"greeting": {"type": "string", "description": "Greeting message"}},
+        "outputs": {"greeting": {"type": "string", "description": "Greeting message", "source": "${greet1.result}"}},
         "nodes": [
             {
                 "id": "greet1",
@@ -601,7 +601,9 @@ def test_nested_workflow_with_real_nodes(tmp_path):
     # Create inner workflow that writes a file
     inner_workflow = {
         "inputs": {"message": {"description": "Message to write", "type": "string", "required": True}},
-        "outputs": {"file_path": {"description": "Path to written file", "type": "string"}},
+        "outputs": {
+            "written": {"description": "Whether the file was written", "type": "boolean", "source": "${write.written}"}
+        },
         "nodes": [
             {
                 "id": "write",
