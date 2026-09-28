@@ -107,7 +107,8 @@ styles of tool, and they behave very differently as fixed workflow steps:
 - **Observe-then-act tools** return handles (element uids, cursor or session ids)
   that the next call uses after reading this result: `take_snapshot` → `click(uid)`.
   They fit a step count known up front, with handles threaded through templates.
-  When the list of steps is runtime data, they need an `agent` node in the loop.
+  When the list of steps is runtime data, each step has to read the previous
+  result to find its handle, which usually means an `agent` node in the loop.
 - **Whole-program tools** take a complete script, query or form and return its
   result in one call (`evaluate_script`, a SQL `query`, `fill_form`). Prefer them
   when the steps are data, or when you would otherwise chain observe-then-act calls.
@@ -125,7 +126,7 @@ Then check three things before building on a tool:
   prose, pin the server version and treat output changes as breaking.
 - **What it can do, not just what it returns.** `pflow probe` shows the output
   shape. Also test the one capability the workflow depends on (does the input
-  reach the field? is the request visible?). Each probe starts a fresh server, so
+  reach the field? is the request visible?). Each probe opens a fresh session, so
   use a small workflow when the test needs earlier state.
 
 **Slow calls.** A call is abandoned after `timeout` seconds. The server stays up
@@ -135,11 +136,12 @@ went). If the server runs one call at a time, the handler waits until the
 abandoned call actually finishes, so give a long program its own deadline and
 have it return early with what it has.
 
-**Server lifetime.** pflow starts a stdio server for each run or probe and stops
-it at the end, so every run starts clean, which is what a reusable workflow wants.
-A server you run yourself over HTTP outlives pflow runs and may keep some state
-between them (server-dependent): useful for step-by-step exploration, at the cost
-of that isolation.
+**Server lifetime.** Each run or probe opens a new session and closes it at the
+end; a stdio server is started and stopped with it, which suits a reusable
+workflow. A server you run yourself over HTTP outlives pflow runs and may keep
+state between them: useful for step-by-step exploration, at the cost of
+isolation. Either way, state the server keeps on disk (a browser profile, a
+database) survives, so check the server's options when a run must start clean.
 
 ### Node Creation Pattern
 
