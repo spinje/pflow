@@ -7,9 +7,10 @@ import click.testing
 
 from pflow.cli.param_parsing import infer_type, parse_workflow_params
 from pflow.cli.workflow_errors import _display_text_error_details
-from pflow.cli.workflow_output import _display_execution_summary, _format_cost_summary_lines
+from pflow.cli.workflow_output import _display_execution_summary
 from pflow.cli.workflow_resolution import is_likely_workflow_name
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.execution.formatters.success_formatter import format_cost_summary_lines
 
 
 class TestInferType:
@@ -181,7 +182,7 @@ class TestIsLikelyWorkflowName:
 
 
 class TestDisplayCostSummary:
-    """Tests for _format_cost_summary_lines pricing warning display."""
+    """Tests for format_cost_summary_lines — the CLI summary's cost lines."""
 
     @staticmethod
     def _make_formatted_result(
@@ -196,7 +197,7 @@ class TestDisplayCostSummary:
 
         ``unavailable_models`` uses the F#17-deferred shape
         ``list[{name, calls}]`` consumed by the helper-normalizer in
-        ``cli/workflow_output.py::_format_cost_summary_lines``.
+        ``execution/formatters/success_formatter.py::format_cost_summary_lines``.
 
         The cost line reads ``metrics.workflow.tokens_total`` (production keeps
         it equal to ``metrics.total.tokens_total`` — both summed from the same
@@ -224,7 +225,7 @@ class TestDisplayCostSummary:
             unavailable_models=[{"name": "my-custom-model", "calls": 4}],
             total_calls=4,
         )
-        out = "\n".join(_format_cost_summary_lines(None, result))
+        out = "\n".join(format_cost_summary_lines(result))
         assert "Cost unavailable" in out
         # F#17 deferred: per-model call count in parenthetical
         assert "my-custom-model (4 calls)" in out
@@ -239,7 +240,7 @@ class TestDisplayCostSummary:
             partial_cost_usd=0.03,
             total_calls=2,
         )
-        out = "\n".join(_format_cost_summary_lines(None, result))
+        out = "\n".join(format_cost_summary_lines(result))
         assert "$0.0300+" in out
         assert "unknown-model (1 call)" in out
         assert "   Total LLM calls: 2" in out
@@ -247,7 +248,7 @@ class TestDisplayCostSummary:
     def test_known_model_shows_normal_cost(self) -> None:
         """When pricing is available, show normal cost."""
         result = self._make_formatted_result(total_calls=3)
-        out = "\n".join(_format_cost_summary_lines(0.05, result))
+        out = "\n".join(format_cost_summary_lines(result | {"total_cost_usd": 0.05}))
         assert "$0.0500" in out
         assert "unavailable" not in out.lower()
         # F#17 deferred: priced multi-call line carries the call count
@@ -261,20 +262,20 @@ class TestDisplayCostSummary:
         as 0 (never shown) for every run. The fixture now uses the production key.
         """
         result = self._make_formatted_result(total_calls=2, tokens_total=28000)
-        out = "\n".join(_format_cost_summary_lines(0.05, result))
+        out = "\n".join(format_cost_summary_lines(result | {"total_cost_usd": 0.05}))
         assert "28,000 tokens" in out
 
     def test_priced_cost_line_token_count_over_one_million_uses_separators(self) -> None:
         """Token counts ≥ 1M render with thousands separators, no overflow or
         abbreviation — matching the trace-report summary convention."""
         result = self._make_formatted_result(total_calls=9, tokens_total=2137122)
-        out = "\n".join(_format_cost_summary_lines(0.05, result))
+        out = "\n".join(format_cost_summary_lines(result | {"total_cost_usd": 0.05}))
         assert "2,137,122 tokens" in out
 
     def test_known_model_singular_call_uses_singular_noun(self) -> None:
         """F#17 wording lock: single LLM call renders as ``1 call``."""
         result = self._make_formatted_result(total_calls=1)
-        out = "\n".join(_format_cost_summary_lines(0.05, result))
+        out = "\n".join(format_cost_summary_lines(result | {"total_cost_usd": 0.05}))
         assert "$0.0500" in out
         assert "1 call" in out
         assert "1 calls" not in out
@@ -282,13 +283,13 @@ class TestDisplayCostSummary:
     def test_zero_cost_shows_nothing(self) -> None:
         """When cost is zero, produce no lines."""
         result = self._make_formatted_result()
-        assert _format_cost_summary_lines(0.0, result) == []
+        assert format_cost_summary_lines(result | {"total_cost_usd": 0.0}) == []
 
     def test_total_llm_calls_suppressed_when_zero(self) -> None:
         """Honest unmeasurable: workflows with no LLM calls must NOT show
         ``Total LLM calls: 0``."""
         result = self._make_formatted_result(total_calls=0)
-        out = "\n".join(_format_cost_summary_lines(0.05, result))
+        out = "\n".join(format_cost_summary_lines(result | {"total_cost_usd": 0.05}))
         # Cost line shows but no sibling line for zero calls.
         assert "$0.0500" in out
         assert "Total LLM calls" not in out
@@ -302,7 +303,7 @@ class TestDisplayCostSummary:
             unavailable_models_unnamed_count=3,
             total_calls=3,
         )
-        out = "\n".join(_format_cost_summary_lines(None, result))
+        out = "\n".join(format_cost_summary_lines(result))
         assert "3 calls without recorded model" in out
         assert "unknown" not in out
         assert "   Total LLM calls: 3" in out
@@ -317,10 +318,115 @@ class TestDisplayCostSummary:
             partial_cost_usd=0.01,
             total_calls=5,
         )
-        out = "\n".join(_format_cost_summary_lines(None, result))
+        out = "\n".join(format_cost_summary_lines(result))
         # Locked wording from F#17 deferred spec
         assert "my-custom-model (3 calls); 2 calls without recorded model" in out
         assert "   Total LLM calls: 5" in out
+
+
+def _agent_call(model: str | None, estimate: float | None) -> dict:
+    """An agent-backend llm_call record as the trace stores it (codex/claude backends)."""
+    return {
+        "model": model,
+        "input_tokens": 1000,
+        "output_tokens": 100,
+        "cost_usd": None,
+        "api_equivalent_cost_usd": estimate,
+        "num_turns": 1,
+    }
+
+
+class TestCostLinesSubscriptionBilling:
+    """The CLI cost line keeps paid / subscription / unpriced distinguishable (#634).
+
+    Driven through ``MetricsCollector.get_summary`` so the metrics → formatter
+    seam is exercised with the dict shape the runner actually produces.
+    """
+
+    @staticmethod
+    def _lines(llm_calls: list[dict]) -> list[str]:
+        from pflow.core.metrics import MetricsCollector
+
+        summary = MetricsCollector().get_summary(llm_calls)
+        return format_cost_summary_lines({"total_cost_usd": summary["total_cost_usd"], "metrics": summary["metrics"]})
+
+    def test_agent_only_run_shows_labelled_estimate_not_missing_pricing(self) -> None:
+        lines = self._lines([
+            _agent_call("gpt-6-astra", 2.0),
+            _agent_call("gpt-6-astra", 3.0),
+            _agent_call("gpt-6-astra", 0.9507),
+        ])
+
+        assert lines == [
+            "💰 Cost: subscription (3 agent calls) · API-equivalent: $5.9507",
+            "   Total LLM calls: 3",
+        ]
+
+    def test_mixed_run_shows_paid_plus_subscription_and_api_equivalent_total(self) -> None:
+        lines = self._lines([{"model": "gpt-4o", "cost_usd": 0.42}, _agent_call("gpt-6-astra", 5.95)])
+
+        assert lines == [
+            "💰 Cost: $0.4200 + subscription (1 agent call) · API-equivalent total: $6.3700",
+            "   Total LLM calls: 2",
+        ]
+
+    def test_unpriced_api_model_keeps_the_missing_pricing_warning(self) -> None:
+        lines = self._lines([{"model": "ollama/llama3.2", "cost_usd": None}])
+
+        assert lines == [
+            "⚠️  Cost unavailable — pricing data missing for: ollama/llama3.2 (1 call)",
+            "   Total LLM calls: 1",
+        ]
+
+    def test_unpriced_api_model_beside_agent_calls_names_only_the_api_model(self) -> None:
+        lines = self._lines([{"model": "ollama/llama3.2", "cost_usd": None}, _agent_call("gpt-6-astra", 1.0)])
+
+        assert lines == [
+            "⚠️  Cost unavailable — pricing data missing for: ollama/llama3.2 (1 call)",
+            "   + subscription (1 agent call) · API-equivalent: $1.0000",
+            "   Total LLM calls: 2",
+        ]
+
+    def test_agent_model_without_pricing_names_it_on_the_estimate(self) -> None:
+        lines = self._lines([_agent_call("gpt-x", None)])
+
+        assert lines[0] == "💰 Cost: subscription (1 agent call) · API-equivalent: unavailable for: gpt-x (1 call)"
+
+    def test_partially_estimated_agent_calls_mark_the_estimate_partial(self) -> None:
+        lines = self._lines([
+            {"model": "gpt-4o", "cost_usd": 0.42},
+            _agent_call("gpt-6-astra", 1.0),
+            _agent_call("gpt-x", None),
+        ])
+
+        # No API-equivalent *total* when part of it is unknown.
+        assert lines[0] == (
+            "💰 Cost: $0.4200 + subscription (2 agent calls) · "
+            "API-equivalent: $1.0000+ (partial — unavailable for: gpt-x (1 call))"
+        )
+
+    def test_cli_summary_prints_subscription_line_to_stderr(self) -> None:
+        """The CLI summary routes through the shared cost lines (not a local copy)."""
+        from pflow.core.metrics import MetricsCollector
+
+        summary = MetricsCollector().get_summary([_agent_call("gpt-6-astra", 5.9507)])
+        formatted = {
+            "duration_ms": 100,
+            "total_cost_usd": summary["total_cost_usd"],
+            "metrics": summary["metrics"],
+            "status": "success",
+            "workflow": {"name": "wf", "action": "unsaved"},
+            "execution": {"steps": [], "cache_hits": 0, "nodes_executed": 1},
+        }
+
+        @click.command()
+        def cmd() -> None:
+            _display_execution_summary(formatted, verbose=False, warning_diagnostics=[])
+
+        cli_result = click.testing.CliRunner(mix_stderr=False).invoke(cmd)
+        assert cli_result.exit_code == 0, cli_result.output
+        assert "💰 Cost: subscription (1 agent call) · API-equivalent: $5.9507" in cli_result.stderr
+        assert "pricing data missing" not in cli_result.output
 
 
 class TestDisplayExecutionSummaryAdvisories:

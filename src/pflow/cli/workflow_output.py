@@ -644,60 +644,6 @@ def _echo_summary_blocks(blocks: list[list[str]]) -> None:
             click.echo(line, err=True)
 
 
-def _format_cost_summary_lines(total_cost: float | None, formatted_result: dict[str, Any]) -> list[str]:
-    """Build the LLM cost / token usage summary lines.
-
-    Returns ``💰 Cost: ...`` (priced) or ``⚠️  Cost unavailable — ...``
-    (unpriced) as the first line, followed by a ``   Total LLM calls: N``
-    sibling line (3-space indent) whenever the run actually made any LLM
-    calls. The sibling line is intentionally suppressed when no LLM calls
-    happened so workflows that never touch an LLM don't see ``Total LLM
-    calls: 0`` (mirrors the "honest unmeasurable" precedent in
-    ``format_dry_run_nudge``). Returns ``[]`` when there is no cost to show.
-
-    Args:
-        total_cost: Total cost in USD
-        formatted_result: Full formatted result containing metrics
-    """
-    metrics = formatted_result.get("metrics", {})
-    total_metrics = metrics.get("total", {})
-    total_llm_calls = int(total_metrics.get("total_calls", 0) or 0)
-
-    # Warn about models with unavailable pricing
-    if not total_metrics.get("pricing_available", True):
-        from pflow.core.metrics import format_unavailable_models_phrase, unavailable_models_to_counts
-
-        unavailable_counts = unavailable_models_to_counts(total_metrics.get("unavailable_models", []))
-        unavailable_unnamed_count = total_metrics.get("unavailable_models_unnamed_count", 0)
-        models_phrase = format_unavailable_models_phrase(unavailable_counts, unavailable_unnamed_count)
-        partial = total_metrics.get("partial_cost_usd")
-        if partial is not None:
-            lines = [f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_phrase})"]
-        else:
-            lines = [f"⚠️  Cost unavailable — pricing data missing for: {models_phrase}"]
-        if total_llm_calls > 0:
-            lines.append(f"   Total LLM calls: {total_llm_calls}")
-        return lines
-
-    if total_cost is None or total_cost <= 0:
-        return []
-
-    # Get token count for context. The key is ``tokens_total`` (set by
-    # MetricsCollector._build_execution_metrics) — cache-inclusive input + output.
-    workflow_metrics = metrics.get("workflow", {})
-    tokens_total = workflow_metrics.get("tokens_total", 0)
-
-    detail_parts: list[str] = []
-    if total_llm_calls > 0:
-        detail_parts.append(f"{total_llm_calls} call{'s' if total_llm_calls != 1 else ''}")
-    if tokens_total > 0:
-        detail_parts.append(f"{tokens_total:,} tokens")
-
-    if detail_parts:
-        return [f"💰 Cost: ${total_cost:.4f} ({', '.join(detail_parts)})"]
-    return [f"💰 Cost: ${total_cost:.4f}"]
-
-
 def _format_workflow_completion_status(
     duration_s: float,
     status: str,
@@ -868,6 +814,7 @@ def _display_execution_summary(
     """
     from pflow.execution.formatters.batch_errors import format_batch_errors_section
     from pflow.execution.formatters.success_formatter import (
+        format_cost_summary_lines,
         format_stderr_warnings,
         partition_surfaced_diagnostics,
     )
@@ -878,7 +825,6 @@ def _display_execution_summary(
     warnings_list, advisories_list = partition_surfaced_diagnostics(warning_diagnostics)
 
     duration_ms = formatted_result.get("duration_ms")
-    total_cost = formatted_result.get("total_cost_usd")
     execution = formatted_result.get("execution", {})
     steps = execution.get("steps", []) if execution else []
 
@@ -910,7 +856,7 @@ def _display_execution_summary(
         blocks.append(_as_block(format_batch_errors_section(steps)))
         blocks.append(_as_block(format_stderr_warnings(steps)))
 
-    blocks.append(_format_cost_summary_lines(total_cost, formatted_result))
+    blocks.append(format_cost_summary_lines(formatted_result))
 
     if warnings_list:
         blocks.append(["⚠️ Warnings:", *(format_diagnostic(w) for w in warnings_list)])

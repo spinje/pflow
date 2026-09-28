@@ -9,6 +9,7 @@ import logging
 import re
 import shutil
 import statistics
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -17,9 +18,15 @@ from uuid import uuid4
 from pflow.core.duration_format import format_duration
 from pflow.core.exceptions import ReportGenerationError
 from pflow.core.llm_usage import input_token_total
+from pflow.core.metrics import (
+    MetricsCollector,
+    format_subscription_phrase,
+    format_unavailable_models_phrase,
+    unavailable_models_to_counts,
+)
 from pflow.core.node_type_display import node_type_tag
 from pflow.core.trace_io import load_trace_file
-from pflow.core.trace_tree import batch_item_cost, event_cost
+from pflow.core.trace_tree import TraceTree, batch_item_cost, event_cost
 from pflow.runtime.workflow_trace import final_events_by_node
 
 logger = logging.getLogger(__name__)
@@ -303,7 +310,7 @@ def _compute_outlier_threshold(values: list[float]) -> float | None:
     return q3 + 1.5 * iqr
 
 
-def _compute_event_cost(event: dict[str, Any]) -> float | None:
+def _compute_event_cost(event: Mapping[str, Any]) -> float | None:
     """Total cost for a real trace event — delegates to :func:`pflow.core.trace_tree.event_cost`.
 
     Kept as a module-private alias so the report's call sites (and the test
@@ -313,9 +320,61 @@ def _compute_event_cost(event: dict[str, Any]) -> float | None:
     return event_cost(event)
 
 
-def _compute_batch_item_cost(item: dict[str, Any]) -> float | None:
+def _compute_batch_item_cost(item: Mapping[str, Any]) -> float | None:
     """Total cost for one batch item — delegates to :func:`pflow.core.trace_tree.batch_item_cost`."""
     return batch_item_cost(item)
+
+
+def _llm_calls_under(events: Iterable[Any]) -> list[dict[str, Any]]:
+    """This run's LLM calls under ``events`` — cached subtrees excluded.
+
+    The same leaf set ``WorkflowTraceCollector.collect_llm_calls`` feeds the
+    CLI summary, so the report's cost figures classify calls identically.
+    """
+    leaves = TraceTree(events=()).iter_llm_leaves(events, descend_cached_subtrees=False)
+    return [dict(leaf.llm_call) for leaf in leaves if leaf.llm_call is not None]
+
+
+def _format_total_cost(costs: Mapping[str, Any]) -> str | None:
+    """Render ``MetricsCollector.calculate_costs`` output for the summary header."""
+    subscription = costs.get("subscription")
+    partial = costs.get("partial_cost_usd")
+    if not costs.get("pricing_available", True):
+        models_phrase = format_unavailable_models_phrase(
+            unavailable_models_to_counts(costs.get("unavailable_models", [])),
+            costs.get("unavailable_models_unnamed_count", 0),
+        )
+        text = f"— (pricing unavailable for {models_phrase}"
+        text += f"; partial cost ${partial:.4f})" if partial else ")"
+        return f"{text} + {format_subscription_phrase(subscription)}" if subscription else text
+    if subscription:
+        paid_prefix = f"${partial:.4f} + " if partial else ""
+        return paid_prefix + format_subscription_phrase(subscription, paid_cost=partial)
+    total = costs.get("total_cost_usd")
+    return f"${total:.4f}" if total else None
+
+
+def _format_row_cost(row: Mapping[str, Any], *, batch_item: bool = False) -> str:
+    """Cost cell for one table row: paid cost, else a ``~$`` API-equivalent estimate.
+
+    Subscription-billed agent calls pay nothing observable per call, so their
+    row shows the estimate with a tilde marker instead of ``—``. ``—`` stays
+    for rows whose cost is genuinely unknown (unpriced API calls, agent calls
+    without an estimate).
+    """
+    paid = _compute_batch_item_cost(row) if batch_item else _compute_event_cost(row)
+    if paid is not None or row.get("status") == "cached":
+        return _format_cost(paid)
+    calls = _llm_calls_under((row,))
+    if batch_item:
+        calls += _llm_calls_under(row.get("events") or [])
+    costs = MetricsCollector.calculate_costs(calls)
+    subscription = costs.get("subscription")
+    if not costs["pricing_available"] or not subscription or "unavailable_models" in subscription:
+        return "—"
+    estimate = f"~${subscription['api_equivalent_cost_usd']:.4f}"
+    partial = costs.get("partial_cost_usd")
+    return f"${partial:.4f} + {estimate}" if partial else estimate
 
 
 def _format_cost(cost: float | None) -> str:
@@ -773,23 +832,12 @@ def _build_summary(
         tokens_out = llm.get("total_output_tokens", 0)
         if total_in or tokens_out:
             lines.append(f"- Tokens: {_format_tokens(total_in, tokens_out, cache_read, with_cache_pct=True)}")
-        cost = llm.get("total_cost_usd")
-        if cost is not None and cost > 0:
-            lines.append(f"- Total cost: ${cost:.4f}")
-        elif llm.get("pricing_available") is False:
-            from pflow.core.metrics import format_unavailable_models_phrase, unavailable_models_to_counts
-
-            partial = llm.get("partial_cost_usd")
-            unavailable_counts = unavailable_models_to_counts(llm.get("unavailable_models", []))
-            unavailable_unnamed_count = llm.get("unavailable_models_unnamed_count", 0)
-            models_phrase = format_unavailable_models_phrase(unavailable_counts, unavailable_unnamed_count)
-            if partial is not None and partial > 0:
-                lines.append(f"- Total cost: — (pricing unavailable for {models_phrase}; partial cost ${partial:.4f})")
-            else:
-                lines.append(f"- Total cost: — (pricing unavailable for {models_phrase})")
-        api_equivalent_cost = llm.get("total_api_equivalent_cost_usd")
-        if isinstance(api_equivalent_cost, (int, float)) and not isinstance(api_equivalent_cost, bool):
-            lines.append(f"- API-equivalent estimate: ${api_equivalent_cost:.4f}")
+        # Classified from the event leaves, not ``llm_summary``: traces written
+        # before subscription-billed agent calls were told apart from unpriced
+        # API calls carry a summary that conflates the two.
+        total_cost = _format_total_cost(MetricsCollector.calculate_costs(_llm_calls_under(trace.get("nodes", []))))
+        if total_cost:
+            lines.append(f"- Total cost: {total_cost}")
         models = llm.get("models_used", [])
         if models:
             lines.append(f"- Models: {', '.join(models)}")
@@ -1038,13 +1086,13 @@ def _format_pipeline_table(events: list[dict[str, Any]], lines: list[str]) -> No
                 rows.append(
                     f"| {i} | {_row_batch_item_label(node_id, item)} | {type_tag} | "
                     f"{_row_status(item)} | {format_duration(item.get('duration_ms', 0))} | "
-                    f"{_row_tokens(item)} | {_format_cost(_compute_batch_item_cost(item))} |"
+                    f"{_row_tokens(item)} | {_format_row_cost(item, batch_item=True)} |"
                 )
         else:
             rows.append(
                 f"| {i} | {event.get('node_id', '?')} | {type_tag} | "
                 f"{_row_status(event)} | {format_duration(event.get('duration_ms', 0))} | "
-                f"{_row_tokens(event)} | {_format_cost(_compute_event_cost(event))} |"
+                f"{_row_tokens(event)} | {_format_row_cost(event)} |"
             )
     if not rows:
         return
@@ -1440,7 +1488,7 @@ def _build_items_table(
     for item in items:
         idx = item.get("index", "?")
         dur = format_duration(item.get("duration_ms", 0))
-        cost = _format_cost(_compute_batch_item_cost(item))
+        cost = _format_row_cost(item, batch_item=True)
         status = _row_status(item)
         if has_labels:
             label = _item_label_or_index(item)

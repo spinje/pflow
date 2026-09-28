@@ -170,14 +170,15 @@ def _mirror_pricing_tri_state(result: dict[str, Any], metrics_summary: dict[str,
     ``total_cost_usd: null`` is ambiguous — agents can't tell "no LLM calls"
     from "calls happened but pricing data missing." Mirroring the
     discriminators alongside makes the cause obvious without drilling into
-    ``result["metrics"]["total"]``.
+    ``result["metrics"]["total"]``. ``subscription`` is mirrored for the same
+    reason: subscription-billed agent calls also leave the paid total null.
     """
+    for key in ("partial_cost_usd", "subscription"):
+        if metrics_summary.get(key) is not None:
+            result[key] = metrics_summary[key]
     if metrics_summary.get("pricing_available") is not False:
         return
     result["pricing_available"] = False
-    partial_cost = metrics_summary.get("partial_cost_usd")
-    if partial_cost is not None:
-        result["partial_cost_usd"] = partial_cost
     unavailable = metrics_summary.get("unavailable_models")
     if unavailable:
         result["unavailable_models"] = list(unavailable)
@@ -290,7 +291,6 @@ def format_success_as_text(  # noqa: C901
     # Extract data
     duration_ms = success_dict.get("duration_ms", 0)
     duration_sec = duration_ms / 1000 if duration_ms else 0
-    total_cost = success_dict.get("total_cost_usd")
     workflow_metadata = success_dict.get("workflow", {})
     workflow_name = workflow_metadata.get("name", "workflow")
     workflow_action = workflow_metadata.get("action", "executed")
@@ -357,44 +357,8 @@ def format_success_as_text(  # noqa: C901
     # the CLI summary block calls in `_display_execution_summary`)
     lines.extend(format_stderr_warnings(steps))
 
-    # Show cost (matches CLI `_format_cost_summary_lines`). The "Total LLM calls: N"
-    # sibling line below the cost line keeps the call tally visible at all
-    # three surfaces (CLI text, success formatter, trace report); call counts
-    # are also now interpolated into the priced cost line and per-model in
-    # the unpriced phrase (Bundle 7 / F#17 deferred).
-    metrics = success_dict.get("metrics", {})
-    total_metrics = metrics.get("total", {})
-    total_llm_calls = int(total_metrics.get("total_calls", 0) or 0)
-
-    if not total_metrics.get("pricing_available", True):
-        from pflow.core.metrics import format_unavailable_models_phrase, unavailable_models_to_counts
-
-        unavailable_counts = unavailable_models_to_counts(total_metrics.get("unavailable_models", []))
-        unavailable_unnamed_count = total_metrics.get("unavailable_models_unnamed_count", 0)
-        models_phrase = format_unavailable_models_phrase(unavailable_counts, unavailable_unnamed_count)
-        partial = total_metrics.get("partial_cost_usd")
-        if partial is not None:
-            lines.append(f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_phrase})")
-        else:
-            lines.append(f"⚠️  Cost unavailable — pricing data missing for: {models_phrase}")
-        if total_llm_calls > 0:
-            lines.append(f"   Total LLM calls: {total_llm_calls}")
-    elif total_cost and total_cost > 0:
-        # The key is ``tokens_total`` (set by MetricsCollector._build_execution_metrics)
-        # — cache-inclusive input + output. Mirrors the CLI cost line.
-        workflow_metrics = metrics.get("workflow", {})
-        tokens_total = workflow_metrics.get("tokens_total", 0)
-
-        detail_parts: list[str] = []
-        if total_llm_calls > 0:
-            detail_parts.append(f"{total_llm_calls} call{'s' if total_llm_calls != 1 else ''}")
-        if tokens_total > 0:
-            detail_parts.append(f"{tokens_total:,} tokens")
-
-        if detail_parts:
-            lines.append(f"💰 Cost: ${total_cost:.4f} ({', '.join(detail_parts)})")
-        else:
-            lines.append(f"💰 Cost: ${total_cost:.4f}")
+    # Show cost — the same lines the CLI summary prints.
+    lines.extend(format_cost_summary_lines(success_dict))
 
     # Show warnings and advisories in separate sections (matches CLI format).
     # Warnings are regressions; advisories are non-degrading notes.
@@ -467,6 +431,74 @@ def _append_outputs(lines: list[str], result: dict[str, Any]) -> None:
     except (TypeError, ValueError):
         # CLI safe_output falls back to repr(); match it for parity.
         lines.append(repr(first_value))
+
+
+def format_cost_summary_lines(success_dict: dict[str, Any]) -> list[str]:
+    """Build the LLM cost summary lines shared by the CLI summary and MCP text.
+
+    The first line names the run's cost state, and the three states stay
+    distinguishable (see ``MetricsCollector.calculate_costs``):
+
+    - paid: ``💰 Cost: $0.0420 (2 calls, 1,234 tokens)``
+    - subscription-billed agent calls: ``💰 Cost: [$paid + ]subscription (N agent
+      calls) · API-equivalent[ total]: $X`` — the estimate, labelled, never a
+      "pricing missing" warning
+    - unpriced API calls: ``⚠️  Cost unavailable — pricing data missing for: …``
+      (or the ``$X+ (partial — …)`` form), with any subscription calls on a
+      ``   + subscription …`` sibling line
+
+    A ``   Total LLM calls: N`` sibling line follows the subscription and
+    unpriced forms whenever LLM calls ran (the priced form carries the count
+    inline). Returns ``[]`` when there is no cost to show — a run with no LLM
+    calls never sees ``Total LLM calls: 0``.
+
+    Args:
+        success_dict: Dictionary from format_execution_success()
+    """
+    from pflow.core.metrics import (
+        format_subscription_phrase,
+        format_unavailable_models_phrase,
+        unavailable_models_to_counts,
+    )
+
+    metrics = success_dict.get("metrics", {})
+    total_metrics = metrics.get("total", {})
+    total_llm_calls = int(total_metrics.get("total_calls", 0) or 0)
+    calls_line = [f"   Total LLM calls: {total_llm_calls}"] if total_llm_calls > 0 else []
+    subscription = total_metrics.get("subscription")
+    partial = total_metrics.get("partial_cost_usd")
+
+    if not total_metrics.get("pricing_available", True):
+        unavailable_counts = unavailable_models_to_counts(total_metrics.get("unavailable_models", []))
+        unavailable_unnamed_count = total_metrics.get("unavailable_models_unnamed_count", 0)
+        models_phrase = format_unavailable_models_phrase(unavailable_counts, unavailable_unnamed_count)
+        if partial is not None:
+            lines = [f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_phrase})"]
+        else:
+            lines = [f"⚠️  Cost unavailable — pricing data missing for: {models_phrase}"]
+        if subscription:
+            lines.append(f"   + {format_subscription_phrase(subscription)}")
+        return lines + calls_line
+
+    if subscription:
+        paid_prefix = f"${partial:.4f} + " if partial else ""
+        return [f"💰 Cost: {paid_prefix}{format_subscription_phrase(subscription, paid_cost=partial)}", *calls_line]
+
+    total_cost = success_dict.get("total_cost_usd")
+    if total_cost is None or total_cost <= 0:
+        return []
+
+    # The key is ``tokens_total`` (set by MetricsCollector._build_execution_metrics)
+    # — cache-inclusive input + output.
+    tokens_total = metrics.get("workflow", {}).get("tokens_total", 0)
+    detail_parts: list[str] = []
+    if total_llm_calls > 0:
+        detail_parts.append(f"{total_llm_calls} call{'s' if total_llm_calls != 1 else ''}")
+    if tokens_total > 0:
+        detail_parts.append(f"{tokens_total:,} tokens")
+    if detail_parts:
+        return [f"💰 Cost: ${total_cost:.4f} ({', '.join(detail_parts)})"]
+    return [f"💰 Cost: ${total_cost:.4f}"]
 
 
 def format_only_indicator(only_node: str, nodes_skipped: int) -> str:

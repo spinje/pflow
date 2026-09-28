@@ -715,6 +715,37 @@ class TestPricingUnavailableWarning:
         assert "Total LLM calls" not in text
 
 
+class TestSubscriptionBilledCost:
+    """JSON output keeps paid and estimate separate; MCP text labels the estimate (#634)."""
+
+    def test_agent_run_json_mirrors_subscription_and_text_labels_estimate(self):
+        from pflow.core.metrics import MetricsCollector
+
+        class _Trace:
+            @staticmethod
+            def collect_llm_calls() -> list[dict]:
+                return [
+                    {"model": "gpt-4o", "cost_usd": 0.42},
+                    {"model": "gpt-6-astra", "cost_usd": None, "api_equivalent_cost_usd": 5.95, "num_turns": 1},
+                ]
+
+        collector = MetricsCollector()
+        collector.record_node_execution("agent", 10.0)
+        shared = {"__trace_collector__": _Trace()}
+
+        output = format_execution_success(shared, {"nodes": [{"id": "agent"}]}, metrics_collector=collector)
+
+        # The estimate never enters the paid channel; the null total is explained.
+        assert output["total_cost_usd"] is None
+        assert "pricing_available" not in output
+        assert output["subscription"] == {"calls": 1, "api_equivalent_cost_usd": 5.95}
+        assert output["partial_cost_usd"] == 0.42
+        assert output["metrics"]["total"]["partial_cost_usd"] == 0.42
+        text = format_success_as_text(output)
+        assert "💰 Cost: $0.4200 + subscription (1 agent call) · API-equivalent total: $6.3700" in text
+        assert "pricing data missing" not in text
+
+
 class TestOnlyNodeDisplay:
     """Tests for --only flag display behavior in text output."""
 

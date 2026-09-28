@@ -1051,8 +1051,45 @@ class TestWorkflowTraceCollector:
             filepath = streaming_collector.save_to_file()
             summary = load_trace_file(filepath)["llm_summary"]
 
+        # Paid cost stays unobserved (never 0.0); the model is not "missing
+        # pricing" — the call is subscription-billed and carries an estimate.
+        assert summary["total_cost_usd"] is None
+        assert summary["pricing_available"] is True
+        assert "unavailable_models" not in summary
+        assert summary["agent_calls"] == 1
+        assert summary["total_api_equivalent_cost_usd"] == pytest.approx(0.05)
+
+    def test_agent_call_beside_unpriced_api_call_lists_only_the_api_model(self, streaming_collector, temp_home):
+        with patch("pathlib.Path.home", return_value=temp_home):
+            streaming_collector.record_node_execution(
+                node_id="agent-1",
+                node_type="AgentNode",
+                duration_ms=100.0,
+                success=True,
+                node_output={
+                    "llm_usage": {
+                        "model": "gpt-5.5",
+                        "total_tokens": 100,
+                        "cost_usd": None,
+                        "api_equivalent_cost_usd": 0.05,
+                        "num_turns": 1,
+                    },
+                },
+            )
+            streaming_collector.record_node_execution(
+                node_id="llm-1",
+                node_type="LLMNode",
+                duration_ms=50.0,
+                success=True,
+                node_output={"llm_usage": {"model": "ollama/llama3.2", "total_tokens": 50, "cost_usd": None}},
+            )
+
+            filepath = streaming_collector.save_to_file()
+            summary = load_trace_file(filepath)["llm_summary"]
+
         assert summary["total_cost_usd"] is None
         assert summary["pricing_available"] is False
+        assert summary["unavailable_models"] == [{"name": "ollama/llama3.2", "calls": 1}]
         assert summary["total_api_equivalent_cost_usd"] == pytest.approx(0.05)
 
     def test_llm_summary_unpriced_call_surfaces_as_none(self, streaming_collector, temp_home):
