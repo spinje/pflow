@@ -104,6 +104,22 @@ To use MCP tools, first add MCP servers to pflow. See [Adding MCP servers](/guid
 
 pflow supports both local (stdio) and remote (HTTP) MCP servers. Both work identically in workflows - same naming, parameters, and output structure.
 
+## Server lifetime
+
+Each run, and each `pflow probe`, connects to its MCP servers and disconnects at the end. A stdio server starts and stops with the run, so every run begins clean. That is the right default for a saved workflow, but anything the server holds in memory (an open browser page, a notebook kernel) is gone before the next call. State the server writes to disk, such as a browser profile, survives either way.
+
+When your agent needs to explore step by step across separate calls, keep one server process alive outside pflow. Run the stdio server behind [mcp-proxy](https://github.com/sparfenyuk/mcp-proxy), which starts a single child and shares it with every connection, and register the proxy as an HTTP server:
+
+```bash
+# keep this running in its own process (another terminal, or backgrounded):
+uvx --with 'mcp<2' mcp-proxy --port 8932 -- <server command>   # mcp<2: mcp-proxy 0.12 breaks on mcp 2.x
+pflow mcp add '{"explore": {"type": "http", "url": "http://127.0.0.1:8932/mcp"}}'
+# when done:
+pflow mcp remove -f explore    # then stop the proxy process
+```
+
+A server's own HTTP mode is not a substitute: it may drop its state when the last client disconnects, which happens at the end of every run. With `@playwright/mcp`, `--port` starts the next run at `about:blank`, while behind the proxy the open page, localStorage and session cookie carried across separate runs. Everything that uses the long-lived registration shares one server and its state, so confirm a finished workflow against the normal run-scoped registration.
+
 ## Error handling
 
 MCP nodes return `error` action on:
