@@ -5,6 +5,10 @@ One-off verification harness: open a pflow-UI URL, settle, dispatch a real
 onMouseEnter delegates through native mouseover, so this drives the production
 hover path), then COUNT the hover marks + edge halos and screenshot.
 
+The mouseover is a synthetic in-page event (`dispatchEvent`, `isTrusted: false`).
+For real input (modifier keys, drag, typing, focus) or request interception, use a
+host-side automation tool instead (`pflow guide mcp` → Choosing Tools for Deterministic Steps).
+
 ## Inputs
 
 ### url

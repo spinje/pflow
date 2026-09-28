@@ -8,6 +8,10 @@ before/after and screenshot. Deep links capture STATES; this captures what a cli
 DOES — camera follow, panel stays-vs-swaps, focus/expansion side effects — the
 interaction layer `focus=`/`node=` cannot reach.
 
+The click is a synthetic in-page event (`dispatchEvent`, `isTrusted: false`), enough to
+drive React handlers. For real input (modifier keys, drag, typing, focus) or request interception, use a
+host-side automation tool instead (`pflow guide mcp` → Choosing Tools for Deterministic Steps).
+
 Each run reopens the page (fresh in-page state, layout cache cleared), so a
 multi-click sequence needs its own steps inside ONE run — copy the `click` step.
 Selectors are interpolated into single-quoted JS strings: use double quotes inside

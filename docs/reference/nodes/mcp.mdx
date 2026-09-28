@@ -40,7 +40,14 @@ MCP tools become nodes with the pattern `mcp-{server}-{tool}`:
 
 ## Parameters
 
-MCP node parameters come directly from the tool's input schema. Each MCP server defines its own tools with their own parameters.
+MCP node parameters come from the tool's input schema. Each MCP server defines its own tools with their own parameters.
+
+pflow also adds two parameters to every MCP node. They control the call and are never sent to the server:
+
+| Parameter | Effect |
+|-----------|--------|
+| `timeout` | Seconds before the tool call is abandoned (default: 30) |
+| `result_format: json_block` | For tools that wrap JSON in prose, parse the single fenced JSON block in the text result and use it as `result` |
 
 To see a tool's parameters:
 
@@ -103,7 +110,7 @@ MCP nodes return `error` action on:
 
 - **Connection failure**: Server not reachable
 - **Tool error**: Tool reported an error (via `isError` flag)
-- **Timeout**: Request took too long (default 30 seconds)
+- **Timeout**: The call took longer than `timeout` seconds (default 30)
 
 The node does **not** retry automatically - MCP calls start a server subprocess, and retries would cause resource conflicts.
 

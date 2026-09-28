@@ -42,8 +42,10 @@ Build and run the command:
 - The script refuses to clobber an existing worktree dir — relay that error as-is; a collision
   with a *different* task means the name was too vague. Don't work around refusals.
 - Related subcommands when the user asks: `./scripts/worktree rm <branch> [-f]` tears down a
-  worktree whose PR has merged (squash-safe check built in; `-f` skips it and keeps the branch);
-  `list` shows worktrees with their merge state.
+  worktree whose PR has merged (squash-safe check built in; a dirty-tree refusal lists the dirty
+  paths; `-f` discards those local files but still deletes the branch only when the merge
+  verifies — otherwise it keeps the branch and says why); `list` shows worktrees with their
+  merge state.
 
 **Examples:**
 

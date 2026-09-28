@@ -96,6 +96,7 @@ Read the settled state: rendered node count, viewport transform, the focused car
 text, source-pane marker, banner/full-screen flags.
 
 - type: mcp-chrome-devtools-evaluate_script
+- result_format: json_block
 - function: |
     async () => {
       const focused = (document.querySelector(".node.focused")?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60);
@@ -135,6 +136,7 @@ Let the poll detect the change, re-fetch, and re-layout.
 Re-read on the SAME page after the append.
 
 - type: mcp-chrome-devtools-evaluate_script
+- result_format: json_block
 - function: |
     async () => {
       const focused = (document.querySelector(".node.focused")?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60);
@@ -179,6 +181,7 @@ Re-read: focus must still be `done` (Finalize…), and the source pane must now 
 the marker.
 
 - type: mcp-chrome-devtools-evaluate_script
+- result_format: json_block
 - function: |
     async () => {
       const focused = (document.querySelector(".node.focused")?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60);
@@ -219,6 +222,7 @@ Re-read: the non-blocking banner is present, the full-screen error is NOT, and t
 node count is unchanged (last valid canvas held).
 
 - type: mcp-chrome-devtools-evaluate_script
+- result_format: json_block
 - function: |
     async () => {
       const focused = (document.querySelector(".node.focused")?.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60);
@@ -252,34 +256,20 @@ Delete the throwaway workflow.
 
 ### verdict
 
-Combine the four reads into a pass/fail verdict (the four wrapped chrome-devtools
-results parse by their lone brace span, like inspect's clean node).
+Combine the four reads into a pass/fail verdict.
 
 - type: code
 - inputs:
-    baseline: ${baseline.result}
-    after_append: ${after_append.result}
-    after_insert: ${after_insert.result}
-    after_corrupt: ${after_corrupt.result}
+    base: ${baseline.result}
+    app: ${after_append.result}
+    ins: ${after_insert.result}
+    cor: ${after_corrupt.result}
 
 ```python code
-baseline: str
-after_append: str
-after_insert: str
-after_corrupt: str
-
-import json
-
-
-def parse(s: str) -> dict:
-    a, b = s.find("{"), s.rfind("}")
-    return json.loads(s[a : b + 1]) if a != -1 else {}
-
-
-base = parse(baseline)
-app = parse(after_append)
-ins = parse(after_insert)
-cor = parse(after_corrupt)
+base: dict
+app: dict
+ins: dict
+cor: dict
 
 checks = {
     "in_place": app.get("nodes", 0) > base.get("nodes", -1),
