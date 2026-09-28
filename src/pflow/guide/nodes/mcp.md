@@ -126,8 +126,8 @@ Then check three things before building on a tool:
   prose, pin the server version and treat output changes as breaking.
 - **What it can do, not just what it returns.** `pflow probe` shows the output
   shape. Also test the one capability the workflow depends on (does the input
-  reach the field? is the request visible?). Each probe opens a fresh session, so
-  use a small workflow when the test needs earlier state.
+  reach the field? is the request visible?). Each probe starts from a fresh server
+  unless you keep one alive (see Server lifetime below).
 
 **Slow calls.** A call is abandoned after `timeout` seconds. The server stays up
 for the rest of the run, so an `on-error:` handler can call the same server and
@@ -136,12 +136,32 @@ went). If the server runs one call at a time, the handler waits until the
 abandoned call actually finishes, so give a long program its own deadline and
 have it return early with what it has.
 
-**Server lifetime.** Each run or probe opens a new session and closes it at the
-end; a stdio server is started and stopped with it, which suits a reusable
-workflow. A server you run yourself over HTTP outlives pflow runs and may keep
-state between them: useful for step-by-step exploration, at the cost of
-isolation. Either way, state the server keeps on disk (a browser profile, a
-database) survives, so check the server's options when a run must start clean.
+**Server lifetime.** Each run or probe connects to its MCP servers and
+disconnects at the end; a stdio server is started and stopped with it. That suits
+a reusable workflow, which should start clean, but it means state held in the
+server process (an open browser page, a notebook kernel, a shell session) is gone
+before your next probe. State the server writes to disk (a browser profile, a
+database) survives either way, so check the server's options when a run must
+start clean.
+
+To explore step by step (look, act, look again across separate probes), keep one
+server process alive outside pflow: run the stdio server behind a proxy that holds
+a single child for its whole life, and register the proxy over HTTP.
+
+```bash
+# keep this running in its own process (another terminal, or backgrounded):
+uvx --with 'mcp<2' mcp-proxy --port 8932 -- <server command>   # mcp<2: mcp-proxy 0.12 breaks on mcp 2.x
+pflow mcp add '{"explore": {"type": "http", "url": "http://127.0.0.1:8932/mcp"}}'
+# probe or run mcp-explore-* nodes; when done:
+pflow mcp remove -f explore    # then stop the proxy process
+```
+
+A server's own HTTP mode is not the same: it may still discard state when the
+last client disconnects, which every run end does. Playwright MCP's `--port`
+restarts at `about:blank`; behind the proxy, its open page, localStorage and
+session cookie carried across separate probes and runs. Everything using the
+long-lived registration shares that one server and its state, so confirm the
+finished workflow against the normal run-scoped registration.
 
 ### Node Creation Pattern
 
