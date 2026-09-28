@@ -278,9 +278,11 @@ class TestInlineExampleValidation:
 
         Phantom sub-workflow refs, drifted node references, and unknown node
         types are embedded in a source file of the corpus's type (one indented
-        inside an MDX-style component) and must each be extracted AND produce
-        ERROR diagnostics — otherwise the bare-var input injection, or an
-        extractor that silently drops blocks, would have made the test toothless.
+        inside an MDX-style component) and must each be extracted intact AND
+        produce the ERROR diagnostic naming that defect — otherwise the bare-var
+        input injection, or an extractor that drops or mangles blocks, would
+        have made the test toothless. A parse error does not count: it would
+        mean the extractor damaged the block, not that validation caught it.
         """
         registry = Registry()
         cases = {
@@ -300,6 +302,11 @@ class TestInlineExampleValidation:
                 "Bad type.\n\n- type: not-a-real-node\n\n```shell command\necho hi\n```\n"
             ),
         }
+        expected_errors = {
+            "phantom_child": "Sub-workflow file not found: './does-not-exist.pflow.md'",
+            "drifted_node_ref": "references non-existent node 'ghost-node'",
+            "unknown_node_type": "Unknown node type: 'not-a-real-node'",
+        }
         sections = [f"Case {label}:\n\n````markdown\n{content}````\n" for label, content in cases.items()]
         sections[0] = f'<Tab title="nested">\n{textwrap.indent(sections[0], "  ")}</Tab>\n'
         source_root = tmp_path / "source"
@@ -311,12 +318,13 @@ class TestInlineExampleValidation:
         extracted = _collect_workflows(probe, tmp_path / "extracted")
         assert len(extracted) == len(cases), f"extractor found {len(extracted)} of {len(cases)} broken blocks"
 
-        for label, path in extracted:
-            try:
-                errors = _validate(path, registry)
-            except (MarkdownParseError, SchemaValidationError, ValueError):
-                continue  # raising is also an acceptable "caught it"
-            assert errors, f"{label!r} should have produced a validation error but passed"
+        # Blocks are extracted in document order, so they pair with the cases.
+        for case, (label, path) in zip(cases, extracted, strict=True):
+            expected = expected_errors[case]
+            messages = [e.message for e in _validate(path, registry)]
+            assert any(expected in m for m in messages), (
+                f"{case!r} ({label}) should fail naming {expected!r}, got: {messages}"
+            )
 
     def test_self_contained_examples_execute(self, all_workflows: list[tuple[str, Path]]) -> None:
         """The self-contained subset must RUN, not just validate.
