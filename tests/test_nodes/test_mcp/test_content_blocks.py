@@ -55,9 +55,10 @@ def test_text_block_is_parsed_as_before() -> None:
 
 
 def test_image_block_exposes_data_and_mime_type() -> None:
-    result = _run(ImageContent(type="image", data="aGk=", mimeType="image/png"))
+    # `_meta` pins the wire alias: the SDK's Python field is `meta`.
+    result = _run(ImageContent(type="image", data="aGk=", mimeType="image/png", _meta={"page": 2}))
 
-    assert result == {"type": "image", "data": "aGk=", "mimeType": "image/png"}
+    assert result == {"type": "image", "data": "aGk=", "mimeType": "image/png", "_meta": {"page": 2}}
 
 
 def test_audio_block_exposes_data_and_mime_type() -> None:
