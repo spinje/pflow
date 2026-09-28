@@ -99,7 +99,7 @@ One module, `core/templates` (single file initially; split only if it grows), ow
   total, **context-free** (no per-param mode — the deferred #621 tolerance is *policy over
   Issues*, never a parse flag), and cached with a **bounded** `lru_cache` keyed on **author
   template text only** — helpers that run on resolved runtime values (cost analysis
-  `row_builder.py:928`, `token_estimation.py:414`, `sub_workflow_walker.py:537`,
+  `row_builder.py:928`, `token_estimation.py:414/:448/:452`, `sub_workflow_walker.py:537`,
   `engine.py:400`) never route through the cache.
 - **One value walk** (`lookup`/`resolve`) that also **returns the set of references it could
   not resolve** — the single judge of "unresolved" for the engine's strict check
@@ -200,7 +200,8 @@ Drift becomes loud through three meta-tests (pflow's native mechanism):
 4. **Typed parse + drift-site migration** — the AST and `parse()`; migrate the sites where
    drift actually lived: validation passes (`path_validation.py` is the heaviest consumer; the
    operand classifier lands here), `data_flow` operand loop (:787-796), engine resolution
-   (`template_resolution.py`, `engine.py:150-156` hand split, `engine.py:245` carry check,
+   (`template_resolution.py`, `engine.py:150-156` — the segment split inside
+  `_diagnose_carry_ref`, `engine.py:245` carry check,
    `_resolve_template_string` :393-401), `template_errors` classification (:137, :320),
    `output_resolver` (:41-53 wraps the whole source; the prose-in-`source:` drift is recorded,
    not fixed), `batch_executor.resolve_batch_items` :108-131, `loop_control` :131-153 (own
@@ -319,14 +320,15 @@ asymmetry the corpus cites; Tasks 112/120 collide on the type-compatibility matr
 - Dynamic index today (the **before** side of the Sanctioned delta; corpus records it):
   inner absent → text unchanged; inner int with the outer path missing → `'${a[0].x}'`
   (rewritten, unflagged); inner non-int → `'${a[abc].x}'` (rewritten, warning logged
-  :152-156, unflagged); `${a[${i}].x ?? b}` with a non-int inner → fallback never tried.
+  :152-156, unflagged); `${a[${i}].x ?? b}` with a non-int inner → fallback never tried,
+  with an int inner and a missing outer path → the fallback fires (kept).
 - Unresolved templates remain textually unchanged in output; the strict-vs-permissive **error
   policy** (raise vs record, `template_resolution.py:441-459`) stays with the engine (ADR-0014)
   — only the *detection* moves to the resolver's unresolved set.
 - `output_resolver._is_all_absent_coalesce` keeps its deliberately stricter semantics —
   consumes parsed operands but is NOT absorbed. Output `source:` with surrounding prose
   (`source: prefix ${run.stdout}` → `'${prefix ok}'`) is a recorded drift, not fixed here.
-- Loop conditions: validator (`validator.py:261`) and runtime (`loop_control.py:132`) share
+- Loop conditions: validator (`template_validation/validator.py:258-266`) and runtime (`loop_control.py:132`) share
   `extract_simple_template_var`; batch `continue` mode blocks dynamic indices
   (`path_validation.py:165-172`).
 
@@ -361,8 +363,9 @@ the named phase)
   (`_node_template_value_sources`, `validator.py:764`).
 - Under-checks are visible: a static check that defers on `has_templates` must key on
   "contains a Reference", not "needs rewriting" (after #632 the two differ for escape-only
-  values: `core/workflow/validator.py:1008/:1047/:1262`, `template_validation/validator.py:1226`
-  currently skip agent params, `output_schema`, the LLM `model` key and downstream type
+  values: `core/workflow/validator.py:1008/:1047/:1155/:1262`, `template_validation/validator.py:1226`,
+  `core/workflow/sub_workflow_resolver.py:93` currently skip agent params, both `output_schema`
+  keys, the LLM `model` key, templated child refs and downstream type
   inference for them); any deliberate under-check that remains gets an INFO advisory or a named
   corpus row.
 - The historical drift bugs and today's (#620/#632, #630) exist as named regression fixtures
