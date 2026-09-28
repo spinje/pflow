@@ -98,6 +98,43 @@ class TestMoveFileNode:
             with open(dest_path, encoding="utf-8") as f:
                 assert f.read() == "Existing content"
 
+    def test_move_overwrite_ignores_shared_store_key(self):
+        """A shared-store `overwrite` key must not enable overwriting; only the param does.
+
+        Author inputs are read from params only: a workflow input named `overwrite`
+        reaches `shared` through the namespaced store's root fallback and must not
+        silently override the node's param.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = os.path.join(tmpdir, "source.txt")
+            dest_path = os.path.join(tmpdir, "dest.txt")
+            with open(source_path, "w", encoding="utf-8") as f:
+                f.write("New content")
+            with open(dest_path, "w", encoding="utf-8") as f:
+                f.write("Old content")
+
+            # BEHAVIOR: shared["overwrite"] alone leaves the destination protected
+            node = MoveFileNode()
+            node.set_params({"source_path": source_path, "dest_path": dest_path})
+            shared = {"overwrite": True}
+
+            action = node.run(shared)
+
+            assert action == "error"
+            assert "exists" in shared["error"].lower()
+            with open(dest_path, encoding="utf-8") as f:
+                assert f.read() == "Old content"
+
+            # BEHAVIOR: the param alone enables overwriting
+            node = MoveFileNode()
+            node.set_params({"source_path": source_path, "dest_path": dest_path, "overwrite": True})
+
+            action = node.run({})
+
+            assert action == "default"
+            with open(dest_path, encoding="utf-8") as f:
+                assert f.read() == "New content"
+
     def test_move_source_not_found(self):
         """Test behavior when source file doesn't exist.
 

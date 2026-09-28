@@ -1,6 +1,6 @@
 # Run searcher
 
-Run one pflow codebase searcher (`pflow-codebase-searcher` — or any other read-only persona) as a Codex/GPT-sol subagent and return its cited answer. The second capacity pool and second model family for the orchestration's highest-frequency agent type: use it for cross-model verification (same question to this AND the native opus searcher, caller compares) or as capacity offload when Claude limits bite. Codex-only by design — the Claude side already has a better native path (the Agent tool with follow-up/resume), so a claude branch here would be dead scaffolding.
+Run one pflow codebase searcher (`pflow-codebase-searcher` — or any other read-only persona) as a Codex/GPT-astra subagent and return its cited answer. The second capacity pool and second model family for the orchestration's highest-frequency agent type: use it for cross-model verification (same question to this AND the native opus searcher, caller compares) or as capacity offload when Claude limits bite. Codex-only by design — the Claude side already has a better native path (the Agent tool with follow-up/resume), so a claude branch here would be dead scaffolding.
 
 ## Inputs
 
@@ -20,11 +20,11 @@ The search or verification task, phrased exactly as you would brief the native s
 
 ### effort
 
-Model tier — the reasoning lever, distinct from the DEPTH you write into the prompt (DEPTH = how broadly the agent searches; this = how hard the model thinks).
+Reasoning tier, distinct from the DEPTH you write into the prompt (DEPTH = how broadly the agent searches; this = how hard the model thinks). One Codex model runs all three; only the thinking budget moves.
 
-* `low` → **sol**, low reasoning — mechanical/quick lookups ("which file defines X"). Uses the Opus-equivalent model while the DECISIONS #3 override holds; the dormant mapping is terra with medium reasoning.
-* `medium` → **sol**, medium reasoning — ordinary investigation.
-* `high` → **sol**, high reasoning (**default**) — real verification / cross-model adversarial checks.
+* `low` → **astra**, low reasoning — mechanical/quick lookups ("which file defines X"). Search, not judgment.
+* `medium` → **astra**, medium reasoning — ordinary investigation.
+* `high` → **astra**, high reasoning (**default**) — real verification / cross-model adversarial checks.
 
 - type: string
 - required: false
@@ -58,7 +58,7 @@ fi
 
 ### load-persona
 
-Load the persona body (frontmatter stripped) and resolve the `effort` tier to a codex `(model, reasoning_effort)` pair: `low` → sol/low (mechanical lookups), `medium` → sol/medium, `high` → sol/high (verification). While the DECISIONS #3 override holds (Sonnet banned for all subagents), every tier maps to the Opus-equivalent `sol` — restore `low` → terra when the override lifts. The persona frontmatter's own model/effort is intentionally NOT used here — `effort` is the single per-call control (searchers vary by call; review lenses, by contrast, stay frontmatter-pinned). Fails loudly on a missing persona file or an unknown effort value.
+Load the persona body (frontmatter stripped) and resolve the `effort` tier to a codex `(model, reasoning_effort)` pair — one model, `gpt-6-astra`, at low (mechanical lookups), medium, or high (verification) reasoning. The persona frontmatter's own model/effort is intentionally NOT used here — `effort` is the single per-call control (searchers vary by call; review lenses, by contrast, stay frontmatter-pinned). Fails loudly on a missing persona file or an unknown effort value.
 
 - type: code
 - inputs:
@@ -73,13 +73,15 @@ agent: str
 cwd: str
 effort: str
 
-# effort tier -> (codex launch model, reasoning_effort). All tiers map to sol
-# (opus/fable-tier) while the DECISIONS #3 override bans the Sonnet tier for
-# subagents; when the override lifts, low reverts to ("gpt-5.6-terra", "medium").
+# effort tier -> (codex launch model, reasoning_effort). One Codex model serves every
+# tier, so the tier is purely a thinking dial: low for mechanical lookups, high for
+# verification. It stays a table rather than a constant because this node is the
+# executable statement of the routing contract — tests/test_scripts/
+# test_codex_model_names.py runs it and asserts the pair.
 TIER = {
-    "low": ("gpt-5.6-sol", "low"),
-    "medium": ("gpt-5.6-sol", "medium"),
-    "high": ("gpt-5.6-sol", "high"),
+    "low": ("gpt-6-astra", "low"),
+    "medium": ("gpt-6-astra", "medium"),
+    "high": ("gpt-6-astra", "high"),
 }
 if effort not in TIER:
     raise ValueError(f"Unknown effort {effort!r} (expected low|medium|high)")
@@ -89,7 +91,7 @@ path = Path(cwd) / ".claude" / "agents" / f"{agent}.md"
 if not path.is_file():
     raise FileNotFoundError(f"No persona file for agent {agent!r} at {path}")
 
-text = path.read_text()
+text = path.read_text(encoding="utf-8")
 body = text.split("---", 2)[2].strip() if text.startswith("---") else text.strip()
 
 result: dict = {"persona": body, "model": model, "effort": reasoning}

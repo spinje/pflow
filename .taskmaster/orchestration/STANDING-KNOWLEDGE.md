@@ -1,27 +1,36 @@
-# Braindump — main orchestrator (rolling tacit layer)
+# STANDING-KNOWLEDGE — main orchestrator (promoted long-term memory)
 
-_Tacit residue ONLY: what exists in no other file. Process = `ORCHESTRATION.md`; settled
-decisions = `DECISIONS.md`; state = `CURRENT-STATE.md`; journey = `sessions/`. The test for every
-line here: **"could the next agent find this by reading files?"** If yes, it gets cut._
+_The role's long-term memory, read IN FULL once at boot. Process = `ORCHESTRATION.md`; settled
+decisions = `DECISIONS.md`; state = `CURRENT-STATE.md`; journey = `sessions/` (each ending in its
+own `## Braindump`); counters = `RECURRENCE.md`. The test for every line here: **"could the next
+agent find this by reading files?"** If yes, it gets cut._
 
-_**Read these as LEADS, not as verified truth** — verify before propagating. Organized by theme,
-not by session. `(sNN)` tags mark which session a line came from, for recency and supersession.
-**When you add to this file, merge into the section that owns the theme — do not append a dated
-one.** Refreshed in place at each session close (`/close-orchestrator-session`, step 3 — the
-doctrine lives there). Sessions: seeded 2026-07-12; refreshed through session-07-continued
-(2026-08-15)._
+_**Entry is by PROMOTION only**: a `RECURRENCE.md` threshold hit, a user ruling, a
+visible severity call, or a gotcha proven by one verification that has no trigger-point home (a
+skill or agent def read at the moment of use — when one exists, the gotcha goes THERE, not here).
+A single unpromoted observation belongs in its session's `## Braindump`, and if it may recur, as
+a `RECURRENCE.md` counter. New lines are written **`trigger → action; why: mechanism`**, tagged
+`(sNN)`, merged into the section that owns the theme — never a dated section. Read every entry as
+a LEAD, not verified truth: verify before propagating. **AMENDED, never overwritten** — after any
+large edit, grep the pre-edit copy's user quotations against the new file. It must SHRINK as
+knowledge becomes durable elsewhere; a line proven false or single-instance is deleted or
+demoted to a counter at close (close skill, step 4)._
 
-Predecessor tacit layer: the **Genesis** section at the bottom of this file (2026-07-02) —
-HISTORICAL; its process claims are superseded by ORCHESTRATION.md, its working-style observations
-were absorbed into the command's "Working with the user".
+_Lineage: pre-2026-09-27 this file was `BRAINDUMP.md` (its git predecessor; refreshed in place
+through session-07-continued, 2026-08-15). Entries below written under the older, ungated bar are
+grandfathered — they drain through the close skill's downward exit, not through a rewrite. The
+frozen **Genesis** section at the bottom (2026-07-02) is HISTORICAL: its process claims are
+superseded by ORCHESTRATION.md; its working-style observations were absorbed into the role
+prompt's "Working with the user"._
 
-## 1. The user — their words, their moves
+## 1. The user — how they decide, hard-stop, audit, communicate
 
 - **The web UI is first-class product, not a dev tool.** I framed it as "a dev tool" to skip
-  the sibling programme's UI ruling and the user hard-stopped it ("pflows web ui is not a web tool, and all
-  ui should be done by fable… and verify everything"). Lesson shape: never infer a surface's
-  importance from its architecture (local server ≠ low stakes) — the ruling is DECISIONS #8;
-  the sensitivity behind it (UI quality matters to them, everywhere) is the tacit part.
+  the sibling programme's UI ruling and the user hard-stopped it ("pflows web ui is not a web
+  tool, and all ui should be done by fable… and verify everything"). Lesson shape: never infer
+  a surface's importance from its architecture (local server ≠ low stakes) — the ruling is
+  ORCHESTRATION.md "Model routing" (the UI/taste trigger); the sensitivity behind it (UI quality
+  matters to them, everywhere) is the tacit part.
 - **User correction — visibility is not deletion.** When they said they did not want compatibility
   edits committed because they wanted to see them, I wrongly erased the commit and working diff.
   Their correction: *"I asked what you did, I just wanted to see it."* Leave reviewable changes
@@ -50,8 +59,8 @@ were absorbed into the command's "Working with the user".
 - **They run this system's own gate prompts on YOU (s07 — pflow-earned; sibling standing).**
   *"So you are FULLY happy? Any loose ends right now?"* and *"have you read all current reviews
   on the pr?"* — answer by GOING LOOKING (that pass found five real loose ends, including the
-  #14 auto-reviewer gate I had skipped while declaring the PR ready). They audit whether a gate
-  RAN, not just what shipped.
+  auto-reviewer gate — since retired — I had skipped while declaring the PR ready). They audit
+  whether a gate RAN, not just what shipped.
 - **User pressure-tests a new CLI surface hard and iteratively — and demands consistency be VERIFIED,
   not asserted** (s06, `pflow settings llm models` design). They serially caught surface
   incoherences (a status label that read as an imperative, a flag combo that made no sense,
@@ -62,7 +71,7 @@ were absorbed into the command's "Working with the user".
   concrete mock output per iteration is how the design converged.
 
 _Lines tagged `(sibling, s07)` were imported from the sibling programme's tacit layer in the
-re-audit (DECISIONS #22) — same user, empirically earned THERE; imported-not-earned here (#19)._
+re-audit — same user, empirically earned THERE; imported-not-earned here (#19)._
 
 - **(sibling, s07) The user stages changes themselves to read incremental diffs** — a staged
   tree is their normal working state: never reset/unstage to "clean up"; staged ≠ about to
@@ -78,9 +87,6 @@ re-audit (DECISIONS #22) — same user, empirically earned THERE; imported-not-e
 - **(sibling, s07) Cost the zero-build option before designing** — their first move on a scope
   gap is the existing surface that already covers it, and they're usually right. Twin: "why is
   there a max in the first place?" — state what a constraint is FOR before working around it.
-- **(sibling, s07) Delegation triggers: YOUR uncertainty (not task size), and SHELF LIFE** —
-  one-shot verification reading that won't be needed again never enters this window; hand it to
-  a searcher/fork.
 - **(sibling, s07) At every major ruling, produce the claims-risk inventory unasked** — rank the
   load-bearing claims by damage × evidence-thinness, delegate the probes as ONE battery,
   per-claim VERIFIED/REFUTED/PARTIAL.
@@ -91,13 +97,14 @@ re-audit (DECISIONS #22) — same user, empirically earned THERE; imported-not-e
   not research scoped to "map what it can do" — a task needing both must be asked for both.
   (Both recorded as posture; promote to a row on the first real pflow instance.)
 
-## 2. Claims and their tells — verify before relaying
+## 2. Recurred patterns and their tells — a formulation trusted over the source
 
 - **Own overturn (s07): "ready to merge" is a CHECKLIST claim, never a feeling** — CI green on
-  the FINAL head + #14 auto-reviewer dispositions + state docs true. I declared readiness with
-  the reviews unread. Sub-trap, same session: a CI watcher parsing `gh pr checks` tabular output
-  with `awk $2` reads green through noise (check names contain spaces) — parse `--json` with
-  python/jq, and re-measure any watcher verdict before acting on it.
+  the FINAL head + the review gate of the day (in s07 the auto-reviewer gate, since retired) +
+  state docs true. I declared readiness with the reviews unread. Sub-trap, same session: a CI
+  watcher parsing `gh pr checks` tabular output with `awk $2` reads green through noise (check
+  names contain spaces) — parse `--json` with python/jq, and re-measure any watcher verdict
+  before acting on it.
 - **Trap — a PR review authored by `spinje` is the AGENT under the repo git identity, not the human
   user** (s06). I nearly treated an inline review comment as a human review gate. The git
   user IS `spinje`; children post disposition comments under it. Read the body/author-association
@@ -136,7 +143,19 @@ re-audit (DECISIONS #22) — same user, empirically earned THERE; imported-not-e
   time they read it — skill bodies are read at the moment of use, so upstream-shaping content
   there is structurally too late.
 
-## 3. Running the machine — recovery, runner seams
+## 3. Checks and evidence
+
+_(nothing promoted yet)_
+
+## 4. Rules and their boundaries
+
+_(nothing promoted yet)_
+
+## 5. Relay and packet craft
+
+_(nothing promoted yet)_
+
+## 6. Running the machine — recovery, runner seams
 
 - **Transient API death ≠ tier exhaustion → resume the SAME agent, don't replace** (s06). The
   limit-recovery rule (never resume an exhausted tier — it re-dies) does NOT apply to a "connection
@@ -167,7 +186,7 @@ re-audit (DECISIONS #22) — same user, empirically earned THERE; imported-not-e
   cross-check live `git log`; zsh reserves `status`/`path`; a heredoc body starting `**` dies on
   zsh globbing — use `--body-file`.
 
-## 4. Mechanisms that worked
+## 7. Mechanisms that worked — shell, git, tooling
 
 - **Cross-file coherence audit:** grep `DECISIONS #` across ORCHESTRATION + all agent defs, then
   check each def's standing rules against the lane rules. Caught a real contradiction (lane B's
@@ -178,11 +197,11 @@ re-audit (DECISIONS #22) — same user, empirically earned THERE; imported-not-e
   checking how the source repo's command invoked it; the user had to point ("see how its
   mentioned in the [sibling repo] docs"). One `grep -rn <name>` would have caught it.
   - **And check the SUBSTRATE, not just the wiring** (s07): an imported rule can depend on a
-    mechanism the source repo has and yours lacks — the review-labour ownership move (#17)
-    required a Bash-drivable lens dispatch that didn't exist here yet (implementers hold no
-    Agent tool). Caught at import time, encoded as an explicit interim, dissolved the same day
-    when the fan-out shipped. Before porting an ownership/authority rule, ask what MECHANISM the
-    target role uses to exercise it.
+    mechanism the source repo has and yours lacks — the review-labour ownership move
+    (ORCHESTRATION.md "Review policy") required a Bash-drivable lens dispatch that didn't exist
+    here yet (implementers hold no Agent tool). Caught at import time, encoded as an explicit
+    interim, dissolved the same day when the fan-out shipped. Before porting an
+    ownership/authority rule, ask what MECHANISM the target role uses to exercise it.
 - **Adversarial DESIGN review via Codex** (s04, user-invoked). For a hard design
   call, get an independent critique of the *proposed design* (not a diff). Working zsh invocation:
   `codex exec --sandbox workspace-write -c 'approvals_reviewer="auto_review"' "$(cat prompt.md)"`.
@@ -192,13 +211,17 @@ re-audit (DECISIONS #22) — same user, empirically earned THERE; imported-not-e
   (durable-provenance gap, three-seams-not-N). Local-only: that review + the session's searcher
   outputs live in `scratchpad/` (gitignored) — gone once this machine's temp clears.
 
-## 5. Local-only artifacts (a successor cannot discover these)
+## 8. Artifacts — local-only (a successor cannot discover these)
 
 - `scratchpads/cross-repo-knowledge-transfer/` (gitignored): `plan.md` (the fold's plan),
   `re-audit-report.md` (four buckets + P0–P8 dispositions + the addendum), and
   `phase-a-transfer-list.md` (the blind-pass list — holds the UN-imported residue for any future
-  pass). If missing: DECISIONS #19/#22 summarize what landed; the residue is reconstructable
-  only from the sibling corpus.
+  pass). If missing: what landed lives at its Homes (the `(sibling, s07)` lines above, governed by
+  DECISIONS #19); the residue is reconstructable only from the sibling corpus.
+
+## 9. Exemplars
+
+_(nothing promoted yet)_
 
 Note to next agent: read this file fully, summarize it to yourself, then proceed.
 

@@ -146,6 +146,14 @@ all_task_numbers() {
 list_by_status() {
     local filter_status=$1
     local verbose=$2
+    # Optional third arg narrows by the spec's ## Roadmap slot (next|then|later);
+    # "unscheduled" selects specs with no slot. Only meaningful for pending tasks.
+    local roadmap_filter=${3:-}
+    # Optional fourth arg (YYYY-MM-DD) hides done tasks completed before that date and
+    # reports how many were folded — the board is read whole, so old history is a tax.
+    # Undated done tasks are never hidden (hiding them would be silent, not lean).
+    local done_cutoff=${4:-}
+    local older=0
 
     # Collect task info for sorting
     local task_entries=()
@@ -156,10 +164,23 @@ list_by_status() {
 
         if [ -f "$file" ]; then
             task_status=$(get_section_value "$file" "Status")
+            if [ -n "$roadmap_filter" ] && [ "$task_status" = "$filter_status" ]; then
+                local slot=$(get_section_value "$file" "Roadmap")
+                if [ "$roadmap_filter" = "unscheduled" ]; then
+                    [ -z "$slot" ] || continue
+                else
+                    [ "$slot" = "$roadmap_filter" ] || continue
+                fi
+            fi
             if [ "$task_status" = "$filter_status" ]; then
                 if [ "$filter_status" = "done" ]; then
                     # For done tasks, collect with completion date for sorting
                     completed=$(get_section_value "$file" "Completed")
+                    if [ -n "$done_cutoff" ] && [ -n "$completed" ] && [ "$completed" != "unknown" ] \
+                        && [[ "$completed" < "$done_cutoff" ]]; then
+                        older=$((older + 1))
+                        continue
+                    fi
                     # Use date for sorting, default to 9999-99-99 if unknown
                     sort_key="${completed:-9999-99-99}"
                     task_entries+=("$sort_key|$task_num")
@@ -241,6 +262,10 @@ list_by_status() {
             echo "- $title"
         fi
     done
+    if [ "$older" -gt 0 ]; then
+        echo ""
+        echo "($older older done tasks folded — ./scripts/tasks --done for all, --since DATE for a window)"
+    fi
 }
 
 # Search tasks
@@ -338,6 +363,14 @@ check_tasks() {
                 warnings=$((warnings + 1))
             fi
         fi
+        if [ "$st" = "not started" ]; then
+            local slot=$(get_section_value "$file" "Roadmap")
+            case "$slot" in
+                next|then|later) ;;
+                "") echo -e "${RED}✗ task_$num${NC}: pending but no ## Roadmap slot (next|then|later)"; errors=$((errors + 1)) ;;
+                *)  echo -e "${RED}✗ task_$num${NC}: unrecognized ## Roadmap slot \"$slot\" (next|then|later)"; errors=$((errors + 1)) ;;
+            esac
+        fi
     done
     echo ""
     echo "Checked $n task file(s): $errors error(s), $warnings warning(s)."
@@ -368,13 +401,31 @@ show_summary() {
     list_by_status "blocked" "$verbose"
     echo ""
 
-    echo -e "${GREEN}## Done${NC}"
-    list_by_status "done" "$verbose"
+    # Done tasks default to the last six months; older history is one line away.
+    local cutoff
+    cutoff=$(date -v-6m +%F 2>/dev/null || date -d "6 months ago" +%F)
+    echo -e "${GREEN}## Done (since $cutoff)${NC}"
+    list_by_status "done" "$verbose" "" "$cutoff"
     echo ""
 
-    echo -e "${YELLOW}## Pending${NC}"
-    list_by_status "not started" "$verbose"
+    # The roadmap: pending tasks grouped by their spec's ## Roadmap slot (the single
+    # source of truth for sequencing — CLAUDE.md no longer carries a list).
+    echo -e "${YELLOW}## Pending — next${NC}"
+    list_by_status "not started" "$verbose" "next"
     echo ""
+    echo -e "${YELLOW}## Pending — then${NC}"
+    list_by_status "not started" "$verbose" "then"
+    echo ""
+    echo -e "${YELLOW}## Pending — later${NC}"
+    list_by_status "not started" "$verbose" "later"
+    echo ""
+    local unscheduled
+    unscheduled=$(list_by_status "not started" "false" "unscheduled")
+    if [ -n "$unscheduled" ]; then
+        echo -e "${YELLOW}## Pending — unscheduled (no ## Roadmap slot; --check flags these)${NC}"
+        echo "$unscheduled"
+        echo ""
+    fi
 
     echo -e "${RED}## Deprecated${NC}"
     list_by_status "deprecated" "$verbose"
@@ -387,6 +438,7 @@ show_summary() {
     echo "  ./scripts/tasks --since DATE Same, for tasks completed on/after DATE (YYYY-MM-DD)"
     echo "  ./scripts/tasks --search X   Find tasks mentioning X"
     echo "  ./scripts/tasks --check      Validate every task's status + completed date"
+    echo "  ./scripts/tasks --boot       Orchestrator boot-set size table + session-log SHA lint"
     echo ""
     echo -e "${BOLD}▶ Reading tasks:${NC} run the commands above and read the output directly — don't delegate to subagents."
     echo "  Each task is ~100 tokens (all ${total_count} fit in ~13k), so cost isn't the constraint — relevance is."
@@ -394,6 +446,57 @@ show_summary() {
     echo "  So prefer --since DATE over --all, read only what you need, and trust recent tasks over old ones."
     echo ""
     echo -e "📁 Raw task files ${YELLOW}(full text, heavier — only when a doc pointer says so)${NC}: .taskmaster/tasks/task_N/task-N.md"
+}
+
+boot_check() {
+    # Boot-set size table for the main orchestrator's close ritual (step 7 of
+    # .claude/skills/close-orchestrator-session/SKILL.md). Prints lines/bytes/est-tokens per
+    # boot-read file and a TOTAL; caps nothing — the judgement is the orchestrator's. Lints
+    # the newest session log for bare 40-char SHAs (post-ship evidence belongs to the PR, not
+    # the log) — that is the one check that can fail.
+    local orch=".taskmaster/orchestration"
+    local latest
+    latest=$(ls "$orch"/sessions/session-*.md 2>/dev/null | sort | tail -1)
+    local files=(
+        "$orch/ORCHESTRATION.md" "$orch/DECISIONS.md" "$orch/CURRENT-STATE.md"
+        "$orch/STANDING-KNOWLEDGE.md" "$orch/RECURRENCE.md" ".claude/commands/start-orchestration.md"
+    )
+    [ -n "$latest" ] && files+=("$latest")
+    local tl=0 tb=0 f l b
+    printf "%-58s %6s %8s %8s\n" "file" "lines" "bytes" "~tokens"
+    for f in "${files[@]}"; do
+        if [ ! -f "$f" ]; then
+            printf "%-58s %s\n" "$f" "MISSING"
+            continue
+        fi
+        l=$(wc -l < "$f"); b=$(wc -c < "$f")
+        printf "%-58s %6d %8d %8d\n" "$f" "$l" "$b" $((b / 4))
+        tl=$((tl + l)); tb=$((tb + b))
+    done
+    printf "%-58s %6d %8d %8d\n" "TOTAL" "$tl" "$tb" $((tb / 4))
+    # A SHA is allowed when BACKTICKED (a deliberate ref), when its line carries a URL (hex path
+    # segments read as SHAs), or when its line names a release fact (shipped/merged/squash/base/
+    # head/rebase — whole words, since "database" carries "base"). A candidate is 8 or 40 hex
+    # chars with at least one letter (a pure digit run is a count or a date). Everything else is
+    # post-ship evidence the PR already owns.
+    [ -n "$latest" ] || return 0
+    local errors=0 n line stripped tok
+    n=0
+    while IFS= read -r line; do
+        n=$((n + 1))
+        case "$line" in *https://*) continue ;; esac
+        echo "$line" | grep -qiE '\b(shipped|merge[ds]?|squash(e[ds])?|base[ds]?|head|rebase[ds]?)\b' && continue
+        stripped=$(echo "$line" | sed -E 's/`[^`]*`//g')
+        for tok in $(echo "$stripped" | grep -oE '(^|[^0-9A-Za-z])([0-9a-f]{8}|[0-9a-f]{40})([^0-9A-Za-z]|$)' | grep -oE '[0-9a-f]{8,40}'); do
+            echo "$tok" | grep -q '[a-f]' || continue
+            [ "$errors" -eq 0 ] && echo ""
+            echo "FAIL: $latest:$n: bare SHA-looking token \"$tok\" — backtick it, or drop it (the PR owns post-ship evidence)"
+            errors=$((errors + 1))
+            break
+        done
+    done < "$latest"
+    [ "$errors" -eq 0 ] || return 1
+    return 0
 }
 
 # Main
@@ -438,6 +541,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --check)
             check_tasks || exit 1
+            exit 0
+            ;;
+        --boot)
+            boot_check || exit 1
             exit 0
             ;;
         --all)
@@ -521,6 +628,7 @@ while [[ $# -gt 0 ]]; do
             echo "  ./scripts/tasks --blocked    List blocked tasks"
             echo "  ./scripts/tasks --search X   Find tasks mentioning X"
             echo "  ./scripts/tasks --check      Validate task statuses + completed dates"
+            echo "  ./scripts/tasks --boot       Orchestrator boot-set size table + session-log SHA lint"
             exit 0
             ;;
         *)

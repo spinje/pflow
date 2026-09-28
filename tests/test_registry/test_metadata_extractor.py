@@ -89,6 +89,25 @@ class TestMetadataExtractorBehavior:
 
         assert result["actions"] == ["default", "retry", "error"]
 
+    def test_commas_inside_parentheses_do_not_split_actions_or_params(self):
+        """Parenthetical descriptions may contain commas; only top-level commas separate items."""
+
+        class ParentheticalCommaNode(Node):
+            """
+            Node whose Interface descriptions contain commas.
+
+            Interface:
+            - Params: mode (fast, slow, or auto), verbose
+            - Actions: default (success, or partial), error (failure)
+            """
+
+            pass
+
+        result = self.extractor.extract_metadata(ParentheticalCommaNode)
+
+        assert result["actions"] == ["default", "error"]
+        assert [param["key"] for param in result["params"]] == ["mode", "verbose"]
+
     def test_extracts_type_information_from_enhanced_format(self):
         """Test that enhanced format with types is correctly parsed."""
 

@@ -12,6 +12,10 @@ not started
 ## Priority
 medium
 
+## Roadmap
+
+then
+
 ## Details
 This feature extends Task 46's code export capability to generate MCP server packages instead of (or in addition to) standalone scripts.
 

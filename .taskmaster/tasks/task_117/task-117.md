@@ -19,6 +19,10 @@ medium (the main workflow path used by agents is fixed; this is the direct-CLI s
 
 ---
 
+## Roadmap
+
+then
+
 ## Root cause (verified 2026-06-07)
 
 The infrastructure is **already in place** but cannot fire for subcommands:

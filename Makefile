@@ -30,7 +30,11 @@ test-llm test-all: verify-openai-key
 install: ## Install the virtual environment and install the pre-commit hooks
 	@echo [setup] Creating virtual environment using uv
 	@$(UV) sync
-	@$(UV) run pre-commit install
+	@if git config core.hooksPath >/dev/null 2>&1; then \
+		echo "[setup] core.hooksPath is set - pflow pre-commit hooks NOT installed (make check covers the same gates)"; \
+	else \
+		$(UV) run pre-commit install; \
+	fi
 
 .PHONY: check
 check: ## Run code quality tools.

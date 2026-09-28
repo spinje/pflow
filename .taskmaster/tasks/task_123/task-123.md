@@ -11,6 +11,10 @@ not started
 
 medium
 
+## Roadmap
+
+then
+
 ## Problem
 
 Connecting to OAuth-protected MCP servers requires users to manually:

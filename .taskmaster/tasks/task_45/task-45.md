@@ -5,6 +5,10 @@ not started
 
 > ⚠️ **Evaluated & shelved (2026-06-07).** No implementation started; intentionally deferred — revisit only after the core loop is great + user-validated. See below.
 
+## Roadmap
+
+later
+
 ## Research & Decision (2026-06-07)
 Full analysis: [`research/n8n-node-interop-and-integration-backend-strategy.md`](research/n8n-node-interop-and-integration-backend-strategy.md)
 (supersedes the Jan-2025 `research/n8n-wrapper-vs-pure-pflow-decision.md` engine-pivot framing).

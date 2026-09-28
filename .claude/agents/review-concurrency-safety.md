@@ -216,6 +216,10 @@ This pattern appears in any "lazy initialization" or "ensure started" code. If t
 Historical example:
 - `_ensure_started()` in MCP connection pool had a TOCTOU race where two threads could create duplicate event loops (Task 127, fixed with `threading.Lock()` + double-check locking)
 
+- "Rarely called" is not a defense — a retry, a resume, or a second CLI invocation makes any path its own concurrent caller.
+- Two lock shapes are legal: hold the lock across check-and-act, or lock only the check-and-FLIP so the flipped status guards the long work — name which one the code uses; a flip without a lock is the race.
+- A race made LOUD by a constraint (a unique index, `EEXIST` on an atomic create, a failed lock acquire) still needs an owner: who catches it, and does the user get a sane message? Loud-then-swallowed is silent.
+
 ### 5. Asyncio-in-Threads Interaction
 
 The MCP connection pool runs an asyncio event loop in a background daemon thread. This creates specific pitfalls:
@@ -274,6 +278,10 @@ Historical examples:
 - Stale `_sessions`/`_stacks` if `_shutdown_async()` fails — cleanup needed `.clear()` in `finally` block (Task 127)
 - Timeout didn't cover MCP session creation — if server binary doesn't exist or handshake hangs, blocks indefinitely (Task 127)
 
+- Claimed-but-abandoned work: a marker, lock file, or pinned-run entry written before the work starts needs a failure-path clear AND a lease/expiry recovery — otherwise a crash leaves it claimed forever.
+- Retrying a deterministic failure loops forever: a retry policy must distinguish "the input won't change" from "the environment might".
+- Side effects that escape the atomic unit: a file written, a process spawned, or a message sent BEFORE the atomic rename/commit fires even when the unit is rolled back.
+
 ### 8. SQLite Concurrent Access
 
 The memoization cache (`runtime/cache.py`) uses SQLite. If the diff touches the cache or adds new SQLite usage:
@@ -327,6 +335,9 @@ def process(items, results=[]):  # results is shared mutable state!
     return results
 ```
 
+- `threading.local` isolates threads, not coroutines — async code sharing a thread shares the local.
+- Module-level mutable state (caches, registries, singletons) is shared across every run in the process, including concurrent batch items.
+
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 
 - **Races without a constructible interleaving.** If you can't write Thread A / Thread B / stale read as concrete steps, it's theoretical — say so in the Summary instead of filing it.
@@ -337,7 +348,7 @@ def process(items, results=[]):  # results is shared mutable state!
 
 ## Output Format
 
-REVIEW-PROTOCOL.md skeleton. Title: `Concurrency Safety Review`. Critical = thread safety violations or resource lifecycle bugs (with the literal interleaving/leak scenario and the fix). Verified-clear section: **Verified Safe** (concurrent paths confirmed thread-safe, with what you simulated).
+REVIEW-PROTOCOL.md skeleton. Title: `Concurrency Safety Review`. Verified Safe names the MECHANISM that protects each site, not just what you simulated; the Summary answers overall concurrency safety; the off-checklist pass here hunts the novel interleaving no item names. Critical = thread safety violations or resource lifecycle bugs (with the literal interleaving/leak scenario and the fix). Verified-clear section: **Verified Safe** (concurrent paths confirmed thread-safe, with what you simulated).
 
 ## Key Principle
 

@@ -11,6 +11,10 @@ not started
 
 medium
 
+## Roadmap
+
+next
+
 ## Problem
 
 When iterating on workflows during development, batch nodes process all items before revealing errors. This wastes time and resources—you don't want to wait for 100+ items to process just to discover a bug at step 3. AI agents building workflows are particularly affected since they iterate frequently with `pflow workflow.json`.

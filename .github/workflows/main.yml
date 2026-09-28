@@ -244,7 +244,17 @@ jobs:
 
       - name: Install GNU Make
         shell: pwsh
-        run: choco install make --version=4.4.1 --yes --no-progress
+        # The Chocolatey feed is a network dependency on the Windows critical path; one
+        # feed outage read as a red gate. Three attempts before it counts as a failure.
+        run: |
+          $attempt = 0
+          do {
+            $attempt++
+            choco install make --version=4.4.1 --yes --no-progress
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -ge 3) { throw "choco install make failed after $attempt attempts" }
+            Start-Sleep -Seconds 15
+          } while ($true)
 
       - name: Verify Git Bash used by pflow
         shell: pwsh
@@ -301,5 +311,12 @@ jobs:
         timeout-minutes: 10
         run: |
           npx --version
+          # Pre-warm the npx cache with retries so the 60s discovery timeout covers only the
+          # spawn, never the package download (a cold-runner fetch timed out once).
+          for attempt in 1 2 3; do
+            npx -y --package=@modelcontextprotocol/server-everything node -e "process.exit(0)" && break
+            [ "$attempt" -lt 3 ] || { echo "npx pre-warm failed after 3 attempts" >&2; exit 1; }
+            sleep 15
+          done
           uv run pflow mcp add '{"mcpServers":{"everything":{"command":"npx","args":["-y","@modelcontextprotocol/server-everything"]}}}'
           uv run pflow mcp sync everything

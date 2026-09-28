@@ -99,6 +99,9 @@ Historical examples:
 - Runtime supported `??` coalesce operator, but `output_resolver.py` and `batch_node.py` did manual `source_expr[2:-1]` + `resolve_value()` bypassing coalesce entirely (Task 128)
 - Runtime resolved file references at compile time, but pre-execution validation ran BEFORE file resolution and saw raw paths (Task 129)
 
+- One shared predicate: a rule enforced at two layers calls ONE comparison; a hand-written copy on either side is the drift this lens exists to catch.
+- Classify each divergence by its CONSEQUENCE first: validator-stricter-than-runtime rejects valid workflows (bad UX, not corruption); runtime-stricter-than-validator lets a workflow pass `validate` and die mid-run — the second is the Critical.
+
 ### 2. Validation Changes → Runtime Consistency
 
 For every validation change in the diff/plan, check:
@@ -116,6 +119,9 @@ Historical examples:
 - Unknown parameters promoted from warnings to errors — but 24 stale param names across 9 example workflows had been silently accepted for months (fix 6f896d4d)
 - Validation allowed empty strings for required inputs, but runtime failed with unhelpful errors (fix 7e3b3bfd)
 - Simple templates (`${var}`) completely skipped error checking — only complex templates validated (Task 85)
+
+- Diagnostic codes and error keys must survive a rule's move between layers — consumers (tests, the web UI, agent instructions) match on them; renames are `review-impact-completeness`'s, key agreement is yours.
+- A rule living in a non-canonical layer needs a stated reason — acceptable: it gates permission, or checks request shape rather than workflow state; "it was convenient" is drift.
 
 ### 3. Entry Point Consistency
 
@@ -214,6 +220,9 @@ These boundaries and gaps exist today. If changes touch these areas, check wheth
 4. **Coalesce validation boundary** — data flow still checks operand roots, while template Pass 5 excludes multi-operand coalesce from field/path checks so optional fields can fall through at runtime. Do not exempt regressions in this supported optional-field behavior as a known gap.
 5. **`inputs` scoping divergence** — `data_flow.py` scopes per-node, `template_validation/` scopes globally. Different models for the same concept.
 
+- Meta-test coverage: an everywhere-rule enforced by a test that enumerates its population (a registry sweep, a node-type list) must derive that population from the code, not a hand list — new modules silently fall outside a hand list. A diff establishing a new everywhere-rule without a meta-test is a finding; a failing ratchet is never fixed by editing its roster.
+- Two artifacts agreeing is not proof: a validator and a runtime generated from the same wrong schema agree on the same wrong answer — check the source they share.
+
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 
 - **The pre-existing gaps above** — note if a change worsens one, never report the unchanged gap as new. The documented coalesce field/path behavior is supported behavior, not a gap exemption.
@@ -225,7 +234,7 @@ These boundaries and gaps exist today. If changes touch these areas, check wheth
 
 ## Output Format
 
-REVIEW-PROTOCOL.md skeleton. Title: `Validation Consistency Review`. Critical = validation/runtime mismatch that will cause user-visible errors (state what each layer does and the fix). Verified-clear section: **Verified Consistent** (validation/runtime pairs confirmed in sync).
+REVIEW-PROTOCOL.md skeleton. Title: `Validation Consistency Review`. The Summary answers overall validation health; the off-checklist pass here hunts the drift no touchpoint names. Critical = validation/runtime mismatch that will cause user-visible errors (state what each layer does and the fix). Verified-clear section: **Verified Consistent** (validation/runtime pairs confirmed in sync).
 
 ## Key Principle
 

@@ -132,6 +132,8 @@ def _setup_signals() -> None:
 
     signal.signal(signal.SIGINT, _handle_sigint)
     if sys.platform != "win32":
+        # SIG_DFL kills pflow (exit 141, no trace) when a subprocess ignores large
+        # stdin; see tests/test_nodes/test_shell/test_shell_sigpipe.py.
         signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
 

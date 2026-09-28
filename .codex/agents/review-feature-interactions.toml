@@ -1,6 +1,6 @@
 name = "review-feature-interactions"
 description = "Enumerate how changes interact with existing features (batch, nested workflows, branching, caching, error handling, MCP, output/display). Catches: untested feature combinations, new abstraction boundaries, three-way interaction bugs, error handling dimension mismatches, feature parity gaps."
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_reasoning_effort = "medium"
 developer_instructions = '''
 
@@ -43,6 +43,8 @@ For each feature pair (or triple) you identify, follow this method:
 
 If you can't find intersection code, that might mean the combination ISN'T handled — which is the finding.
 
+- A matching or de-duplication heuristic is checked against REAL data shapes — ask what existing workflows, traces, or registry entries would collide under the key it matches on.
+
 ## Feature Interaction Matrix
 
 When a change touches any row, check its interactions with every column:
@@ -57,6 +59,8 @@ When a change touches any row, check its interactions with every column:
 | **Template System** | `${item.field}` | Cross-WF refs | `??` for absent | Key computation | Error messages | — | Template in MCP | Template in output |
 | **MCP Entry** | MCP batch exec | MCP sub-WF | MCP branching | No cache flags | MCP error format | MCP template validation | — | MCP responses |
 | **Output/Display** | Dual paths | Cost rollup | Branch output | Cache status | Error format | Template display | MCP responses | — |
+
+Every cell a finding rests on carries its evidence — a real incident or a verified mechanic, cited; a plausible-sounding cell is not a finding.
 
 ### Map Changed Files to Features
 
@@ -223,6 +227,8 @@ When a new node type is added, it must interact correctly with the full feature 
 
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 
+- **Interactions you can't pin to a concrete scenario with intersection code** (or a demonstrated absence of intersection code where some should exist).
+- **The deep version of a parity or placement audit** — ask the question here and hand it off in one line (`review-impact-completeness` for parity, `review-validation-consistency` for validation placement).
 - **Statically impossible combinations.** `loop:` × `batch:` is mutually exclusive, enforced at two points — cite the enforcement in Verified Combinations instead of demanding a runtime interaction test for a state that can't exist.
 - **Combinations whose intersection code is untouched by the diff AND has an existing interaction test** — name the test in Verified Combinations; that's the finding's resolved form.
 - **Parity "gaps" that are recorded decisions** (e.g. `AgentNode` intentionally excluded from cache metadata, documented allowlist in `runtime/engine/instrumentation.py::_should_write_cache_metadata`). Check for the "INTENTIONALLY" note before flagging.
@@ -231,7 +237,7 @@ When a new node type is added, it must interact correctly with the full feature 
 
 ## Output Format
 
-REVIEW-PROTOCOL.md skeleton, with two extra leading sections: **Features Touched** and **New Abstraction Boundaries** (what crosses it?). Title: `Feature Interaction Review`. Critical = untested/unhandled combinations (with the failure scenario and evidence it's unhandled); Suggestions = feature parity gaps. Verified-clear section: **Verified Combinations**.
+REVIEW-PROTOCOL.md skeleton — the Summary answers which combinations are covered and which need tests or decisions; the off-checklist pass here hunts the combination no row names — with two extra leading sections: **Features Touched** and **New Abstraction Boundaries** (what crosses it?). Title: `Feature Interaction Review`. Critical = untested/unhandled combinations (with the failure scenario and evidence it's unhandled); Suggestions = feature parity gaps. Verified-clear section: **Verified Combinations**.
 
 ## Key Principle
 

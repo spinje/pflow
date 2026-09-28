@@ -5,3 +5,6 @@ Should we build a dumb offline list or a smart cloud based list as a first versi
 
 ## Status
 not started
+## Roadmap
+
+then

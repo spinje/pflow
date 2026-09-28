@@ -9,6 +9,7 @@ directly; engine/planner parity rides on both callers delegating here
 
 from pflow.runtime.engine.batch_executor import build_batch_output
 from pflow.runtime.engine.types import BatchConfig
+from pflow.runtime.template_validation.validator import BATCH_OUTPUTS
 
 
 def _config(**overrides) -> BatchConfig:
@@ -25,7 +26,19 @@ def _config(**overrides) -> BatchConfig:
     return BatchConfig(**defaults)
 
 
+_DECLARED_TO_RUNTIME: dict[str, type] = {"array": list, "number": int, "dict": dict, "string": str}
+
+
 class TestBuildBatchOutput:
+    def test_matches_validator_batch_outputs_contract(self):
+        """Fails if either ``build_batch_output`` or ``BATCH_OUTPUTS`` gains or loses a key, or a declared type drifts."""
+        output = build_batch_output(
+            [{"a": 1}], total_count=2, errors=[{"index": 1, "error": "boom"}], timing_stats=None, batch_config=_config()
+        )
+        assert set(output) == {o["key"] for o in BATCH_OUTPUTS}
+        for declared in BATCH_OUTPUTS:
+            assert isinstance(output[declared["key"]], _DECLARED_TO_RUNTIME[declared["type"]]), declared
+
     def test_top_level_keys_match_contract(self):
         output = build_batch_output(
             [{"a": 1}], total_count=2, errors=[{"index": 1, "error": "boom"}], timing_stats=None, batch_config=_config()

@@ -112,6 +112,8 @@ Historical duplication patterns to watch for recurring (several have since been 
 
 For the diff's changes, search for similar logic elsewhere. If you find duplicates, check if they need the same update.
 
+- Before proposing extraction, check whether apparent copies are thin callers of an existing seam — a wrapper is not duplication.
+
 ### 3. Rename/Move Impact
 
 When the diff moves, renames, or deletes a function, class, or module, search for ALL references — many break silently:
@@ -132,6 +134,9 @@ grep "from pflow.old_module" tests/ src/
 ```
 grep "old_function_name\|old_module_name" src/ tests/ .taskmaster/ architecture/
 ```
+
+- **Persisted data written in the OLD shape and read by the NEW code is a consumer**: saved workflows, traces on disk, resume tokens, cache entries, settings files. A rename or shape change needs an explicit decision about old-shape inputs (accept / migrate / reject loudly) — silence is the finding.
+- **Error identifiers are an API**: a diagnostic code, exception class name, or error key that consumers match on (tests, the web UI, agent instructions) — renaming one breaks every consumer that maps it.
 
 ### 4. Interface/Signature Change Ripple
 
@@ -250,8 +255,12 @@ Historical examples:
 - CLI commands in quickstart were wrong — based on assumptions not verified against `--help` (Task 93)
 - `pflow mcp add` syntax documented with wrong positional args (Task 93)
 
+- The `pflow-codebase-searcher` agent file is a consumer too — it carries a map of modules and names; a move or rename it cites is a stale map until updated. Diff the actual caller against any declared surface (an Interface docstring, `pflow guide` prose, a schema annotation) rather than trusting the declaration.
+
 ## What NOT to Flag (lens-specific — on top of the protocol's list)
 
+- **Consumers the type checker or an existing test already provably covers** — hunt the consumers `make check` CAN'T see: strings, templates, docs, ad-hoc reimplementations.
+- **The staleness failure mode of derived data** — you own the consumer MAP; whether a derived value goes stale is `review-silent-failures`'s.
 - **Deliberately divergent consumers with documented rationale.** Allowlists, "INTENTIONALLY excluded" notes, and per-consumer policies (e.g. each `_iter_workflow_traces` consumer owning its own status filter) are decisions, not misses. Check for the note before flagging.
 - **Historical citations naming old paths** ("then `runtime/wrappers/batch_node.py`, now …") in docs, comments, and agent files — they're history, not stale references. The freshness meta-test (`tests/test_docs/test_agent_references.py`) allowlists them explicitly.
 - **Pre-existing duplication the diff doesn't touch** — one line in Suggestions at most; your Criticals are reserved for consumers of the CHANGED pattern.
@@ -260,7 +269,7 @@ Historical examples:
 
 ## Output Format
 
-REVIEW-PROTOCOL.md skeleton. Title: `Impact Completeness Review`. Critical = unconverted consumers that will silently break (name the modified pattern, the consumer, what breaks); Suggestions = duplication to consolidate. Verified-clear section: **Verified Complete** (consumers confirmed updated). Summary states how confident you are that ALL consumers were found.
+REVIEW-PROTOCOL.md skeleton. Title: `Impact Completeness Review`. Each Critical names the fix; the off-checklist pass here hunts the unmapped consumer. Critical = unconverted consumers that will silently break (name the modified pattern, the consumer, what breaks); Suggestions = duplication to consolidate. Verified-clear section: **Verified Complete** (consumers confirmed updated). Summary states how confident you are that ALL consumers were found.
 
 ## Key Principle
 

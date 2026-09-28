@@ -8,6 +8,10 @@ This is distinct from Task 96 (batch/data parallelism) which runs the SAME opera
 ## Status
 not started
 
+## Roadmap
+
+later
+
 ## Dependencies
 - Task 96: Support Batch Processing in Workflows (recommended to complete first - teaches async patterns, lower risk)
 

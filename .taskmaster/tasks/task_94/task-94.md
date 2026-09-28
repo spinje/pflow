@@ -23,6 +23,10 @@ not started
 
 medium
 
+## Roadmap
+
+next
+
 ## Problem
 
 When an agent looks at the `llm` node it sees a bare `model: str` parameter — no list of models, no

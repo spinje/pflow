@@ -1,8 +1,8 @@
-"""IR to PocketFlow compiler for pflow workflows.
+"""IR to CompiledWorkflow compiler for pflow workflows.
 
 This module is the core orchestrator of the compilation pipeline: it parses IR,
-delegates validation, instantiates nodes with wrapper chains, wires edges, and
-builds the executable PocketFlow Flow object.
+delegates validation, instantiates bare nodes with per-node NodeConfigs, wires
+edges, and builds the CompiledWorkflow that runtime/engine's WorkflowEngine runs.
 
 Supporting concerns are in sibling modules:
 - compile_validation.py — pre-compilation validation orchestration
@@ -139,7 +139,7 @@ def inject_special_parameters(
 def _wire_nodes(nodes: dict[str, Any], edges: list[dict[str, Any]]) -> None:
     """Wire nodes together based on edge definitions.
 
-    This function connects nodes using PocketFlow's >> operator for default
+    This function connects nodes using core/node.py's >> operator for default
     connections and - operator for action-based routing.
 
     Args:

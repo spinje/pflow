@@ -40,7 +40,7 @@ class CopyFileNode(Node):
         super().__init__(max_retries=3, wait=0.1)
 
     def prep(self, shared: dict) -> tuple[str, str, bool]:
-        """Extract source path, destination path, and overwrite flag from shared store or params."""
+        """Extract source path, destination path, and overwrite flag from params."""
         # Source path is required
         source_path = self.params.get("source_path")
         if not source_path:
@@ -61,7 +61,7 @@ class CopyFileNode(Node):
         dest_path = os.path.normpath(dest_path)
 
         # Overwrite flag (default False)
-        overwrite = shared.get("overwrite", self.params.get("overwrite", False))
+        overwrite = self.params.get("overwrite", False)
 
         logger.debug(
             "Preparing to copy file",

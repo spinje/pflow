@@ -17,6 +17,23 @@ from pflow.core.node import BaseNode
 logger = logging.getLogger(__name__)
 
 
+def _split_top_level_commas(content: str) -> list[str]:
+    """Split on commas outside parentheses, so "a (x, y), b" yields ["a (x, y)", " b"]."""
+    parts: list[str] = []
+    depth = 0
+    start = 0
+    for index, char in enumerate(content):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(depth - 1, 0)
+        elif char == "," and depth == 0:
+            parts.append(content[start:index])
+            start = index + 1
+    parts.append(content[start:])
+    return parts
+
+
 class PflowMetadataExtractor:
     """Extract metadata from pflow node classes."""
 
@@ -242,9 +259,8 @@ class PflowMetadataExtractor:
         # Remove the "as fallbacks" note if present
         content = re.sub(r"\s*\(as fallbacks[^)]*\)", "", content)
 
-        # Split by comma and clean up
         params = []
-        for param in content.split(","):
+        for param in _split_top_level_commas(content):
             param = param.strip()
             if param:
                 # Extract just the parameter name (before any parentheses)
@@ -266,8 +282,7 @@ class PflowMetadataExtractor:
             List of action names (without descriptions)
         """
         actions = []
-        # Split by comma first to handle multiple actions
-        for part in content.split(","):
+        for part in _split_top_level_commas(content):
             part = part.strip()
             if part:
                 # Extract just the action name (before any parentheses)

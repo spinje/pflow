@@ -12,6 +12,10 @@ not started
 ## Priority
 medium
 
+## Roadmap
+
+later
+
 ## Details
 When shell commands need to process data from previous nodes (via template variables like `${node.output}`), the current approach embeds the data directly into the command string. This breaks when the data contains shell-sensitive characters like quotes or apostrophes.
 

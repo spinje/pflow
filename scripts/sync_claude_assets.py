@@ -17,9 +17,9 @@ CLAUDE_COMMAND_AGENT = re.compile(r"@agent-([A-Za-z0-9_-]+)")
 CLAUDE_COMMAND_AUTORUN = re.compile(r"^!`(?P<command>[^`]+)`$", re.MULTILINE)
 NON_AGENT_FILES = frozenset({"README.md", "REVIEW-PROTOCOL.md"})
 CLAUDE_AGENT_MODEL_TO_CODEX = {
-    "fable": "gpt-5.6-sol",
-    "opus": "gpt-5.6-sol",
-    "sonnet": "gpt-5.6-terra",
+    "fable": "gpt-6-astra",
+    "opus": "gpt-6-astra",
+    "sonnet": "gpt-6-astra",
 }
 CLAUDE_AGENT_EFFORT_TO_CODEX = {
     "low": "low",
@@ -29,7 +29,7 @@ CLAUDE_AGENT_EFFORT_TO_CODEX = {
 
 # Skills that live under .agents/skills but are hand-authored for Codex only — they have no
 # Claude source by design, so the orphan sweep must NOT treat them as stale mirrors. Consumers:
-# AGENTS.md and examples/real-workflows/git-worktree-task-creator/workflow.pflow.md.
+# AGENTS.md and scripts/worktree (the Codex launch prompt).
 CODEX_ONLY_SKILLS = frozenset({"sandbox-testing"})
 
 

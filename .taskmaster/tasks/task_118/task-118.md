@@ -11,6 +11,10 @@ not started
 
 medium
 
+## Roadmap
+
+next
+
 ## Problem
 
 Task 107 (markdown workflow format) ships with minimal code block validation: `ast.parse()` for Python syntax and `yaml.safe_load()` for YAML config blocks. This catches syntax errors but misses:

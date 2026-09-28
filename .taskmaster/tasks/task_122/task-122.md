@@ -11,6 +11,10 @@ not started
 
 medium
 
+## Roadmap
+
+later
+
 ## Problem
 
 OpenClaw uses Lobster for workflow automation — a YAML-based pipeline format where steps are shell commands with approval gates. Key characteristics:

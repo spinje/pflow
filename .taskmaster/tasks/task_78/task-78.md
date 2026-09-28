@@ -13,6 +13,10 @@ not started
 ## Priority
 medium
 
+## Roadmap
+
+then
+
 ## Details
 Currently, the pflow agent has to guess whether ambiguous requests like "analyze customer churn" or "do the churn thing" match existing workflows. This task will implement a request history feature that captures the actual user requests that successfully triggered workflow execution.
 

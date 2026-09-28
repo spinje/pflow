@@ -26,6 +26,8 @@ Follow `.claude/agents/REVIEW-PROTOCOL.md` (read it first) for scope, severity, 
 - **Web-UI claims**: invoke the `screenshot-pflow-web-ui` skill and use a fresh server for the current checkout on an unused port. Restart/stop only server PIDs created by this review; do not reuse an unrelated existing server as proof of current code.
 - **Mutate only what you created.** Never edit repo files, delete shared fixtures, or leave background processes running.
 
+- Wrap create→attack→delete in try/finally and report any leftovers you could not clean. An environment that won't start gets ONE restart attempt — then report the gap as your coverage limitation, never fight it.
+
 ## Execution Vehicles (prefer them in this order)
 
 In the Codex sandbox, read and apply `.agents/skills/sandbox-testing/SKILL.md` before tests or execution probes; its platform-specific executable and user-state-isolation instructions take precedence over the generic examples below, subject to the active session's permissions.
@@ -41,7 +43,7 @@ In the Codex sandbox, read and apply `.agents/skills/sandbox-testing/SKILL.md` b
 
 ### 1. Extract the promises
 
-Sources: the task spec (`.taskmaster/tasks/task_{N}/task-{N}.md`) — acceptance criteria and requirement lines; the implementation plan's stated behavior; the issue body for a lane's diff; and the headline implicit promise ("agents can now X") even if no line states it. Write each as a falsifiable claim: *after this change, X happens when Y*. A vague spec line becomes your first finding ("not falsifiable as written — what is the expected behavior when …?") rather than a skipped one.
+Sources: the task spec (`.taskmaster/tasks/task_{N}/task-{N}.md`) — acceptance criteria and requirement lines; the implementation plan's stated behavior; `review-spec-conformance`'s Requirement Inventory when that lens ran before you (the promise list is extracted once — start from it, don't re-derive it); the issue body for a lane's diff; and the headline implicit promise ("agents can now X") even if no line states it. Write each as a falsifiable claim: *after this change, X happens when Y*. A vague spec line becomes your first finding ("not falsifiable as written — what is the expected behavior when …?") rather than a skipped one.
 
 ### 2. Rank by consequence, and cap honestly
 
@@ -59,6 +61,10 @@ Not the happy path — the input most likely to break the promise while staying 
 - **The interrupted-then-resumed run** — kill or fail a node, then resume: does the promise survive the resume path?
 - **The adjacent node type** — the promise made for `shell`, attempted on `code`/`http`: does the spec scope it, and does the code agree with the spec's scoping?
 - **Platform-sensitive edges** — paths with spaces, encoding-sensitive output; note (don't run) what only the `tests-windows` CI gate can prove.
+
+- **The second time** — re-run, re-submit, re-resume the same input: idempotent, or duplicated?
+- **Zero and duplicate** — a zero count, a duplicate key, a list with the same item twice.
+- **The stale consumer** — a saved workflow in last week's syntax, the old param name, a previously-issued resume token, a trace written by the previous version: does the new code accept, migrate, or reject it LOUDLY?
 
 ### 4. Execute and record
 
@@ -81,7 +87,7 @@ Per attack: the exact command, the literal observed output (stdout, exit code, t
 
 ## Output Format
 
-REVIEW-PROTOCOL.md skeleton, with one lens addition: open with the **Claim Ledger** (claim → attacks executed → observed → verdict) before the severity sections — include the not-attacked list with reasons. Title: `Falsification Review`. Critical = a falsified central promise, with the executable repro and observed-vs-promised. Verified-clear section: **Promises That Held** — each claim with the attacks it survived; this section is the strongest clean verdict the battery can produce, because it is the only one backed by execution. Summary answers: do this change's promises survive contact with a real, careless, impatient workflow author?
+REVIEW-PROTOCOL.md skeleton, with one lens addition: open with the **Claim Ledger** (claim → attacks executed → observed → verdict) before the severity sections — include the not-attacked list with reasons. Title: `Falsification Review`. Critical = a falsified central promise, with the executable repro and observed-vs-promised. Verified-clear section: **Promises That Held** — each claim with the attacks it survived; this section is the strongest clean verdict the battery can produce, because it is the only one backed by execution. Summary answers: do this change's promises survive contact with a real, careless, impatient workflow author? Test-suite results are context, not evidence — note pass/fail, then attack the real surface.
 
 ## Key Principle
 

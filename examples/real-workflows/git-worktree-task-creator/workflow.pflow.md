@@ -61,25 +61,9 @@ Which coding agent to launch in the worktree's Terminal. `claude` (the default) 
 - required: false
 - default: "claude"
 
-### mode
-
-Which agentic skill the launched agent starts with. `explore` (the default) → `/start-work`: investigate the task and produce a plan first — use when no plan exists yet. `implement` → `/implement-plan`: execute an existing plan directly, without re-planning. In `implement` mode, pass the bare task/issue number as `task_description` so the skill can resolve the plan file (e.g. `task_description=177 mode=implement`).
-
-- type: string
-- required: false
-- default: "explore"
-
-### phases
-
-Phase scope for `mode=implement` — implements only these phases of the plan, then stops. Give the numbers as a range or list: `1`, `1-2`, `1,3`. Empty (default) implements the whole plan. Errors in `explore` mode (there is no plan to scope).
-
-- type: string
-- required: false
-- default: ""
-
 ### model
 
-Optional model for the launched agent, passed through as `--model` (both `claude` and `codex` accept it) — an alias like `opus`/`sonnet`, or a full id like `claude-opus-4-8`. Empty (the default) uses the agent's own default model.
+Optional model for the launched agent, passed through as `--model` (both `claude` and `codex` accept it) — an alias like `opus`/`fable`, or a full id like `claude-opus-4-8`. Empty (the default) uses the agent's own default model.
 
 - type: string
 - required: false
@@ -217,7 +201,7 @@ BRANCH_NAME=name
 
 ### parse-result
 
-Central logic node. Parses the LLM's KEY=VALUE response, validates the base branch (erroring if on a feature branch without explicit input), classifies the work as a pflow task or a GitHub issue (deriving the `work_label`) and selects the launched agent's entry skill from `mode` (deriving the `agent_hint` used in the launch-cli prompt — `/start-work` for `explore`, `/implement-plan` for `implement`), constructs the worktree path and full branch name deterministically, prepends a tracker-labelled reference (`issue-<n>` / `task-<n>`) to the branch name for traceability (e.g. `fix/issue-382-shrink-trace-content-interning`), and escapes the task description through two quoting layers (shell single-quote inside AppleScript double-quote) so it can be safely embedded in the launch-cli osascript command.
+Central logic node. Parses the LLM's KEY=VALUE response, validates the base branch (erroring if on a feature branch without explicit input), classifies the work as a pflow task or a GitHub issue (deriving the `work_label` and the `agent_hint` used in the launch-cli prompt), constructs the worktree path and full branch name deterministically, prepends a tracker-labelled reference (`issue-<n>` / `task-<n>`) to the branch name for traceability (e.g. `fix/issue-382-shrink-trace-content-interning`), and escapes the task description through two quoting layers (shell single-quote inside AppleScript double-quote) so it can be safely embedded in the launch-cli osascript command.
 
 - type: code
 - inputs:
@@ -227,8 +211,6 @@ Central logic node. Parses the LLM's KEY=VALUE response, validates the base bran
     base_branch: ${base_branch}
     description: ${task_description}
     work_type: ${work_type}
-    mode: ${mode}
-    phases: ${phases}
     issue_number: ${resolve-description.result.number}
     title_resolved: ${resolve-description.result.title_resolved}
     agent: ${agent}
@@ -244,8 +226,6 @@ current_branch: str
 base_branch: str
 description: str
 work_type: str
-mode: str
-phases: str
 issue_number: str
 title_resolved: bool
 agent: str
@@ -253,79 +233,20 @@ model: str
 copy_folder: str
 
 # Classify work as a pflow task or a standalone GitHub issue. This drives how
-# the launched Claude session is told to interpret the description, so a bare
-# issue number isn't mistaken for a task id by the /start-work skill.
+# the launched agent is told to interpret the description, so a bare issue number
+# isn't mistaken for a task id.
 work_type = (work_type or 'task').strip().lower()
 if work_type not in ('task', 'issue'):
     raise ValueError(f"work_type must be 'task' or 'issue', got '{work_type}'")
 
-# Which agentic skill the launched agent is pointed at:
-#   'explore'   -> /start-work    (investigate + produce a plan; no plan exists yet)
-#   'implement' -> /implement-plan (a plan already exists; execute it directly)
-mode = (mode or 'explore').strip().lower()
-if mode not in ('explore', 'implement'):
-    raise ValueError(f"mode must be 'explore' or 'implement', got '{mode}'")
-
-# Optional phase scope forwarded to /implement-plan (which implements ONLY the
-# named phase(s) and stops). Restricted to digits/spaces/commas/hyphens because
-# it is inlined UNESCAPED into agent_hint -> the launch step's AppleScript +
-# shell quoting layers; a quote/$/backtick would break them. Only meaningful in
-# implement mode -- there is no plan to scope while exploring.
-phases = (phases or '').strip()
-if phases:
-    if mode != 'implement':
-        raise ValueError("phases only applies when mode=implement (there is no plan to scope in explore mode)")
-    if not re.fullmatch(r'[0-9][0-9,\- ]*', phases):
-        raise ValueError(
-            f"phases must contain only digits, spaces, commas, and hyphens (e.g. '1', '1-2', '1,3'), got '{phases}'"
-        )
-
 work_label = 'GitHub issue' if work_type == 'issue' else 'Task'
-issue_scaffolding_note = (
-    ' This is a GitHub issue, NOT a pflow task -- do not create taskmaster scaffolding.'
-    if work_type == 'issue' else ''
-)
-
-if mode == 'implement':
-    # A plan already exists -- point the agent at /implement-plan, not the
-    # exploratory /start-work skill. When phases is set, forward it as the skill's
-    # phase-scope argument so only those phases run.
-    scope_arg = f' phases {phases}' if phases else ''
-    if work_type == 'task':
-        # Tasks live in .taskmaster; a bare task number resolves the plan file for
-        # /implement-plan. issue_number is guaranteed digit-only (or empty) by
-        # resolve-description's regex, so it is safe to inline unescaped here.
-        ref = (issue_number or '').strip()
-        if ref:
-            target = f'Run /implement-plan {ref}{scope_arg}.'
-        else:
-            target = f"Run /implement-plan on the task's implementation-plan.md{scope_arg}."
-    else:
-        # A GitHub issue number is NOT a task id, and issues have no .taskmaster
-        # plan -- so do NOT feed the number to /implement-plan (it would resolve to a
-        # nonexistent task_<n>). The launched agent has the issue context and locates
-        # the issue's existing plan itself.
-        target = f'Run /implement-plan on the existing plan for this issue{scope_arg}.'
-    # Empty phases means "the whole plan". /implement-plan otherwise ASKS before
-    # implementing a whole plan when no scope is given; the worktree's implement
-    # mode is an explicit "execute it directly" request, so tell it to proceed.
-    if phases:
-        directive = f' Implement ONLY phase(s) {phases} and stop after that scope.'
-    else:
-        directive = ' Implement the whole plan directly -- no need to ask before starting.'
-    agent_hint = (
-        'A plan already exists -- do NOT explore or re-plan. If an /implement-plan '
-        f'skill is available, use it to implement the plan directly. {target}'
-        f'{directive}{issue_scaffolding_note}'
-    )
-elif work_type == 'issue':
+if work_type == 'issue':
     agent_hint = (
         'This is a GitHub issue, NOT a pflow task -- do not create taskmaster task '
-        'scaffolding. If a /start-work skill is available, use it to begin and pass '
-        'this as a GitHub issue so it fetches the details via gh.'
+        'scaffolding. Fetch the issue via gh, including every comment, before starting.'
     )
 else:
-    agent_hint = 'If a /start-work skill is available, use it to begin.'
+    agent_hint = 'Read CLAUDE.md, then the task spec under .taskmaster/tasks/, before starting.'
 
 # If a folder was copied into the worktree (gitignored briefing/research docs that
 # won't exist in a fresh checkout), point the agent at it. The launch prompt otherwise
@@ -505,7 +426,7 @@ if [ '${open_cursor}' != 'false' ] && [ '${open_cursor}' != 'False' ] && [ '${op
 
 ### launch-cli
 
-Opens a new Terminal window, cd's into the worktree, and starts the selected coding agent (`claude` or `codex`, per the `agent` input) with the description and branch name as initial context. The launch command prefix (`claude --dangerously-skip-permissions` or `codex --sandbox workspace-write --ask-for-approval never`) is derived in `parse-result` as `agent_cmd`; both agents take the context prompt as a positional argument, so only this prefix differs. The absolute worktree path is inlined **directly** into the `do script` command as a resolved `${parse-result.result.worktree_path}` value — NOT passed via a bash variable. This matters: `do script` runs in a brand-new Terminal window whose shell never inherited the workflow's variables, so a `cd $VAR` there would expand to empty and silently land in `$HOME` (the bug that previously launched Claude in the home folder with a stray trust dialog and no project `.claude/` context). A guard refuses to launch (and reports on stderr) if the worktree dir is missing, so it can never fall back to home. `activate` brings Terminal above the Cursor window opened by the prior node, and the window created by `do script` is automatically Terminal's frontmost window — so the Claude session lands on top without any manual window-raising. The description is labelled `Task:` or `GitHub issue:` per `work_type`, and the agent is pointed at its entry skill per `mode` — `/start-work` (explore) or `/implement-plan` (implement) — with issues explicitly told not to create taskmaster scaffolding. When `agent=codex`, the prompt additionally tells Codex to use the repo-local `sandbox-testing` skill when running pflow tests (Claude has no such skill, so it's added only for codex; named in plain text to stay safe through the quoting layers, which `agent_hint` is not escaped through). The description is pre-escaped by parse-result to handle quotes safely through the AppleScript and shell quoting layers. Skipped when `open_cli` is false.
+Opens a new Terminal window, cd's into the worktree, and starts the selected coding agent (`claude` or `codex`, per the `agent` input) with the description and branch name as initial context. The launch command prefix (`claude --dangerously-skip-permissions` or `codex --sandbox workspace-write --ask-for-approval never`) is derived in `parse-result` as `agent_cmd`; both agents take the context prompt as a positional argument, so only this prefix differs. The absolute worktree path is inlined **directly** into the `do script` command as a resolved `${parse-result.result.worktree_path}` value — NOT passed via a bash variable. This matters: `do script` runs in a brand-new Terminal window whose shell never inherited the workflow's variables, so a `cd $VAR` there would expand to empty and silently land in `$HOME` (the bug that previously launched Claude in the home folder with a stray trust dialog and no project `.claude/` context). A guard refuses to launch (and reports on stderr) if the worktree dir is missing, so it can never fall back to home. `activate` brings Terminal above the Cursor window opened by the prior node, and the window created by `do script` is automatically Terminal's frontmost window — so the Claude session lands on top without any manual window-raising. The description is labelled `Task:` or `GitHub issue:` per `work_type`, with issues explicitly told not to create taskmaster scaffolding. When `agent=codex`, the prompt additionally tells Codex to use the repo-local `sandbox-testing` skill when running pflow tests (Claude has no such skill, so it's added only for codex; named in plain text to stay safe through the quoting layers, which `agent_hint` is not escaped through). The description is pre-escaped by parse-result to handle quotes safely through the AppleScript and shell quoting layers. Skipped when `open_cli` is false.
 
 - type: shell
 - ignore_errors: true

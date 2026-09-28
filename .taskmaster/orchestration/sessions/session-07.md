@@ -78,7 +78,7 @@
 ## [2026-08-14] main orchestrator — session continued (user ruling): fresh-eyes re-audit begins
 
 - User ruled: continue in THIS session file (no session-08). Booted per role prompt; reality
-  verified (main == origin/main == 15a36a0f; fold = 2 commits on the PR-#610 branch; clean tree).
+  verified (main == origin/main == `15a36a0f`; fold = 2 commits on the PR-#610 branch; clean tree).
 - Blind-pass quarantine held at boot: DECISIONS read #1–#14 only; pflow BRAINDUMP.md and the
   cross-repo scratchpad deferred to Phase B; PR #610 diff unread. Partial contamination noted
   honestly: CURRENT-STATE headlines + this file's close entries name some imports in shorthand.
@@ -188,3 +188,27 @@
 - Filed #620–#625 (see CURRENT-STATE). Checked and **not** filed: MCP timeout message (already clear), `probe` hiding values (it doesn't), a Codex quota error surface (unreproducible). Also verified: external-file `- code:` works; `timeout:` + `on-error` salvage recovers partial evidence; a long-lived HTTP MCP server keeps some state across runs (#624's workaround).
 - Owner framing: browser driving is one of many uses — prefer general capabilities/concepts over browser-specific docs.
 
+
+## [2026-09-27] Outside-session addition — sibling-system comparison, fold batch 3, worktree script
+
+- Separate work outside session-07, in a plain session with the user. Compared pflow's
+  orchestration system against the sibling programme's (104 sessions vs 7; everything after
+  the 08-15 fold was un-assimilated) and folded the generic delta: DECISIONS #23–#28.
+  Comparison, plans and before/after checks: `scratchpads/orchestration-comparison/`
+  (local-only). No numbered session owns this; CURRENT-STATE was rewritten directly.
+- **[RULING]** *"fable is for main orch, planning, and ui / taste, everything else is opus,
+  never sonnet"* · *"fable planner is for task planning, not lanes"* (#24) · *"we keep this as
+  simple as possible for this repo (no docs prs)"* (#27) · *"we shouldnt record irrelevant
+  things like use medium for searcher as decisions"* — DECISIONS rows are rulings + pointers;
+  frontmatter values live in the frontmatter · the sibling repo's name appears nowhere in this
+  repo (their words; re-affirmed #19).
+- Overturned, owned: I reverted the user's own mid-session `effort: medium` edit as a "leaf
+  overstep" — an uncommitted change has no author; ask first (RECURRENCE n=1). I ported half of
+  the sibling's two-part spec-conformance ruling and left `review-plan` pointing at a check it
+  didn't have — caught by the lens-body diff, fixed with §12.
+- Found in passing: `core.hooksPath` in the shared `.git/config` made `make install` fail in
+  EVERY worktree (pre-commit refuses) — the "first act: `make install`" in three agent defs was
+  a latent trap. Makefile fixed; effective for worktrees only once it is on `main`.
+- Deliberately not ported, with triggers in #23: DECISIONS index/archive split; an agent-file
+  fact checker; the sibling's inverted deletion-test line in `review-simplicity`.
+- Uncommitted at write time: both batches (`git status`). Landing is the user's word (#5).

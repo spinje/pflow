@@ -63,7 +63,7 @@ def test_write_generates_codex_assets(tmp_path: Path) -> None:
     parsed_agent = tomllib.loads(agent)
     assert agent.startswith('name = "demo-agent"\n')
     assert 'description = "Demo agent"' in agent
-    assert parsed_agent["model"] == "gpt-5.6-sol"
+    assert parsed_agent["model"] == "gpt-6-astra"
     assert parsed_agent["model_reasoning_effort"] == "high"
     assert "Do the work. 🔍" in parsed_agent["developer_instructions"]
     assert not (root / ".codex/agents/README.toml").exists()
@@ -74,8 +74,8 @@ def test_write_generates_codex_assets(tmp_path: Path) -> None:
 def test_render_agent_maps_models(tmp_path: Path) -> None:
     source = tmp_path / "agent.md"
     cases = (
-        ("fable", "medium", 'model = "gpt-5.6-sol"', 'model_reasoning_effort = "medium"'),
-        ("sonnet", "low", 'model = "gpt-5.6-terra"', 'model_reasoning_effort = "low"'),
+        ("fable", "medium", 'model = "gpt-6-astra"', 'model_reasoning_effort = "medium"'),
+        ("sonnet", "low", 'model = "gpt-6-astra"', 'model_reasoning_effort = "low"'),
     )
     for model, effort, expected_model, expected_effort in cases:
         write_file(

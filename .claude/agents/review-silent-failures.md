@@ -85,6 +85,9 @@ Historical examples:
 - `if cost:` skipped `$0.0000` total cost display — `0.0` is falsy (Task 108, found TWICE)
 - `shared.get("item") or shared.get("file")` failed when item was `0` (Task 96)
 
+- Also `NaN`, and a filter or match that can yield ZERO items feeding a destructive or aggregate operation (delete-all, sum, "latest") — zero matches must be a stated outcome, not a silent no-op.
+- Pagination/truncation: any "fetch all X" against a paged or limited source (MCP tool results, HTTP APIs, capped shell output) states how it handles more than one page — silent truncation is the finding.
+
 ### 2. Exception Handling That Swallows Errors
 
 Search for these patterns in the diff and surrounding code:
@@ -112,6 +115,9 @@ Ask for each exception handler:
 Historical examples:
 - `except Exception: pass` suppressed all settings errors without logging (Task 80)
 - Batch `error_handling: continue` caught `CompilationError` (structural) same as runtime errors (fix e45bba0d)
+
+- Third-party or framework behavior with **ignore-unknown semantics** (a parser that drops unknown keys, a client that discards unrecognized params, codegen) gets special suspicion — ask what happens when it receives something it doesn't recognize. In plan mode, a plan that relies on such tooling is flagged at the approach level.
+- `except Exception` storing `str(e)` for the user: don't extend the pattern — map known failures to written messages; the raw text is the finding.
 
 ### 3. Return Values That Signal Failure
 
@@ -155,6 +161,9 @@ Historical examples:
 - `output_mapping` in nested workflows was always silently failing due to namespace interception (Task 59)
 - Cross-cutting keys (`__mcp_pool__`, `__warnings__`, etc.) silently dropped for child workflows (fix ce8920de). Current `_PROPAGATED_KEYS` set is in `runtime/workflow_executor.py` — see `runtime/CLAUDE.md`.
 
+- A new skip condition must count and record what it skipped, not just `continue` — a skip nobody can see is a drop.
+- Timezone/locale: a date converted through UTC can shift the calendar day; identifiers stay strings.
+
 ### 5. Cross-Boundary Signal Loss
 
 When data or signals cross a component boundary, they can be lost in transit. **For every boundary crossing in the changed code, check both directions.**
@@ -194,6 +203,9 @@ The system appears to work but uses outdated data. This is distinct from "data d
 
 If the diff touches caching, memoization, registry, or any state that persists across invocations — check invalidation conditions.
 
+- A marker written BEFORE the work it announces (a lock file, a pinned-run entry, a cache stamp, a resume checkpoint): if the write or dispatch that follows fails, the marker lies — look for the failure-path clear and a lease/expiry recovery path.
+- A cache key missing a parameter the fetch uses serves stale data along the missing dimension.
+
 ### 7. Batch-Specific Silent Failures
 
 Batch processing is the #1 bug attractor (7 of 20 post-merge fixes). If the diff touches batch code, run the batch scenario matrix owned by `.claude/agents/review-feature-interactions.md` (§Batch Processing Interactions), asking the silent-outcome question for each scenario — 0 items; all fail + continue; some fail + continue; compile error in item; all succeed + fail_fast; sub-WF returns "error" action: does it produce a visible error/DEGRADED status, or does it look like success?
@@ -220,7 +232,7 @@ The same lens applies to safety tooling itself: a new or edited meta-test, lint 
 
 ## Output Format
 
-REVIEW-PROTOCOL.md skeleton. Title: `Silent Failure Review`. Critical = operations that silently produce wrong results. Verified-clear section: **Checked and Clear** (operations you confirmed are correctly guarded).
+REVIEW-PROTOCOL.md skeleton. Title: `Silent Failure Review`. Each Critical carries the silent-failure scenario, the code path, and what SHOULD happen instead; the Summary answers overall silent-failure risk; the off-checklist pass here hunts the way this change stays quiet that no section names. Critical = operations that silently produce wrong results. Verified-clear section: **Checked and Clear** (operations you confirmed are correctly guarded).
 
 ## Key Principle
 

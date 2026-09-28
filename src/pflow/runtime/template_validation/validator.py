@@ -49,7 +49,8 @@ _PERM_VAR = r"[a-zA-Z_][\w-]*(?:(?:\[(?:[\d]+|\$\{[^}]+\})\])?(?:\.[\w-]*(?:\[(?
 _PERM_OPERAND = rf"(?:{TemplateResolver._LITERAL_PATTERN}|{_PERM_VAR})"
 _PERMISSIVE_PATTERN = re.compile(rf"\$\{{({_PERM_OPERAND}(?:\s*\?\?\s*{_PERM_OPERAND})*)\}}")
 
-# Batch output definitions matching PflowBatchNode.post() structure
+# Batch output definitions matching the shape built by
+# runtime/engine/batch_executor.py:build_batch_output
 BATCH_OUTPUTS: list[dict[str, str]] = [
     {"key": "results", "type": "array", "description": "Array of successful results (failed items filtered out)"},
     {"key": "count", "type": "number", "description": "Total items processed"},

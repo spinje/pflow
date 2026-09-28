@@ -11,6 +11,10 @@ not started
 
 low
 
+## Roadmap
+
+later
+
 ## Problem
 
 MCP is the only way to add custom functionality, but it's heavyweight:
