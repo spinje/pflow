@@ -8,7 +8,6 @@ import re
 import sys
 import threading
 import uuid
-from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -17,6 +16,7 @@ from typing import Any, TextIO
 
 from pflow.core.diagnostic import Diagnostic, warning_degrades_status
 from pflow.core.exceptions import OnlySnapshotMissingError
+from pflow.core.metrics import MetricsCollector
 from pflow.core.node_type_display import is_model_node_type
 from pflow.core.trace_io import (
     RESERVED_LINE_KEYS,
@@ -324,9 +324,11 @@ class _LLMSummaryAccumulator:
     """Accumulator for ``WorkflowTraceCollector._collect_llm_summary``.
 
     Lives at module level to keep the recursive collector small (ruff C901).
-    Mirrors ``MetricsCollector.calculate_costs`` semantics: when any leaf
-    has ``cost_usd: None``, ``total_cost_usd`` becomes ``None`` and we surface
-    ``partial_cost_usd`` + ``unavailable_models`` + ``pricing_available: False``.
+    Cost classification is delegated to ``MetricsCollector.calculate_costs`` so
+    the trace summary and the CLI/JSON summary cannot drift. Only the keys the
+    trace summary already carried are emitted (no ``subscription`` block —
+    that would be a trace-format addition); ``agent_calls`` +
+    ``total_api_equivalent_cost_usd`` describe subscription-billed calls.
     """
 
     total_calls: int = 0
@@ -337,12 +339,8 @@ class _LLMSummaryAccumulator:
     total_cache_read_tokens: int = 0
     total_num_turns: int = 0
     agent_calls: int = 0
-    priced_cost: float = 0.0
-    api_equivalent_cost: float = 0.0
-    has_api_equivalent_cost: bool = False
     models: set[str] = field(default_factory=set)
-    unavailable_models: Counter[str] = field(default_factory=Counter)
-    unavailable_models_unnamed_count: int = 0
+    calls: list[dict[str, Any]] = field(default_factory=list)
 
     def add_leaf(self, call: dict[str, Any]) -> None:
         is_warmup = call.get("is_warmup", False)
@@ -360,21 +358,9 @@ class _LLMSummaryAccumulator:
             self.agent_calls += 1
             if isinstance(turns, int) and turns > 0:
                 self.total_num_turns += turns
-        cost = call.get("cost_usd")
+        self.calls.append(call)
         model = call.get("model") or ""
-        is_real_model = bool(model) and model != VALIDATION_PLACEHOLDER
-        if cost is None:
-            if is_real_model and not is_warmup:
-                self.unavailable_models[model] += 1
-            elif not is_real_model and not is_warmup:
-                self.unavailable_models_unnamed_count += 1
-        else:
-            self.priced_cost += cost
-        api_equivalent_cost = call.get("api_equivalent_cost_usd")
-        if isinstance(api_equivalent_cost, (int, float)) and not isinstance(api_equivalent_cost, bool):
-            self.api_equivalent_cost += float(api_equivalent_cost)
-            self.has_api_equivalent_cost = True
-        if is_real_model and not is_warmup:
+        if model and model != VALIDATION_PLACEHOLDER and not is_warmup:
             self.models.add(model)
 
     def as_dict(self) -> dict[str, Any]:
@@ -397,22 +383,20 @@ class _LLMSummaryAccumulator:
             result["agent_calls"] = self.agent_calls
         if self.total_num_turns:
             result["total_num_turns"] = self.total_num_turns
-        if self.unavailable_models or self.unavailable_models_unnamed_count:
-            result["total_cost_usd"] = None
-            result["partial_cost_usd"] = round(self.priced_cost, 6) if self.priced_cost > 0 else None
+        costs = MetricsCollector.calculate_costs(self.calls)
+        result["total_cost_usd"] = costs["total_cost_usd"]
+        if costs["total_cost_usd"] is None:
+            result["partial_cost_usd"] = costs["partial_cost_usd"]
+        if not costs["pricing_available"]:
             # Per-model call counts let renderers show "model (N calls)" without rebuilding them from
             # individual call events. Additive within trace 2.x — consumers
             # gate on ``format_version.startswith("2.")``.
-            result["unavailable_models"] = [
-                {"name": name, "calls": calls} for name, calls in sorted(self.unavailable_models.items())
-            ]
-            result["unavailable_models_unnamed_count"] = self.unavailable_models_unnamed_count
-            result["pricing_available"] = False
-        else:
-            result["total_cost_usd"] = round(self.priced_cost, 6)
-            result["pricing_available"] = True
-        if self.has_api_equivalent_cost:
-            result["total_api_equivalent_cost_usd"] = round(self.api_equivalent_cost, 6)
+            result["unavailable_models"] = costs["unavailable_models"]
+            result["unavailable_models_unnamed_count"] = costs["unavailable_models_unnamed_count"]
+        result["pricing_available"] = costs["pricing_available"]
+        api_equivalent_cost = costs.get("subscription", {}).get("api_equivalent_cost_usd")
+        if api_equivalent_cost is not None:
+            result["total_api_equivalent_cost_usd"] = api_equivalent_cost
         return result
 
 

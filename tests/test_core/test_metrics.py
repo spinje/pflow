@@ -490,3 +490,78 @@ class TestCalculateCostsCounterShape:
         ]
         summary = collector.get_summary(llm_calls)
         assert summary["metrics"]["total"]["total_calls"] == 2
+
+
+def _agent_call(model: str | None, estimate: float | None) -> dict:
+    """An agent-backend llm_call record as the trace stores it (codex/claude backends)."""
+    return {
+        "model": model,
+        "input_tokens": 1000,
+        "output_tokens": 100,
+        "total_tokens": 1100,
+        "cost_usd": None,
+        "api_equivalent_cost_usd": estimate,
+        "num_turns": 1,
+    }
+
+
+class TestSubscriptionBilledCalls:
+    """Agent-backend calls (the only records carrying ``api_equivalent_cost_usd``)
+    are subscription-billed, not unpriced — the three cost states stay distinct."""
+
+    def test_agent_only_run_is_subscription_not_missing_pricing(self):
+        cost_data = MetricsCollector.calculate_costs([_agent_call("gpt-6-astra", 2.5), _agent_call("gpt-6-astra", 0.5)])
+
+        assert cost_data["pricing_available"] is True
+        assert "unavailable_models" not in cost_data
+        # Paid cost is unobserved for subscription calls — never summed to 0.0.
+        assert cost_data["total_cost_usd"] is None
+        assert cost_data["partial_cost_usd"] is None
+        assert cost_data["subscription"] == {"calls": 2, "api_equivalent_cost_usd": 3.0}
+
+    def test_mixed_paid_and_subscription_keeps_paid_subset_separate(self):
+        cost_data = MetricsCollector.calculate_costs([
+            {"model": "gpt-4o", "cost_usd": 0.42},
+            _agent_call("gpt-6-astra", 5.95),
+        ])
+
+        assert cost_data["pricing_available"] is True
+        assert cost_data["total_cost_usd"] is None
+        assert cost_data["partial_cost_usd"] == 0.42
+        assert cost_data["subscription"] == {"calls": 1, "api_equivalent_cost_usd": 5.95}
+
+    def test_unpriced_api_call_beside_agent_call_is_the_only_unavailable_model(self):
+        cost_data = MetricsCollector.calculate_costs([
+            {"model": "ollama/llama3.2", "cost_usd": None},
+            _agent_call("gpt-6-astra", 1.0),
+        ])
+
+        assert cost_data["pricing_available"] is False
+        assert cost_data["unavailable_models"] == [{"name": "ollama/llama3.2", "calls": 1}]
+        assert cost_data["subscription"]["calls"] == 1
+
+    def test_agent_call_without_estimate_is_named_under_subscription(self):
+        """The key is present with a ``None`` value when the agent model has no
+        pricing (or was omitted) — still subscription-billed, estimate unavailable."""
+        cost_data = MetricsCollector.calculate_costs([_agent_call("gpt-x", None), _agent_call(None, None)])
+
+        assert cost_data["pricing_available"] is True
+        assert cost_data["subscription"] == {
+            "calls": 2,
+            "api_equivalent_cost_usd": None,
+            "unavailable_models": [{"name": "gpt-x", "calls": 1}],
+            "unavailable_models_unnamed_count": 1,
+        }
+
+    def test_get_summary_carries_subscription_into_json_metrics(self):
+        summary = MetricsCollector().get_summary([
+            {"model": "gpt-4o", "cost_usd": 0.42},
+            _agent_call("gpt-6-astra", 5.95),
+        ])
+
+        total = summary["metrics"]["total"]
+        assert total["cost_usd"] is None
+        assert total["partial_cost_usd"] == 0.42
+        assert "pricing_available" not in total
+        assert total["subscription"] == {"calls": 1, "api_equivalent_cost_usd": 5.95}
+        assert summary["subscription"] == total["subscription"]

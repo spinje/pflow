@@ -94,7 +94,11 @@ because providers can echo credentials; response-parse failures need the same ma
 Cost normalization lives in `_normalize` and its helpers. `cost_usd` means paid
 cost; unavailable pricing remains `None`. Agent backend estimates use
 `api_equivalent_cost_usd` instead. Trace and analysis consumers must not treat
-those comparisons as observed billing.
+those comparisons as observed billing. Summaries classify each call as paid,
+subscription-billed (the record carries the estimate key), or unpriced in one
+place — `MetricsCollector.calculate_costs` — which the CLI/JSON summary, the
+trace `llm_summary`, and `trace_report` all call; only human displays show the
+estimate, always labelled (`subscription … · API-equivalent`, `~$` cells).
 
 ## llm_config.py and settings.py
 

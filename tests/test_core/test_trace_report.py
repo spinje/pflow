@@ -1792,37 +1792,124 @@ class TestCostInTables:
         assert "$0.0100" in md
 
     def test_summary_header_shows_total_cost(self) -> None:
-        """Summary header includes total cost from llm_summary."""
+        """Summary header totals this run's paid cost from the node events."""
         trace = _make_trace(
-            llm_summary={
-                "total_calls": 3,
-                "total_tokens": 5000,
-                "total_cost_usd": 0.0847,
-                "models_used": ["gpt-4"],
-            }
+            nodes=[
+                _make_event(node_id="a", node_type="LLMNode", llm_call={"model": "gpt-4", "cost_usd": 0.05}),
+                _make_event(node_id="b", node_type="LLMNode", llm_call={"model": "gpt-4", "cost_usd": 0.0347}),
+            ],
+            llm_summary={"total_calls": 2, "total_tokens": 5000, "total_cost_usd": 0.0847, "models_used": ["gpt-4"]},
         )
         md = _build_summary(trace, source_path="test")
         assert "Total cost: $0.0847" in md
 
-    def test_summary_header_labels_api_equivalent_estimate(self) -> None:
-        trace = _make_trace(
-            llm_summary={
-                "total_calls": 1,
-                "total_tokens": 5000,
-                "total_cost_usd": None,
-                "pricing_available": False,
-                "unavailable_models": [{"name": "gpt-5.5", "calls": 1}],
-                "unavailable_models_unnamed_count": 0,
-                "total_api_equivalent_cost_usd": 0.0847,
-                "models_used": ["gpt-5.5"],
-            }
+
+def _agent_llm_call(model: str | None, estimate: float | None) -> dict[str, Any]:
+    """An agent-backend llm_call as the trace stores it (codex/claude backends)."""
+    return {
+        "model": model,
+        "input_tokens": 1000,
+        "output_tokens": 100,
+        "cost_usd": None,
+        "api_equivalent_cost_usd": estimate,
+        "num_turns": 1,
+    }
+
+
+class TestSubscriptionBilledCost:
+    """Paid / subscription-billed / unpriced stay distinguishable in the header and table (#634)."""
+
+    @staticmethod
+    def _summary(nodes: list[dict[str, Any]], **llm_summary: Any) -> str:
+        trace = _make_trace(nodes=nodes, llm_summary={"total_calls": len(nodes), "total_tokens": 1, **llm_summary})
+        return _build_summary(trace, source_path="test")
+
+    @staticmethod
+    def _cost_cell(md: str, node_id: str) -> str:
+        row = next(line for line in md.splitlines() if line.startswith("| ") and f" {node_id} " in line)
+        return row.rstrip(" |").rsplit("| ", 1)[-1]
+
+    def test_agent_only_trace_labels_subscription_with_estimate(self) -> None:
+        md = self._summary([
+            _make_event(node_id="review", node_type="AgentNode", llm_call=_agent_llm_call("gpt-6-astra", 2.9712)),
+        ])
+
+        assert "- Total cost: subscription (1 agent call) · API-equivalent: $2.9712" in md
+        assert self._cost_cell(md, "review") == "~$2.9712"
+        assert "pricing unavailable" not in md
+        # The estimate lives in the header clause — no duplicate line.
+        assert "API-equivalent estimate" not in md
+
+    def test_legacy_summary_that_conflated_agent_calls_is_reclassified_from_events(self) -> None:
+        """Traces written before the fix list agent models as unpriced in
+        ``llm_summary`` — the header classifies from the events instead."""
+        md = self._summary(
+            [_make_event(node_id="review", node_type="AgentNode", llm_call=_agent_llm_call("gpt-6-astra", 0.0847))],
+            total_cost_usd=None,
+            pricing_available=False,
+            unavailable_models=[{"name": "gpt-6-astra", "calls": 1}],
+            unavailable_models_unnamed_count=0,
+            total_api_equivalent_cost_usd=0.0847,
         )
 
-        md = _build_summary(trace, source_path="test")
+        assert "- Total cost: subscription (1 agent call) · API-equivalent: $0.0847" in md
+        assert "pricing unavailable" not in md
 
-        assert "Total cost: —" in md
-        assert "API-equivalent estimate: $0.0847" in md
-        assert "Total cost: $0.0847" not in md
+    def test_mixed_trace_shows_paid_plus_subscription_and_marks_estimate_rows(self) -> None:
+        md = self._summary([
+            _make_event(node_id="draft", node_type="LLMNode", llm_call={"model": "gpt-4o", "cost_usd": 0.42}),
+            _make_event(node_id="review", node_type="AgentNode", llm_call=_agent_llm_call("gpt-6-astra", 2.9712)),
+        ])
+
+        assert "- Total cost: $0.4200 + subscription (1 agent call) · API-equivalent total: $3.3912" in md
+        assert self._cost_cell(md, "draft") == "$0.4200"
+        assert self._cost_cell(md, "review") == "~$2.9712"
+
+    def test_unpriced_api_model_keeps_pricing_unavailable_and_dash(self) -> None:
+        md = self._summary([
+            _make_event(node_id="local", node_type="LLMNode", llm_call={"model": "ollama/llama3.2", "cost_usd": None}),
+        ])
+
+        assert "- Total cost: — (pricing unavailable for ollama/llama3.2 (1 call))" in md
+        assert "subscription" not in md
+        assert self._cost_cell(md, "local") == "—"
+
+    def test_agent_call_without_estimate_names_the_model_and_shows_dash(self) -> None:
+        md = self._summary([
+            _make_event(node_id="review", node_type="AgentNode", llm_call=_agent_llm_call("gpt-x", None)),
+        ])
+
+        assert (
+            "- Total cost: subscription (1 agent call) · API-equivalent: unavailable (no pricing for: gpt-x (1 call))"
+            in md
+        )
+        assert self._cost_cell(md, "review") == "—"
+
+    def test_batch_item_rows_show_per_item_estimate(self) -> None:
+        md = self._summary([
+            _make_event(
+                node_id="run-codex",
+                node_type="AgentNode",
+                batch_items=[
+                    {
+                        "index": 0,
+                        "status": "success",
+                        "duration_ms": 50,
+                        "llm_call": _agent_llm_call("gpt-6-astra", 2.964),
+                    },
+                    {
+                        "index": 1,
+                        "status": "success",
+                        "duration_ms": 50,
+                        "llm_call": _agent_llm_call("gpt-6-astra", 2.7403),
+                    },
+                ],
+            ),
+        ])
+
+        assert "- Total cost: subscription (2 agent calls) · API-equivalent: $5.7043" in md
+        assert self._cost_cell(md, r"run-codex[0]") == "~$2.9640"
+        assert self._cost_cell(md, r"run-codex[1]") == "~$2.7403"
 
 
 # --- Error summary ---
