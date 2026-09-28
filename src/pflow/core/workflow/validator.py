@@ -125,6 +125,41 @@ def _mcp_sync_hint_for_unknown_node_type(node_type: str) -> tuple[str, str] | No
     )
 
 
+def code_param_type_diagnostics(node_id: str, params: dict[str, Any]) -> list[Diagnostic]:
+    """Reject a literal non-string ``code`` param on a ``code`` node (issue #622).
+
+    Shared by step 9 of ``WorkflowValidator.validate`` and the compiler, which
+    raises it for callers that compile without validating first.
+    """
+    if "code" not in params or isinstance(params["code"], str):
+        return []
+    code = params["code"]
+    type_name = "null" if code is None else type(code).__name__
+    suggestions = [
+        "Write the Python inline in a ```python code``` block, or reference ONE file: `- code: ./script.py`."
+    ]
+    if isinstance(code, list):
+        suggestions.append(
+            "`code` takes a single script — a list of files is not supported. Merge the shared helpers into that one file."
+        )
+    return [
+        Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Code Parameter Validation Error",
+            node_id=node_id,
+            message=f"Parameter 'code' must be a string of Python source, got {type_name}.",
+            suggestions=suggestions,
+            context={
+                "category": "validation",
+                "node_type": "code",
+                "path": f"nodes[id={node_id}].params.code",
+            },
+            see_also=["code"],
+        )
+    ]
+
+
 class WorkflowValidator:
     """Orchestrates all workflow validation checks.
 
@@ -815,6 +850,8 @@ class WorkflowValidator:
             node_type = node.get("type")
             if node_type == "agent":
                 diagnostics.extend(WorkflowValidator._validate_agent_params(node_id, params))
+            elif node_type == "code":
+                diagnostics.extend(code_param_type_diagnostics(node_id, params))
             elif node_type == "llm":
                 diagnostics.extend(WorkflowValidator._validate_llm_output_schema(node_id, params))
                 llm_diags, display_model, provider_name, forms = WorkflowValidator._validate_llm_model_id_lite(
