@@ -345,6 +345,13 @@ the named phase)
 4. **Escape consumes through `}`** (phase 4): `$${a[${i}]}` and `$${FOO:-${bar}}` stay literal.
 5. **Cache-block escape, option (a)** (phase 4/5): `$${` honoured in cache prose; hash and
    prepare stay byte-symmetric.
+Validator-only corrections that the Parity section forces are sanctioned alongside the deltas
+above and listed in the plan: over-rejections the runtime resolves (#262; a `[N]` index inside a
+declared nested structure or on a `list`-typed output; Pass 8 field-checking `??` operands) flip to
+accepted, and under-checks the runtime does not catch (coalesce roots in `batch.items`; an Issue on
+any surface) flip to ERROR. A runtime-only syntax the validator always rejected (`$node.x` output
+sources) is removed rather than admitted.
+
 6. Phase-4 type passes may emit **new** validator errors on the *outer* dynamic-index reference
    (today `extract_variables('${a[${i}].x}') == {'i'}`; inner references were never validated —
    `data_flow.py:287` skips them; an input used only inside a dynamic index is reported "never
@@ -417,8 +424,9 @@ the named phase)
   `batchItems.ts:26`, `format.ts:9`, `sourceDecorate.ts:32` — a separate issue).
 - `prompt_refs.first_per_item_position` tearing a nested index (`'Static text. ${results[${item.i}].x}'`
   cuts at 23) — an existing bug, recorded for a lane.
-- Fixing the output-`source:` prose wrap, #643's save-path params, #262's proper fix beyond
-  the corpus row (they are recorded; each has its own home).
+- Fixing the output-`source:` prose wrap and #643's save-path params (recorded; each has its own
+  home). #262 is not point-fixed but flips as a consequence of Pass 5 consuming parsed segments
+  (the root of `items[0]` is `items`) — its corpus row records the flip.
 
 ## Implementation Notes
 
