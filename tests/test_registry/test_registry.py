@@ -322,6 +322,38 @@ class TestRegistryNodeRetrieval:
             assert nodes["mcp-current-tool"]["interface"]["outputs"] == expected
             assert nodes["mcp-legacy-tool"]["interface"]["outputs"] == expected
 
+    def test_load_adds_missing_pflow_params_to_mcp_entries_without_shadowing(self):
+        """Entries synced before a pflow-level MCP param existed gain it on load (GH #625).
+
+        Without the repair, `result_format` on such a node fails unknown-param validation
+        until a manual `pflow mcp sync`. A tool-schema param with the same key is kept as is.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = Registry(Path(tmpdir) / "test.json")
+            timeout = {"key": "timeout", "type": "int", "required": False, "description": "old"}
+            tool_owned = {"key": "result_format", "type": "str", "required": True, "description": "the tool's own"}
+            registry.save({
+                "mcp-srv-old": {"type": "mcp", "file_path": "virtual://mcp", "interface": {"params": [timeout]}},
+                "mcp-srv-owns-key": {
+                    "type": "mcp",
+                    "file_path": "virtual://mcp",
+                    "interface": {"params": [tool_owned, timeout]},
+                },
+                "shell": {"module": "m", "class_name": "C", "interface": {"params": []}},
+            })
+
+            nodes = registry.load(include_filtered=True)
+            old_keys = [p["key"] for p in nodes["mcp-srv-old"]["interface"]["params"]]
+            owns_params = nodes["mcp-srv-owns-key"]["interface"]["params"]
+
+            assert old_keys == ["timeout", "result_format"]
+            assert owns_params == [tool_owned, timeout]
+            assert nodes["shell"]["interface"]["params"] == []
+
+            registry.save(nodes)
+            reloaded = registry.load(include_filtered=True)
+            assert reloaded["mcp-srv-old"]["interface"]["params"] == nodes["mcp-srv-old"]["interface"]["params"]
+
     def test_output_types_by_kind_ships_declared_types_and_drops_any(self):
         """The kind->field->type read-model: declared docstring types verbatim;
         ``any`` entries dropped (a type that says nothing is not a fact worth

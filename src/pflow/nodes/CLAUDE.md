@@ -23,7 +23,9 @@ error responses.
 
 Store natural output types. Do not add convenience JSON auto-parsing to ordinary
 nodes; template coercion owns that behavior. See
-`architecture/core-concepts/data-type-coercion.md`.
+`architecture/core-concepts/data-type-coercion.md`. MCP is the deliberate
+exception: `mcp/node.py` parses text content that is entirely JSON, and, only on
+opt-in `result_format: json_block`, the one fenced json block of a prose result.
 
 ## Navigation
 
