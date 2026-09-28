@@ -62,9 +62,10 @@ Script ran on page and returned:
 
 By default that arrives as a plain string, so `${node.result.count}` cannot
 resolve. With `- result_format: json_block` the parsed block becomes `result`,
-and `${node.result.count}` works. Exactly one ` ```json ` block must be present
-across the text content: zero or several, or invalid JSON inside it, fail the
-node (routable with `on-error`) rather than guess. `structuredContent`, when the
+and `${node.result.count}` works. The result must be text-only and hold exactly
+one ` ```json ` block: other content (images, resources), zero or several
+blocks, or invalid JSON inside it fail the node (routable with `on-error`)
+rather than guess. `structuredContent`, when the
 server sends it, still takes precedence, and a tool error (`isError`) is still
 an error.
 

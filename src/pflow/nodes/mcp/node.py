@@ -23,7 +23,9 @@ _PFLOW_PARAMS = frozenset(param["key"] for param in MCP_NODE_PARAMS)
 JSON_BLOCK = "json_block"
 # A ```json fence line, its body, and the next ``` fence line. JSON strings cannot hold a raw
 # newline, so no line inside a valid JSON body can start with ``` — the lazy body is exact.
-_JSON_FENCE = re.compile(r"^[ \t]*```json[ \t]*\n(.*?)^[ \t]*```[ \t]*$", re.MULTILINE | re.DOTALL | re.IGNORECASE)
+_JSON_FENCE = re.compile(
+    r"^[ \t]*```json[ \t]*\r?\n(.*?)^[ \t]*```[ \t]*\r?$", re.MULTILINE | re.DOTALL | re.IGNORECASE
+)
 
 
 class MCPResultFormatError(PflowError):
@@ -800,16 +802,28 @@ class MCPNode(Node):
         """Parse the single fenced ```json block in the tool's text content (``result_format: json_block``).
 
         For tools that answer an LLM rather than a program: the payload sits in a fenced block
-        inside prose. Zero or several blocks, or an invalid body, raise instead of guessing.
+        inside prose. Non-text content, zero or several blocks, or an invalid body raise
+        instead of guessing or dropping content.
         """
-        texts = [c.text for c in mcp_result.content or [] if isinstance(getattr(c, "text", None), str)]
+        blocks = mcp_result.content or []
+        non_text = [
+            getattr(c, "type", type(c).__name__) for c in blocks if not isinstance(getattr(c, "text", None), str)
+        ]
+        if non_text:
+            raise MCPResultFormatError(
+                f"result_format '{JSON_BLOCK}' applies to text-only results, but this result has "
+                f"{', '.join(sorted(set(non_text)))} content. Remove result_format to get the tool's "
+                "content as ${node.result}."
+            )
+        texts = [c.text for c in blocks]
         bodies = [m.group(1) for text in texts for m in _JSON_FENCE.finditer(text)]
         if len(bodies) != 1:
             received = repr("\n".join(texts)[:300]) if texts else "(no text content)"
             raise MCPResultFormatError(
                 f"result_format '{JSON_BLOCK}' needs exactly one fenced ```json block in the tool's text "
                 f"result, found {len(bodies)}. Text received: {received}. Remove result_format to get the "
-                "raw text as ${node.result} and parse it in a code node."
+                "tool's text as ${node.result} (a list when it has several content blocks) and parse it "
+                "in a code node."
             )
         try:
             return json.loads(bodies[0])

@@ -75,6 +75,8 @@ def test_param_absent_keeps_prose_string_unchanged() -> None:
         (['First:\n```json\n{"a": 1}\n```\nSecond:\n```json\n{"b": 2}\n```'], 2),
         # Blocks are counted across every text content block of the result.
         (['```json\n{"a": 1}\n```', 'more:\n```json\n{"b": 2}\n```'], 2),
+        # Mixed line endings must not hide a second block.
+        (['```json\n{"a": 1}\n```\r\n```json\r\n{"b": 2}\r\n```'], 2),
     ],
 )
 def test_block_count_other_than_one_is_an_error(texts: list[str], found: int) -> None:
@@ -113,7 +115,7 @@ def test_tool_error_flag_keeps_precedence_over_text_block() -> None:
     assert shared["error_details"]["is_tool_error"] is True
 
 
-def test_non_text_content_is_ignored_when_one_block_exists() -> None:
+def test_non_text_content_is_an_error_not_silently_dropped() -> None:
     result = CallToolResult(
         content=[
             ImageContent(type="image", data="aGk=", mimeType="image/png"),
@@ -122,8 +124,15 @@ def test_non_text_content_is_ignored_when_one_block_exists() -> None:
     )
     action, shared, _ = _run(result, result_format="json_block")
 
+    assert action == "error"
+    assert "applies to text-only results, but this result has image content" in shared["error"]
+
+
+def test_crlf_fenced_block_is_recognised() -> None:
+    action, shared, _ = _run(_text_result('Returned:\r\n```json\r\n{"a": 1}\r\n```\r\n'), result_format="json_block")
+
     assert action == "default"
-    assert shared["result"] == {"a": 1, "b": "two"}
+    assert shared["result"] == {"a": 1}
 
 
 def test_unknown_result_format_value_is_rejected_before_the_call() -> None:
