@@ -13,7 +13,7 @@ medium
 
 ## Roadmap
 
-next
+then
 
 ## Problem
 
@@ -76,6 +76,11 @@ This makes the shell command valid bash that shellcheck can lint.
 
 ## Dependencies
 
+- **Blocked by Task 170 (One Template Language) and the language ruling it defers** — the
+  shell-injection half changes what `${X}` means inside a shell block, which is the same
+  decision as #621/#550 (non-grammar `${…}` in code-bearing params). That ruling is taken ONCE,
+  after 170's phase 5, so it lands in one parser instead of seven regex families. Ruled
+  2026-09-28 (session-08); the linting half could be split out earlier if wanted.
 - Task 107: Markdown Workflow Format — must be implemented first (this task lints markdown code blocks)
 - Task 104: Python Code Node — already implemented, defines the input injection pattern that shell should follow
 
