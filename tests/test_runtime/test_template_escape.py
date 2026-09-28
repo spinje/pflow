@@ -94,3 +94,14 @@ def test_bare_double_dollar_is_not_an_escape() -> None:
     """`$$` without a following `{` is plain text (the shell's PID here)."""
     result = _run(_shell_workflow("echo \"$$\" | grep -Eq '^[0-9]+$' && echo pid"))
     assert _stdout(result, "run") == "pid"
+
+
+def test_escape_in_batch_step_resolves_per_item() -> None:
+    workflow = _shell_workflow('echo "${item} $${PFLOW_TEST_UNSET_620:-none}"').replace(
+        "- type: shell\n", '- type: shell\n- batch:\n    items: ["a", "b"]\n'
+    )
+    result = _run(workflow)
+    assert result.success, [e.get("message") for e in result.errors]
+    batch = result.shared_after["run"]
+    assert [r["stdout"].strip() for r in batch["results"]] == ["a none", "b none"]
+    assert batch["results"][0]["command"] == 'echo "a ${PFLOW_TEST_UNSET_620:-none}"'
