@@ -313,6 +313,8 @@ def _create_node_and_config(
     node_metadata = nodes.get(node_type, {})
     interface_metadata = node_metadata.get("interface")
 
+    _reject_non_string_code(node_type, node_id, params)
+
     # Extract optional input keys for code nodes
     optional_input_keys: set[str] = set()
     if node_type == "code" and "code" in params and isinstance(params.get("inputs"), dict):
@@ -556,6 +558,27 @@ def _validate_loop_cap(value: int, node_id: str | None, node_type: str | None) -
             ),
         )
     return value
+
+
+def _reject_non_string_code(node_type: str, node_id: str, params: dict[str, Any]) -> None:
+    """Raise WorkflowValidator's non-string ``code`` diagnostic for direct-compile callers.
+
+    The web UI run pre-flight and cache-key prediction compile without validating
+    first; without this they hit a raw ``TypeError`` from ``ast.parse`` in
+    optional-input-key extraction.
+    """
+    if node_type != "code":
+        return
+    from pflow.core.workflow.validator import code_param_type_diagnostics
+
+    if code_errors := code_param_type_diagnostics(node_id, params):
+        raise CompilationError(
+            message=code_errors[0].message,
+            phase="node_instantiation",
+            node_id=node_id,
+            node_type="code",
+            wrapped_diagnostics=code_errors,
+        )
 
 
 def _validate_retry_config(value: Any, node_id: str, node_type: str) -> dict[str, Any] | None:
