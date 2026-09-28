@@ -10,3 +10,11 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
 - Deviations/surprises: the battery overturned four load-bearing design points of the draft (resolve() auto-parse contract; Issues needed as a second channel; per-key `inputs` for inject_none; inner refs must not be "variables") and the corpus harness (the nested `[N]` over-rejection sat under the planned producer; strict xfail without `raises=` would have green-lit a harness bug). Old 4a/4b merged into one engine-contact phase because the facade's semantics reach runtime consumers immediately. Two rulings reversed from the draft: R4 (narrow `$node.x`), R5 (reject `??` chunks). One ledger-wording conflict escalated (declared outputs "skip" vs error). Not a spec contradiction otherwise.
 - Self-checks: fully happy with the plan's shape; residual doubts are the four handback questions; test-reflect: n/a (no tests written).
 - Next: main orchestrator rules on the handback questions and the size call, then launches phase 1 (Agent A, Opus/high) on `c07acb4d`.
+
+## [2026-09-28 23:55] task-planner — rulings written into the spec ledger
+- Did: recorded the main orchestrator's four rulings (all at importance 2, each matching the plan's recommendation) in `task-170.md`: ledger wording for declared outputs (error unless all-absent `??`), `$node.x` output-source form removed, `??` chunk vars rejected at parse, inline-list `batch.items` stays unflagged (Out of scope, lane-B pointer); added the phase-4d `npm ci` note to Implementation Notes.
+- Changed: `task-170.md`, this log. No code; no implementation (user ruled no new starts this session).
+- Verified: each ruling matches the plan's §0.6 (R4/R5/R12) and Appendix A row; nothing in the code disagrees (executed evidence in the previous entry). | Assumed: none.
+- Deviations/surprises: none.
+- Self-checks: clean.
+- Next: the next main orchestrator launches the Opus task orchestrator on the committed plan; phase 1 starts on the merged head.
