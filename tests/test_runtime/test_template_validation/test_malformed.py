@@ -270,6 +270,44 @@ class TestMalformedTemplateEdgeCases:
         # Double ${{ means 2 ${, but only 1 valid template
         assert any("Malformed template syntax" in err.message for err in errors)
 
+    def test_dollar_escape_of_any_content_is_not_a_template(self):
+        """`$${...}` is a literal, whatever its content (issue #620)."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "test-node",
+                    "type": "shell",
+                    "params": {"command": 'echo "$${NAME:-world} $${#X} $${PRICE}"'},
+                }
+            ],
+            "enable_namespacing": True,
+        }
+
+        registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
+
+        assert errors == []
+
+    def test_malformed_template_beside_an_escape_is_still_detected(self):
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "test-node",
+                    "type": "shell",
+                    "params": {"command": "echo $${NAME:-world} ${unclosed"},
+                }
+            ],
+            "enable_namespacing": True,
+        }
+
+        registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
+
+        assert len(errors) == 1
+        assert "found 1 '${' but only 0 valid template(s)" in errors[0].message
+
     def test_multiple_malformed_in_same_string(self):
         """Test detection of multiple malformed templates in same string."""
         workflow_ir = {

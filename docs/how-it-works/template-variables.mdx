@@ -325,6 +325,8 @@ echo 'Price: $${PRICE}'
 
 This produces the literal string `Price: ${PRICE}` instead of trying to resolve a variable.
 
+Whatever follows `$${` is left alone, so shell parameter expansion (`$${NAME:-world}`, `$${#ITEMS}`) and JavaScript template literals work the same way. Only `$${` is an escape: a bare `$$` (the shell's process ID) is passed through unchanged.
+
 ## Validation
 
 pflow validates template variables at workflow creation time:

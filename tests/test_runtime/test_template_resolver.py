@@ -33,8 +33,6 @@ class TestTemplateDetection:
         assert not TemplateResolver.has_templates("")
         assert not TemplateResolver.has_templates("price: 100")
         assert not TemplateResolver.has_templates("$oldstyle")  # Old $var syntax not detected
-        assert not TemplateResolver.has_templates("$${escaped}")  # Escaped templates are not templates
-        assert not TemplateResolver.has_templates("prefix $${var} suffix")
 
 
 class TestVariableExtraction:
@@ -197,7 +195,7 @@ class TestEdgeCases:
 
         # These malformed templates should remain as-is
         assert TemplateResolver.resolve_template("${var", context) == "${var"  # Unclosed
-        assert TemplateResolver.resolve_template("$${var}", context) == "$${var}"  # Escaped
+        assert TemplateResolver.resolve_template("$${var}", context) == "${var}"  # Escaped: literal
         assert TemplateResolver.resolve_template("${}", context) == "${}"  # Empty
 
         # Variables with hyphens now work
@@ -494,3 +492,46 @@ class TestLiteralOperands:
         assert TemplateResolver.is_literal_operand("node.field") is False
         assert TemplateResolver.is_literal_operand("truthy_value") is False
         assert TemplateResolver.is_literal_operand("") is False
+
+
+class TestEscapeAndSinglePassInterpolation:
+    """`$${` escapes and single-pass complex interpolation (issue #620).
+
+    Before #620, interpolation was a sequential ``str.replace`` per match: the escape
+    survived verbatim (``$${PRICE}``), a same-name reference corrupted it
+    (``"a ${x} b $${x}"`` -> ``"a V b $V"``), and text inside an already-substituted
+    value was re-scanned order-dependently (``"${a} ${b}"`` with ``a="${b}"`` gave
+    ``"B B"`` but ``"${b} ${a}"`` gave ``"B ${b}"``).
+    """
+
+    def test_escape_yields_literal_template_text(self):
+        assert TemplateResolver.resolve_template("Price: $${PRICE}", {"PRICE": 9}) == "Price: ${PRICE}"
+
+    def test_escape_applies_to_any_content(self):
+        assert TemplateResolver.resolve_template('echo "$${NAME:-world} $${#X}"', {}) == 'echo "${NAME:-world} ${#X}"'
+
+    def test_escape_is_not_corrupted_by_same_name_reference(self):
+        assert TemplateResolver.resolve_template("a ${x} b $${x}", {"x": "V"}) == "a V b ${x}"
+
+    def test_bare_double_dollar_is_untouched(self):
+        assert TemplateResolver.resolve_template("pid $$ and ${x}", {"x": 1}) == "pid $$ and 1"
+
+    def test_triple_dollar_escapes_the_brace_and_keeps_one_dollar(self):
+        assert TemplateResolver.resolve_template("$$${x}", {"x": 1}) == "$${x}"
+
+    def test_resolved_values_are_not_rescanned(self):
+        context = {"a": "${b}", "b": "B", "e": "$${b}"}
+        assert TemplateResolver.resolve_template("${a} ${b}", context) == "${b} B"
+        assert TemplateResolver.resolve_template("${b} ${a}", context) == "B ${b}"
+        assert TemplateResolver.resolve_template("x ${e}", context) == "x $${b}"
+
+    def test_escapes_inside_nested_structures(self):
+        value = {"cmd": "echo $${HOME}", "args": ["$${A}", 3]}
+        assert TemplateResolver.resolve_nested(value, {}) == {"cmd": "echo ${HOME}", "args": ["${A}", 3]}
+
+    def test_escape_only_value_needs_resolution(self):
+        """``has_templates`` routes escape-only params through resolution (``split_params``)."""
+        assert TemplateResolver.has_templates("echo $${HOME}")
+        assert TemplateResolver.has_templates({"k": ["$${A}"]})
+        assert not TemplateResolver.has_templates("echo $$")
+        assert TemplateResolver.extract_variables("$${HOME} ${name}") == {"name"}

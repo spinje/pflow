@@ -133,7 +133,9 @@ None.
   Discord-snowflake rule).
 - Simple templates preserve type; complex templates stringify via the exact
   `_convert_to_string` rules.
-- `$$` escape: prevents resolution, does NOT strip the extra `$` (frozen partial behavior).
+- `$${` escape: any content after it is literal and resolves to `${...}` (one `$` stripped);
+  a bare `$$` is untouched; validator and resolver both skip it. Complex interpolation is a
+  single pass — substituted values are never re-scanned. (Refreshed 2026-09-28 — #620 ruling.)
 - `??` falls through on absent root OR absent field (#441); a literal operand always resolves
   and ends the chain; literal-first matching (keyword literals win over same-spelled
   identifiers).
@@ -158,6 +160,8 @@ None.
 - Grammar coherence: every strictly-valid template is also discoverable by the loose/
   validation views; every literal-grammar match round-trips `try_parse_json`.
 - Existence and resolution cannot disagree (single walk: found ⟺ value produced).
+- The engine's strict-mode unresolved check consumes the resolver's unresolved set instead of
+  re-scanning resolved output text (#630). (Refreshed 2026-09-28 — #620 ruling.)
 
 ### Structure
 - Exactly one place in `src/` compiles a `${…}` grammar (mechanically enforced).
@@ -187,8 +191,8 @@ None.
   lookbehind the canonical extractor has; `graph/scope.py` accepts digit-leading roots
   (validator-rejected input anyway). Each replacement needs a characterization test and an
   explicit decision.
-- `_PERMISSIVE_PATTERN` has no `$$`-escape handling — the phase-1 corpus will force an
-  explicit decision (carve-out vs documented permissiveness).
+- `_PERMISSIVE_PATTERN` skips `$${` escapes exactly like `TEMPLATE_PATTERN` (both carry the
+  `(?<!\$)` lookbehind); the malformed-syntax count ignores escaped `${` too.
 - Stale docs to fix in passing: `template_validation/CLAUDE.md` claims `compile_validation.py`
   imports `validate_workflow_templates` (false — template passes run only in
   `WorkflowValidator`); update the consumer table when touching the package.
