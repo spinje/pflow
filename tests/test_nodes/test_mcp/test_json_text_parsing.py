@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock
 
+from mcp.types import CallToolResult, TextContent
+
 from pflow.nodes.mcp.node import MCPNode
 from pflow.runtime.template_resolver import TemplateResolver
 
@@ -14,13 +16,10 @@ class TestJSONTextContentParsing:
         node = MCPNode()
         node.params = {"__mcp_server__": "test", "__mcp_tool__": "test"}
 
-        # Simulate MCP result with JSON text content
-        mock_result = MagicMock()
-        mock_result.structuredContent = None
-        mock_result.isError = False
-        mock_content = MagicMock()
-        mock_content.text = '{"channels": [{"id": "C123", "name": "general"}]}'
-        mock_result.content = [mock_content]
+        # MCP result with JSON text content
+        mock_result = CallToolResult(
+            content=[TextContent(type="text", text='{"channels": [{"id": "C123", "name": "general"}]}')]
+        )
 
         result = node._extract_result(mock_result)
 
@@ -167,13 +166,9 @@ class TestComposioScenario:
         node = MCPNode()
         node.params = {"__mcp_server__": "composio", "__mcp_tool__": "googlesheets"}
 
-        # Simulate Composio returning JSON as text (the actual behavior)
-        mock_result = MagicMock()
-        mock_result.structuredContent = None
-        mock_result.isError = False
-        mock_content = MagicMock()
-        mock_content.text = '{"data": {"valueRanges": [{"values": [["A1", "B1"], ["A2", "B2"]]}]}}'
-        mock_result.content = [mock_content]
+        # Composio returning JSON as text (the actual behavior)
+        text = '{"data": {"valueRanges": [{"values": [["A1", "B1"], ["A2", "B2"]]}]}}'
+        mock_result = CallToolResult(content=[TextContent(type="text", text=text)])
 
         result = node._extract_result(mock_result)
 

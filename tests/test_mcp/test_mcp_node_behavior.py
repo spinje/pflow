@@ -9,6 +9,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+from mcp.types import CallToolResult, TextContent
 
 from pflow.core.user_errors import MCPError
 from pflow.nodes.mcp.node import MCPNode
@@ -168,21 +169,8 @@ class TestMCPResultExtraction:
         """
         node = MCPNode()
 
-        # Mock typical filesystem server response
-        mock_result = MagicMock()
-        mock_result.structuredContent = None
-        mock_result.isError = False
-
-        mock_content = MagicMock()
-        mock_content.text = "File contents here"
-        mock_result.content = [mock_content]
-
-        # Need to make hasattr work correctly
-        del mock_content.image
-        del mock_content.resource
-        del mock_content.resource_link
-
-        result = node._extract_result(mock_result)
+        # Typical filesystem server response
+        result = node._extract_result(CallToolResult(content=[TextContent(type="text", text="File contents here")]))
         assert result == "File contents here"
 
     def test_error_flag_extraction(self):
@@ -213,17 +201,9 @@ class TestMCPResultExtraction:
         """
         node = MCPNode()
 
-        mock_result = MagicMock()
-        mock_result.structuredContent = None
-        mock_result.isError = False
-
-        # Multiple content blocks
-        content1 = MagicMock()
-        content1.text = "First result"
-        content2 = MagicMock()
-        content2.text = "Second result"
-
-        mock_result.content = [content1, content2]
+        mock_result = CallToolResult(
+            content=[TextContent(type="text", text="First result"), TextContent(type="text", text="Second result")]
+        )
 
         result = node._extract_result(mock_result)
 
@@ -440,18 +420,13 @@ class TestMCPResultPreParsedData:
         mock_result.structuredContent = None
         mock_result.isError = False
 
-        # Simulate MCP SDK returning pre-parsed dict in content.text
-        mock_content = MagicMock()
-        mock_content.text = {
-            "video_id": "abc123",
-            "transcript": [{"text": "Hello", "start": 0.0}],
-        }
-        mock_result.content = [mock_content]
-
-        # Remove other attributes to simulate text-only content
-        del mock_content.image
-        del mock_content.resource
-        del mock_content.resource_link
+        # Simulate MCP SDK returning pre-parsed dict in content.text. TextContent validates
+        # text as str, so model_construct is the only way to build this shape.
+        mock_result.content = [
+            TextContent.model_construct(
+                type="text", text={"video_id": "abc123", "transcript": [{"text": "Hello", "start": 0.0}]}
+            )
+        ]
 
         result = node._extract_result(mock_result)
 
@@ -468,17 +443,12 @@ class TestMCPResultPreParsedData:
         mock_result.structuredContent = None
         mock_result.isError = False
 
-        # Simulate MCP SDK returning pre-parsed list in content.text
-        mock_content = MagicMock()
-        mock_content.text = [
-            {"name": "item1", "value": 100},
-            {"name": "item2", "value": 200},
+        # Simulate MCP SDK returning pre-parsed list in content.text (see the dict case above)
+        mock_result.content = [
+            TextContent.model_construct(
+                type="text", text=[{"name": "item1", "value": 100}, {"name": "item2", "value": 200}]
+            )
         ]
-        mock_result.content = [mock_content]
-
-        del mock_content.image
-        del mock_content.resource
-        del mock_content.resource_link
 
         result = node._extract_result(mock_result)
 
@@ -491,18 +461,8 @@ class TestMCPResultPreParsedData:
         """String content.text should still be parsed as JSON (existing behavior)."""
         node = MCPNode()
 
-        mock_result = MagicMock()
-        mock_result.structuredContent = None
-        mock_result.isError = False
-
         # Normal case: content.text is a JSON string
-        mock_content = MagicMock()
-        mock_content.text = '{"key": "value", "number": 42}'
-        mock_result.content = [mock_content]
-
-        del mock_content.image
-        del mock_content.resource
-        del mock_content.resource_link
+        mock_result = CallToolResult(content=[TextContent(type="text", text='{"key": "value", "number": 42}')])
 
         result = node._extract_result(mock_result)
 
@@ -568,18 +528,12 @@ class TestMCPResultPreParsedData:
         """
         node = MCPNode()
 
-        mock_result = MagicMock()
-        mock_result.structuredContent = None
-        mock_result.isError = False
-
         # Simulate MCP server returning Python repr string instead of JSON
-        mock_content = MagicMock()
-        mock_content.text = "{'video_id': 'abc123', 'transcript': [{'text': 'Hello', 'start': 0.0}]}"
-        mock_result.content = [mock_content]
-
-        del mock_content.image
-        del mock_content.resource
-        del mock_content.resource_link
+        mock_result = CallToolResult(
+            content=[
+                TextContent(type="text", text="{'video_id': 'abc123', 'transcript': [{'text': 'Hello', 'start': 0.0}]}")
+            ]
+        )
 
         result = node._extract_result(mock_result)
 
@@ -592,18 +546,8 @@ class TestMCPResultPreParsedData:
         """Valid JSON should be parsed with json.loads, not ast.literal_eval."""
         node = MCPNode()
 
-        mock_result = MagicMock()
-        mock_result.structuredContent = None
-        mock_result.isError = False
-
         # Valid JSON with double quotes
-        mock_content = MagicMock()
-        mock_content.text = '{"key": "value", "number": 42}'
-        mock_result.content = [mock_content]
-
-        del mock_content.image
-        del mock_content.resource
-        del mock_content.resource_link
+        mock_result = CallToolResult(content=[TextContent(type="text", text='{"key": "value", "number": 42}')])
 
         result = node._extract_result(mock_result)
 
