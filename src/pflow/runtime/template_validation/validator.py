@@ -43,11 +43,14 @@ logger = logging.getLogger(__name__)
 # Also supports nested index templates: ${node[${__index__}].field}
 # Also supports coalesce operator: ${a.field ?? b.field}
 # Also supports literal operands (Optional A): ${a ?? 0}, ${a ?? "x"}, ${0}
+# Skips `$${...}` escapes (any content) exactly like TemplateResolver.TEMPLATE_PATTERN.
 _PERM_VAR = r"[a-zA-Z_][\w-]*(?:(?:\[(?:[\d]+|\$\{[^}]+\})\])?(?:\.[\w-]*(?:\[(?:[\d]+|\$\{[^}]+\})\])?)*)?"
 # A coalesce operand is a literal OR a variable path. Literal sub-grammar is the
 # same one runtime resolution uses (kept in sync via TemplateResolver).
 _PERM_OPERAND = rf"(?:{TemplateResolver._LITERAL_PATTERN}|{_PERM_VAR})"
-_PERMISSIVE_PATTERN = re.compile(rf"\$\{{({_PERM_OPERAND}(?:\s*\?\?\s*{_PERM_OPERAND})*)\}}")
+_PERMISSIVE_PATTERN = re.compile(rf"(?<!\$)\$\{{({_PERM_OPERAND}(?:\s*\?\?\s*{_PERM_OPERAND})*)\}}")
+# A template opening; an escaped `$${` is literal text, not an opening.
+_TEMPLATE_OPEN = re.compile(r"(?<!\$)\$\{")
 
 # Batch output definitions matching the shape built by
 # runtime/engine/batch_executor.py:build_batch_output
@@ -680,7 +683,7 @@ def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[Diagnosti
             """Recursively check for malformed templates in any value type."""
             if isinstance(value, str) and "${" in value:
                 # Count how many ${ we have
-                dollar_brace_count = value.count("${")
+                dollar_brace_count = len(_TEMPLATE_OPEN.findall(value))
 
                 # Count how many valid templates we matched
                 valid_matches = _PERMISSIVE_PATTERN.findall(value)
