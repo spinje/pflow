@@ -4,15 +4,34 @@ import asyncio
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
+from pflow.core.exceptions import PflowError
 from pflow.core.node import Node
 from pflow.mcp.auth_utils import build_auth_headers, expand_env_vars_nested
+from pflow.mcp.errors import unwrap_exception_group
+from pflow.registry.constants import MCP_NODE_PARAMS
 
 logger = logging.getLogger(__name__)
 
 _SOURCE_LINE_SUFFIX = "_source_line"
+
+_PFLOW_PARAMS = frozenset(param["key"] for param in MCP_NODE_PARAMS)
+
+JSON_BLOCK = "json_block"
+# A ```json fence line, its body, and the next ``` fence line. JSON strings cannot hold a raw
+# newline, so no line inside a valid JSON body can start with ``` — the lazy body is exact.
+_JSON_FENCE = re.compile(
+    r"^[ \t]*```json[ \t]*\r?\n(.*?)^[ \t]*```[ \t]*\r?$", re.MULTILINE | re.DOTALL | re.IGNORECASE
+)
+
+
+class MCPResultFormatError(PflowError):
+    """The tool succeeded, but its result does not match the node's ``result_format``."""
+
+    retriable = False
 
 
 def _is_source_line_sidecar(key: str, params: dict[str, Any]) -> bool:
@@ -96,6 +115,7 @@ class MCPNode(Node):
         super().__init__(max_retries=1, wait=0)
         self._server_config: dict[str, Any] | None = None
         self._timeout: int = 30  # Default timeout in seconds
+        self._result_format: str | None = None
 
     def prep(self, shared: dict) -> dict:
         """Prepare MCP tool execution.
@@ -174,7 +194,7 @@ class MCPNode(Node):
         tool_args = {
             k: v
             for k, v in self.params.items()
-            if not k.startswith("__") and k != "timeout" and not _is_source_line_sidecar(k, self.params)
+            if not k.startswith("__") and k not in _PFLOW_PARAMS and not _is_source_line_sidecar(k, self.params)
         }
 
         # Get optional timeout from params (validate as positive integer seconds)
@@ -188,6 +208,14 @@ class MCPNode(Node):
             raise ValueError(
                 f"Invalid 'timeout' parameter: {timeout_param!r}. Must be a positive integer (seconds)."
             ) from None
+
+        result_format = self.params.get("result_format")
+        if result_format is not None and result_format != JSON_BLOCK:
+            raise MCPResultFormatError(
+                f"Invalid 'result_format' parameter: {result_format!r}. The only supported value is "
+                f"'{JSON_BLOCK}'; omit the parameter to keep the tool's result as returned."
+            )
+        self._result_format = result_format
 
         logger.debug(
             "Preparing MCP tool execution", extra={"mcp_server": server, "mcp_tool": tool, "tool_args": tool_args}
@@ -470,10 +498,15 @@ class MCPNode(Node):
         """
         from pflow.mcp.errors import describe_mcp_error
 
-        diagnostic = describe_mcp_error(exc, timeout=self._timeout)
-        error_msg = f"MCP tool failed: {diagnostic.message}"
-        if diagnostic.suggestions:
-            error_msg += f" {diagnostic.suggestions[0]}"
+        root = unwrap_exception_group(exc)
+        if isinstance(root, MCPResultFormatError):
+            # The tool call succeeded; only the requested result shape did not match.
+            error_msg = str(root)
+        else:
+            diagnostic = describe_mcp_error(exc, timeout=self._timeout)
+            error_msg = f"MCP tool failed: {diagnostic.message}"
+            if diagnostic.suggestions:
+                error_msg += f" {diagnostic.suggestions[0]}"
         logger.debug(
             error_msg,
             exc_info=exc,
@@ -755,6 +788,8 @@ class MCPNode(Node):
 
         # PRIORITY 3: Fall back to content blocks (legacy/unstructured)
         if hasattr(mcp_result, "content"):
+            if self._result_format == JSON_BLOCK:
+                return self._extract_json_block(mcp_result)
             return self._process_content_blocks(mcp_result)
 
         # Fallback: preserve structured data, otherwise convert to string
@@ -762,3 +797,38 @@ class MCPNode(Node):
         if isinstance(mcp_result, (dict, list)):
             return mcp_result
         return str(mcp_result)
+
+    def _extract_json_block(self, mcp_result: Any) -> Any:
+        """Parse the single fenced ```json block in the tool's text content (``result_format: json_block``).
+
+        For tools that answer an LLM rather than a program: the payload sits in a fenced block
+        inside prose. Non-text content, zero or several blocks, or an invalid body raise
+        instead of guessing or dropping content.
+        """
+        blocks = mcp_result.content or []
+        non_text = [
+            getattr(c, "type", type(c).__name__) for c in blocks if not isinstance(getattr(c, "text", None), str)
+        ]
+        if non_text:
+            raise MCPResultFormatError(
+                f"result_format '{JSON_BLOCK}' applies to text-only results, but this result has "
+                f"{', '.join(sorted(set(non_text)))} content. Remove result_format to get the tool's "
+                "content as ${node.result}."
+            )
+        texts = [c.text for c in blocks]
+        bodies = [m.group(1) for text in texts for m in _JSON_FENCE.finditer(text)]
+        if len(bodies) != 1:
+            received = repr("\n".join(texts)[:300]) if texts else "(no text content)"
+            raise MCPResultFormatError(
+                f"result_format '{JSON_BLOCK}' needs exactly one fenced ```json block in the tool's text "
+                f"result, found {len(bodies)}. Text received: {received}. Remove result_format to get the "
+                "tool's text as ${node.result} (a list when it has several content blocks) and parse it "
+                "in a code node."
+            )
+        try:
+            return json.loads(bodies[0])
+        except json.JSONDecodeError as e:
+            raise MCPResultFormatError(
+                f"result_format '{JSON_BLOCK}': the fenced ```json block is not valid JSON ({e}). "
+                f"Block body: {bodies[0][:300]!r}"
+            ) from None
