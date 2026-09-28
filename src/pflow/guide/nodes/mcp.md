@@ -41,6 +41,34 @@ Server C:  result.Items[]                   # DynamoDB style
 **There are NO patterns. Test every MCP tool:**
 `pflow probe mcp-service-TOOL param=value`
 
+### pflow Parameters on Every MCP Node
+
+Besides the tool's own parameters, every MCP node accepts two pflow parameters
+that are never sent to the server:
+
+| Parameter | Effect |
+|---|---|
+| `timeout` | Seconds before the tool call is abandoned (default: 30) |
+| `result_format: json_block` | Parse the single fenced ` ```json ` block in a text result and use it as `result` |
+
+Some tools answer for an LLM, wrapping their data in prose:
+
+````text
+Script ran on page and returned:
+```json
+{"count": 42}
+```
+````
+
+By default that arrives as a plain string, so `${node.result.count}` cannot
+resolve. With `- result_format: json_block` the parsed block becomes `result`,
+and `${node.result.count}` works. The result must be text-only and hold exactly
+one ` ```json ` block: other content (images, resources), zero or several
+blocks, or invalid JSON inside it fail the node (routable with `on-error`)
+rather than guess. `structuredContent`, when the
+server sends it, still takes precedence, and a tool error (`isError`) is still
+an error.
+
 ### MCP Tools Can Report Failure Inside `result`
 
 Some MCP tools return a successful MCP response while the service payload says

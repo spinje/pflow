@@ -89,7 +89,7 @@ Three patterns have different jobs; do not unify them just because they all find
 
 | Pattern | Owner/purpose | Important distinction |
 |---|---|---|
-| `_PERMISSIVE_PATTERN` | `validator.py`, validation discovery | Sees nested bracket templates; no dollar-escape lookbehind |
+| `_PERMISSIVE_PATTERN` | `validator.py`, validation discovery | Sees nested bracket templates; skips `$${` escapes like `TEMPLATE_PATTERN` |
 | `TEMPLATE_PATTERN` | `TemplateResolver`, runtime resolution | Strict operand grammar and dollar-escape guard |
 | `TEMPLATE_EXTRACT_PATTERN` | `TemplateResolver`, diagnostic/data-flow discovery | Broad extraction; downstream checks decide validity |
 

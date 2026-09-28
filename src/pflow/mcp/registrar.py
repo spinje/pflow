@@ -7,7 +7,7 @@ from typing import Any
 
 from pflow.core.diagnostic import Diagnostic
 from pflow.registry import Registry
-from pflow.registry.constants import MCP_CANONICAL_OUTPUT
+from pflow.registry.constants import MCP_CANONICAL_OUTPUT, MCP_NODE_PARAMS
 
 from .discovery import DEFAULT_DISCOVERY_TIMEOUT_SECONDS, MCPDiscovery
 from .errors import describe_mcp_error
@@ -347,14 +347,7 @@ class MCPRegistrar:
         if "inputSchema" in tool:
             params = self.discovery.convert_to_pflow_params(tool["inputSchema"])
 
-        # Add pflow-level MCPNode params (not part of tool's inputSchema).
-        # MCPNode.prep() strips timeout from tool_args before calling the server.
-        params.append({
-            "key": "timeout",
-            "type": "int",
-            "required": False,
-            "description": "Timeout in seconds for tool execution (default: 30)",
-        })
+        params.extend(param.copy() for param in MCP_NODE_PARAMS)
 
         # MCPNode stores every successful tool response under one canonical
         # ``result`` output. Keep it open-ended even when outputSchema exists:
