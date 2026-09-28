@@ -29,7 +29,7 @@ dependencies = [
     "jsonschema>=4.20.0", # JSON Schema validation for workflow IR
     "referencing>=0.28.4", # Offline JSON Schema reference registry for self-contained LLM output_schema validation
     "pydantic", # IR/metadata validation
-    "mcp[cli]>=1.17.0", # Model Context Protocol for MCP server support
+    "mcp[cli]>=1.17.0,<2", # Model Context Protocol for MCP server support; <2 until the SDK 2.x / spec 2026-07-28 migration (GH #644 part 2).
     "requests>=2.32.5", # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression). Slated for removal in favor of httpx — see GH #422.
     "claude-agent-sdk>=0.2.82", # Claude Agent SDK for agentic development node (>=0.2.82 for native structured output via output_format + ResultMessage.structured_output)
     "PyYAML>=6.0.0", # YAML parsing for markdown workflow format params and frontmatter

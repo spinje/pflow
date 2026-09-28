@@ -976,10 +976,16 @@ rss: true
   # Daily Report
   ## Steps
   ### fetch-data
+
+  Fetch the repository's open issues.
+
   - type: http
   - url: https://api.github.com/repos/owner/repo/issues
 
   ### summarize
+
+  Summarize the fetched issues.
+
   - type: llm
   - prompt: Summarize these issues: ${fetch-data.response}
   ```
