@@ -48,3 +48,15 @@ proof.
 - a mid-session USER edit to a tracked file read as a subagent overstepping its brief and was
   reverted without asking (the searcher's `effort` value) — an uncommitted change with no author
   is indistinguishable from a leaf's; ask before reverting anything you did not make | s07 | n=1
+- host load from many parallel agents on one machine (lanes + lenses + planner; load average
+  140–217 measured) makes timing-benchmark tests flake (`test_real_compilation_performance…`
+  203 ms/200, another 166/150) and produced one unidentified first-run `make test` failure —
+  recognition would cap concurrent local lanes or exempt benchmarks under load | s08 | n=1
+- a lane squash-merged after `origin/main` moved past its last merge-of-main without
+  re-gating (CI on the push to main caught it green) — the lane def's merged-result gate runs
+  before the PR, not again before the merge click; recognition would add "re-check origin/main
+  right before merging; if it moved, repeat the gate" | s08 | n=1
+- a subagent-authored durable doc (ADR-0015) carried a mechanism that did not exist (a "prose
+  interpolator") because I wrote it from a lens's summary instead of the code — the context-free
+  ADR review caught it; recognition would make "read the cited function before writing its
+  mechanism into an ADR/spec" a checklist line | s08 | n=1

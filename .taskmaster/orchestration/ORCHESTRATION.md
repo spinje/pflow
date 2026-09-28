@@ -207,14 +207,18 @@ merged PR and point the packet there instead; almost all recent tasks have revie
    merge main into the branch and re-run `make check` + `make test` before the PR — a
    branch-green / merge-red gap is exactly what this catches. Never *reason* that a gate you can
    cheaply *run* would pass — run it.
-6. **Teardown:** after merge, the main orchestrator runs `./scripts/worktree rm <branch>`. The
+6. **Teardown:** after merge, the main orchestrator runs `./scripts/worktree rm <branch>` and
+   fast-forwards its local `main` with `git merge --ff-only origin/main` (`git pull` rebases
+   and refuses over the orchestrator's uncommitted state files). The
    script owns the squash-safe check — **squash merges make commit-id checks LIE** (`git branch
    --merged` / `git cherry` mark merged branches unmerged), so it compares the merged PR's
    `headRefOid` (via `gh`) to the branch tip and requires a clean tree, and it refuses while any
    process is rooted inside the worktree (a stale `pflow ui` server is the usual one) — so the
    PRODUCER stops its worktree's dev servers before handing back (kill only PIDs whose argv
    carries the worktree path) and declares `dev servers: none | <ports>` in the handback. Never
-   `-f` blind: `-f` skips the checks and keeps the branch, and its reason goes in the session log.
+   `-f` blind: `-f` discards the tree's local state (it prints the dirty paths it drops) but still
+   verifies the merge and deletes the branch only when the merged head equals the tip — otherwise
+   it keeps the branch and says why; its reason goes in the session log.
 7. **Parallel tasks** require the collision analysis below; at most one in-flight task may need a
    live `pflow ui` server; prefer a no-checkpoint task as the parallel companion (checkpoints
    serialize on the user's attention).
