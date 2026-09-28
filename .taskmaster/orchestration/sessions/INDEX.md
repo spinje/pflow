@@ -6,7 +6,9 @@ summary. Entry bar: 1–3 wrapped lines — ships/rulings by NUMBER, no narrativ
 "Read for:" clause naming the arcs that should route a reader here; anything more belongs in
 the session log. Never a boot read: grep it when work touches an old arc, then read THAT session —
 targeted reads replace range fork-mining. Sessions 01–07 predate the per-session `## Braindump`
-(DECISIONS #23); their residue lives in `STANDING-KNOWLEDGE.md`._
+(ORCHESTRATION.md "Artifacts and ownership"); their residue lives in `STANDING-KNOWLEDGE.md`.
+DECISIONS numbers in entries are the rows as they stood at that session — the ledger was since
+pruned to the rows that pass its bar; git history holds the removed ones._
 
 - 01 (2026-07-11) — converted pre-restructure log (history 2026-06-16→07-11); Tasks 125/164/171/
   174/116 shipped (#554/#559/#563/#560/#564); DECISIONS #1, #6; worktree sweep; Task 176 spec
@@ -28,5 +30,8 @@ targeted reads replace range fork-mining. Sessions 01–07 predate the per-sessi
 - 07 (2026-08-14) — PR #610 (merged after close); #608/#609 filed; DECISIONS #15–#22; falsifier +
   lane-implementer landed. Read for: cross-repo fold, fresh-eyes re-audit P0–P8, merge-readiness
   lesson; outside-session tails 2026-09-21 (#615–#618 audit), 2026-09-27 (#620–#625 browser
-  eval) and 2026-09-27 (sibling-system comparison → DECISIONS #23–#28, `scripts/worktree`,
-  the worktree `make install` trap).
+  eval), 2026-09-27 (sibling-system comparison → DECISIONS #23–#28, `scripts/worktree`,
+  the worktree `make install` trap) and 2026-09-28 (parity fold: sibling standard adopted in
+  full, DECISIONS pruned to five rows, knowledge base retired → code homes + ADR 0014,
+  Codex runner model → `gpt-6-astra`, #616 fixed on the PR branch; handover in
+  `scratchpads/handoffs/`).

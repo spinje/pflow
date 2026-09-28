@@ -4,7 +4,7 @@ Stale references make a review agent confidently wrong (2026-06 audit: a dead
 `.taskmaster/knowledge/decision-deep-dives/` pointer, a phantom `BatchExecutor`
 class, and a renamed batch module survived in agent files long after the code
 moved). Three mechanical checks pin every backtick-quoted reference in
-`.claude/agents/`:
+`.claude/agents/` and `.claude/commands/`:
 
 1. path-shaped tokens resolve to real files,
 2. bare filenames match some file in the repo (ambiguous hits pass — this is a
@@ -24,6 +24,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = REPO_ROOT / ".claude" / "agents"
+COMMANDS_DIR = REPO_ROOT / ".claude" / "commands"
+SCAN_DIRS = (AGENTS_DIR, COMMANDS_DIR)
 
 # Path-shaped: backtick token with a "/" and a known file extension.
 _PATH_RE = re.compile(r"`([A-Za-z_.][\w.-]*/[\w./-]*\.(?:py|md|toml|json|yaml|yml|cfg))`")
@@ -35,7 +37,7 @@ _BARE_FILE_RE = re.compile(r"`([A-Za-z_][\w.-]*\.(?:py|md))`")
 _SYMBOL_RE = re.compile(r"`([A-Za-z_][\w.]*\(\)|_[a-z]\w+|[A-Z][a-z]+(?:[A-Z][a-zA-Z]+)+)`")
 
 # Template placeholders and example names — not real references.
-_PLACEHOLDER_RE = re.compile(r"[{*<>]|task[-_]N|test_X|test_Y|_N\b|\bX\b|\bY\b|item-\d+")
+_PLACEHOLDER_RE = re.compile(r"[{*<>]|task[-_]N|\bNN\b|test_X|test_Y|_N\b|\bX\b|\bY\b|item-\d+")
 
 # Deliberate historical citations ("then X, now Y") and other intentional
 # mentions of things that no longer (or never) exist in the codebase. Each
@@ -50,6 +52,7 @@ ALLOWED_MISSING_SYMBOLS = {
     "BaseExceptionGroup",  # Python 3.11+ stdlib name in the version-difference table
     "_compute_batch_memo_key",  # historical duplication example (since consolidated)
     "_current_node",  # historical instance-state race example (Task 108, removed)
+    "TaskList",  # Claude Code harness tool name, not a pflow symbol
 }
 
 
@@ -61,6 +64,7 @@ def _resolves(token: str) -> bool:
         REPO_ROOT / token,
         REPO_ROOT / "src" / "pflow" / token,
         REPO_ROOT / "tests" / token,
+        REPO_ROOT / ".taskmaster" / "orchestration" / token,  # e.g. `sessions/INDEX.md`
     ]
     if any(c.exists() for c in candidates):
         return True
@@ -83,9 +87,10 @@ def _source_corpus() -> str:
 
 
 def _iter_tokens(pattern: re.Pattern[str]):
-    for agent_file in sorted(AGENTS_DIR.glob("*.md")):
-        for token in sorted(set(pattern.findall(agent_file.read_text(encoding="utf-8")))):
-            yield agent_file.name, token
+    for scan_dir in SCAN_DIRS:
+        for md_file in sorted(scan_dir.glob("*.md")):
+            for token in sorted(set(pattern.findall(md_file.read_text(encoding="utf-8")))):
+                yield f"{scan_dir.name}/{md_file.name}", token
 
 
 def test_agent_path_references_resolve():

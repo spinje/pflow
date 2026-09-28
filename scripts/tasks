@@ -449,10 +449,11 @@ show_summary() {
 }
 
 boot_check() {
-    # Boot-set size table for the main orchestrator's close ritual (DECISIONS #23). Prints
-    # lines/bytes/est-tokens per boot-read file and a TOTAL; caps nothing — the judgement is
-    # the orchestrator's. Lints the newest session log for bare 40-char SHAs (post-ship
-    # evidence belongs to the PR, not the log) — that is the one check that can fail.
+    # Boot-set size table for the main orchestrator's close ritual (step 7 of
+    # .claude/skills/close-orchestrator-session/SKILL.md). Prints lines/bytes/est-tokens per
+    # boot-read file and a TOTAL; caps nothing — the judgement is the orchestrator's. Lints
+    # the newest session log for bare 40-char SHAs (post-ship evidence belongs to the PR, not
+    # the log) — that is the one check that can fail.
     local orch=".taskmaster/orchestration"
     local latest
     latest=$(ls "$orch"/sessions/session-*.md 2>/dev/null | sort | tail -1)

@@ -19,6 +19,9 @@ For EACH test you added or touched in this phase:
    a non-zero exit code.** A run that collects no tests exits non-zero too (pytest returns 5 for
    "no tests collected"), so a filter that matches nothing reports a confident KILL for a run that
    executed nothing at all. Read the count, and check it against the tests you meant to run.
+   **Restore a mutation by writing the saved original back (or reverting only your own hunk), never
+   by `git checkout -- <file>`:** on a dirty tree that command also wipes the uncommitted work in the
+   file, and the "restored" run goes red for a reason that reads like a real catch.
 2. **Does it exercise the real path?** The real CLI/workflow surface over a hand-built internal
    call where the bug would live in the entry path (a directly-constructed node or store can mask
    exactly the layer under test). Fixtures shaped like real workflows crossing the same code path.

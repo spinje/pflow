@@ -19,8 +19,11 @@ Build and run the command:
   issues (`gh issue view <N>` for the title — an issue number is never a task id);
   `<type>/<kebab-slug>` for ad-hoc work. Type ∈ feat/fix/docs/refactor/perf/test/chore. Slug =
   2–4 words, no articles.
-- If the current branch is NOT `main`, the script refuses to default the base — pass `main`
-  explicitly as `[base-ref]` unless the user explicitly wants to branch from the current branch.
+- The script defaults the base to `main` only while the **main checkout** is on `main` (the
+  branch shown above is the invoker's; they differ only when run from inside a worktree) —
+  otherwise it refuses, so pass `main` explicitly as `[base-ref]` unless the user explicitly
+  wants to branch from the current branch. A local `main` behind `origin/main` gets a warning:
+  offer to `git pull` first.
 - If the user mentions files/folders to carry over (scratchpads, briefs, research notes), add
   `--copy <path>` per item (repeatable; paths relative to repo root, location preserved). This
   matters for gitignored files — a fresh worktree only contains tracked files.
@@ -31,7 +34,7 @@ Build and run the command:
   through verbatim (`"/start-orchestration 94"`).
 - `--model <name>` only alongside `--claude`/`--codex`. **The live tiers are `opus` and `fable`
   only — the Sonnet tier is retired (DECISIONS #24) and the script refuses it.** Claude aliases
-  pass through; for Codex, `opus`/`fable` map to the Codex launch model.
+  pass through; for Codex, `opus`/`fable` map to `gpt-6-astra`.
 - The script refuses to clobber an existing worktree dir — relay that error as-is; a collision
   with a *different* task means the name was too vague. Don't work around refusals.
 - Related subcommands when the user asks: `./scripts/worktree rm <branch> [-f]` tears down a

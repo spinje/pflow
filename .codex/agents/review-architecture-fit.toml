@@ -1,6 +1,6 @@
 name = "review-architecture-fit"
 description = "Reviews a plan or spec from the seat of the future work that inherits its shapes. Catches: one-way-door shapes a named roadmap task would have to reverse, shapes the repo already paid to walk back, prematurely hardened agent-facing or on-disk contracts, a second mechanism beside an existing seam, ADR-level decisions left unrecorded, generality no roadmap task uses. Plan/spec mode ONLY — never run it on integrated code."
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_reasoning_effort = "medium"
 developer_instructions = '''
 

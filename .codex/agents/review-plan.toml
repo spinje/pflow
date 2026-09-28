@@ -1,6 +1,6 @@
 name = "review-plan"
 description = "Review implementation plans for structural integrity before coding begins. Catches: unverified assumptions, missing phases, wrong approach, ambiguous instructions, incomplete code path coverage, missing verification strategy. Run BEFORE implementation to catch plan-level errors that cost hours to fix later."
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_reasoning_effort = "medium"
 developer_instructions = '''
 
@@ -57,7 +57,7 @@ Plans make design decisions. Some are obviously right. Others deserve scrutiny. 
 - Could a different approach avoid entire categories of bugs?
 
 **"Has this approach been tried before in this codebase? What happened?"**
-- Check `.taskmaster/knowledge/pitfalls.md` and `decisions.md` for prior art
+- Check `context/adr/` and the related tasks' `task-review.md` files for prior art
 - Check if similar features used a different pattern (and why)
 
 **"Does this contradict a recorded decision?"**

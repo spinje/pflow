@@ -12,11 +12,30 @@
       "Write",
       "Edit",
       "Bash(chmod:*)",
-      "Bash(touch:*)"
+      "Bash(touch:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git fetch:*)",
+      "Bash(git merge-base:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git blame:*)",
+      "Bash(git ls-remote:*)",
+      "Bash(git worktree list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(scripts/worktree rm:*)",
+      "Bash(./scripts/worktree rm:*)",
+      "Bash(./scripts/tasks:*)"
     ],
-    "deny": [],
-    "ask": [
-      "Bash(rm:*)"
-    ]
+    "deny": []
   }
 }

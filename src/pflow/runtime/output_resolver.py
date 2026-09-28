@@ -147,7 +147,8 @@ def populate_declared_outputs(
     failures: list[dict[str, Any]] = []
 
     for output_name, output_config in outputs.items():
-        # Skip outputs without source field (backward compatibility)
+        # Sourceless outputs are schema-valid (source is optional and the validator
+        # accepts them), but under namespacing nothing writes them to root: skip.
         if not isinstance(output_config, dict) or "source" not in output_config:
             continue
 

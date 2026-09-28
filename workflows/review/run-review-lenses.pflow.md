@@ -1,6 +1,6 @@
 # Run review lenses
 
-Fan the pflow review battery out as parallel read-only subagents (Codex/GPT-sol by default, Claude optional), then merge the findings into one deduplicated report that flags where independent lenses converge. The merge preserves; it never adjudicates — verification and verdicts stay with the caller (the deep-review flow). Lenses run blind to each other; only the merge step sees all outputs, and no agent ever sees the merged report. Execution-based lenses (`review-falsifier`) never run here — this fan-out is read-only by contract.
+Fan the pflow review battery out as parallel read-only subagents (Codex/GPT-astra by default, Claude optional), then merge the findings into one deduplicated report that flags where independent lenses converge. The merge preserves; it never adjudicates — verification and verdicts stay with the caller (the deep-review flow). Lenses run blind to each other; only the merge step sees all outputs, and no agent ever sees the merged report. Execution-based lenses (`review-falsifier`) never run here — this fan-out is read-only by contract.
 
 ## Inputs
 
@@ -20,7 +20,7 @@ What every lens reviews, stated as an instruction (e.g. "Review all changes on t
 
 ### provider
 
-Which engine runs ALL lenses: `codex` (GPT sol via the Codex CLI) or `claude` (Claude Code, opus). One provider per run — no per-lens routing. Codex is the default deliberately: a same-family reviewer shares the author's blind spots, and cross-model diversity is the point of this dispatch.
+Which engine runs ALL lenses: `codex` (GPT astra via the Codex CLI) or `claude` (Claude Code, opus). One provider per run — no per-lens routing. Codex is the default deliberately: a same-family reviewer shares the author's blind spots, and cross-model diversity is the point of this dispatch.
 
 - type: string
 - required: false
@@ -54,7 +54,7 @@ fi
 
 ### load-lenses
 
-Normalize the lens list and load each persona from its canonical `.claude/agents/*.md` file (single source of truth — the generated `.codex` twins are build artifacts). Each lens's **frontmatter is the runtime contract**: its `model`/`effort` drive the launch. Codex maps contract tiers per ORCHESTRATION.md's table (opus/fable → `gpt-5.6-sol`, sonnet → `gpt-5.6-terra`) and passes effort through `model_reasoning_effort`; Claude uses the model alias as-is and approximates effort as a thinking budget (pflow's claude backend has no effort parameter — this mapping is the workflow's own). All lenses go to the chosen provider's run node (the other receives an empty list and no-ops — two nodes exist only because pflow rejects one provider's parameters on the other's launch). Fails loudly on an unknown provider, a missing persona file, or an execution-based lens (`review-falsifier` needs write/execute access this read-only fan-out never grants).
+Normalize the lens list and load each persona from its canonical `.claude/agents/*.md` file (single source of truth — the generated `.codex` twins are build artifacts). Each lens's **frontmatter is the runtime contract**: its `model`/`effort` drive the launch. Codex maps contract tiers per ORCHESTRATION.md's table (every tier → `gpt-6-astra`) and passes effort through `model_reasoning_effort`; Claude uses the model alias as-is and approximates effort as a thinking budget (pflow's claude backend has no effort parameter — this mapping is the workflow's own). All lenses go to the chosen provider's run node (the other receives an empty list and no-ops — two nodes exist only because pflow rejects one provider's parameters on the other's launch). Fails loudly on an unknown provider, a missing persona file, or an execution-based lens (`review-falsifier` needs write/execute access this read-only fan-out never grants).
 
 - type: code
 - inputs:
@@ -77,7 +77,7 @@ if provider not in ("codex", "claude"):
 EXECUTION_LENSES = {"review-falsifier"}
 
 # Contract tier -> codex launch model (mirror of ORCHESTRATION.md's mapping table)
-CODEX_MODELS = {"opus": "gpt-5.6-sol", "fable": "gpt-5.6-sol", "sonnet": "gpt-5.6-terra"}
+CODEX_MODELS = {"opus": "gpt-6-astra", "fable": "gpt-6-astra", "sonnet": "gpt-6-astra"}
 # Effort -> claude thinking budget (approximation; claude backend has no effort param)
 THINKING_TOKENS = {"low": 4000, "medium": 8000, "high": 16000, "xhigh": 32000, "max": 32000}
 
@@ -92,7 +92,7 @@ for entry in lenses:
     path = agents_dir / f"{name}.md"
     if not path.is_file():
         raise FileNotFoundError(f"No persona file for lens {name!r} at {path}")
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     if text.startswith("---"):
         _, fm, body = text.split("---", 2)
         meta = {}
@@ -130,7 +130,7 @@ result: dict = {
 
 ### run-codex
 
-Every codex-routed lens runs here concurrently as a read-only sol agent — its persona as system prompt, the repo as cwd so it reads REVIEW-PROTOCOL.md and the CLAUDE.md files itself. `continue` error handling: one dead lens never kills the battery; it surfaces as a named coverage gap instead. The one exception: when EVERY selected lens fails, the engine aborts the batch loudly (per-lens errors recorded, no merged report) — the caller treats that as a full coverage gap and re-runs; it is never a clean pass. The 3600s timeout is a hang detector, not a pace expectation.
+Every codex-routed lens runs here concurrently as a read-only astra agent — its persona as system prompt, the repo as cwd so it reads REVIEW-PROTOCOL.md and the CLAUDE.md files itself. `continue` error handling: one dead lens never kills the battery; it surfaces as a named coverage gap instead. The one exception: when EVERY selected lens fails, the engine aborts the batch loudly (per-lens errors recorded, no merged report) — the caller treats that as a full coverage gap and re-runs; it is never a clean pass. The 3600s timeout is a hang detector, not a pace expectation.
 
 - type: agent
 - backend: codex
@@ -237,7 +237,7 @@ Merge, don't adjudicate: deduplicate true duplicates, preserve every distinct fi
 
 - type: agent
 - backend: codex
-- model: gpt-5.6-sol
+- model: gpt-6-astra
 - sandbox: read-only
 - approval_policy: never
 - timeout: 1800

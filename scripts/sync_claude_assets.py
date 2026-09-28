@@ -17,9 +17,9 @@ CLAUDE_COMMAND_AGENT = re.compile(r"@agent-([A-Za-z0-9_-]+)")
 CLAUDE_COMMAND_AUTORUN = re.compile(r"^!`(?P<command>[^`]+)`$", re.MULTILINE)
 NON_AGENT_FILES = frozenset({"README.md", "REVIEW-PROTOCOL.md"})
 CLAUDE_AGENT_MODEL_TO_CODEX = {
-    "fable": "gpt-5.6-sol",
-    "opus": "gpt-5.6-sol",
-    "sonnet": "gpt-5.6-terra",
+    "fable": "gpt-6-astra",
+    "opus": "gpt-6-astra",
+    "sonnet": "gpt-6-astra",
 }
 CLAUDE_AGENT_EFFORT_TO_CODEX = {
     "low": "low",

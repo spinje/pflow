@@ -25,6 +25,10 @@ You already know the current state from the conversation. Determine which review
 
 Tell the agents the chosen scope explicitly in their prompts — per REVIEW-PROTOCOL.md they execute the named scope, never infer or substitute it.
 
+**An empty target diff is a dispatch error, not a clean result** — when the chosen scope's `--stat`
+(below) is empty, stop and fix the scope before launching anything: a lens over nothing returns
+clean, and that clean gets read as coverage.
+
 **Scale the battery — deploy 1-8 agents, never more.** Gauge size with the chosen scope's `--stat` diff (`git diff --stat`, `--cached --stat`, or `origin/<base>...HEAD --stat`) and the file list (for plans: estimate from the plan's phases and components touched):
 
 | Tier | Scope | Agents |
@@ -35,6 +39,12 @@ Tell the agents the chosen scope explicitly in their prompts — per REVIEW-PROT
 | Major | >500 lines, or >50 files, or multi-phase plans of that scale | 5-8 |
 
 **Counts are ceilings, not targets.** Never deploy a specialist whose dimension the scope doesn't touch just to hit the tier's number — if only 3 dimensions are genuinely in play on a Full-tier diff, deploy 3. Size doesn't create relevance: a huge diff that never touches threading or user-facing output still gets no `review-concurrency-safety` or `review-agent-ux`, so even Major-tier reviews rarely exceed 5-6 agents in practice. When in doubt between tiers, pick the higher one.
+
+**Sensitive paths set a minimum of Full tier regardless of diff size** — the engine
+(`src/pflow/runtime/engine/`), the trace format (`src/pflow/runtime/workflow_trace.py`,
+`src/pflow/core/trace_io.py`), shell and code node execution (`src/pflow/nodes/shell/`,
+`src/pflow/nodes/python/`), and the MCP server surface (`src/pflow/mcp_server/`). A 5-line engine
+change outranks a 500-line UI change.
 
 **User-specified count.** If the invocation includes a standalone number (`3`) or range (`2-4`), it overrides the tier table: a number is an exact count, a range is floor and ceiling (relevance picks within). `review-plan` still fills slot 1 in plan mode. If the floor exceeds the genuinely relevant dimensions, fill remaining slots with the strong defaults (`review-silent-failures`, `review-impact-completeness`) and note it in the summary. Numbers inside identifiers (`task 38`) are not counts.
 
@@ -51,7 +61,9 @@ uv run pflow workflows/review/run-review-lenses.pflow.md \
 ```
 
 Provider defaults to codex — cross-model diversity is the point: a same-family reviewer shares
-the author's blind spots. **Cross-model means OPPOSITE the builder**: a Claude-side caller keeps
+the author's blind spots. It also buys **capacity** (the lenses run outside the runner — zero of
+its child slots) and **context economy** (one merged report in your window instead of N).
+**Cross-model means OPPOSITE the builder**: a Claude-side caller keeps
 the codex default; a Codex-side gate runner passes `provider=claude` (the claude branch runs
 tool-restricted and SDK-sandboxed; the codex branch stays the mechanically read-only path). Each `lenses` entry is a bare agent name or `{"name": …, "target": …}`
 giving that one lens its own review target (the mechanism for re-reviews: hand a lens its prior
@@ -62,18 +74,29 @@ preserves, never adjudicates — evaluation stays yours). A battery outruns a si
 auto-backgrounds into the wake trap), so launch it **backgrounded with stdout redirected to a
 declared file inside the worktree/task folder**, then **WAIT IN-TURN** for that file — a Monitor
 until-loop or repeated foreground polls. **Never end your turn to wait** — a stopped caller is
-never woken by background-Bash completion (DECISIONS #17). An empty or
+never woken by background-Bash completion (ORCHESTRATION.md "Review policy"). An empty or
 partial report is a COVERAGE GAP, not a clean pass — the report's Coverage section names failed
-lenses; re-run those before evaluating.
+lenses; re-run those before evaluating. **Read the report file IN FULL, never through `tail`** —
+a tail shows only the trailing verified-clean sections and is indistinguishable from a genuinely
+clean review. The workflow's `raw` output is the per-lens audit trail when you must prove the merge
+dropped nothing.
 
 **Fallback: direct Agent-tool launches** (the section below) — a logged one-off for when pflow
-cannot run or the caller must keep working in parallel; state the reason wherever you record the
-gate's outcome. **Plan-mode reviews always launch directly too** — the fan-out's contract is
-code review; the fan-out default applies to code mode only.
+cannot run or the caller must keep working in parallel. Fallback coverage is same-family, so
+wherever you record the gate's outcome (a lane's PR body) state (a) that the pflow fan-out did not
+start, and why, (b) which lenses ran, and (c) that they share the builder's model family — that
+coverage is the FLOOR, not diversity; the main orchestrator commissions one cross-model lens for a
+sensitive-path diff (tier rule above). Never fall back to reviewing your own diff. A Codex seat
+whose sandbox cannot start pflow runs the native `.codex/agents/review-*.toml` lenses under the
+same disclosure. **Plan-mode reviews always launch directly too** — the fan-out's
+contract is code review; the fan-out default applies to code mode only.
 
 **`review-falsifier` always launches directly** (Agent tool), never through the fan-out — it
 EXECUTES the change (real workflow runs, targeted pytest) and needs the access the read-only
-fan-out never grants. Code mode only.
+fan-out never grants. Code mode only. It does not count toward the lens cap and runs **LAST** —
+after the reading battery's confirmed fixes have landed, so it attacks the state that ships. Give it
+the task spec path, plus `review-spec-conformance`'s Requirement Inventory when that lens ran.
+Skip it when the diff carries no user-facing promise to falsify (pure refactors, docs, tooling).
 
 ## Deploy Agents (direct launch — the fallback path, and the falsifier's only path)
 
@@ -121,13 +144,21 @@ or:
 Review all changes on this branch for task 135 (Execution Core Compile-Once Redesign).
 ```
 
+When the target includes a named document (an ADR, a settled ruling), state in the prompt (or
+`review_target`) that **SILENCE about it is a coverage gap, not a pass** — otherwise a lens skims
+the `.md` and reports nothing. Carry the live settled-rulings set
+(`.taskmaster/orchestration/DECISIONS.md`, `context/adr/`) into evaluation too, so a finding that
+proposes to regress one is disputed by default (Step 2) rather than argued from scratch.
+
 ## Evaluate Findings
 
 When all agents return, evaluate their findings rigorously. **Do not blindly trust the reviews.** Review agents can be wrong, miss context, or misunderstand the code.
 
 ### Step 1: Inventory
 
-Build a complete inventory of all findings across agents. For each finding, extract:
+Under the default fan-out dispatch the merged report largely IS the inventory — verify its
+Coverage section, then move to Step 2. For direct launches, build a complete inventory of all
+findings across agents. For each finding, extract:
 - **What**: The specific issue raised
 - **Where**: File path and location
 - **Severity**: Critical / Warning / Suggestion
@@ -144,6 +175,9 @@ For findings classified as Critical or high-confidence Warnings, verify them bef
 - If a finding references specific code, deploy a `pflow-codebase-searcher` agent (or a small batch in parallel) to verify the claim against actual code. The review agent may have hallucinated a file path, misread a function, or missed surrounding context.
 - Check whether the proposed fix would conflict with existing patterns or break other code. Check `context/adr/` — a finding that re-litigates a recorded decision is disputed by default; flag the conflict instead.
 - Check for context the review agent may have missed — CLAUDE.md files, related tests, git history.
+- **Disputing a Critical takes the same rigor as confirming one**: a searcher-verified
+  counter-citation (file:line of what the reviewer misread), never reasoning from memory — a
+  wrongly disputed Critical is silently final.
 
 You don't need to verify every Suggestion — focus verification effort on findings that would change the implementation.
 

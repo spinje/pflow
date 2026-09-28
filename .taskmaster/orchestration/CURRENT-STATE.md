@@ -1,98 +1,119 @@
-# CURRENT-STATE.md (last verified: 2026-09-27 outside any numbered session — main @ 02fcf160)
+# CURRENT-STATE.md (last verified: 2026-09-28 outside any numbered session — main @ 02fcf160)
 
 _Living state header — the ONE mandatory session-start read (~80-line budget; state + pointers
-only). Rewritten at close/park (DECISIONS #16); work done outside a numbered session appends a
-dated `## Outside-session — folded at next rewrite` block at the top, which the next boot folds.
-How-it-got-here: latest `sessions/session-NN.md` (+ the previous three braindumps); routing:
-`sessions/INDEX.md`. Every claim here is a pointer to verify, not a fact._
+only). Rewritten at close/park (ORCHESTRATION "Artifacts and ownership"); work done outside a
+numbered session appends a dated `## Outside-session — folded at next rewrite` block at the top,
+which the next boot folds. How-it-got-here: latest `sessions/session-NN.md` (+ the previous three
+braindumps); routing: `sessions/INDEX.md`. Every claim here is a pointer to verify, not a fact._
 
 ## Process
 
-- **Fold batch 3 landed 2026-09-27 (DECISIONS #23–#27) — the process contract moved again; read
-  ORCHESTRATION.md fresh.** Headlines: three-tier memory (session `## Braindump` → `RECURRENCE.md`
-  → `STANDING-KNOWLEDGE.md`, ex-BRAINDUMP; `sessions/INDEX.md` routing; `./scripts/tasks --boot`);
-  routing policy #24 (Fable = main orchestrator / task planners / design-bearing UI; Opus =
-  everything else; **Sonnet retired**; **every task gets a planner** — Fable planner → Opus task
-  orchestrator); small instruction edits ≤2 applied at close (#25); step-back before a point fix
-  + class filing bar (#26); no docs-PR lane, #5 stands (#27). Two new lenses:
-  `review-spec-conformance` (code, full-tier) · `review-architecture-fit` (plan/spec).
-  **Worktree provisioning is now `./scripts/worktree new | rm | list` (#28)** — the LLM-driven
-  workflow runner and `start-work` / `implement-plan` / `manual-verification` /
-  `test-writer-fixer` / `create-plan` are retired; `rm` owns the squash-safe teardown check.
-  **`make install` FAILED in every worktree until now** (`core.hooksPath` in the shared
-  `.git/config` makes `pre-commit install` refuse) — fixed in the Makefile, but a worktree
-  checks out committed `main`, so the fix only works for worktrees once it has landed there.
-  **Both batches are on PR #626** (`chore/orchestration-fold-batch-3`), user-authorized; merge
-  waits on CI + the auto-reviewer comments acted on (#14) + the user's word. Comparison + plans:
-  `scratchpads/orchestration-comparison/`; handover for the next agent:
-  `scratchpads/handoffs/handover-orchestration-fold-2026-09-27.md` (both local-only).
-- Earlier fold (2026-08-14/15, #15–#22, session-07): completion gate is one job owned by the
-  gate-runner via the pflow fan-out (#17); effort routing (#18); lane B on `lane-implementer`
-  (#20); `review-falsifier` (direct launch only).
-- Model/effort on every launch: runner-specific `model` + explicit `effort` (Codex:
-  `reasoning_effort`). Root `AGENTS.md` is the live launch contract.
-- **Merge policy** (#4/#14): orchestrator merges when fully ready — CI green + the implementing
-  agent has acted on auto-reviewer comments. Lane implementers merge their own PRs.
+- **The process contract moved twice in two days — read ORCHESTRATION.md, the role prompt and
+  DECISIONS.md fresh; nothing below restates them.** 2026-09-27: three-tier memory, routing
+  policy (DECISIONS #24), `scripts/worktree`, CLAUDE.md restructure. 2026-09-28: the sibling
+  programme's orchestration standard adopted IN FULL (user: *"make sure pflow is up to date to
+  [the sibling's] orchestration standards in full"*) — delegation by default with path+summary
+  returns; producer sets spec Status/Completed before the PR; closing-keyword and
+  `closingIssuesReferences` discipline; dev servers stopped and declared at handback; tooling
+  postmortems (screenshot skill); deep-review: empty-scope guard, read-in-full, counter-cited
+  disputes, falsifier last and outside the cap, same-family fallback disclosure, sensitive-path
+  minimum tier; searcher points at `context/`; test-reflect restore rule. Homes carry every rule.
+- **DECISIONS.md is five rows** (#4 merge authority · #5 commit authority · #19 name ban +
+  imported-not-earned · #24 routing · #31 no knowledge base) under the user's bar: *"decisions
+  are things that will impact future sessions hard and are not inferrable through its home"*. No
+  dates; numbers stable; removed rows live in git. Live citations were repointed at Homes;
+  session logs and task archives keep theirs as history.
+- **`.taskmaster/knowledge/` is deleted (#31).** 60 entries audited: 5 became one-line code
+  comments, 1 became `context/adr/0014` (Task 135 engine + shared-store-only), the rest were
+  already at their Homes, stale, or generic. The audit found and fixed #616 (copy/move-file
+  shared-store `overwrite` fallback) on the PR branch.
+- **Codex runner model is `gpt-6-astra` for every tier** (the two previous runner names are
+  retired, per the sibling's swap); `tests/test_scripts/test_codex_model_names.py` sweeps live
+  files for them. Root `AGENTS.md` is the live launch contract.
+- **No automatic PR review** (workflow removed; reviews run before `create-pr`); the on-demand
+  `@claude` mention workflow stays. Merge = CI green on the merged result (#4) + the user's word
+  where #5 requires it.
 - Instruments: `workflows/review/run-review-lenses.pflow.md` (codex fan-out, waited on in-turn)
-  · `workflows/search/run-searcher.pflow.md` (codex searcher offload). Known cosmetic gap: no
-  pricing data for `gpt-5.6-sol` → fan-out runs print "cost unavailable".
+  · `workflows/search/run-searcher.pflow.md` (codex searcher offload). Cosmetic: no pricing data
+  for the runner model → fan-out runs print "cost unavailable".
 
 ## In flight
 
-- **PR #626 open** (fold batch 3 + worktree script + CLAUDE.md restructure; 113 paths). No
-  worktrees beyond `main`, no live subagents. `origin/main == 02fcf160`; the main checkout sits
-  on the PR branch until it merges.
+- **PR #626 open** (`chore/orchestration-fold-batch-3`; head `8bd0f703` pushed 09-27) — CI was
+  red on that head (fixture encoding + golden-hash drift; both fixed locally). **The 2026-09-28
+  batch is UNCOMMITTED on the branch in the main checkout** (~60 paths: parity fold, DECISIONS
+  prune, knowledge fold, #616 fix, model swap, `scripts/worktree` review fixes, new tests) — the
+  user commits and pushes (#5); handover: `scratchpads/handoffs/handover-parity-fold-2026-09-28.md`.
+  After merge: `git checkout main && git pull`; `make install` in worktrees works from then on.
+- No worktrees beyond `main`, no live subagents. `origin/main == 02fcf160`.
 
 ## Recently shipped / filed
 
-- Merged: PR #619 (2026-09-21, CLAUDE-guidance audit) · #614 (08-23, closes #612) · #613
-  (08-22, closes #611) · #610 (08-14, the cross-repo fold). No producer remains.
-- Filed 2026-09-21, no fixes: #615–#618 (Astra-verified audit of `2ee91a77`; report
-  `scratchpads/codebase-audit-2026-09-21/report.md`, local-only).
-- Filed 2026-09-27, no fixes, **triage is the orchestrator's + user's call**: #620 (`$${…}`
-  escape documented but broken) · #621 (non-template `${` rejected everywhere) · #622 (no code
-  sharing; list `code` passes validate then crashes) · #623 (docs: choosing MCP tools for
-  deterministic steps; undocumented MCP `timeout:` / `on-error` salvage) · #624 (MCP state lost
-  between invocations) · #625 (prose-wrapped MCP JSON). #620–#622/#625 extend the
-  #550/#551/#552 `evaluate_script` cluster. Tacit notes:
-  `scratchpads/handoffs/braindump-issues-620-625.md` (local-only).
-- #608 + #609 (filed 08-14, still open): executed-verified falsifier findings on the #592 fix;
-  both lane-B-shaped. #609's fix shape is a claim — the lane verifies the exec-path error
-  inventory first.
+- Merged: PR #619 (09-21, CLAUDE-guidance audit) · #614 (08-23) · #613 (08-22) · #610 (08-14).
+- Filed 09-21, no fixes except #616 (fixed on the PR branch, closes on merge): #615, #617
+  (`delete-file` string `confirm_delete` — see also #448), #618.
+- Filed 09-27, no fixes, triage is the orchestrator's + user's call: #620–#625 (MCP/template
+  cluster; #620–#622/#625 extend #550/#551/#552). Notes: `scratchpads/handoffs/braindump-issues-620-625.md`.
+- #608 + #609 (08-14, open): executed-verified falsifier findings on the #592 fix; lane-B-shaped.
+- Filed 09-28 from the knowledge-base audit: **#627** (nodes raise vanilla exceptions at 45 sites —
+  task-shaped, class of #503) · **#628** (sourceless declared output passes validation, produces
+  nothing — needs the reject-vs-warn ruling). The simple finds were fixed on the PR branch.
 
 ## Current arc
 
-- **Task 94 spec REWRITTEN + design LOCKED (session-06); not yet started.** Under #24 it is the
-  first live run of the Fable-planner → Opus-orchestrator shape — freshness-check the spec
-  against `main` first (it predates #610–#619). Task 99 predates Task 177's agent-node
-  replacement; refresh before consideration.
-- Resume/HITL arc closed (125→164→174→171→176 ✅). Read `task_171` + `task_176` task-reviews
-  before resume/gate/trace work.
-- Tasks 142 and 46 parked in Later by user ruling 2026-07-15.
+- **Task 94 spec REWRITTEN + design LOCKED (session-06); not yet started.** First live run of
+  the Fable-planner → Opus-orchestrator shape — freshness-check the spec against `main` first.
+  Task 99 predates Task 177's agent-node replacement; refresh before consideration.
+- Resume/HITL arc closed (125→164→174→171→176). Read `task_171` + `task_176` reviews before
+  resume/gate/trace work. Tasks 142 and 46 parked in Later by user ruling.
 
 ## Parallel-lane candidates (open issues; re-scan at pick)
 
-- **Fresh:** #615–#618 · #620–#625 (cluster above) · **#608 · #609**.
+- **Fresh:** #615 · #617 · #618 · #620–#625 · **#608 · #609** · #628 (ruling first) · #627 (task-shaped).
 - **#589** bounded-memory text stdin (needs a hard-ceiling decision) · **#542** trace retention ·
   **#562** resumable inline workflows (both trace-format — serialize, lane-A excluded) · **#546**
   pinned-run resolve race · **#568** detached UI runs · **#538** liveness backstop (check #566
   overlap) · **#544** `llm_*` canonicalization · **#549** post-#539 visibility · **#528**
   `--output-format` · **#550/#551/#552** MCP `evaluate_script` cluster · **#580** UI run-value
-  unwrap (design-bearing → Fable per #8, now routable) · **#553** misleading "Workflow Not
-  Found" · **#520/#521** validator/parser · **#566/#567/#572/#574/#575** Windows/test-infra
-  tail · **#601** batch cost roll-up · **#606** dual LLM provider tables · **#602** (blocked
-  upstream: litellm 3.14 wheels).
+  unwrap (design-bearing → Fable) · **#553** misleading "Workflow Not Found" · **#520/#521**
+  validator/parser · **#566/#567/#572/#574/#575** Windows/test-infra tail · **#601** batch cost
+  roll-up · **#606** dual LLM provider tables · **#602** (blocked upstream: litellm wheels).
+
+## Do not re-raise (declined, with the trigger that reopens each)
+
+- pr-closer / RELEASE-BLOCK / HOLD-PUSH / batched releases / pure-docs self-merge / a docs-PR
+  lane — pflow has no production; state lands per #5. Reopens: never (user: "no docs prs").
+- Automatic PR review (any bot) — reviews run before the PR. Reopens: never.
+- A cross-task knowledge base (#31). Reopens: never.
+- DECISIONS index/archive split — moot at five rows.
+- Agent-file fact checker beyond `tests/test_docs/test_agent_references.py` — reopens when a
+  searcher def crosses ~30 KB (now ~15 KB).
+- Shell lint (pinned shellcheck over `scripts/`) — reopens on a shell bug shellcheck would have
+  caught. H1-as-name check for task specs — reopens when the board's width is a complaint.
+  PR-title Conventional-Commit gate — reopens when a changelog entry reads wrong. Searcher eval
+  harness — reopens at the next searcher-def edit larger than a paragraph. `Blocked by:` /
+  `## Use cases` spec fields — reopen when the board parses them. `draft` task status — the
+  check rejects it.
+- Foreground review fan-out and rebase+force-with-lease — pflow's choices (background-to-file,
+  merge-main) are deliberate; the sibling's differ for its own reasons.
+
+## Regime facts (dated — re-measure, never inherit)
+
+- 2026-09-28: `make test` 9190 passed; `make check` green; boot set per `./scripts/tasks --boot`
+  (run it — the number is in the handover). CI per-job ~2 min; Windows is a blocking gate.
 
 ## Watch list (non-obvious, easy to miss)
 
 - **Trace-format seam is hot**: #562 + #542 — serialize; run `task_159/baseline/verify.sh` for
-  trace-touching work. Engine + trace remain lane-A excluded regardless of size (DECISIONS #7).
+  trace-touching work. Engine + trace remain lane-A excluded regardless of size (ORCHESTRATION
+  "Lanes").
 - Conflation attractor: `is_trace_locked` (probe, `ui/run_tailer.py`) vs `_lock_trace_handle`
   (writer flock, `workflow_trace.py`).
 - Windows is a **blocking CI gate**; ADR-0013 governs shell semantics.
-- Real-browser verification requires killing stale `pflow ui` servers first.
+- Real-browser verification requires killing stale `pflow ui` servers first — and the producer
+  now stops its own before handback.
 - Treat old spec file:line refs as stale (Task 177 moved 133 files).
 - **Imported-not-earned rules (#19): a fold rule failing against a pflow instance is a user
-  escalation, never a silent keep or delete.** Batch 3 (#23–#27) is imported too.
-- Counters that used to live here (searcher-name ambiguity; Chocolatey CI flake) moved to
-  `RECURRENCE.md` — recognize a repeat in the moment, increment at close.
+  escalation, never a silent keep or delete.** Everything adopted 09-27/09-28 is imported.
+- Unattended `rm` denials (n=2 in RECURRENCE) were ruled: the user removed the `ask` rule on
+  `rm` from `.claude/settings.json`; the counter is gone (the setting is the record).

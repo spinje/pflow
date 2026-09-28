@@ -6,17 +6,20 @@ instrumentation; see `runtime/engine/CLAUDE.md`.
 ## Inputs, outputs, and lifecycle
 
 Author-provided inputs—static or resolved from `${...}`—arrive in `self.params`
-before `prep()`. Do not read author inputs from `shared` as a fallback. `shared`
-still carries injected runtime infrastructure such as MCP pools/cancellation, and
-`post()` writes node outputs there.
+before `prep()`. Do not read author inputs from `shared` as a fallback: a same-name
+fallback picked up namespace dicts (node IDs matching param names; bug class removed
+2025-12). `shared` still carries injected runtime infrastructure such as MCP
+pools/cancellation, and `post()` writes node outputs there.
 
 Production nodes inherit `core/node.py:Node`. Exceptions escaping `exec()` enter
 `Node._exec`'s retry loop; non-retriable failures or exhausted attempts reach
-`exec_fallback`. The engine owns graph traversal, not these retries. Translate
-failures inside exec deliberately when they are valid routable results, known
-non-retriable failures, or unsafe to repeat. Keep exec/fallback/post result shapes
-and returned actions consistent. Examples: `llm/llm.py` selective retry suppression
-and `http/http.py` routing of valid HTTP error responses.
+`exec_fallback`. Exceptions with `retriable = False` skip retry, and `max_retries`
+defaults to 1, so retry is opt-in per node. The engine owns graph traversal, not
+these retries. Translate failures inside exec deliberately when they are valid
+routable results, known non-retriable failures, or unsafe to repeat. Keep
+exec/fallback/post result shapes and returned actions consistent. Examples:
+`llm/llm.py` selective retry suppression and `http/http.py` routing of valid HTTP
+error responses.
 
 Store natural output types. Do not add convenience JSON auto-parsing to ordinary
 nodes; template coercion owns that behavior. See

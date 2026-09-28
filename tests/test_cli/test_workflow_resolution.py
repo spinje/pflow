@@ -498,8 +498,8 @@ class TestIsLikelyWorkflowName:
         assert is_likely_workflow_name("process", ("input=data.txt", "output=result.json"))
         assert is_likely_workflow_name("workflow", ("key=value",))
 
-    def test_cli_syntax_not_workflow_name(self):
-        """Test that CLI syntax isn't mistaken for workflow name."""
+    def test_keyless_and_flag_args_not_workflow_name(self):
+        """Test that keyless "=" tokens and flags don't mark a workflow name."""
         from pflow.cli.workflow_resolution import is_likely_workflow_name
 
         assert not is_likely_workflow_name("node1", ("=>", "node2"))

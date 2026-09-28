@@ -10,6 +10,12 @@ in execution/workflow_resolver.py. This module is CLI-only routing logic.
 from __future__ import annotations
 
 import os
+import re
+
+# A CLI parameter token: a non-empty key, then "=" (see param_parsing.parse_workflow_params).
+# Keys stay permissive (hyphens, dots, leading digits, and "--key=value" typos that the
+# undeclared-input validator reports), so only an empty key is rejected here.
+_PARAM_ARG = re.compile(r"[^=\s]+=")
 
 
 def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
@@ -45,21 +51,16 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
     if " " in text:
         return False
 
-    # If there are parameter-like arguments following (key=value), likely a workflow name
-    # But check that it's not CLI syntax (=> or --)
-    if remaining_args and any("=" in arg for arg in remaining_args) and "=>" not in remaining_args:
+    # key=value arguments following the name mark it as a workflow invocation
+    if any(_PARAM_ARG.match(arg) for arg in remaining_args):
         return True
 
-    # Single kebab-case word is likely a workflow name
-    # But exclude if followed by CLI operators or flags
+    # Single kebab-case word is likely a workflow name, unless followed by flags
     if "-" in text and not text.startswith("--"):
         # Special case: --help is allowed with workflow names
-        if remaining_args and len(remaining_args) > 0 and remaining_args[0] == "--help":
+        if remaining_args[:1] == ("--help",):
             return True
-        # Check if followed by other CLI syntax
-        return not (
-            remaining_args and ("=>" in remaining_args or any(arg.startswith("--") for arg in remaining_args[:2]))
-        )
+        return not any(arg.startswith("--") for arg in remaining_args[:2])
 
     # Don't treat single words as workflow names unless they have params
     # This prevents false positives with CLI node names like "node1", "read-file", etc.

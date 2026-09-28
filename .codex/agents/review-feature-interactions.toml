@@ -1,6 +1,6 @@
 name = "review-feature-interactions"
 description = "Enumerate how changes interact with existing features (batch, nested workflows, branching, caching, error handling, MCP, output/display). Catches: untested feature combinations, new abstraction boundaries, three-way interaction bugs, error handling dimension mismatches, feature parity gaps."
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_reasoning_effort = "medium"
 developer_instructions = '''
 

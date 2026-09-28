@@ -84,7 +84,7 @@ def test_issue_hint_forbids_task_scaffolding_and_fetches_via_gh() -> None:
     result = run_parse_result(BRANCH_RESPONSE, work_type="issue", issue_number="443")
 
     assert "do not create taskmaster task scaffolding" in result["agent_hint"]
-    assert "gh" in result["agent_hint"]
+    assert "via gh" in result["agent_hint"]
     assert result["work_label"] == "GitHub issue"
     assert result["full_branch"] == "feat/issue-443"  # unresolved title → anchored on the number alone
 

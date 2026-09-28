@@ -117,17 +117,19 @@ class TestIsLikelyWorkflowName:
         """Test that args with parameters are detected as workflow names."""
         assert is_likely_workflow_name("my-workflow", ("input=data.csv", "output=result"))
         assert is_likely_workflow_name("analyzer", ("file=test.txt",))
-        # But not if it's CLI syntax with =>
+        # Permissive keys (hyphens, dots, leading digits) still count as parameters
+        assert is_likely_workflow_name("analyzer", ("api-key=abc", "2fa.token=1"))
+        # A token with no key before "=" is not a parameter
         assert not is_likely_workflow_name("node1", ("=>", "node2"))
-        assert not is_likely_workflow_name("read-file", ("--path=data.txt", "=>", "process"))
+        assert not is_likely_workflow_name("analyzer", ("=value",))
 
     def test_kebab_case(self):
         """Test that kebab-case names are detected."""
         assert is_likely_workflow_name("my-analyzer", ())
         assert is_likely_workflow_name("generate-report", ())
         assert is_likely_workflow_name("test-workflow-name", ())
-        # But not if followed by CLI syntax
-        assert not is_likely_workflow_name("read-file", ("=>", "process"))
+        # But not if followed by flags
+        assert not is_likely_workflow_name("read-file", ("--verbose",))
 
     def test_natural_language(self):
         """Test that natural language is not detected as workflow name."""

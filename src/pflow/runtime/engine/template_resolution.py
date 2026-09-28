@@ -92,6 +92,8 @@ def split_params(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Separate params into template_params and static_params.
 
+    Only params TemplateResolver.has_templates detects are ever resolved; an
+    undetected template stays a literal in static_params.
     Static params get type coercion via coerce_param_for_node.
     _source_line keys are kept in static_params (nodes read them for error
     reporting, e.g. python_code.py uses _code_source_line for line numbers).

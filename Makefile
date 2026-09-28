@@ -31,7 +31,7 @@ install: ## Install the virtual environment and install the pre-commit hooks
 	@echo [setup] Creating virtual environment using uv
 	@$(UV) sync
 	@if git config core.hooksPath >/dev/null 2>&1; then \
-		echo "[setup] hooks are path-managed (core.hooksPath) - skipping pre-commit install"; \
+		echo "[setup] core.hooksPath is set - pflow pre-commit hooks NOT installed (make check covers the same gates)"; \
 	else \
 		$(UV) run pre-commit install; \
 	fi

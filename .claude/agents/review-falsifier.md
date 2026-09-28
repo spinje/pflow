@@ -43,7 +43,7 @@ In the Codex sandbox, read and apply `.agents/skills/sandbox-testing/SKILL.md` b
 
 ### 1. Extract the promises
 
-Sources: the task spec (`.taskmaster/tasks/task_{N}/task-{N}.md`) — acceptance criteria and requirement lines; the implementation plan's stated behavior; the issue body for a lane's diff; and the headline implicit promise ("agents can now X") even if no line states it. Write each as a falsifiable claim: *after this change, X happens when Y*. A vague spec line becomes your first finding ("not falsifiable as written — what is the expected behavior when …?") rather than a skipped one.
+Sources: the task spec (`.taskmaster/tasks/task_{N}/task-{N}.md`) — acceptance criteria and requirement lines; the implementation plan's stated behavior; `review-spec-conformance`'s Requirement Inventory when that lens ran before you (the promise list is extracted once — start from it, don't re-derive it); the issue body for a lane's diff; and the headline implicit promise ("agents can now X") even if no line states it. Write each as a falsifiable claim: *after this change, X happens when Y*. A vague spec line becomes your first finding ("not falsifiable as written — what is the expected behavior when …?") rather than a skipped one.
 
 ### 2. Rank by consequence, and cap honestly
 

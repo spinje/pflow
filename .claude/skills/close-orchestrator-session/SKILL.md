@@ -6,11 +6,11 @@ description: "End-of-session ritual for the pflow MAIN ORCHESTRATOR. Invoke when
 # Close Orchestrator Session
 
 The main orchestrator's session close is a **retrospection event, not a filing chore**. Session-file
-entries capture real transitions; `CURRENT-STATE.md` is rewritten at close/park (DECISIONS #16).
+entries capture real transitions; `CURRENT-STATE.md` is rewritten at close/park (ORCHESTRATION.md "Artifacts and ownership").
 This moment also adds the look BACK across the whole session — the corrections, overturned calls,
 improvised mechanisms, and the user's exact words — before they age out with your context window.
 A successor boots on `ORCHESTRATION.md + DECISIONS.md → CURRENT-STATE.md → the latest session
-file in full (thin-file rule, DECISIONS #10) + the previous three sessions' braindumps →
+file in full (thin-file rule, ORCHESTRATION.md "Artifacts and ownership") + the previous three sessions' braindumps →
 STANDING-KNOWLEDGE.md → RECURRENCE.md` (INDEX.md is grepped when an arc surfaces, never skimmed),
 plus its own reality verification; this ritual makes that stack sufficient.
 
@@ -82,8 +82,13 @@ Rewrite `CURRENT-STATE.md` from verified current reality; audit the other ledger
   corrections/overturns, cross-task seams, escalations, and the user's own words.
 - **Trackers** — task spec Status lines and spec decision ledgers were
   reconciled at each ship; spot-check the ones this session moved.
-- **DECISIONS.md** — every settled-decision-grade user ruling from this session has a row
-  (same-breath rule); if one is missing, that's a discipline failure to note AND fix.
+- **DECISIONS.md** — every user ruling from this session that passes the ledger's bar (hits
+  future sessions hard AND is not inferable from its Home — authority and standing bans, mostly)
+  has a row, written in the same breath; every other ruling lives at its Home only. Hygiene
+  rides the same pass, against the ledger's bar (its header): a row whose Home now carries the
+  rule, or that no longer hits future sessions hard, is REMOVED — numbers stay stable, git holds
+  the history, and every live citation of the removed number is repointed at the Home in the
+  same pass; a body restating its Home shrinks to the ruling plus the pointer; no dates.
 
 ## 3. Reconcile RECURRENCE.md (mechanical, never optional)
 
@@ -98,7 +103,7 @@ every close, mechanically.
 ## 4. Promotions + process evolution (never silent; self-applied only below the bar)
 
 **Small edits at importance ≤2 — adding or modifying a sentence or clause — are APPLIED here, not
-proposed (DECISIONS #25), and the session log names each one.** Everything above that bar goes to
+proposed, and the session log names each one.** Everything above that bar goes to
 the user with a recommendation: a 3+/5 call, a rule changing what a role may DO (routing, gates,
 authority, destructive-op boundaries), a deletion of standing guidance, or a multi-paragraph
 rewrite. After editing any `.claude/` asset, run the mirror sync:
@@ -112,7 +117,7 @@ Take the rest to the user, with a recommendation each:
   ramp's disposition.
 - **Process evolution**: if the session changed how this role operates — a new failure mode, a
   mechanism worth standardizing, a rule the user stated — edit `start-orchestration` or
-  `ORCHESTRATION.md` directly when it clears #25's bar (≤2 and sentence-sized, logged);
+  `ORCHESTRATION.md` directly when it clears this step's small-edit bar (≤2 and sentence-sized, logged);
   otherwise propose it and let the user rule.
 
 **STANDING-KNOWLEDGE.md hygiene rides this step.** It only ever holds the user model, recurred
@@ -154,7 +159,8 @@ future agent to decide WHETHER to read this session — never a summary.
 
 ## 6. Write the session braindump (the LAST content step)
 
-Append a `## Braindump` section to your own `sessions/session-NN.md`. It comes last
+Append a `## Braindump` section to your own `sessions/session-NN.md`; read the `/braindump`
+command (`~/.claude/commands/braindump.md`) before you start writing. It comes last
 deliberately: your context window is ending, and this is the capture of what only it holds. It
 is read for free by the next three boots, then stays findable via INDEX.md. This is a knowledge
 transfer to yourself, returning with no memory.
@@ -192,5 +198,6 @@ summarizing the session's events, which this must not do.
   climbs two closes running is a finding for step 4, not a shrug. The same command lints the
   newest session log for bare SHAs, and THAT can fail.
 - Session close does not authorize a commit. Report the exact uncommitted files; any commit or
-  push follows DECISIONS #5.
+  push follows DECISIONS #5. The ritual itself may run unattended at the end of a granted run;
+  only the commit waits for the user's word (#5).
 - Tell the user the session is closed and what the successor will pick up first.

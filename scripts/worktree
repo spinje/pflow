@@ -9,8 +9,9 @@
 #       scratchpads a fresh checkout won't have), and optionally launch a coding agent in a new
 #       Terminal window with the given context. A context starting with "/" or "$" is passed
 #       through verbatim as the agent's instruction; plain text is framed as the task.
-#       base-ref defaults to main ONLY when this checkout is on main; on any other branch it must
-#       be given explicitly, so a worktree never silently branches off unmerged work.
+#       base-ref defaults to main ONLY when the MAIN checkout is on main (wherever this runs from);
+#       on any other branch it must be given explicitly, so a worktree never silently branches
+#       off unmerged work. A local main behind origin/main is warned about, not refused.
 #   ./scripts/worktree rm <branch|path> [-f]
 #       Remove a worktree whose PR has MERGED — squash-safe: the merged PR's head SHA (via gh) must
 #       equal the branch tip, and the tree must be clean; the branch is deleted too. -f skips both
@@ -42,20 +43,23 @@ slugify() { # branch name -> directory slug (feat/task-94-model-list -> feat-tas
   echo "$1" | tr '[:upper:]/' '[:lower:]-' | tr -cd 'a-z0-9-'
 }
 
-dir_for() { # branch or path -> worktree directory
-  if [ -d "$1" ]; then (cd "$1" && pwd); else echo "$WORKTREES_DIR/$(slugify "$1")"; fi
+dir_for() { # branch or path -> worktree directory; a branch's slug wins over a same-named repo dir (docs/reference is both)
+  local slug_dir="$WORKTREES_DIR/$(slugify "$1")"
+  if [ -d "$slug_dir" ]; then echo "$slug_dir"; elif [ -d "$1" ]; then (cd "$1" && pwd); else echo "$slug_dir"; fi
 }
 
-merged_head() { # branch -> head SHA of its MERGED PR, or empty (squash merges make `git branch --merged` lie)
-  command -v gh >/dev/null 2>&1 || return 0
-  gh pr list --state merged --head "$1" --json headRefOid -q '.[0].headRefOid' 2>/dev/null || true
+merged_head() { # branch -> head SHA of its MERGED PR, or empty (squash merges make `git branch --merged` lie).
+  # Exit 2 = gh missing or failed (offline, unauthenticated) — distinct from "no merged PR", so a
+  # caller never reports an unanswerable query as "unmerged".
+  command -v gh >/dev/null 2>&1 || return 2
+  gh pr list --state merged --head "$1" --json headRefOid -q '.[0].headRefOid // empty' 2>/dev/null || return 2
 }
 
 cwd_blockers() { # dir -> "pid=N cwd=PATH" lines for processes rooted inside dir (read-only: report, never signal)
   command -v lsof >/dev/null 2>&1 || return 0
   lsof -a -d cwd -Fpn 2>/dev/null | awk -v dir="$1" '
     /^p/ { pid = substr($0, 2) }
-    /^n/ { path = substr($0, 2); if (index(path, dir) == 1) printf "    pid=%s cwd=%s\n", pid, path }'
+    /^n/ { path = substr($0, 2); if (path == dir || index(path, dir "/") == 1) printf "    pid=%s cwd=%s\n", pid, path }'
 }
 
 model_for_agent() { # <claude|codex> <model> -> runner model name; the Sonnet tier is retired (DECISIONS #24)
@@ -65,7 +69,7 @@ model_for_agent() { # <claude|codex> <model> -> runner model name; the Sonnet ti
   esac
   if [ "$agent" = "codex" ]; then
     case "$model" in
-      opus|fable) model="gpt-5.6-sol" ;;
+      opus|fable) model="gpt-6-astra" ;;
     esac
   fi
   printf '%s\n' "$model"
@@ -93,13 +97,12 @@ launch_agent() { # <dir> <branch> <base> <claude|codex> [context] [model]
   local dir="$1" branch="$2" base="$3" agent="$4" context="${5:-}" model="${6:-}"
   local agent_cmd prompt runfile
 
-  model="$(model_for_agent "$agent" "$model")"
   if [ "$agent" = "codex" ]; then
     agent_cmd="codex --sandbox workspace-write --ask-for-approval never"
   else
     agent_cmd="claude --dangerously-skip-permissions"
   fi
-  [ -n "$model" ] && agent_cmd="$agent_cmd --model $model"
+  [ -n "$model" ] && agent_cmd="$agent_cmd --model $(printf %q "$model")"
 
   prompt="You are working in a dedicated git worktree at $dir on branch $branch (base $base). Read CLAUDE.md first and run every command from this directory. Sibling worktrees may hold in-flight branches — read ORCHESTRATION.md \"Collision analysis\" before touching shared tooling."
   if [ -n "$context" ]; then
@@ -165,8 +168,21 @@ cmd_new() {
     current="$(git -C "$REPO_ROOT" branch --show-current)"
     [ "$current" = "main" ] || die "the main checkout is on '$current', not main — pass the base ref explicitly (usually: main)"
     base="main"
+    # PRs merge on GitHub, so the local main is often behind — a worktree cut from it starts on
+    # stale code and its rebase later pays for drift that was never needed.
+    if git -C "$REPO_ROOT" rev-parse --verify --quiet origin/main >/dev/null \
+       && ! git -C "$REPO_ROOT" merge-base --is-ancestor origin/main main; then
+      echo "warning: local main is behind origin/main (as of the last fetch) — git pull first, or pass origin/main as the base" >&2
+    fi
   fi
-  [ -n "$model" ] && model="$(model_for_agent "${agent:-claude}" "$model")"
+  # Everything that can refuse does so BEFORE the worktree exists — no half-provisioned tree to undo.
+  if [ -n "$model" ]; then
+    [ -n "$agent" ] || die "--model only applies alongside --claude or --codex"
+    model="$(model_for_agent "$agent" "$model")"
+  fi
+  if [ -n "$agent" ] && [ "${WORKTREE_NO_LAUNCH:-0}" != 1 ]; then
+    command -v osascript >/dev/null 2>&1 || die "--$agent opens a Terminal window via osascript (macOS) — not available here; create the worktree without it and launch the agent yourself"
+  fi
 
   local dir
   dir="$WORKTREES_DIR/$(slugify "$branch")"
@@ -233,9 +249,12 @@ cmd_rm() {
     return 0
   fi
 
+  [ -n "$branch" ] || die "worktree is on a detached HEAD — no branch to check a merged PR for; inspect, or -f"
   [ -z "$(git -C "$dir" status --porcelain)" ] \
     || die "worktree is dirty — commit or stash there, or re-run with -f to discard"
-  merged="$(merged_head "$branch")"
+  local rc=0
+  merged="$(merged_head "$branch")" || rc=$?
+  [ "$rc" -eq 0 ] || die "could not query gh for a merged PR of '$branch' (gh missing, unauthenticated, or offline) — fix gh, or -f to remove and keep the branch"
   [ -n "$merged" ] || die "no MERGED PR found for branch '$branch' (gh) — merge it first, or -f to remove and keep the branch"
   [ "$merged" = "$tip" ] \
     || die "merged PR head $merged != branch tip $tip — the branch moved after the merge; inspect, or -f"
@@ -247,17 +266,18 @@ cmd_rm() {
 }
 
 cmd_list() {
-  local path branch tip merged
+  local path branch tip merged rc
   git -C "$REPO_ROOT" worktree list --porcelain | awk '/^worktree /{print $2}' | while IFS= read -r path; do
     branch="$(git -C "$path" branch --show-current 2>/dev/null || echo "?")"
     tip="$(git -C "$path" rev-parse --short HEAD 2>/dev/null || echo "?")"
     if [ "$path" = "$REPO_ROOT" ]; then
       merged="(main checkout)"
-    elif ! command -v gh >/dev/null 2>&1; then
-      merged="? (no gh)"
     else
-      merged="$(merged_head "$branch")"
-      merged="${merged:+merged}"; merged="${merged:-unmerged}"
+      rc=0
+      merged="$(merged_head "$branch")" || rc=$?
+      if [ "$rc" -ne 0 ]; then merged="? (gh unavailable)"
+      else merged="${merged:+merged}"; merged="${merged:-unmerged}"
+      fi
     fi
     printf '%-60s %-40s %s  %s\n' "$path" "$branch" "$tip" "$merged"
   done

@@ -60,7 +60,7 @@ Plans make design decisions. Some are obviously right. Others deserve scrutiny. 
 - Could a different approach avoid entire categories of bugs?
 
 **"Has this approach been tried before in this codebase? What happened?"**
-- Check `.taskmaster/knowledge/pitfalls.md` and `decisions.md` for prior art
+- Check `context/adr/` and the related tasks' `task-review.md` files for prior art
 - Check if similar features used a different pattern (and why)
 
 **"Does this contradict a recorded decision?"**

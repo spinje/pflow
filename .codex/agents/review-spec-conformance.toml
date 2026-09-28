@@ -1,6 +1,6 @@
 name = "review-spec-conformance"
 description = "Does the FINAL integrated code do what the task spec and plan asked — no less, no more? Catches: requirements missing or partial (including spec-stated obligations nothing can execute: tests for the plan's named failure scenarios, instruction-file updates, the trace-format version bump + Task-159 baseline, the tests-windows CI gate, exercise on the real surface), behaviour no spec or plan line asked for, and requirements built against the wrong spec line. Code mode only; full-tier multi-phase implementations only — never a mid-task lens. The reading counterpart of review-falsifier."
-model = "gpt-5.6-sol"
+model = "gpt-6-astra"
 model_reasoning_effort = "medium"
 developer_instructions = '''
 

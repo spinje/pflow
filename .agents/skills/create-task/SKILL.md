@@ -47,7 +47,7 @@ Don't guess at fundamentals. It's better to ask than to document assumptions.
 
 ## Status
 
-<not started | in progress | done | blocked>
+<not started | in progress | done | blocked | deprecated>
 
 ## Priority
 
@@ -143,9 +143,12 @@ If something is both a requirement and a test scenario, put it in Requirements. 
     (`YYYY-MM-DD`), or the board files it under "Undated".
 13. **Far-phase / large tasks may defer the design (the carved-stub pattern)** — capture
     *Problem / Design intent (confirm at start, NOT a locked spec) / Current state (verified vs
-    main, path:line) / Dependencies*, and leave one deferred line: "Solution / Requirements /
-    Verification — finalized when the task is started (just-in-time)." A stub that locks a
-    design months early just goes stale.
+    main, path:line) / Dependencies*, add a `## Open questions (resolve at start)` section for
+    the choices the discussion left open, and leave one deferred line: "Solution / Requirements
+    / Verification — finalized when the task is started (just-in-time)." A stub that locks a
+    design months early just goes stale. To mirror an existing spec's shape, read the raw
+    `task-<N>.md` — the compact `./scripts/tasks <N>` view prints only Status and Description,
+    hiding the section structure.
 
 ## Example
 
@@ -255,8 +258,8 @@ Error messages should be semantic with line numbers since markdown always parses
 
 ## References
 
-- Existing JSON workflow parser: `src/parsers/json_workflow.py`
-- IR data structures: `src/core/ir.py`
+- Workflow loading (WorkflowManager): `src/pflow/core/workflow/manager.py`
+- IR schema and validation: `src/pflow/core/ir_schema.py`
 - Task 104 progress log: `.taskmaster/tasks/task_104/implementation/progress-log.md`
 ```
 

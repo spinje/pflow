@@ -105,7 +105,6 @@ pflow/
 │   └── test_scripts/        # scripts/ behaviour (asset sync, worktree)
 └── .taskmaster/
     ├── orchestration/       # Programme state, decisions, standing knowledge, recurrence, session logs + index
-    ├── knowledge/           # Cross-task patterns, pitfalls, decision deep-dives (see its CLAUDE.md)
     └── tasks/task_{N}/      # One directory per task; see "Task artifacts" below
         ├── task-{N}.md              # Spec: current what + why, edited in place (Status, Priority, Roadmap)
         ├── task-review.md           # Post-implementation durable forward-reference

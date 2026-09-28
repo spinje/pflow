@@ -175,3 +175,12 @@ Re-add the flag when done — headless is the standing default; do not leave hea
   **HTTP cache** heuristically reused old `assets/*` (index.html itself now sends
   `Cache-Control: no-cache`). Add a throwaway query param to bust it: `&v=<anything-new>`
   (unknown params are ignored by the app).
+
+## Tooling postmortem
+
+A flawed workflow here (wrong or misleading answer, a race, an obvious gap) gets fixed or
+reported, never silently worked around — the workaround dies with the session, the flaw bills
+every later one. **A phase that drove the UI ends its handback with a short postmortem:** what
+worked well, friction and time sinks, near-misses, and ideas ranked S/M/L by size. The
+orchestrating agent (`task-orchestrator` or `lane-implementer`) dispositions each item in the
+task's progress log (a lane: in the PR body).

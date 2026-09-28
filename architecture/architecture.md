@@ -161,7 +161,7 @@ workflow.pflow.md → parse_markdown() → dict (IR) → normalize_ir() → vali
 
 ### Shared Store Pattern
 
-See [shared-store.md](./core-concepts/shared-store.md) for the shared store pattern.
+Nodes communicate only through the shared store, which the engine namespaces per node. See [Why Namespaced Shared Store?](#why-namespaced-shared-store) below, the engine's namespace rules in [`src/pflow/runtime/engine/CLAUDE.md`](../src/pflow/runtime/engine/CLAUDE.md#namespace-and-import-boundaries), and the decision record [ADR 0014](../context/adr/0014-135-engine-orchestration-shared-store-only.md).
 
 ### Orchestration Engine
 
@@ -211,7 +211,7 @@ Templates use `${variable}` syntax. In `.pflow.md` files, templates appear inlin
 | `agent` | `nodes/agent/` | Agentic coding via Claude or Codex | Active |
 | `mcp` | `nodes/mcp/` | Execute MCP tools | Active |
 
-> **Critical:** See `src/pflow/nodes/CLAUDE.md` for the mandatory retry pattern. Nodes that catch exceptions in exec() break automatic retries.
+> **Critical:** Exceptions escaping `exec()` drive `Node`'s retry and `exec_fallback`, so translate failures inside `exec()` only deliberately (valid routable results, known non-retriable failures, or work unsafe to repeat) — see `src/pflow/nodes/CLAUDE.md`.
 
 ### Node Naming
 
@@ -536,4 +536,4 @@ Users simply specify `type: "workflow"` — they don't need to know about Workfl
 - **Node lifecycle primitives**: `src/pflow/core/node.py` — BaseNode, Node, wiring operators
 - **Engine internals**: `src/pflow/runtime/CLAUDE.md` — compiler, engine, template resolution, batch
 - **Node Interface Format**: `architecture/reference/enhanced-interface-format.md`
-- **Shared Store**: `architecture/core-concepts/shared-store.md`
+- **Shared Store**: `context/adr/0014-135-engine-orchestration-shared-store-only.md` (decision), `src/pflow/runtime/engine/CLAUDE.md` → "Namespace and import boundaries" (namespacing rules)
