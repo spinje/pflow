@@ -1,18 +1,22 @@
-"""Validate the runnable workflow examples embedded in the pflow guide.
+"""Validate the runnable workflow examples embedded in the guide and the docs.
 
 Sibling of ``test_example_validation.py``: that one validates shipped files
 under ``examples/``; this one validates the workflow examples written inline
-in the guide source (``src/pflow/guide/**/*.md``) that an agent reads via
-``pflow guide``.
+in prose — two corpora, one extractor:
+
+- the guide source (``src/pflow/guide/**/*.md``) an agent reads via
+  ``pflow guide``;
+- the Mintlify docs (``docs/**/*.mdx``) a human reads to understand the
+  workflows their agent builds.
 
 Why this exists
 ---------------
-The guide is the agent-facing surface. A guide example that doesn't compile,
-references a sub-workflow file that doesn't exist, or names an upstream node
-that isn't there teaches the agent a broken pattern. Those exact failure
-classes (phantom sub-workflow ref, drifted node reference, unknown node type)
-shipped in the guide before and were only caught by hand. This test makes the
-guard automatic.
+A prose example that doesn't compile, references a sub-workflow file that
+doesn't exist, or names an upstream node that isn't there teaches a broken
+pattern. Those exact failure classes (phantom sub-workflow ref, drifted node
+reference, unknown node type) shipped in the guide before and were only caught
+by hand; docs examples were unchecked entirely. This test makes the guard
+automatic for both.
 
 Determinism / gap-proofness
 ---------------------------
@@ -20,12 +24,14 @@ A fenced block is treated as a complete-workflow claim iff it contains a
 ``## Steps`` header. ``## Steps`` is *required* in every real pflow workflow
 and never appears in a single-node fragment excerpt, so the extraction set is
 defined by a format invariant, not a heuristic. Any complete workflow added
-to the guide later carries ``## Steps`` and is covered automatically — there
-is no marker to forget.
+to either corpus later carries ``## Steps`` and is covered automatically —
+there is no marker to forget. Fences may be indented (MDX nests them inside
+components such as ``<Update>`` or ``<Tab>``); the body is dedented before use.
+Fragments without ``## Steps`` are not checked by this test.
 
 Two tiers, both in-process
 --------------------------
-1. **Validation** (every complete example): same path as CLI
+1. **Validation** (every complete example, per corpus): same path as CLI
    ``--validate-only`` — parse → inject dummy params →
    ``WorkflowValidator.validate``.
 2. **Execution** (the self-contained subset only — ``code``/``shell`` nodes,
@@ -47,13 +53,16 @@ Tolerances (deliberate, not false-failure suppression)
   surface. Bare ``${name}`` refs (no dot) that aren't node ids are injected as
   optional inputs before validation. Dotted refs (``${node.key}``) are left
   untouched, so node-reference typos and phantom sub-workflows STILL fail —
-  verified by the negative cases in ``test_negative_cases_still_fail``.
+  verified by the negative cases in ``test_negative_cases_still_fail``, which
+  run through the extractor for each corpus's file type.
 - **MCP nodes.** Blocks whose only unregistered node types are ``mcp-*`` are
   skipped (MCP interfaces depend on user-configured servers) — same contract
   as the sibling example test.
 """
 
 import re
+import textwrap
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -70,11 +79,29 @@ from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
 from pflow.registry import Registry
 
-GUIDE_DIR = Path(__file__).parent.parent.parent / "src" / "pflow" / "guide"
+REPO_ROOT = Path(__file__).parent.parent.parent
 
-# Outermost fenced block; the backreference closes on the same fence width, so
-# a ````markdown wrapper containing ```shell blocks is captured as ONE block.
-_FENCE_RE = re.compile(r"(?m)^(`{3,})([^\n`]*)\n(.*?)^\1[ \t]*$", re.S)
+
+@dataclass(frozen=True)
+class Corpus:
+    """A tree of prose files whose fenced ``## Steps`` blocks are workflow claims."""
+
+    name: str
+    root: Path
+    pattern: str
+    # Extraction floor: guards against the regex silently matching nothing.
+    min_examples: int
+
+
+CORPORA = (
+    Corpus("guide", REPO_ROOT / "src" / "pflow" / "guide", "*.md", min_examples=7),
+    Corpus("docs", REPO_ROOT / "docs", "*.mdx", min_examples=5),
+)
+
+# Outermost fenced block; the backreferences close on the same indentation and
+# fence width, so a ````markdown wrapper containing ```shell blocks is captured
+# as ONE block, and a fence indented inside an MDX component still pairs up.
+_FENCE_RE = re.compile(r"(?m)^([ \t]*)(`{3,})([^\n`]*)\n(.*?)^\1\2[ \t]*$", re.S)
 # A filename hint in the prose just before a block, e.g. ``(`to-uppercase.pflow.md`)``.
 _HINT_RE = re.compile(r"`([A-Za-z0-9._-]+\.pflow\.md)`")
 # A bare template var ``${name}`` — no dot, no index. Dotted refs are node outputs.
@@ -94,20 +121,20 @@ def _filename_hint(prose_before: str) -> str | None:
     return hits[-1] if hits else None
 
 
-def _collect_guide_workflows(tmp_root: Path) -> list[tuple[str, Path]]:
-    """Extract every ``## Steps`` block and materialize it on disk.
+def _collect_workflows(corpus: Corpus, tmp_root: Path) -> list[tuple[str, Path]]:
+    """Extract every ``## Steps`` block in a corpus and materialize it on disk.
 
-    Blocks from the same guide file are written into one directory so that
+    Blocks from the same source file are written into one directory so that
     sub-workflow cross-references (``workflow: ./child.pflow.md``) resolve
     against sibling blocks — the guide presents child and parent as separate
     fenced blocks. Returns ``(label, path)`` pairs.
     """
     collected: list[tuple[str, Path]] = []
-    for md_file in sorted(GUIDE_DIR.rglob("*.md")):
-        text = md_file.read_text(encoding="utf-8")
+    for source in sorted(corpus.root.rglob(corpus.pattern)):
+        text = source.read_text(encoding="utf-8")
         blocks: list[tuple[str | None, str]] = []
         for match in _FENCE_RE.finditer(text):
-            body = match.group(3)
+            body = textwrap.dedent(match.group(4))
             if not _has_steps(body):
                 continue
             prose_before = "\n".join(text[: match.start()].rstrip().splitlines()[-3:])
@@ -115,18 +142,18 @@ def _collect_guide_workflows(tmp_root: Path) -> list[tuple[str, Path]]:
         if not blocks:
             continue
 
-        file_dir = tmp_root / md_file.stem
+        # Relative path, not stem: docs has several ``index.mdx`` and ``mcp.mdx``.
+        relative = source.relative_to(corpus.root)
+        file_dir = tmp_root / relative.with_suffix("")
         file_dir.mkdir(parents=True, exist_ok=True)
         for idx, (hint, body) in enumerate(blocks):
-            name = hint or f"guide_block_{idx}.pflow.md"
+            name = hint or f"block_{idx}.pflow.md"
             # Near-complete excerpts omit the H1 title; synthesize one so the
             # parser accepts the document. Content is otherwise verbatim.
-            content = (
-                body if _TITLE_RE.search(body) else f"# Guide Example {idx}\n\nExtracted from {md_file.name}.\n\n{body}"
-            )
+            content = body if _TITLE_RE.search(body) else f"# Example {idx}\n\nExtracted from {source.name}.\n\n{body}"
             path = file_dir / name
             path.write_text(content, encoding="utf-8")
-            collected.append((f"{md_file.name}:{name}", path))
+            collected.append((f"{corpus.name}/{relative.as_posix()}:{name}", path))
     return collected
 
 
@@ -192,25 +219,33 @@ def _is_self_contained_runnable(path: Path) -> bool:
     return True
 
 
-class TestGuideExampleValidation:
-    """Every complete workflow shown in the guide must pass structural validation."""
+class TestInlineExampleValidation:
+    """Every complete workflow shown in the guide or the docs must validate."""
+
+    @pytest.fixture(scope="class", params=CORPORA, ids=lambda c: c.name)
+    def corpus_workflows(
+        self, request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+    ) -> tuple[Corpus, list[tuple[str, Path]]]:
+        corpus: Corpus = request.param
+        return corpus, _collect_workflows(corpus, tmp_path_factory.mktemp(corpus.name))
 
     @pytest.fixture(scope="class")
-    def guide_workflows(self, tmp_path_factory: pytest.TempPathFactory) -> list[tuple[str, Path]]:
-        if not GUIDE_DIR.exists():
-            pytest.skip("Guide directory not found")
-        return _collect_guide_workflows(tmp_path_factory.mktemp("guide_examples"))
+    def all_workflows(self, tmp_path_factory: pytest.TempPathFactory) -> list[tuple[str, Path]]:
+        """Both corpora pooled: the execution tier's floors hold over the union."""
+        root = tmp_path_factory.mktemp("all_corpora")
+        return [example for corpus in CORPORA for example in _collect_workflows(corpus, root / corpus.name)]
 
-    def test_guide_examples_pass_validation(self, guide_workflows: list[tuple[str, Path]]) -> None:
-        """All ``## Steps`` blocks in the guide validate (MCP-only excerpts skipped)."""
-        assert guide_workflows, "No guide workflow examples found — extraction likely broke"
+    def test_examples_pass_validation(self, corpus_workflows: tuple[Corpus, list[tuple[str, Path]]]) -> None:
+        """All ``## Steps`` blocks in the corpus validate (MCP-only excerpts skipped)."""
+        corpus, workflows = corpus_workflows
+        assert workflows, f"No {corpus.name} workflow examples found — extraction likely broke"
 
         registry = Registry()
         registered = set(registry.load().keys())
 
         failures: list[tuple[str, str]] = []
         skipped: list[str] = []
-        for label, path in guide_workflows:
+        for label, path in workflows:
             missing = _unregistered_types(path, registered)
             if missing and all(t.startswith("mcp-") for t in missing):
                 skipped.append(label)
@@ -225,23 +260,27 @@ class TestGuideExampleValidation:
         if failures:
             rendered = "\n".join(f"  {label}: {msg}" for label, msg in failures)
             pytest.fail(
-                f"{len(failures)} validation error(s) in guide examples "
+                f"{len(failures)} validation error(s) in {corpus.name} examples "
                 f"({len(skipped)} MCP-only block(s) skipped):\n{rendered}"
             )
 
-    def test_extraction_coverage_is_meaningful(self, guide_workflows: list[tuple[str, Path]]) -> None:
+    def test_extraction_coverage_is_meaningful(self, corpus_workflows: tuple[Corpus, list[tuple[str, Path]]]) -> None:
         """Guard against extraction silently finding nothing (regex/format drift)."""
-        assert len(guide_workflows) >= 7, (
-            f"Expected >=7 guide workflow examples, found {len(guide_workflows)}. "
+        corpus, workflows = corpus_workflows
+        assert len(workflows) >= corpus.min_examples, (
+            f"Expected >={corpus.min_examples} {corpus.name} workflow examples, found {len(workflows)}. "
             "The ## Steps extraction may have broken, or examples were removed."
         )
 
-    def test_negative_cases_still_fail(self, tmp_path: Path) -> None:
-        """The tolerances must not mask real bugs.
+    @pytest.mark.parametrize("corpus", CORPORA, ids=lambda c: c.name)
+    def test_negative_cases_still_fail(self, corpus: Corpus, tmp_path: Path) -> None:
+        """The tolerances must not mask real bugs — checked through the extractor.
 
         Phantom sub-workflow refs, drifted node references, and unknown node
-        types must all still produce ERROR diagnostics — otherwise the
-        bare-var input injection would have made the whole test toothless.
+        types are embedded in a source file of the corpus's type (one indented
+        inside an MDX-style component) and must each be extracted AND produce
+        ERROR diagnostics — otherwise the bare-var input injection, or an
+        extractor that silently drops blocks, would have made the test toothless.
         """
         registry = Registry()
         cases = {
@@ -261,16 +300,25 @@ class TestGuideExampleValidation:
                 "Bad type.\n\n- type: not-a-real-node\n\n```shell command\necho hi\n```\n"
             ),
         }
-        for label, content in cases.items():
-            path = tmp_path / f"{label}.pflow.md"
-            path.write_text(content, encoding="utf-8")
+        sections = [f"Case {label}:\n\n````markdown\n{content}````\n" for label, content in cases.items()]
+        sections[0] = f'<Tab title="nested">\n{textwrap.indent(sections[0], "  ")}</Tab>\n'
+        source_root = tmp_path / "source"
+        source_root.mkdir()
+        page = source_root / f"page{corpus.pattern.removeprefix('*')}"
+        page.write_text("Intro prose.\n\n" + "\n".join(sections), encoding="utf-8")
+
+        probe = Corpus(corpus.name, source_root, corpus.pattern, min_examples=0)
+        extracted = _collect_workflows(probe, tmp_path / "extracted")
+        assert len(extracted) == len(cases), f"extractor found {len(extracted)} of {len(cases)} broken blocks"
+
+        for label, path in extracted:
             try:
                 errors = _validate(path, registry)
             except (MarkdownParseError, SchemaValidationError, ValueError):
                 continue  # raising is also an acceptable "caught it"
             assert errors, f"{label!r} should have produced a validation error but passed"
 
-    def test_self_contained_examples_execute(self, guide_workflows: list[tuple[str, Path]]) -> None:
+    def test_self_contained_examples_execute(self, all_workflows: list[tuple[str, Path]]) -> None:
         """The self-contained subset must RUN, not just validate.
 
         Validation proves a workflow is structurally sound; it cannot prove the
@@ -281,7 +329,7 @@ class TestGuideExampleValidation:
         with a warning. Examples needing network/LLM or caller inputs are
         validated above but not executed here.
         """
-        runnable = [(label, path) for label, path in guide_workflows if _is_self_contained_runnable(path)]
+        runnable = [(label, path) for label, path in all_workflows if _is_self_contained_runnable(path)]
         assert len(runnable) >= 2, (
             f"Expected >=2 self-contained runnable examples (the loop and error-handling demos), "
             f"found {len(runnable)}. The runnable filter or a code fence may have broken."
@@ -300,9 +348,9 @@ class TestGuideExampleValidation:
 
         if failures:
             rendered = "\n".join(f"  {label}: {msg}" for label, msg in failures)
-            pytest.fail(f"{len(failures)} self-contained guide example(s) failed to run:\n{rendered}")
+            pytest.fail(f"{len(failures)} self-contained example(s) failed to run:\n{rendered}")
 
-    def test_loop_example_terminates_by_condition(self, guide_workflows: list[tuple[str, Path]]) -> None:
+    def test_loop_example_terminates_by_condition(self, all_workflows: list[tuple[str, Path]]) -> None:
         """Documented ``loop:`` examples must stop on their own condition.
 
         The breadth execution test above only proves a loop example doesn't
@@ -313,7 +361,7 @@ class TestGuideExampleValidation:
         the iteration cap. A regression in condition-termination fails here.
         """
         loop_examples: list[tuple[str, Path, str]] = []
-        for label, path in guide_workflows:
+        for label, path in all_workflows:
             if not _is_self_contained_runnable(path):
                 continue
             ir = parse_markdown(path.read_text(encoding="utf-8")).ir
