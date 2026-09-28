@@ -45,9 +45,6 @@ proof.
   say "native searcher" / "searcher offload". Rename of the agent considered and held (churn
   across many files). Flip condition: an agent launches the wrong channel, or the user trips on
   it again | s07 | n=1
-- Windows CI installs GNU Make via Chocolatey with no retry/cache (`main.yml`, the
-  `tests-windows` job); a feed outage reads as a red gate. Top-10% fix = take the feed off the
-  critical path — gated on the flake recurring | s06, s07 | n=1
 - a mid-session USER edit to a tracked file read as a subagent overstepping its brief and was
   reverted without asking (the searcher's `effort` value) — an uncommitted change with no author
   is indistinguishable from a leaf's; ask before reverting anything you did not make | s07 | n=1

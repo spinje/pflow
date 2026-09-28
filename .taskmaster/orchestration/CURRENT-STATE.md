@@ -107,7 +107,9 @@ braindumps); routing: `sessions/INDEX.md`. Every claim here is a pointer to veri
   "Lanes").
 - Conflation attractor: `is_trace_locked` (probe, `ui/run_tailer.py`) vs `_lock_trace_handle`
   (writer flock, `workflow_trace.py`).
-- Windows is a **blocking CI gate**; ADR-0013 governs shell semantics.
+- Windows is a **blocking CI gate**; ADR-0013 governs shell semantics. Its two network fetches
+  (Chocolatey `make`, the `npx` MCP smoke package) retry three times since 09-28 — the flake
+  class hit n=2 (s06/s07 Chocolatey, 09-28 npx) and the retry is the record.
 - Real-browser verification requires killing stale `pflow ui` servers first — and the producer
   now stops its own before handback.
 - Treat old spec file:line refs as stale (Task 177 moved 133 files).
