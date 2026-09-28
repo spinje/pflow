@@ -39,12 +39,10 @@ braindumps); routing: `sessions/INDEX.md`. Every claim here is a pointer to veri
 
 ## In flight
 
-- **PR #626 open** (`chore/orchestration-fold-batch-3`; head `8bd0f703` pushed 09-27) — CI was
-  red on that head (fixture encoding + golden-hash drift; both fixed locally). **The 2026-09-28
-  batch is UNCOMMITTED on the branch in the main checkout** (~60 paths: parity fold, DECISIONS
-  prune, knowledge fold, #616 fix, model swap, `scripts/worktree` review fixes, new tests) — the
-  user commits and pushes (#5); handover: `scratchpads/handoffs/handover-parity-fold-2026-09-28.md`.
-  After merge: `git checkout main && git pull`; `make install` in worktrees works from then on.
+- **PR #626 open, CI green** (`chore/orchestration-fold-batch-3`; the 09-28 batch is committed
+  at `7deaa77c` and pushed, user-authorized; body carries "Closes #616"). Merge waits on the
+  user's word (#4/#5). After merge: `git checkout main && git pull`; `make install` in worktrees
+  works from then on. Handover: `scratchpads/handoffs/handover-parity-fold-2026-09-28.md`.
 - No worktrees beyond `main`, no live subagents. `origin/main == 02fcf160`.
 
 ## Recently shipped / filed
