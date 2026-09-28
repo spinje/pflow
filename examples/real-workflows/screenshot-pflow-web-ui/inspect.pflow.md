@@ -68,6 +68,7 @@ every edge's path — so connector↔edge and connector↔tile gaps are exact nu
 guesses. Also reports the viewport `scale` so rendered px can be converted to CSS px.
 
 - type: mcp-chrome-devtools-evaluate_script
+- pageId: ${prepare.page_id}
 - result_format: json_block
 - function: |
     async () => {

@@ -61,6 +61,7 @@ compares DOM edge ids against the live `/api/graph` contract by identity, never
 by re-derived counts.
 
 - type: mcp-chrome-devtools-evaluate_script
+- pageId: ${prepare.page_id}
 - result_format: json_block
 - function: |
     async () => {
@@ -164,6 +165,7 @@ by re-derived counts.
 Capture the checked state (context for any violation).
 
 - type: mcp-chrome-devtools-take_screenshot
+- pageId: ${prepare.page_id}
 - fullPage: true
 - format: png
 - filePath: ${out_path}
