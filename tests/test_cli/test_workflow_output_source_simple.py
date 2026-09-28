@@ -8,6 +8,7 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from pflow.cli.main import main
@@ -133,39 +134,31 @@ class TestWorkflowOutputSource:
         finally:
             Path(workflow_file).unlink(missing_ok=True)
 
-    def test_backward_compatibility_without_source(self):
-        """Test that outputs without source field still work (backward compatibility)."""
+    @pytest.mark.parametrize("extra_args", [["--validate-only"], []], ids=["validate-only", "run"])
+    def test_output_without_source_is_rejected(self, extra_args):
+        """A sourceless output fails validation instead of silently producing nothing (issue #628)."""
         workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "printf '%s' 'backward compat'"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "printf '%s' 'never reported'"}}],
             "edges": [],
-            "outputs": {
-                "echo": {
-                    "description": "Direct output reference"
-                    # No source field - should look for 'echo' key in shared store
-                }
-            },
+            "outputs": {"echo": {"description": "Declared without a source"}},
         }
 
-        # Create a temporary file since stdin-only workflows are no longer supported
         with tempfile.NamedTemporaryFile(encoding="utf-8", mode="w", suffix=".pflow.md", delete=False) as f:
             f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
             runner = CliRunner(mix_stderr=False)
-            result = runner.invoke(main, ["--output-format", "json", workflow_file])
+            result = runner.invoke(main, ["--output-format", "json", *extra_args, workflow_file])
 
-            assert result.exit_code == 0
+            assert result.exit_code != 0
             output = json.loads(result.stdout)
-            actual_result = output.get("result", output)
-
-            # Should find the echo output (either from root or from namespaced node)
-            # When no source is specified, it should look for the key name in shared store
-            # The echo node writes "backward compat" to shared["echo"] (or echo1.echo with namespacing)
-            # TODO: This backward compatibility feature is not yet implemented
-            # For now, verify that the workflow executes successfully and returns a result structure
-            assert actual_result is not None
-            assert isinstance(actual_result, dict)
+            assert output["success"] is False
+            assert "never reported" not in result.stdout
+            error = output["errors"][0]
+            assert error["path"] == "outputs.echo"
+            assert "'source' is a required property" in error["message"]
+            assert "Add a source line to output 'echo'" in error["suggestions"][0]
         finally:
             Path(workflow_file).unlink(missing_ok=True)

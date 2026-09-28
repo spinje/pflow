@@ -297,7 +297,7 @@ Parsed record array from the fetch response.
 
 **Input fields**: `type` (string|number|integer|boolean|array|object|any), `required` (true|false), `default` (only when required: false), `stdin` (true|false — only one input can have this), description as prose.
 
-**Output fields**: `source` (template expression like `${node.key}`), `type` (optional hint), `stdout` (true|false — at most one output may set this; marks the output that streams to stdout in text mode), description as prose.
+**Output fields**: `source` (required — template expression like `${node.key}`), `type` (optional hint), `stdout` (true|false — at most one output may set this; marks the output that streams to stdout in text mode), description as prose.
 
 **Node fields**: `type` (required), top-level controls like `batch`, `loop`, `retry`, `cache`, `prompt_cache`, `prewarm`, and `approval` (pause for a human before the step runs — see `pflow guide approval`), then node params as `- key: value`. Code/prompts/batch go in tagged code blocks.
 

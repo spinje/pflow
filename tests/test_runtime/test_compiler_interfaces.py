@@ -265,7 +265,13 @@ class TestCompilerInterfaces:
         """Test that valid outputs matching node capabilities compile successfully."""
         ir = {
             "ir_version": "0.1.0",
-            "outputs": {"content": {"description": "File content read from disk", "type": "string"}},
+            "outputs": {
+                "content": {
+                    "description": "File content read from disk",
+                    "type": "string",
+                    "source": "${reader.content}",
+                }
+            },
             "nodes": [{"id": "reader", "type": "read-file", "params": {"file_path": "test.txt"}}],
             "edges": [],
         }
@@ -273,34 +279,6 @@ class TestCompilerInterfaces:
         # Should compile successfully
         workflow = compile_workflow(ir, registry_with_nodes)
         assert workflow is not None
-
-    def test_outputs_that_cannot_be_traced_log_warning(self, registry_with_nodes, mock_node_import, caplog):
-        """Test that outputs that can't be traced to nodes log warnings, not errors."""
-        ir = {
-            "ir_version": "0.1.0",
-            "outputs": {"dynamic_key": {"description": "A dynamically generated key", "type": "string"}},
-            "nodes": [{"id": "reader", "type": "read-file", "params": {"file_path": "test.txt"}}],
-            "edges": [],
-        }
-
-        # Ensure caplog captures WARNING level logs from the compiler module
-        # This is necessary because earlier tests may have modified logger configuration
-        caplog.set_level("WARNING", logger="pflow.runtime.compilation.compiler")
-
-        # Should compile successfully but log warning
-        workflow = compile_workflow(ir, registry_with_nodes)
-        assert workflow is not None
-
-        # Check for warning
-        warning_found = False
-        for record in caplog.records:
-            if record.levelname == "WARNING" and "dynamic_key" in record.message:
-                warning_found = True
-                assert "cannot be traced to any node" in record.message
-                assert "may be fine if nodes write dynamic keys" in record.message
-                break
-
-        assert warning_found, "Expected warning about untraceable output not found"
 
     def test_hyphenated_output_names_now_allowed(self, registry_with_nodes, mock_node_import):
         """Test that hyphenated output names are now allowed."""
@@ -310,10 +288,12 @@ class TestCompilerInterfaces:
                 "valid-output": {  # Now allowed: contains hyphen
                     "description": "Valid hyphenated output name",
                     "type": "string",
+                    "source": "${node1.result}",
                 },
                 "another-output": {
                     "description": "Another hyphenated output",
                     "type": "string",
+                    "source": "${node1.result}",
                 },
             },
             "nodes": [{"id": "node1", "type": "transform", "params": {}}],
@@ -438,8 +418,8 @@ class TestCompilerInterfaces:
                 "output_file": {"description": "Output file location", "required": True, "type": "string"},
             },
             "outputs": {
-                "content": {"description": "Processed content", "type": "string"},
-                "result": {"description": "Transform result", "type": "any"},
+                "content": {"description": "Processed content", "type": "string", "source": "${reader.content}"},
+                "result": {"description": "Transform result", "type": "any", "source": "${processor.result}"},
             },
             "nodes": [
                 {"id": "reader", "type": "read-file", "params": {"file_path": "${input_file}"}},

@@ -938,9 +938,7 @@ def compile_workflow(
         ) from e
 
     # Step 3: Prepare compilation (validate, resolve inputs)
-    initial_params, _warnings, resolved_defaults, env_param_names = _prepare_compilation(
-        ir_dict, registry, initial_params
-    )
+    initial_params, _warnings, resolved_defaults, env_param_names = _prepare_compilation(ir_dict, initial_params)
 
     template_resolution_mode = initial_params.get("__template_resolution_mode__", "strict")
 
