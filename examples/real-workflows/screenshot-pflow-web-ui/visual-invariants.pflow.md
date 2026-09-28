@@ -61,6 +61,7 @@ compares DOM edge ids against the live `/api/graph` contract by identity, never
 by re-derived counts.
 
 - type: mcp-chrome-devtools-evaluate_script
+- result_format: json_block
 - function: |
     async () => {
       const vpEl = document.querySelector(".react-flow__viewport");
@@ -167,25 +168,6 @@ Capture the checked state (context for any violation).
 - format: png
 - filePath: ${out_path}
 
-### clean
-
-Strip the chrome-devtools "Script ran on page and returned" wrapper off the check
-result and re-emit pure JSON, so the `verdict` output pipes straight to `jq`.
-
-- type: code
-- inputs:
-    raw: ${check.result}
-
-```python code
-raw: str
-
-import json
-
-start = raw.find("{")
-end = raw.rfind("}")
-result: str = json.dumps(json.loads(raw[start : end + 1])) if start != -1 else "{}"
-```
-
 ## Outputs
 
 ### verdict
@@ -193,5 +175,5 @@ result: str = json.dumps(json.loads(raw[start : end + 1])) if start != -1 else "
 The invariant verdict: `passed` + `dotsChecked`/`leaves` counts, the edge-coverage
 report (or its skip reason), and up to 20 violations per invariant.
 
-- source: ${clean.result}
+- source: ${check.result}
 - stdout: true

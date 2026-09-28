@@ -38,7 +38,7 @@ Pure-JSON canvas geometry — run with `-p -o geometry` to print just this (no p
 header) and pipe to `jq`. Shape: `{ scale, nodes: [...], edges: [...] }` — see the field
 reference in the skill.
 
-- source: ${clean.result}
+- source: ${measure.result}
 - stdout: true
 
 ### viewport
@@ -68,6 +68,7 @@ every edge's path — so connector↔edge and connector↔tile gaps are exact nu
 guesses. Also reports the viewport `scale` so rendered px can be converted to CSS px.
 
 - type: mcp-chrome-devtools-evaluate_script
+- result_format: json_block
 - function: |
     async () => {
       const r = (el) => {
@@ -109,23 +110,3 @@ guesses. Also reports the viewport `scale` so rendered px can be converted to CS
       }
       return out;
     }
-
-### clean
-
-Strip the chrome-devtools "Script ran on page and returned" wrapper off the measure
-result and re-emit pure JSON (the JSON is the only brace-delimited span in the wrapper),
-so the `geometry` output pipes straight to `jq` with no escaping.
-
-- type: code
-- inputs:
-    raw: ${measure.result}
-
-```python code
-raw: str
-
-import json
-
-start = raw.find("{")
-end = raw.rfind("}")
-result: str = json.dumps(json.loads(raw[start : end + 1])) if start != -1 else "{}"
-```
