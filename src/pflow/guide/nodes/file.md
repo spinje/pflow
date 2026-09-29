@@ -25,7 +25,7 @@ Write the final report to disk.
 - content: ${format-for-delivery.response}
 ```
 
-**`delete-file` safety flag:** it won't act on `file_path` alone — it requires a `confirm_delete: true` flag that deliberately **cannot** be a node param (so a deletion can't be triggered by node config alone). Provide it as a workflow input and wire it in with `- inputs:` (that reference is also what lets the workflow validate):
+**`delete-file` safety flag:** it won't act on `file_path` alone — it requires a `confirm_delete: true` flag that deliberately **cannot** be a node param (so a deletion can't be triggered by node config alone). Provide it as a `- type: boolean` workflow input named `confirm_delete` and wire it in with `- inputs:` (that reference is also what lets the workflow validate). Only the boolean `true` authorizes deletion — any other value, including a string-typed input's `"true"`, is refused:
 
 ```markdown
 - type: delete-file
