@@ -62,8 +62,8 @@ that use real SDK objects and real servers, not attribute mocks.
   real `chrome-devtools-mcp@1.10.1` / `@playwright/mcp@0.0.83`; a v2 server serves a 1.26 client
   over both transports.
 - **Delete, don't port, what SDK 2.x now does natively.** v2's `stdio_server` moves the wire to
-  private fds and points fd 1 at stderr while serving — so the MCP-server half of #652's stdout
-  reservation (an override passing `stdout=` into `stdio_server`) is deleted here, not ported.
+  private fds, points fd 1 at stderr and fd 0 at devnull while serving — so the MCP-server stdio
+  shims (#652's stdout override, #657's stdin twin) are deleted here, not ported.
   Same test for every shim: if v2 covers it, the shim goes.
 - **The user's governing lens applies to every fork below**, verbatim: *"We should prioritize
   simplicity of the FINAL code, not how easy it is to get there. When in doubt we should ask
@@ -126,8 +126,10 @@ by a code dependency.
 - `pflow mcp serve` runs on v2 (`MCPServer`); every tool and resource call succeeds (the v2
   `context` argument is accepted and forwarded by pflow's overrides).
 - Agents see pflow's rendered error text for pass-through errors (shape per Q5).
-- The #652 MCP-side stdout override is deleted; stray output from tool execution still never
-  reaches the protocol channel (v2 native diversion).
+- The MCP-side stdio shims are deleted — the #652 stdout override AND the #657 stdin twin (a
+  private stdin stream handed to `stdio_server`); v2's `stdio_server` natively diverts fd 1 to
+  stderr and points fd 0 at devnull while serving. Stray output from tool execution still never
+  reaches the protocol channel, and a code-node subprocess under `mcp serve` still reads EOF.
 
 ### Dependencies and docs
 - `pyproject.toml` bounds per Q6; `uv.lock` relocked; the web UI still works on the relocked

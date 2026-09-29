@@ -216,6 +216,7 @@ class TestCodexProcessLifecycle:
             (
                 ["/bin/taskkill", "/PID", "2468", "/T", "/F"],
                 {
+                    "stdin": subprocess.DEVNULL,
                     "stdout": subprocess.DEVNULL,
                     "stderr": subprocess.DEVNULL,
                     "check": False,

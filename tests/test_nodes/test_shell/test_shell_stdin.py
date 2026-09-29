@@ -4,8 +4,15 @@ Tests verify that the ShellNode correctly handles stdin from params,
 including template-resolved values (set directly as resolved params).
 """
 
+import os
+from collections.abc import Callable, Iterator
+
+import pytest
+
 from pflow.nodes.shell.shell import ShellNode
 from tests.shared.shell_command_utils import python_json_command
+
+_SENTINEL = b'{"jsonrpc":"2.0","id":3,"method":"ping"}\n'
 
 
 class TestShellStdinParameterFallback:
@@ -150,3 +157,64 @@ Line 5: with `backticks`"""
 
         assert action == "default"
         assert shared["stdout"].strip() == "2"  # Lines 2 and 3
+
+
+@pytest.fixture
+def parent_stdin_pipe() -> Iterator[Callable[[], bytes]]:
+    """Make pflow's fd 0 an open pipe holding unread bytes, like ``pflow mcp serve``.
+
+    pytest points fd 0 at /dev/null, which hides inheritance (a child reading it
+    sees EOF either way). An open pipe with pending bytes and a live write end is
+    the MCP-serve shape: an inheriting child consumes the bytes, then blocks.
+    Yields ``leftover()``: closes the write end and returns the bytes still unread.
+    """
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, _SENTINEL)
+    saved_stdin = os.dup(0)
+    os.dup2(read_fd, 0)
+    write_open = True
+
+    def leftover() -> bytes:
+        nonlocal write_open
+        os.close(write_fd)
+        write_open = False
+        os.dup2(saved_stdin, 0)  # drop fd 0's reference so the read below hits EOF
+        return os.read(read_fd, 4096)
+
+    try:
+        yield leftover
+    finally:
+        os.dup2(saved_stdin, 0)
+        os.close(saved_stdin)
+        if write_open:
+            os.close(write_fd)
+        os.close(read_fd)
+
+
+class TestShellChildNeverInheritsParentStdin:
+    """A shell child gets its declared stdin or EOF, never pflow's own fd 0 (issue #657)."""
+
+    @pytest.mark.parametrize("params", [{}, {"stdin": ""}], ids=["no-stdin", "empty-stdin"])
+    def test_child_sees_eof_and_parent_stdin_is_untouched(
+        self, parent_stdin_pipe: Callable[[], bytes], params: dict
+    ) -> None:
+        node = ShellNode()
+        node.set_params({"command": "cat", "timeout": 5, **params})
+        shared: dict = {}
+
+        action = node.run(shared)
+
+        assert action == "default", shared.get("error")
+        assert shared["stdout"] == ""
+        assert parent_stdin_pipe() == _SENTINEL
+
+    def test_declared_stdin_still_reaches_child(self, parent_stdin_pipe: Callable[[], bytes]) -> None:
+        node = ShellNode()
+        node.set_params({"command": "cat", "timeout": 5, "stdin": "declared"})
+        shared: dict = {}
+
+        action = node.run(shared)
+
+        assert action == "default", shared.get("error")
+        assert shared["stdout"] == "declared"
+        assert parent_stdin_pipe() == _SENTINEL

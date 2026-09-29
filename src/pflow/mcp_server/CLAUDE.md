@@ -32,8 +32,9 @@ mcp_server/
 
 ## Boundaries to preserve
 
-- **stdout carries only MCP protocol messages.** Log to stderr. `server.py:PflowMCP.run_stdio_async`
-  holds the real stdout for the protocol via `core/stdout_reservation.py`; fd 1 points at stderr.
+- **stdio carries only MCP protocol messages.** Log to stderr. `server.py:PflowMCP.run_stdio_async`
+  holds the real stdin and stdout for the protocol via `core/stdio_reservation.py`; fd 0 points at
+  the null device and fd 1 at stderr, so workflow code never reads or writes the protocol.
 - `main.py` injects settings environment before LLM operations. FastMCP owns its
   event loop: call `mcp.run("stdio")`, never wrap it in `asyncio.run()`.
 - Tools offload synchronous services with `asyncio.to_thread`; blocking core work

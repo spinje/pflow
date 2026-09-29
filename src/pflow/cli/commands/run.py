@@ -33,7 +33,7 @@ from pflow.core.shell_integration import (
 from pflow.core.shell_integration import (
     read_stdin_enhanced,
 )
-from pflow.core.stdout_reservation import reserve_stdout
+from pflow.core.stdio_reservation import reserve_stdout
 from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution.result import ResolvedWorkflow

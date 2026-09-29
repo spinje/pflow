@@ -1,10 +1,12 @@
-"""stdout carries only machine output while user code runs (GH #652).
+"""stdio carries only machine traffic while user code runs (GH #652, #657).
 
 A code node's own thread and a subprocess it starts write to the process's
 stdout directly — neither passes through the code node's capture. Every surface
 whose stdout is read by a program must keep that output parseable and send the
-stray text to stderr. Real subprocesses: the contract is about file descriptors,
-which in-process runners (CliRunner, in-process MCP calls) never exercise.
+stray text to stderr. Under ``mcp serve`` the same code must not read the
+JSON-RPC input either: ``input()`` and an inheriting subprocess see EOF. Real
+subprocesses: the contract is about file descriptors, which in-process runners
+(CliRunner, in-process MCP calls) never exercise.
 """
 
 from __future__ import annotations
@@ -23,33 +25,36 @@ pytestmark = pytest.mark.e2e
 
 # The thread print is unflushed on purpose: it sits in the (block-buffered) sys.stdout
 # until the reservation ends, which must flush it to stderr, not to the restored stdout.
-# The subprocess inherits stdout (the path under test) but not stdin: under `mcp serve` on
-# Windows an inherited stdin — the JSON-RPC pipe the SDK is blocked reading — hangs the
-# child until the next message arrives (#657).
 STRAY_CODE = """\
 import subprocess, sys, threading
 print("CAPTURED")
 worker = threading.Thread(target=lambda: print("THREAD-STRAY"))
 worker.start()
 worker.join()
-subprocess.run([sys.executable, "-c", "print('SUBPROC-STRAY')"], stdin=subprocess.DEVNULL, check=True)
+subprocess.run([sys.executable, "-c", "print('SUBPROC-STRAY')"], check=True)
 result: str = "done"
 """
 
-STRAY_WORKFLOW = f"""\
-# Stray stdout
-
-## Steps
-
-### stray
-
-Writes to stdout from places the code node does not capture.
-
-- type: code
-
-```python code
-{STRAY_CODE}```
+# Neither read passes `stdin=` or checks for a TTY: both must see EOF, never the protocol.
+READER_CODE = """\
+import subprocess, sys
+child = subprocess.run(
+    [sys.executable, "-c", "import sys; print(repr(sys.stdin.read()))"],
+    capture_output=True, text=True, timeout=20, check=True,
+)
+try:
+    typed = input()
+except EOFError:
+    typed = "EOF"
+result: str = child.stdout.strip() + "|" + typed
 """
+
+
+def _code_workflow(title: str, code: str) -> str:
+    return f"# {title}\n\n## Steps\n\n### step\n\nRuns user code.\n\n- type: code\n\n```python code\n{code}```\n"
+
+
+STRAY_WORKFLOW = _code_workflow("Stray stdout", STRAY_CODE)
 
 
 def _clean_env(env: dict[str, str]) -> dict[str, str]:
@@ -113,7 +118,15 @@ def _drain(stream: Any, sink: queue.Queue[str]) -> None:
         sink.put(line)
 
 
-def test_mcp_stdio_protocol_stays_json_rpc(stray_workflow: Path, prepared_subprocess_env: dict[str, str]) -> None:
+def _mcp_session(
+    workflow: Path, env: dict[str, str], wait_for: set[int]
+) -> tuple[dict[int, dict[str, Any]], list[str], str]:
+    """Execute ``workflow`` over a raw ``mcp serve`` session, then ping (id 3).
+
+    The ping is queued while the workflow runs, so a workflow that reads the
+    server's stdin would consume it. Returns responses by id, the protocol lines
+    left after them, and stderr.
+    """
     proc = subprocess.Popen(  # noqa: S603
         [sys.executable, "-m", "pflow.cli", "mcp", "serve"],
         stdin=subprocess.PIPE,
@@ -121,7 +134,7 @@ def test_mcp_stdio_protocol_stays_json_rpc(stray_workflow: Path, prepared_subpro
         stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
-        env=_clean_env(prepared_subprocess_env),
+        env=_clean_env(env),
     )
     assert proc.stdin is not None
     stdout_lines: queue.Queue[str] = queue.Queue()
@@ -149,8 +162,9 @@ def test_mcp_stdio_protocol_stays_json_rpc(stray_workflow: Path, prepared_subpro
             "jsonrpc": "2.0",
             "id": 2,
             "method": "tools/call",
-            "params": {"name": "workflow_execute", "arguments": {"workflow": str(stray_workflow)}},
+            "params": {"name": "workflow_execute", "arguments": {"workflow": str(workflow)}},
         },
+        {"jsonrpc": "2.0", "id": 3, "method": "ping"},
     ]
     try:
         for message in messages:
@@ -158,7 +172,7 @@ def test_mcp_stdio_protocol_stays_json_rpc(stray_workflow: Path, prepared_subpro
         proc.stdin.flush()
 
         responses: dict[int, dict[str, Any]] = {}
-        while 2 not in responses:
+        while not wait_for <= responses.keys():
             line = stdout_lines.get(timeout=120)
             decoded = json.loads(line)  # every protocol line must be JSON-RPC
             if "id" in decoded:
@@ -169,9 +183,26 @@ def test_mcp_stdio_protocol_stays_json_rpc(stray_workflow: Path, prepared_subpro
         proc.kill()
     for reader in readers:
         reader.join(timeout=10)
+    return responses, list(stdout_lines.queue), "".join(stderr_lines.queue)
+
+
+def test_mcp_stdio_protocol_stays_json_rpc(stray_workflow: Path, prepared_subprocess_env: dict[str, str]) -> None:
+    responses, trailing, stderr = _mcp_session(stray_workflow, prepared_subprocess_env, wait_for={2})
 
     tool_text = responses[2]["result"]["content"][0]["text"]
     assert tool_text.startswith("✓"), tool_text
-    for line in list(stdout_lines.queue):  # anything written after the response
+    for line in trailing:  # anything written after the response
         json.loads(line)
-    _assert_strays_on_stderr("".join(stderr_lines.queue))
+    _assert_strays_on_stderr(stderr)
+
+
+def test_mcp_user_code_reads_eof_not_the_protocol(tmp_path: Path, prepared_subprocess_env: dict[str, str]) -> None:
+    workflow = tmp_path / "reader.pflow.md"
+    workflow.write_text(_code_workflow("Stdin reader", READER_CODE), encoding="utf-8")
+
+    responses, _, _ = _mcp_session(workflow, prepared_subprocess_env, wait_for={2, 3})
+
+    tool_text = responses[2]["result"]["content"][0]["text"]
+    assert tool_text.startswith("✓"), tool_text
+    assert "''|EOF" in tool_text
+    assert responses[3]["result"] == {}  # the queued ping was answered, not consumed
