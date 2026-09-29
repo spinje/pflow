@@ -113,30 +113,50 @@ class TestAutoApprove:
         assert "pre-approved via --auto-approve=notify" in capsys.readouterr().err
 
 
-class TestDeny:
-    """Task 171: the `deny` set — `pflow resume <id> --approve no`'s delivery channel."""
+class TestApprovalAnswer:
+    """Resume's single-use ``approval_answer`` — `pflow resume <id> --approve yes|no` (Task 171, #615)."""
 
-    def test_deny_resolves_denied_via_flag_without_prompting(self):
-        resolver = build_gate_resolver(frozenset(), None, deny=frozenset({"notify"}))
+    def test_yes_answers_exactly_one_occurrence(self, capsys):
+        # #615: a looping gate's next iteration is a new action — the answer must
+        # not become a standing approval for the id.
+        resolver = build_gate_resolver(frozenset(), _FakeOC(stdin_tty=False), approval_answer=("notify", True))
+        assert resolver(_approval("notify")) == GateResolution(approved=True, resolved_via="flag")
+        assert "Gate 'notify' approved via --approve yes" in capsys.readouterr().err
+        with pytest.raises(GateNotInteractiveError):
+            resolver(_approval("notify"))
+
+    def test_no_denies_via_flag_without_prompting(self):
+        resolver = build_gate_resolver(frozenset(), None, approval_answer=("notify", False))
         resolution = resolver(_approval("notify"), allow_prompt=False)
         assert resolution == GateResolution(approved=False, resolved_via="flag")
 
-    def test_deny_checked_before_auto_approve(self):
-        # Backstop only — the CLI rejects the contradictory flags up front. A
-        # silent approve here would run a step the human explicitly denied.
-        resolver = build_gate_resolver(frozenset({"notify"}), _FakeOC(), deny=frozenset({"notify"}))
+    def test_answer_checked_before_auto_approve(self):
+        # Backstop only — the CLI rejects `--approve no --auto-approve <same>` up
+        # front. A silent approve here would run a step the human explicitly denied.
+        resolver = build_gate_resolver(frozenset({"notify"}), _FakeOC(), approval_answer=("notify", False))
         assert resolver(_approval("notify")).approved is False
 
-    def test_deny_never_touches_escalations(self):
-        # You cannot pre-deny a question; a denied-set id on an escalation still
+    def test_auto_approve_covers_occurrences_after_the_answer(self, capsys):
+        # `--approve yes --auto-approve <id>`: the answer resolves the paused gate,
+        # the flag every later iteration.
+        resolver = build_gate_resolver(frozenset({"notify"}), _FakeOC(), approval_answer=("notify", True))
+        assert resolver(_approval("notify")).approved is True
+        assert resolver(_approval("notify")).approved is True
+        err = capsys.readouterr().err
+        assert "approved via --approve yes" in err
+        assert "pre-approved via --auto-approve=notify" in err
+
+    def test_answer_never_touches_escalations(self):
+        # You cannot pre-answer a question; an answered id on an escalation still
         # raises the non-interactive error (no controller to prompt through).
-        resolver = build_gate_resolver(frozenset(), None, deny=frozenset({"agent-step"}))
+        resolver = build_gate_resolver(frozenset(), None, approval_answer=("agent-step", True))
         with pytest.raises(GateNotInteractiveError):
             resolver(_escalation(question="a or b?"))
 
-    def test_deny_ignores_other_gates(self):
-        resolver = build_gate_resolver(frozenset({"other"}), None, deny=frozenset({"notify"}))
+    def test_answer_ignores_other_gates_and_is_not_consumed_by_them(self):
+        resolver = build_gate_resolver(frozenset({"other"}), None, approval_answer=("notify", False))
         assert resolver(_approval("other"), allow_prompt=False).approved is True
+        assert resolver(_approval("notify"), allow_prompt=False).approved is False
 
 
 class TestPromptFlows:

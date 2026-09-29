@@ -33,7 +33,7 @@ The gate content follows on stderr — an approval gate's resolved preview, or a
 Answer it — hours or days later:
 
 ```bash
-pflow resume <execution-id> --approve yes        # approval gate: run the gated step and continue
+pflow resume <execution-id> --approve yes        # approval gate: run the gated step once and continue
 pflow resume <execution-id> --approve no         # deny: the run ends cleanly as denied (exit 3)
 pflow resume <execution-id> --choose "per-env"   # escalation: an answer, or an option number (--choose 2)
 pflow resume list                                # pending unanswered pauses (token, workflow, step, gate, age)
@@ -51,6 +51,7 @@ Behavior worth knowing:
 
 - **Nothing re-runs.** Upstream steps are restored from the paused trace. An approved gate's step runs for the first time (approval gates fire *before* the step, so there is no side-effect re-fire risk and no confirmation prompt). An answered escalation continues at the **next** step with the decision folded into the completed step's result (`${step.result.escalation.decision.chosen}`) — the agent step is never re-paid.
 - **A token is consumed by its answer.** The resumed attempt supersedes the paused run; a second answer refuses and names the newer attempt. Each later gate in the same workflow pauses again as a **new** token.
+- **An answer covers one gate, once.** `--approve yes` approves the paused gate only — it is not a standing approval for that step. A paused **loop** step runs its first iteration on the answer; its later iterations are new actions that cannot pause (see below) and fail unless you also pass `--auto-approve <step>`.
 - **Resuming without an answer flag refuses** and shows the pending question with the exact command; `--approve`/`--choose` on a run that is not paused refuses too.
 - The **edited-workflow refusal** and `--force` (below) apply to paused resumes the same as failed ones. Input overrides (`KEY=VALUE`) work the same way.
 
@@ -78,7 +79,7 @@ The failed step runs **again** from the start. If it already partly side-effecte
 ## Other behavior worth knowing
 
 - **Edited workflow → refusal.** If the workflow file changed since the original run, resume refuses — the restored upstream outputs may no longer match the current steps. Re-run from the start, or `--force` to resume anyway.
-- **Loop steps restart at iteration 1.** Loop iteration position is not part of the saved run, so a resumed loop step begins its loop again.
+- **Loop steps restart at iteration 1.** Loop iteration position is not part of the saved run, so a resumed loop step begins its loop again. That is why a gated loop step pauses only on its first iteration: a pause at a later iteration could never be resumed where it stopped, so without pre-approval it fails (exit 1) instead of issuing a token.
 - **Downstream approval gates re-prompt.** Resume does not inherit prior approvals — each execution is a new action. `--auto-approve <step>` still works.
 - **Top-level granularity.** A failure *inside* a sub-workflow re-runs the **whole** sub-workflow step — restoration works only at the top level of the parent workflow. The cross-run cache softens the cost of re-running its inner steps.
 - **Interrupted (Ctrl+C / crash) runs** are resumable too: killed mid-step → resumes at that step; killed while a step was failing (or before its error handler started) → resumes at that failing step; killed between successful steps → resumes at the next step **only when it is unambiguous** (a single non-branching successor; a dynamic `code` router or a branch refuses). Crashed before the first step → nothing to resume.

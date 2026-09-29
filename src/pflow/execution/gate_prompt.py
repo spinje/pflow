@@ -56,7 +56,7 @@ def build_gate_resolver(
     auto_approve: frozenset[str],
     output_controller: OutputController | None,
     *,
-    deny: frozenset[str] = frozenset(),
+    approval_answer: tuple[str, bool] | None = None,
 ) -> GateResolver:
     """Build the ``__gate_resolver__`` callable for this run.
 
@@ -64,21 +64,32 @@ def build_gate_resolver(
     across the workflow tree — a child gate with a flagged id is approved).
     Escalations never auto-resolve: you cannot pre-answer an unknown question.
 
-    ``deny`` (Task 171) pre-DENIES approval gates by node id — the delivery
-    channel for ``pflow resume <id> --approve no``: the paused gate re-fires in
-    the resume run and resolves denied, producing an honest denied resolution
-    line in the attempt trace (→ trace status ``denied``, exit 3). Checked
-    BEFORE ``auto_approve``; the CLI rejects the contradictory
-    ``--approve no`` + ``--auto-approve <same id>`` combination up front, so
-    the precedence here is a backstop, never a silent tiebreak.
+    ``approval_answer`` — ``(node_id, approved)`` — is resume's SINGLE-USE
+    channel for ``pflow resume <id> --approve yes|no`` (Task 171, #615): the
+    paused gate re-fires in the resume run and the first approval request for
+    that id consumes the answer, writing an honest resolution line in the
+    attempt trace ("no" → trace status ``denied``, exit 3). It answers ONE gate
+    occurrence — a looping step's next iteration is a new action and is
+    resolved like any other gate (``auto_approve``, a prompt, or the
+    non-interactive error). Checked BEFORE ``auto_approve``; the CLI rejects the
+    contradictory ``--approve no`` + ``--auto-approve <same id>`` combination
+    up front, so the precedence is a backstop, never a silent tiebreak.
     """
+    pending_answer = approval_answer
 
     def resolver(request: GateRequest, *, allow_prompt: bool = True) -> GateResolution:
-        if request.kind == GATE_KIND_APPROVAL and request.node_id in deny:
-            return GateResolution(approved=False, resolved_via="flag")
+        nonlocal pending_answer
+        if request.kind == GATE_KIND_APPROVAL and pending_answer is not None and pending_answer[0] == request.node_id:
+            approved = pending_answer[1]
+            pending_answer = None
+            if approved and allow_prompt:
+                _echo_flag_approved(request, output_controller, how="approved via --approve yes")
+            return GateResolution(approved=approved, resolved_via="flag")
         if request.kind == GATE_KIND_APPROVAL and request.node_id in auto_approve:
             if allow_prompt:
-                _echo_auto_approved(request, output_controller)
+                _echo_flag_approved(
+                    request, output_controller, how=f"pre-approved via --auto-approve={request.node_id}"
+                )
             return GateResolution(approved=True, resolved_via="flag")
         if allow_prompt and output_controller is not None and can_prompt(output_controller):
             return _prompt(request, output_controller)
@@ -87,8 +98,8 @@ def build_gate_resolver(
     return resolver
 
 
-def _echo_auto_approved(request: GateRequest, output_controller: OutputController | None) -> None:
-    """One stderr line so a pre-approved gate is visible, never silent.
+def _echo_flag_approved(request: GateRequest, output_controller: OutputController | None, *, how: str) -> None:
+    """One stderr line so a flag-approved gate is visible, never silent; ``how`` names the flag.
 
     Code-review fix: the CALLER gates this on ``allow_prompt`` — ``allow_prompt=
     False`` means this resolver call is running on a parallel-batch WORKER
@@ -105,7 +116,7 @@ def _echo_auto_approved(request: GateRequest, output_controller: OutputControlle
         return
     output_controller.prepare_for_prompt()
     click.echo(
-        click.style(f"✓ Gate '{request.node_id}' pre-approved via --auto-approve={request.node_id}", fg="green"),
+        click.style(f"✓ Gate '{request.node_id}' {how}", fg="green"),
         err=True,
     )
 

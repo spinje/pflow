@@ -18,7 +18,7 @@ Two deliberate scope boundaries:
   ``/api/run``'s ``_preflight``); the CLI compiles in-process moments later and surfaces the error
   interactively — a compile here would just run it twice there.
 
-Known micro-reorder vs. the pre-extraction CLI: ``_prime_approval_delivery``'s contradiction
+Known micro-reorder vs. the pre-extraction CLI: ``_approval_answer``'s contradiction
 UsageError (``--approve no`` + ``--auto-approve <same node>``) now fires AFTER the content-hash gate
 instead of before (the CLI primes delivery off the returned source). Both outcomes are refusals and
 no test pins the old order; do not contort the seam to preserve it.
