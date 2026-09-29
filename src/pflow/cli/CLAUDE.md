@@ -49,6 +49,9 @@ is TTY-independent. The output header has a separate TTY policy in
 `workflow_output.py:_show_output_header`; do not use that policy to route data.
 `--print` suppresses normal stderr chatter; `--output-format` chooses the result
 format. Neither is a substitute for the other.
+Node execution (`runner.run` in `commands/run.py:execute_json_workflow`, probe's
+`node.run`) happens inside `core/stdout_reservation.py:reserve_stdout`, in every
+output format, so stray writes from user code reach stderr, not the result.
 
 ### Declared vs --only Output Contract
 

@@ -592,13 +592,10 @@ class TestCompleteUsageNormalization:
     ) -> None:
         """Call-site ordering in ``complete()``: merge happens before completion.
 
-        Verifies two things — both observable from this test:
-        1. ``ensure_model_priced`` runs from within ``complete()`` when the
-           model is missing from ``litellm.model_cost`` (proven by
-           ``register_calls`` being populated).
-        2. The merge runs BEFORE ``litellm.completion`` (proven by
-           ``complete()`` returning success — if merge ran after, the call
-           order assertion below would fail in CI under code drift).
+        Verifies that ``ensure_model_priced`` runs from within ``complete()``
+        when the model is missing from ``litellm.model_cost``, and that the
+        merged entry is already in the catalog when ``litellm.completion``
+        is called (recorded by the mock at call time).
 
         Does NOT verify LiteLLM's internal cost calculator behavior:
         ``litellm.completion`` is mocked, so the ``cost_usd`` assertion
@@ -635,28 +632,22 @@ class TestCompleteUsageNormalization:
 
         monkeypatch.setattr(httpx, "get", fake_httpx_get)
 
-        register_calls: list[dict] = []
+        entry_at_call_time: list[object] = []
 
-        def fake_register(upstream_map: dict) -> None:
-            register_calls.append(upstream_map)
-            # Simulate LiteLLM's real behavior: register_model merges the
-            # upstream entries into litellm.model_cost.
-            litellm.model_cost.update(upstream_map)
+        def fake_completion(**kwargs):
+            entry_at_call_time.append(litellm.model_cost.get(kwargs["model"]))
+            return make_litellm_response(
+                prompt_tokens=5,
+                completion_tokens=58,
+                response_cost=0.0005295,  # what LiteLLM would compute post-merge
+            )
 
-        monkeypatch.setattr(litellm, "register_model", fake_register)
-
-        mock_completion.return_value = make_litellm_response(
-            prompt_tokens=5,
-            completion_tokens=58,
-            response_cost=0.0005295,  # what LiteLLM would compute post-merge
-        )
+        mock_completion.side_effect = fake_completion
 
         response = complete(model="some/brand-new-model", prompt="hi")
 
-        # 1. ensure_model_priced ran from within complete() and called
-        #    register_model exactly once with the dict-form upstream map.
-        assert len(register_calls) == 1
-        assert register_calls[0] == fake_upstream_map
+        # 1. The upstream entry was merged before litellm.completion ran.
+        assert entry_at_call_time == [fake_upstream_map["some/brand-new-model"]]
         # 2. The mocked response_cost flowed through pflow's response
         #    normalization (does NOT exercise LiteLLM's cost calculator).
         assert response.usage["cost_usd"] == 0.0005295

@@ -26,12 +26,13 @@ Hybrid bundled-first, upstream-on-miss
 
 The bundled snapshot is stale for brand-new models that LiteLLM hasn't
 bundled yet (e.g., ``gemini/gemini-3.5-flash`` is in upstream but absent
-from the LiteLLM 1.86.1 wheel). ``ensure_model_priced(model)`` performs
-exactly one upstream fetch per process when a cost-map lookup misses,
-merging the upstream JSON via LiteLLM's public ``register_model(new_entries)``
-API. Bundled pricing always wins (the helper only fetches on miss).
-Failures degrade silently to ``cost_usd=None`` — same as today's pre-fix
-behavior for unbundled models.
+from the LiteLLM 1.86.1 wheel). ``ensure_model_priced(model)`` (runtime
+pricing) and ``try_load_upstream_catalog()`` (validator membership) each
+fetch upstream at most once per process and merge it through one helper,
+``_merge_upstream_catalog``: every upstream entry whose key the bundled
+catalog lacks is added under that exact key, and no bundled entry is ever
+written. Failures degrade silently to ``cost_usd=None`` — same as today's
+pre-fix behavior for unbundled models.
 
 The determinism contract is now two-tiered:
 
@@ -86,20 +87,58 @@ _RECOGNIZED_UPSTREAM_ENTRY_FIELDS = frozenset({
 
 
 def _filter_well_formed_upstream_entries(upstream_map: dict[str, Any]) -> dict[str, Any]:
-    """Drop upstream entries whose value isn't a dict carrying a recognized field.
-
-    Shared between ``ensure_model_priced`` (runtime cost-pricing path) and
-    ``try_load_upstream_catalog`` (validator catalog-membership path). Both
-    write to the same ``litellm.model_cost`` dict, so the filter must run on
-    BOTH paths — otherwise a runtime-side fetch landing first with malformed
-    payload could register junk entries that the validator's catalog check
-    later silently accepts via the documented non-dict fallback.
-    """
+    """Drop upstream entries whose value isn't a dict carrying a recognized field."""
     return {
         k: v
         for k, v in upstream_map.items()
         if isinstance(v, dict) and _RECOGNIZED_UPSTREAM_ENTRY_FIELDS.intersection(v)
     }
+
+
+def _merge_upstream_catalog(litellm: Any) -> None:
+    """Fetch LiteLLM's upstream cost map and add the entries bundled lacks.
+
+    The single write seam behind both upstream paths. Raises on any fetch
+    or payload-shape failure; callers own the latch and the failure policy.
+
+    Each upstream entry whose exact key is absent from ``litellm.model_cost``
+    is inserted under that key; existing keys are never written. This is
+    deliberately NOT ``litellm.register_model``: it re-resolves every key
+    through ``get_model_info``, so an upstream key that aliases a bundled
+    entry (``databricks/databricks-claude-opus-4-6`` resolves to
+    ``databricks/databricks-claude-opus-4``) overwrites the bundled entry and
+    never lands under its own key (#654). The three steps mirror LiteLLM's
+    own cost-map reload (``litellm/proxy/proxy_server.py``): write
+    ``model_cost``, invalidate its lookup caches (``get_model_info`` is
+    ``lru_cache``-d, so a lookup made before the merge would otherwise keep
+    answering from the alias), and add the new keys to the per-provider
+    model sets LiteLLM routes bare model names through (``claude-*`` →
+    ``anthropic``).
+
+    The JSON is fetched with ``httpx`` from ``litellm.model_cost_map_url``
+    (honors ``LITELLM_MODEL_COST_MAP_URL``) because LiteLLM's own URL fetch
+    honors ``LITELLM_LOCAL_MODEL_COST_MAP=True`` and would return the
+    bundled backup instead.
+    """
+    # httpx is litellm's own runtime dep — guaranteed importable whenever
+    # litellm is. Lazy-imported to keep this module cheap when callers never
+    # hit a cost-map miss.
+    import httpx
+
+    response = httpx.get(litellm.model_cost_map_url, timeout=5)
+    response.raise_for_status()
+    upstream_map = response.json()
+    if not isinstance(upstream_map, dict) or not upstream_map:
+        raise ValueError("upstream JSON is empty or not a dict")
+    well_formed = _filter_well_formed_upstream_entries(upstream_map)
+    if not well_formed:
+        raise ValueError("upstream payload contains no well-formed entries")
+    new_entries = {k: v for k, v in well_formed.items() if k not in litellm.model_cost}
+    if not new_entries:
+        return
+    litellm.model_cost.update(new_entries)
+    litellm.utils._invalidate_model_cost_lowercase_map()
+    litellm.add_known_models(model_cost_map=new_entries)
 
 
 # Validator-side latch — independent from the runtime-side ``_upstream_attempted``
@@ -145,6 +184,11 @@ def import_litellm() -> Any:
 
     Use this in place of ``import litellm`` at every production call site.
 
+    Also sets ``suppress_debug_info``: LiteLLM ``print()``s a "Provider List"
+    banner to stdout when it cannot route a model (e.g. from
+    ``cost_per_token``), which would corrupt pflow's JSON output. It is a
+    module attribute, so it can only be set after import.
+
     Return type is ``Any``, not ``ModuleType``, because LiteLLM ships no type
     stubs — call sites read attributes like ``litellm.completion``,
     ``litellm.model_cost``, ``litellm.suppress_debug_info`` which mypy can't
@@ -153,7 +197,9 @@ def import_litellm() -> Any:
     ``disallow_any_unimported = true``.
     """
     configure_litellm_defaults()
-    return importlib.import_module("litellm")
+    litellm: Any = importlib.import_module("litellm")
+    litellm.suppress_debug_info = True
+    return litellm
 
 
 def import_litellm_exceptions() -> Any:
@@ -168,7 +214,7 @@ def import_litellm_exceptions() -> Any:
 
 
 def ensure_model_priced(model: str) -> None:
-    """Merge upstream cost map into ``litellm.model_cost`` on first cache miss.
+    """Merge the upstream cost map into ``litellm.model_cost`` on first cache miss.
 
     Runs at most once per Python process. Idempotent. Thread-safe — pflow's
     ThreadPoolExecutor batch path runs LLM calls in parallel, so two
@@ -180,27 +226,6 @@ def ensure_model_priced(model: str) -> None:
     fetch fails (offline, DNS, proxy, GitHub down, malformed JSON), we log
     at debug level and leave the cost map untouched. ``cost_usd`` stays
     ``None`` for unpriced models, matching pre-fix behavior.
-
-    **Bundled-first determinism preservation**: the upstream map is filtered
-    to only keys NOT already in ``litellm.model_cost`` before passing to
-    ``register_model``. Without this filter, ``register_model`` would
-    overwrite bundled-model entries via its ``model_cost.setdefault(key, {}).update(value)``
-    call path — meaning a single first-miss fetch in any process could
-    shift the *bundled* model's price if upstream had revised it. Filtering
-    preserves the contract: bundled prices stay deterministic across runs;
-    only previously-unpriced models pick up upstream values.
-
-    Implementation note: we fetch the JSON via ``httpx`` directly rather
-    than passing the URL to ``litellm.register_model(url)`` because the
-    URL form routes through ``litellm.get_model_cost_map`` which honors
-    ``LITELLM_LOCAL_MODEL_COST_MAP=True`` (set by ``configure_litellm_defaults``)
-    and returns the bundled backup *instead of* fetching the URL. The
-    dict-form of ``register_model`` skips that gate and merges directly.
-    The fetch URL is read from ``litellm.model_cost_map_url`` (LiteLLM's
-    module-level attribute, populated from ``LITELLM_MODEL_COST_MAP_URL``)
-    so the existing offline regression test in
-    ``tests/test_cli/test_litellm_pricing_map_offline.py`` keeps working
-    without monkeypatching us.
     """
     global _upstream_attempted
     if _upstream_attempted:
@@ -212,50 +237,7 @@ def ensure_model_priced(model: str) -> None:
         if model in litellm.model_cost:
             return
         try:
-            # httpx is litellm's own runtime dep — guaranteed importable
-            # whenever litellm is. Lazy-imported here to keep this module
-            # cheap when callers never hit a cost-map miss.
-            import httpx
-
-            response = httpx.get(litellm.model_cost_map_url, timeout=5)
-            response.raise_for_status()
-            upstream_map = response.json()
-            if not isinstance(upstream_map, dict) or not upstream_map:
-                raise ValueError("upstream JSON is empty or not a dict")
-            # Per-entry shape filter — see ``_filter_well_formed_upstream_entries``.
-            # Without this, a malformed payload would register junk into the
-            # shared ``litellm.model_cost`` dict and the validator's
-            # ``_catalog_form_known_for_provider`` membership check could
-            # silently accept a typo'd model that happened to coincide with
-            # a registered junk key.
-            well_formed = _filter_well_formed_upstream_entries(upstream_map)
-            # Then filter to entries NOT already in bundled model_cost.
-            # litellm.register_model merges via
-            # model_cost.setdefault(key, {}).update(value), which OVERWRITES
-            # existing keys. Without this filter, an upstream price revision
-            # for a bundled model would silently shift the bundled price for
-            # the remaining process lifetime — breaking the "bundled prices
-            # are fully deterministic" half of the contract documented above.
-            new_entries = {k: v for k, v in well_formed.items() if k not in litellm.model_cost}
-            if not new_entries:
-                # All upstream models are already bundled — nothing to register.
-                # The asked-for ``model`` is still missing (we checked above),
-                # but upstream doesn't have it either; cost stays None.
-                _upstream_attempted = True
-                return
-            # Silence LiteLLM's "Provider List:" stderr spam during
-            # register_model. Internally it calls get_model_info() for
-            # every upstream entry; entries from providers LiteLLM doesn't
-            # recognize trigger a debug print at
-            # litellm_core_utils/get_llm_provider_logic.py:463 (gated on
-            # ``suppress_debug_info is False``). Already True in the
-            # complete() path; not necessarily True in the cache-analysis
-            # path that also calls this helper.
-            litellm.suppress_debug_info = True
-            # Pass the filtered dict directly to bypass LiteLLM's
-            # LITELLM_LOCAL_MODEL_COST_MAP gate (which would short-circuit
-            # a URL-form call to the bundled backup).
-            litellm.register_model(new_entries)
+            _merge_upstream_catalog(litellm)
         except Exception as exc:
             _logger.debug("Upstream cost map fetch failed: %s", exc)
         _upstream_attempted = True
@@ -374,7 +356,8 @@ def try_load_upstream_catalog() -> bool:
       authoritative.
 
     Both functions share ``litellm.model_cost``, so a successful merge
-    from EITHER path benefits the other (no duplicate fetches).
+    from EITHER path benefits the other. The latches are independent, so
+    each path may fetch once; a second merge writes nothing new.
 
     Thread-safe via the existing module-level lock.
     """
@@ -386,26 +369,9 @@ def try_load_upstream_catalog() -> bool:
             return _validator_upstream_fetch_succeeded
         litellm = import_litellm()
         try:
-            import httpx
-
-            response = httpx.get(litellm.model_cost_map_url, timeout=5)
-            response.raise_for_status()
-            upstream_map = response.json()
-            if not isinstance(upstream_map, dict) or not upstream_map:
-                raise ValueError("upstream JSON is empty or not a dict")
-            # Per-entry shape filter — see ``_filter_well_formed_upstream_entries``.
-            # Shared with ``ensure_model_priced`` so a malformed payload
-            # registered through EITHER fetch path cannot poison
-            # ``litellm.model_cost`` (both paths share the same dict).
-            well_formed = _filter_well_formed_upstream_entries(upstream_map)
-            if not well_formed:
-                raise ValueError("upstream payload contains no well-formed entries")
-            new_entries = {k: v for k, v in well_formed.items() if k not in litellm.model_cost}
-            if new_entries:
-                litellm.suppress_debug_info = True
-                litellm.register_model(new_entries)
-            # Whether or not we had new entries to register, the fetch
-            # itself succeeded. The catalog is usable for membership checks.
+            _merge_upstream_catalog(litellm)
+            # Whether or not there were new entries, the fetch succeeded:
+            # the catalog is usable for membership checks.
             _validator_upstream_fetch_succeeded = True
         except Exception as exc:
             _logger.debug("Validator upstream catalog merge failed: %s", exc)
