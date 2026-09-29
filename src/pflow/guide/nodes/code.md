@@ -64,6 +64,7 @@ result: dict = {
 - Upstream JSON is auto-parsed before your code runs — if source is JSON, declare `dict`/`list` not `str`
 - Use `Any` as the type when you don't want type validation (see syntax table below — auto-injected, no import needed)
 - Single output via `result` variable — use dict for structured output
+- `${node.stdout}`/`${node.stderr}` hold what the code itself prints (per batch item); prints from a `threading.Thread` the code starts are not captured and go to pflow's own streams — return thread output through `result`
 - Downstream access: `${node.result}` or `${node.result.field}` for dict results
 
 ## Validate-Time Type Checking

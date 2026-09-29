@@ -4,6 +4,9 @@ Organized by what matters to users and downstream consumers, not by
 internal implementation structure (prep/exec/post).
 """
 
+import sys
+import threading
+
 import pytest
 
 from pflow.nodes.file.exceptions import NonRetriableError
@@ -331,9 +334,6 @@ class TestConcurrentOutputCapture:
     @pytest.mark.parametrize("mode", ["fifo", "lifo", "sequential"])
     def test_batch_items_capture_only_their_own_output(self, mode, monkeypatch):
         """fifo: A installs capture first and finishes first; lifo: reversed; sequential: control."""
-        import sys
-        import threading
-
         from pflow.runtime import compile_workflow
         from pflow.runtime.engine import WorkflowEngine
         from tests.shared.registry_utils import ensure_test_registry
@@ -377,29 +377,51 @@ class TestConcurrentOutputCapture:
 
     def test_timed_out_execution_does_not_capture_later_output(self, capsys):
         """A timed-out execution keeps running; the caller's later prints must still reach its stream."""
-        import sys
-        import threading
-
-        release, worker = threading.Event(), []
+        entered, release, worker = threading.Event(), threading.Event(), []
         stdout_before = sys.stdout
-        action = run_code_node(
-            {},
-            code=(
-                "import threading\nrelease: Any\nworker: list\n"
-                "worker.append(threading.current_thread())\n"
-                "release.wait(5)\nprint('late-zombie-output')\nresult: int = 0"
-            ),
-            inputs={"release": release, "worker": worker},
-            timeout=0.05,
-        )
-        assert action == "error"
-
-        print("after-timeout")
-        release.set()
-        worker[0].join(5)
+        shared: dict = {}
+        try:
+            action = run_code_node(
+                shared,
+                code=(
+                    "import threading\nentered: Any\nrelease: Any\nworker: list\n"
+                    "worker.append(threading.current_thread())\nentered.set()\n"
+                    "release.wait()\nprint('late-zombie-output')\nresult: int = 0"
+                ),
+                inputs={"entered": entered, "release": release, "worker": worker},
+                timeout=0.05,
+            )
+            # The execution must still be running (blocked on `release`) when the caller prints.
+            assert entered.wait(5)
+            assert action == "error"
+            assert "timed out" in shared["error"]
+            print("after-timeout")
+        finally:
+            release.set()
+            if worker:
+                worker[0].join(5)
 
         assert capsys.readouterr().out == "after-timeout\n"
         assert sys.stdout is stdout_before
+
+    @pytest.mark.skipif(
+        getattr(sys.flags, "thread_inherit_context", False),
+        reason="threads inherit the capturing context on this build, so their output is captured",
+    )
+    def test_threads_started_by_code_write_to_original_stream(self, capsys):
+        """Output of a thread the code starts itself is neither captured nor lost."""
+        shared: dict = {}
+        run_code_node(
+            shared,
+            code=(
+                "import threading\nprint('parent')\n"
+                "child = threading.Thread(target=print, args=('child',))\n"
+                "child.start()\nchild.join()\nresult: int = 0"
+            ),
+            inputs={},
+        )
+        assert shared["stdout"] == "parent\n"
+        assert capsys.readouterr().out == "child\n"
 
 
 # ======================================================================
