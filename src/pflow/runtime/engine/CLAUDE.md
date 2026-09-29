@@ -54,8 +54,9 @@ pauses. The escalation gate runs after trace/completion and before loop re-entry
 Pause eligibility is deliberately narrow; `_execute_node` and `_gate_pausable`
 are the authorities. It requires the originating `GateNotInteractiveError`, a
 root/non-nested engine, no parallel batch, no `--only`, a real workflow identity
-(not `ir-hash:`), and a collector. Approval is pausable; escalation additionally
-requires no loop, a non-code node, a non-`end` action, and a default successor.
+(not `ir-hash:`), and a collector. Approval additionally requires no loop or the
+loop's first iteration (resume restarts loops at 1); escalation requires no loop,
+a non-code node, a non-`end` action, and a default successor.
 The runner requires tracing enabled before returning PAUSED. A usable resume
 token additionally requires successful persistence; an in-memory paused stamp
 alone is insufficient.

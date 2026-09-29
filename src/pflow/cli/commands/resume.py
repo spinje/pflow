@@ -15,8 +15,8 @@ trace and re-enters the walk at K — see ``runtime/engine/engine.py:_prepare_re
 Task 171 made ``resume`` a GROUP (``ResumeGroup``): the hidden ``run``
 subcommand is the default form (``pflow resume <target> …`` routes to it
 unchanged) and ``list`` shows pending paused runs. A paused source requires the
-gate's answer — ``--approve yes|no`` for approvals (delivered by priming the
-resume run's resolver: auto-approve set for yes, deny set for no) or
+gate's answer — ``--approve yes|no`` for approvals (delivered as the resume run's
+resolver's single-use ``approval_answer``) or
 ``--choose`` for escalations (folded into the restored marker by the loader;
 the escalating step is never re-executed).
 """
@@ -104,25 +104,23 @@ def _build_gate_answer(approve: str | None, choose: str | None) -> dict[str, Any
     return None
 
 
-def _prime_approval_delivery(
+def _approval_answer(
     approve: str | None, auto_approve: tuple[str, ...], source: ResumeSource
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Turn a validated ``--approve`` answer into resolver priming: ``(auto_approve, gate_deny)``.
+) -> tuple[str, bool] | None:
+    """Turn a validated ``--approve`` answer into the resolver's single-use ``(node_id, approved)``.
 
-    The source is paused-approval iff ``approve`` survived the loader. "yes"
-    primes the resolver's auto-approve set with the gated node — the gate
-    re-fires in the resume run and resolves via flag, writing an honest approved
-    resolution line. "no" primes the deny set → ``GateDenied`` → the EXISTING
-    denied machinery (denied attempt trace, exit 3) — which also CONSUMES the
-    token (a verdict resolution line supersedes the source).
+    The source is paused-approval iff ``approve`` survived the loader. The gate
+    re-fires in the resume run and the answer resolves THAT one occurrence
+    (``build_gate_resolver``): "yes" writes an honest approved resolution line;
+    "no" → ``GateDenied`` → the EXISTING denied machinery (denied attempt trace,
+    exit 3) — which also CONSUMES the token. A looping step's later iterations
+    are new actions the answer does not cover (``--auto-approve`` does).
     """
     if approve is None or source.paused_node_id is None:
-        return auto_approve, ()
-    if approve == "yes":
-        return (*auto_approve, source.paused_node_id), ()
-    if source.paused_node_id in auto_approve:
+        return None
+    if approve == "no" and source.paused_node_id in auto_approve:
         raise click.UsageError(f"--approve no contradicts --auto-approve={source.paused_node_id} — drop one.")
-    return auto_approve, (source.paused_node_id,)
+    return source.paused_node_id, approve == "yes"
 
 
 def _workflow_display_name(resolved: ResolvedWorkflow) -> str | None:
@@ -146,7 +144,7 @@ def _dispatch_resume(
     no_trace: bool,
     cache: bool,
     auto_approve: tuple[str, ...],
-    gate_deny: tuple[str, ...] = (),
+    approval_answer: tuple[str, bool] | None,
     dry_run: bool,
 ) -> None:
     """Set up ctx.obj like a normal run and dispatch through the shared pipeline (§E step 7)."""
@@ -170,9 +168,8 @@ def _dispatch_resume(
     ctx.obj["cache"] = cache
     ctx.obj["only_node"] = None
     ctx.obj["auto_approve"] = auto_approve
-    # Task 171: non-empty only for `--approve no` — pre-denies the paused gate so it
-    # re-fires denied in the resume run (→ denied attempt trace, exit 3).
-    ctx.obj["gate_deny"] = gate_deny
+    # `--approve yes|no`, resolved by the paused gate's re-fire (see _approval_answer).
+    ctx.obj["approval_answer"] = approval_answer
     ctx.obj["output_controller"] = OutputController(print_flag=print_flag)
     ctx.obj["workflow_source"] = resolved.source
     ctx.obj["workflow_name"] = name
@@ -281,13 +278,16 @@ def resume() -> None:
     "auto_approve",
     multiple=True,
     metavar="NODE_ID",
-    help="Pre-approve ONE downstream approval gate by step name (repeatable). Resume does not inherit prior approvals.",
+    help=(
+        "Pre-approve ONE approval gate by step name (repeatable) — every iteration of a looping step. "
+        "Resume does not inherit prior approvals."
+    ),
 )
 @click.option(
     "--approve",
     type=click.Choice(["yes", "no"], case_sensitive=False),
     default=None,
-    help='Answer a paused APPROVAL gate: "yes" runs the gated step, "no" denies it cleanly (exit 3).',
+    help='Answer a paused APPROVAL gate once: "yes" runs the gated step, "no" denies it cleanly (exit 3).',
 )
 @click.option(
     "--choose",
@@ -332,7 +332,7 @@ def resume_run(
         # side-effect verdict) lives in preflight_resume — shared with the UI server's
         # POST /api/resume (Task 176), which must refuse exactly as this command does.
         pf = preflight_resume(target, gate_answer=gate_answer, force=force)
-        auto_approve, gate_deny = _prime_approval_delivery(approve, auto_approve, pf.source)
+        approval_answer = _approval_answer(approve, auto_approve, pf.source)
 
         # A --dry-run never runs K, so nothing can fire — the verdict is ignored.
         # (The stale-workflow gate DID apply above: preview mirrors a real resume.)
@@ -351,7 +351,7 @@ def resume_run(
             no_trace=no_trace,
             cache=cache,
             auto_approve=auto_approve,
-            gate_deny=gate_deny,
+            approval_answer=approval_answer,
             dry_run=dry_run,
         )
     except click.exceptions.Exit:

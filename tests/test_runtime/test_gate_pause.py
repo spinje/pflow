@@ -5,7 +5,8 @@ accept. These tests pin both halves of that promise at the producer:
 
 - ``_gate_pausable`` refusals (loop / code-node / terminal escalations stay
   ``failed`` — ``resume_preflight._resolve_between_nodes_entry`` would bounce their
-  token, so none is ever issued);
+  token, so none is ever issued; a loop approval past its first iteration stays
+  ``failed`` — resume restarts the loop at iteration 1);
 - the nesting guard (a child-workflow gate never pauses the run, even when its
   node id COLLIDES with a top-level id — the reason the arm uses an explicit
   ``nested`` flag + first-seen exception tag instead of any id comparison);
@@ -22,6 +23,7 @@ from typing import Any, ClassVar
 import pytest
 
 from pflow.core.exceptions import GateNotInteractiveError
+from pflow.core.gate import GateResolution
 from pflow.core.node import Node
 from pflow.registry import Registry
 from pflow.runtime import compile_workflow
@@ -167,8 +169,55 @@ class TestEscalationPausePromise:
         class _Request:
             kind = "decision_escalation"
 
-        assert _gate_pausable(_Request(), _Config(), _Node(), "default") is True
-        assert _gate_pausable(_Request(), _Config(), _Node(), "end") is False
+        assert _gate_pausable(_Request(), _Config(), _Node(), "default", None) is True
+        assert _gate_pausable(_Request(), _Config(), _Node(), "end", None) is False
+
+
+class _ApproveFirstResolver:
+    """Approves the first ``approvals`` gate requests, then behaves like a non-TTY run."""
+
+    def __init__(self, approvals: int) -> None:
+        self.remaining = approvals
+
+    def __call__(self, request: Any, *, allow_prompt: bool = True) -> GateResolution:
+        if self.remaining > 0:
+            self.remaining -= 1
+            return GateResolution(approved=True, resolved_via="flag")
+        raise GateNotInteractiveError(request)
+
+
+def _loop_approval_ir() -> dict[str, Any]:
+    return {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "tick",
+                "type": "code",
+                "params": {"code": "i: int\nresult: bool = int(i) < 3", "inputs": {"i": "${__iteration__}"}},
+                "approval": "required",
+                "loop": {"while": "${tick.result}", "max_iterations": 3},
+            }
+        ],
+        "edges": [],
+    }
+
+
+class TestApprovalPausePromise:
+    """#615: resume restarts a loop node at iteration 1, so a loop approval is
+    honorable only on its FIRST iteration — later iterations must never issue a token."""
+
+    def test_loop_approval_on_first_iteration_pauses(self):
+        collector = _run_gated(_loop_approval_ir())
+        assert collector.gate_outcome == "paused"
+        assert collector.pause_request is not None
+        assert collector.pause_request["paused_node_id"] == "tick"
+
+    def test_loop_approval_after_first_iteration_stays_failed(self):
+        collector = _run_gated(_loop_approval_ir(), {"__gate_resolver__": _ApproveFirstResolver(approvals=1)})
+        assert collector.gate_outcome == "failed"
+        assert collector.pause_request is None
+        # Iteration 1 really ran before iteration 2's gate refused to pause.
+        assert [event["node_id"] for event in collector.events] == ["tick"]
 
 
 class TestNestingGuard:
