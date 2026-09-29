@@ -24,10 +24,8 @@ Example workflow usage (.pflow.md):
 """
 
 import ast
-import io
 import logging
 import re
-import sys
 import traceback
 import typing as _typing_module
 from concurrent.futures import ThreadPoolExecutor
@@ -37,6 +35,7 @@ from typing import Any
 from pflow.core.node import Node
 from pflow.core.types import PYTHON_ALIASES_AT_S1
 from pflow.nodes.file.exceptions import NonRetriableError
+from pflow.nodes.python.output_capture import capture_output
 
 logger = logging.getLogger(__name__)
 
@@ -717,9 +716,8 @@ class PythonCodeNode(Node):
         try:
             future.result(timeout=timeout)
         finally:
-            # wait=False: don't block if the thread is still running.
-            # The zombie thread is safe because _execute_code uses a guarded
-            # restore for sys.stdout/sys.stderr (see its docstring and #138).
+            # wait=False: don't block if the thread is still running. The
+            # zombie keeps writing only to its own capture (see _execute_code).
             pool.shutdown(wait=False, cancel_futures=True)
 
         # Extract captured output
@@ -845,36 +843,13 @@ class PythonCodeNode(Node):
         Uses compile() with filename='<code>' so traceback frames from user
         code are identifiable and line numbers can be extracted for error messages.
 
-        IMPORTANT: This method runs in a worker thread. We must NOT use
-        redirect_stdout/redirect_stderr here — they modify global sys.stdout/
-        sys.stderr which is not thread-safe. If this thread outlives its caller
-        (e.g. on timeout with pool.shutdown(wait=False)), the __exit__ would
-        restore stale values, corrupting streams for whatever code is running
-        on the main thread at that point.
-
-        Instead, we save/restore manually and guard the restore with an
-        identity check: only restore if sys.stdout/sys.stderr still point to
-        our buffers. A zombie thread that wakes up after the main thread has
-        moved on will see different objects and skip the restore.
+        Capture goes through ``capture_output``, never a swap of the global
+        streams: parallel batch items overlap here, and a timed-out execution
+        keeps running after exec() has returned (#138, #618).
         """
         compiled = compile(code, "<code>", "exec")
-        stdout_buf = io.StringIO()
-        stderr_buf = io.StringIO()
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        sys.stdout = stdout_buf
-        sys.stderr = stderr_buf
-        try:
+        with capture_output() as (stdout_buf, stderr_buf):
             exec(compiled, namespace)  # noqa: S102
-        finally:
-            # Only restore if sys.stdout/sys.stderr still point to our buffers.
-            # If another thread (or the main thread after a timeout) has replaced
-            # them, restoring our stale saved values would corrupt that thread's
-            # streams. In that case, just leave them as-is.
-            if sys.stdout is stdout_buf:
-                sys.stdout = old_stdout
-            if sys.stderr is stderr_buf:
-                sys.stderr = old_stderr
         namespace["__stdout__"] = stdout_buf.getvalue()
         namespace["__stderr__"] = stderr_buf.getvalue()
 
