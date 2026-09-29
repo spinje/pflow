@@ -146,10 +146,16 @@ Deletes a file with required confirmation.
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `file_path` | str | Yes | - | Path to the file to delete |
-| `confirm_delete` | bool | Yes | - | Must be `true` to confirm deletion |
 
 <Warning>
-  **Security exception**: The `confirm_delete` parameter must be set in the shared store (via a previous node or template variable). It cannot be provided directly in node parameters. This prevents accidental deletions from workflow configuration files.
+  **Required confirmation**: deletion also requires a workflow input named `confirm_delete`, declared `- type: boolean` and set to `true` (for example `pflow workflow.pflow.md confirm_delete=true`). It cannot be provided as a node parameter, so node configuration alone never triggers a deletion. Only the boolean `true` authorizes; any other value — including a string-typed input's `"true"` — is refused. Reference the input under `- inputs:` so the workflow validates:
+
+  ```markdown
+  - type: delete-file
+  - file_path: ${target}
+  - inputs:
+      confirm_delete: ${confirm_delete}
+  ```
 </Warning>
 
 ### Output

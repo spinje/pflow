@@ -115,3 +115,89 @@ class TestDeleteFileNode:
             # Should fail because confirm_delete must be in shared
             with pytest.raises(ValueError, match="Missing required 'confirm_delete'"):
                 node.prep(shared)
+
+
+class TestConfirmDeleteRequiresBooleanTrue:
+    """Only the boolean ``True`` authorizes deletion (#617).
+
+    A string-typed workflow input coerces CLI ``confirm_delete=false`` to the
+    non-empty string ``"False"``; generic truthiness must never read that — or any
+    other non-bool — as permission to delete.
+    """
+
+    @pytest.mark.parametrize(
+        "value",
+        ["False", "false", "True", "true", "no", "", 1, 0, None, {"stdout": "x"}, [True]],
+    )
+    def test_non_boolean_value_refuses_and_preserves_file(self, tmp_path, value):
+        target = tmp_path / "keep.txt"
+        target.write_text("KEEP", encoding="utf-8")
+
+        node = DeleteFileNode()
+        node.set_params({"file_path": str(target)})
+        shared = {"confirm_delete": value}
+
+        action = node.run(shared)
+
+        assert action == "error"
+        assert "deleted" not in shared
+        assert "boolean" in shared["error"]
+        assert "type: boolean" in shared["error"]
+        assert target.read_text(encoding="utf-8") == "KEEP"
+
+
+class TestConfirmDeleteThroughCli:
+    """Regression for #617 on the real CLI entry path (input coercion included)."""
+
+    @pytest.mark.parametrize(
+        ("input_type", "cli_value", "refusal_hint"),
+        [
+            ("string", "false", "- type: boolean"),  # the reported bug: coerced to "False", was truthy
+            ("string", "true", "- type: boolean"),  # a string is never authorization, even "True"
+            ("boolean", "false", "confirm_delete=true"),
+            ("boolean", "true", None),  # the one authorizing case
+        ],
+    )
+    def test_only_boolean_true_input_deletes(self, tmp_path, input_type, cli_value, refusal_hint):
+        from click.testing import CliRunner
+
+        from pflow.cli.main import main
+
+        target = tmp_path / "target.txt"
+        target.write_text("KEEP", encoding="utf-8")
+        workflow = tmp_path / "delete.pflow.md"
+        workflow.write_text(
+            f"""# Delete confirmation
+
+## Inputs
+
+### confirm_delete
+
+Whether to delete the file.
+
+- type: {input_type}
+- required: true
+
+## Steps
+
+### act
+
+Delete the disposable file if confirmed.
+
+- type: delete-file
+- file_path: {target.as_posix()}
+- inputs:
+    confirm_delete: ${{confirm_delete}}
+""",
+            encoding="utf-8",
+        )
+
+        result = CliRunner().invoke(main, [str(workflow), f"confirm_delete={cli_value}"])
+
+        if refusal_hint is None:
+            assert result.exit_code == 0, result.output
+            assert not target.exists()
+        else:
+            assert result.exit_code == 1, result.output
+            assert target.read_text(encoding="utf-8") == "KEEP"
+            assert refusal_hint in result.output

@@ -19,13 +19,13 @@ class DeleteFileNode(Node):
     """
     Delete a file from the filesystem with safety confirmation.
 
-    This node deletes a file only when explicitly confirmed via the shared store.
-    Treats non-existent files as success for idempotent behavior.
+    This node deletes a file only when explicitly confirmed by a `confirm_delete`
+    workflow input. Treats non-existent files as success for idempotent behavior.
 
     Interface:
     - Params: file_path: str  # Path to delete
     - Shared: confirm_delete: bool  # MUST be set in shared store (security requirement)
-    - Writes: shared["deleted"]: bool  # True if delete succeeded
+    - Writes: shared["deleted"]: str  # Success message
     - Writes: shared["error"]: str  # Error message if operation failed
     - Actions: default (success), error (failure)
 
@@ -35,13 +35,15 @@ class DeleteFileNode(Node):
 
     Safety Note: The confirm_delete flag MUST be set in shared store.
     It cannot be provided via params to prevent accidental deletions.
+    Only the boolean True authorizes deletion; any other value (including the
+    strings "true"/"True" a string-typed input produces) is refused.
     """
 
     def __init__(self) -> None:
         """Initialize with retry support for transient file access issues."""
         super().__init__(max_retries=3, wait=0.1)
 
-    def prep(self, shared: dict) -> tuple[str, bool]:
+    def prep(self, shared: dict) -> tuple[str, object]:
         """Extract file path and confirmation flag from shared store."""
         # File path is required
         file_path = self.params.get("file_path")
@@ -67,9 +69,10 @@ class DeleteFileNode(Node):
             extra={"file_path": file_path, "confirm_delete": confirm_delete, "phase": "prep"},
         )
 
-        return (str(file_path), bool(confirm_delete))
+        # Pass the raw value: exec authorizes on `is True` only, never on truthiness.
+        return (str(file_path), confirm_delete)
 
-    def exec(self, prep_res: tuple[str, bool]) -> str:
+    def exec(self, prep_res: tuple[str, object]) -> str:
         """
         Delete file if confirmed.
 
@@ -83,16 +86,15 @@ class DeleteFileNode(Node):
         """
         file_path, confirm_delete = prep_res
 
-        # Check confirmation
-        if not confirm_delete:
+        # Only the boolean True authorizes: a string-typed input turns CLI `false`
+        # into the truthy string "False" (#617).
+        if confirm_delete is not True:
             logger.error(
                 "Delete not confirmed",
                 extra={"file_path": file_path, "confirm_delete": confirm_delete, "phase": "exec"},
             )
             # This is a validation error that won't change with retries
-            raise NonRetriableError(
-                f"Deletion of '{file_path}' not confirmed. Set shared['confirm_delete'] = True to confirm."
-            )
+            raise NonRetriableError(_not_confirmed_message(file_path, confirm_delete))
 
         # Check if file exists
         if not os.path.exists(file_path):
@@ -135,7 +137,7 @@ class DeleteFileNode(Node):
         )
         return f"Successfully deleted '{file_path}'"
 
-    def exec_fallback(self, prep_res: tuple[str, bool], exc: Exception) -> str:
+    def exec_fallback(self, prep_res: tuple[str, object], exc: Exception) -> str:
         """Handle final failure after all retries with user-friendly messages."""
         file_path, _ = prep_res
 
@@ -162,7 +164,7 @@ class DeleteFileNode(Node):
 
         return error_msg
 
-    def post(self, shared: dict, prep_res: tuple[str, bool], exec_res: str) -> str:
+    def post(self, shared: dict, prep_res: tuple[str, object], exec_res: str) -> str:
         """Update shared store based on result and return action."""
         # Check if exec_res is an error message from exec_fallback
         if exec_res.startswith("Error:"):
@@ -171,3 +173,16 @@ class DeleteFileNode(Node):
         else:
             shared["deleted"] = exec_res
             return "default"
+
+
+def _not_confirmed_message(file_path: str, confirm_delete: object) -> str:
+    """Explain a refused deletion in authoring-surface terms."""
+    if confirm_delete is False:
+        return (
+            f"Deletion of '{file_path}' not confirmed: 'confirm_delete' is false. Pass confirm_delete=true to delete."
+        )
+    return (
+        f"Deletion of '{file_path}' not confirmed: 'confirm_delete' must be the boolean true, "
+        f"got {type(confirm_delete).__name__} {confirm_delete!r}. "
+        "Declare the confirm_delete workflow input with '- type: boolean'."
+    )
