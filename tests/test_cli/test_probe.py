@@ -98,6 +98,57 @@ def test_probe_json_output_produces_valid_json(runner: click.testing.CliRunner, 
     assert "test content" in output["outputs"]["content"]
 
 
+def test_probe_verbose_json_keeps_progress_off_stdout(tmp_path: Path) -> None:
+    """`-v` progress lines go to stderr so the JSON document on stdout still parses (#658)."""
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("test content", encoding="utf-8")
+
+    from pflow.nodes.file.read_file import ReadFileNode
+
+    runner = click.testing.CliRunner(mix_stderr=False)
+    with (
+        patch("pflow.cli.commands._probe_impl.import_node_class", return_value=ReadFileNode),
+        patch("pflow.cli.commands._probe_impl.Registry") as MockRegistry,
+    ):
+        MockRegistry.return_value.load.return_value = {"read_file": {"interface": {"params": []}}}
+        result = runner.invoke(
+            probe_cmd,
+            ["read-file", f"file_path={test_file}", "--output-format", "json"],
+            obj={"verbose": True},
+        )
+
+    assert result.exit_code == 0
+    output = json.loads(result.stdout)
+    assert output["success"] is True
+    assert "Resolved 'read-file' to 'read_file'" in result.stderr
+    assert "Running node 'read_file'" in result.stderr
+    assert "file_path: " in result.stderr
+    assert f"Stored execution in cache: {output['execution_id']}" in result.stderr
+
+
+def test_probe_verbose_text_mode_also_routes_progress_to_stderr(tmp_path: Path) -> None:
+    """Progress is diagnostics in every format, matching `pflow run -v`; stdout carries only the result."""
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("test content", encoding="utf-8")
+
+    from pflow.nodes.file.read_file import ReadFileNode
+
+    runner = click.testing.CliRunner(mix_stderr=False)
+    with (
+        patch("pflow.cli.commands._probe_impl.import_node_class", return_value=ReadFileNode),
+        patch("pflow.cli.commands._probe_impl.Registry") as MockRegistry,
+    ):
+        MockRegistry.return_value.load.return_value = {"read-file": {"interface": {"params": []}}}
+        result = runner.invoke(probe_cmd, ["read-file", f"file_path={test_file}"], obj={"verbose": True})
+
+    assert result.exit_code == 0
+    assert "Execution ID:" in result.stdout
+    assert "Running node" not in result.stdout
+    assert "Stored execution in cache" not in result.stdout
+    assert "Running node 'read-file'" in result.stderr
+    assert "Stored execution in cache" in result.stderr
+
+
 def test_probe_rejects_text_output_format(runner: click.testing.CliRunner) -> None:
     result = runner.invoke(probe_cmd, ["read-file", "file_path=/tmp/test.txt", "--output-format", "text"])
 
