@@ -171,10 +171,15 @@ optimized for AI agents to understand and add features to."*
 - **PR #424** (`ensure_model_priced` upstream-fetch pattern): MERGED — the reference for the
   network fetch (see Implementation Notes).
 
-- **#606** (dual provider tables → one): sequenced FIRST — this task adds its catalog-group and
-  routing-prefix columns to the table #606 leaves behind.
-- **#654** (the upstream catalog merge overwrites bundled entries and drops new models —
-  `register_model` re-keys): sequenced FIRST — the `live` source depends on a correct merge.
+- **#606** (dual provider tables → one): MERGED 2026-09-30 (PR #661) — the table is now
+  `CURATED_PROVIDERS` (frozen `CuratedProvider` rows) in `core/llm_providers.py`, registry rows
+  derived from `PROVIDERS`; status follows the runtime resolver; byte-exact `providers` snapshot
+  tests exist. This task adds its catalog-group and routing-prefix fields to `CuratedProvider`.
+- **#654** (upstream catalog merge re-keyed entries): MERGED 2026-09-30 (PR #662) — both upstream
+  paths now go through `_merge_upstream_catalog` (`core/litellm_runtime.py`): exact-key writes into
+  `model_cost`, LiteLLM's lookup caches invalidated, `add_known_models` for routing; bundled entries
+  never change; `import_litellm()` sets `suppress_debug_info`. "live" = bundled + upstream-only
+  entries under their exact keys.
 
 Buildable once both merge and the planner's verify-at-start probes are done.
 
@@ -272,12 +277,12 @@ Buildable once both merge and the planner's verify-at-start probes are done.
   `cli/commands/settings.py` — testable without the CLI, one home for both lookup directions.
   `import_litellm()` is called inside the command body (`tests/test_cli/test_lazy_imports.py`
   asserts the CLI imports without litellm).
-- **Sibling to copy:** `llm_providers` in `src/pflow/cli/commands/settings.py` (the `_LLM_PROVIDERS`
-  table, `_provider_status`, `_format_env_vars`, the `inject_settings_env_vars()` call before status
-  checks, text+JSON branches). Mirror its structure.
-- **Provider→env-var/status** comes from the existing `_LLM_PROVIDERS` table + `_provider_status`;
-  do not build a second detector. Canonical runtime provider metadata is `PROVIDERS` /
-  `detect_provider()` in `src/pflow/core/llm_providers.py`.
+- **Sibling to copy:** `llm_providers` in `src/pflow/cli/commands/settings.py` (`_provider_status`,
+  `_format_env_vars`, the `inject_settings_env_vars()` call before status checks, text+JSON
+  branches) over `CURATED_PROVIDERS` in `src/pflow/core/llm_providers.py`. Mirror its structure.
+- **Provider→env-var/status** comes from `CURATED_PROVIDERS` + `_provider_status` ("status = what
+  the runtime would actually use": registry rows ask `resolve_provider_api_key()`, curated-only
+  rows read `os.environ` after injection); do not build a second detector.
 - **Network fetch LANDMINE (from `research/model-discovery-cross-reference-from-pr-424.md`):** pflow
   forces `LITELLM_LOCAL_MODEL_COST_MAP=True`, so `litellm.register_model(URL)` short-circuits to the
   bundled backup and does nothing. The working pattern (shipped in
@@ -303,9 +308,7 @@ Buildable once both merge and the planner's verify-at-start probes are done.
   var in the provider table (a developer's real `GROQ_API_KEY` leaks otherwise).
   `inject_settings_env_vars()` no-ops under pytest (`llm_config.py:226`), so keys stored via
   `set-env` are verified only on the real surface.
-- **Status truth:** for providers in `PROVIDERS`, status must agree with the runtime key resolver
-  (`llm_config.resolve_provider_api_key`) — `_provider_status` reads only `os.environ` and disagrees
-  on an empty exported var with a settings key (the #606 packet carries this).
+- **Status truth:** already true after #606 (PR #661) — reuse `_provider_status` as-is.
 - **Verified data shape (bundled litellm 1.86.1, 2026-09-29):** `model_cost` has 2,716 entries
   (upstream 4,435); `models_by_provider` covers 89 providers. `mode == "chat"` counts: anthropic 20,
   groq 11, openai 98 (grouped by `litellm_provider`), fireworks_ai 244; 2,082 chat + 80
@@ -361,8 +364,8 @@ Buildable once both merge and the planner's verify-at-start probes are done.
 ## References
 
 - Sibling command + provider table/status: `src/pflow/cli/commands/settings.py` (`llm_providers`,
-  `_LLM_PROVIDERS`, `_provider_status`, `_format_env_vars`).
-- Overlapping issues: #606 (dual provider tables — sequenced first), #348 (provider metadata for
+  `_provider_status`, `_format_env_vars`); the table: `core/llm_providers.py` (`CURATED_PROVIDERS`).
+- Overlapping issues: #606 (merged, PR #661), #348 (provider metadata for
   non-core providers — the `set <VAR>` label depends on it), #359 (stderr hygiene precedent).
 - Runtime provider metadata: `src/pflow/core/llm_providers.py` (`PROVIDERS`, `detect_provider`).
 - Network-fetch pattern + landmine: `src/pflow/core/litellm_runtime.py` (`ensure_model_priced`);
