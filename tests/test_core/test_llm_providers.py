@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pflow.core.llm_providers import (
+    CURATED_PROVIDERS,
     PROVIDERS,
     detect_provider,
     extract_provider_prefix,
@@ -32,6 +33,13 @@ def test_provider_env_vars_canonical_first() -> None:
     assert by_name["gemini"].env_vars == ("GEMINI_API_KEY", "GOOGLE_API_KEY")
     for provider in PROVIDERS:
         assert provider.env_vars  # non-empty
+
+
+def test_curated_provider_names_are_unique() -> None:
+    """Registry rows are derived from PROVIDERS; a hand-written row with the same
+    name would list the provider twice with possibly conflicting env vars."""
+    names = [p.name for p in CURATED_PROVIDERS]
+    assert len(names) == len(set(names))
 
 
 def test_detect_provider_known_bare_models() -> None:
