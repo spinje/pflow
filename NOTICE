@@ -33,6 +33,11 @@ Source: https://github.com/modelcontextprotocol/python-sdk
 Copyright: 2024 Anthropic, PBC
 License: MIT
 
+Python package: anyio
+Source: https://github.com/agronholm/anyio
+Copyright: 2018 Alex Grönholm
+License: MIT
+
 Python package: requests
 Source: https://github.com/psf/requests
 Copyright: Kenneth Reitz

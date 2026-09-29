@@ -10,14 +10,18 @@ matching the CLI's outer ``except Exception`` in ``cli/commands/run.py``.
 from __future__ import annotations
 
 import logging
+from io import TextIOWrapper
 from typing import Any
 
+import anyio
 from mcp import types
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ResourceError, ToolError
+from mcp.server.stdio import stdio_server
 
 from pflow.core.diagnostic import Diagnostic, Severity, exception_to_diagnostics
 from pflow.core.diagnostic_render import format_diagnostic
+from pflow.core.stdout_reservation import reserve_stdout
 from pflow.core.suggestion_utils import find_similar_items
 
 logger = logging.getLogger(__name__)
@@ -244,6 +248,21 @@ class PflowMCP(FastMCP):
             # behavior — programmatic agents see the error at the protocol
             # level, not as successful-looking content.
             raise ResourceError(_render_exception(original)) from original
+
+    async def run_stdio_async(self) -> None:
+        """Serve stdio with stdout reserved for the protocol.
+
+        FastMCP's own version writes JSON-RPC to whatever ``sys.stdout`` is, so a
+        stray write from a running workflow would corrupt the protocol stream.
+        """
+        with reserve_stdout() as protocol:
+            protocol_stream = anyio.wrap_file(TextIOWrapper(protocol, encoding="utf-8"))
+            async with stdio_server(stdout=protocol_stream) as (read_stream, write_stream):
+                # `_mcp_server` is FastMCP's private low-level server, renamed in SDK 2.x, so
+                # this breaks loudly at the #644 migration. DELETE this override then, don't
+                # port it: SDK 2.x's stdio_server diverts fd 1 to stderr itself.
+                low_level = self._mcp_server
+                await low_level.run(read_stream, write_stream, low_level.create_initialization_options())
 
 
 # Create the FastMCP server instance with instructions for agents.

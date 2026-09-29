@@ -1466,6 +1466,7 @@ name = "pflow-cli"
 version = "0.15.1"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "claude-agent-sdk" },
     { name = "click" },
     { name = "httpx" },
@@ -1505,6 +1506,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.5" },
     { name = "claude-agent-sdk", specifier = ">=0.2.82" },
     { name = "click", specifier = ">=8.1,<8.2" },
     { name = "httpx", specifier = ">=0.18" },
