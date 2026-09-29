@@ -419,7 +419,21 @@ def test_approve_yes_on_loop_gate_answers_one_iteration_then_fails_loudly(home, 
     assert "Resume token" not in resumed.stdout
     assert "Gate 'gated' approved via --approve yes" in resumed.stderr
     assert "pre-approved via --auto-approve" not in resumed.stderr
+    # Up front: the pre-flight warning names the real outcome (fail, not pause).
+    assert "answers only the first iteration of loop step 'gated'" in resumed.stderr
+    assert "will pause at" not in resumed.stderr
     assert "--auto-approve=gated" in resumed.stdout + resumed.stderr
+
+
+def test_dry_run_with_answer_on_loop_gate_still_names_auto_approve(home, loop_gate):
+    """The answer covers iteration 1 only, so the preview must keep telling the
+    agent how to approve the rest — before any side effect fires."""
+    wf, marker = loop_gate
+    token = _pause(wf, f"marker={marker}")
+    result = _runner().invoke(cli, ["resume", token, "--approve", "yes", "--dry-run"])
+    assert result.exit_code == 0, result.stderr
+    assert "--auto-approve=gated" in result.stdout + result.stderr
+    assert _effects(marker) == []
 
 
 def test_approve_yes_with_auto_approve_runs_gated_loop_to_completion(home, loop_gate):
@@ -429,6 +443,7 @@ def test_approve_yes_with_auto_approve_runs_gated_loop_to_completion(home, loop_
     resumed = _runner().invoke(cli, ["resume", token, "--approve", "yes", "--auto-approve", "gated"])
     assert resumed.exit_code == 0, resumed.stderr
     assert _effects(marker) == ["effect 1", "effect 2", "effect 3"]
+    assert "Warning:" not in resumed.stderr
 
 
 def test_approve_no_on_loop_gate_runs_no_iteration(home, loop_gate):
