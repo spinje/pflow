@@ -1,6 +1,10 @@
 """Shared validation utilities for pflow."""
 
-from typing import Any, Final
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Final
+
+if TYPE_CHECKING:
+    from pflow.core.diagnostic import Diagnostic
 
 VALIDATION_PLACEHOLDER: Final[str] = "__validation_placeholder__"
 """Sentinel value substituted for unresolved declared inputs during
@@ -27,6 +31,31 @@ def generate_dummy_parameters(inputs: dict[str, Any]) -> dict[str, Any]:
         {'api_key': '__validation_placeholder__', 'repo': '__validation_placeholder__'}
     """
     return dict.fromkeys(inputs, VALIDATION_PLACEHOLDER)
+
+
+def validate_with_placeholder_inputs(workflow_ir: dict[str, Any], *, workflow_file: Path | None) -> list["Diagnostic"]:
+    """Validate a workflow without real input values -- the shared call behind
+    ``--validate-only``, ``pflow save``, and ``analyze-cache``.
+
+    Declared inputs get placeholder values. ``workflow_file`` reaches the
+    validator on both channels it reads -- the ``workflow_file`` argument and
+    ``_pflow_workflow_file`` in the params -- so relative sub-workflow paths
+    resolve against the workflow's directory, never the current directory.
+    Callers pass the path once here instead of assembling those params by hand.
+    """
+    from pflow.core.workflow.validator import WorkflowValidator
+    from pflow.registry import Registry
+
+    params = generate_dummy_parameters(workflow_ir.get("inputs") or {})
+    if workflow_file is not None:
+        params["_pflow_workflow_file"] = str(workflow_file)
+    return WorkflowValidator.validate(
+        workflow_ir=workflow_ir,
+        extracted_params=params,
+        registry=Registry(),
+        skip_node_types=False,
+        workflow_file=workflow_file,
+    )
 
 
 def is_valid_parameter_name(name: str) -> bool:

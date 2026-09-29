@@ -192,25 +192,11 @@ def _validate_and_normalize_ir(
     # ONLY for downstream validation. See ``_resolve_for_validation``.
     validation_ir = _resolve_for_validation(workflow_ir, source_path)
 
-    # Step 2: Comprehensive workflow validation (data flow, output sources, node types)
-    from pflow.core.validation_utils import generate_dummy_parameters
-    from pflow.core.workflow.validator import WorkflowValidator
-    from pflow.registry import Registry
+    # Step 2: Comprehensive workflow validation, the same call --validate-only makes
+    from pflow.core.validation_utils import validate_with_placeholder_inputs
 
     try:
-        # Generate dummy parameters for template validation
-        # This enables structural validation without requiring real parameter values
-        inputs = validation_ir.get("inputs", {})
-        dummy_params = generate_dummy_parameters(inputs)
-
-        registry = Registry()
-        validator_diagnostics = WorkflowValidator.validate(
-            workflow_ir=validation_ir,
-            extracted_params=dummy_params,  # Use dummy params for template validation
-            registry=registry,
-            skip_node_types=False,  # Validate node types
-            workflow_file=source_path,
-        )
+        validator_diagnostics = validate_with_placeholder_inputs(validation_ir, workflow_file=source_path)
         errors = [diagnostic for diagnostic in validator_diagnostics if diagnostic.severity == Severity.ERROR]
 
         if errors:
