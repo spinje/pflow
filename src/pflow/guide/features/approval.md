@@ -31,7 +31,7 @@ At a terminal the run pauses before the step and shows the resolved values (the 
 Rules:
 
 - **Not on batch steps** — rejected at validation (the preview could not show resolved `${item}` values). Gate the step before or after the batch instead.
-- **Loop steps prompt every iteration** — each iteration is a new action. Without a terminal, a loop step's gate pauses only on its **first** iteration (a resumed loop restarts at iteration 1, so a later pause could never be honored); past it, an unapproved gate fails (exit 1). To let a gated loop run unattended, pre-approve it: `--auto-approve=<step>` (on resume: `--approve yes --auto-approve <step>`).
+- **Loop steps prompt every iteration** — each iteration is a new action. Without a terminal, a loop step's gate pauses only on its **first** iteration (a resumed loop restarts at iteration 1, so a later pause could never be honored); past it, an unapproved gate fails (exit 1). To let a gated loop run unattended, pre-approve it: `--auto-approve=<step>` (on resume: `--approve yes --auto-approve <step>`). The browser answer panel's Approve answers one iteration the same way and has no approve-all option — answer a multi-iteration gated loop from the CLI.
 - **Cached steps never prompt** — a cache hit performs no action, so there is nothing to approve.
 - Works on `workflow` steps (gates the whole sub-workflow; the preview is its inputs) and on steps **inside** sub-workflows.
 
