@@ -43,8 +43,7 @@ from pflow.core.prompt_cache import (  # noqa: F401 — see docstring.
     deterministic_serialize,
 )
 from pflow.core.trace_tree import normalize_workflow_path_key
-from pflow.core.validation_utils import generate_dummy_parameters
-from pflow.core.workflow.validator import WorkflowValidator
+from pflow.core.validation_utils import validate_with_placeholder_inputs
 from pflow.core.workflow_id import synthesize_inline_workflow_id
 
 from . import types as _types
@@ -489,22 +488,16 @@ def _run_full_validation(
     """Run the same validator pipeline used by run, validate-only, and save.
 
     Real analyzer parameters are intentionally not merged into validation
-    parameters here. ``WorkflowValidator`` receives dummy values derived from
-    declared inputs, matching the other validation entry points and avoiding a
-    stricter analyze-cache-only interpretation of user-provided params.
+    parameters here. Declared inputs get placeholder values -- the same
+    ``validate_with_placeholder_inputs`` call validate-only and save make --
+    avoiding a stricter analyze-cache-only interpretation of user-provided params.
     """
-    inputs = workflow_ir.get("inputs") or {}
-    validation_params = generate_dummy_parameters(inputs)
     workflow_file: Path | None = None
     if workflow_path and not workflow_path.startswith("ir-hash:"):
         workflow_file = Path(workflow_path)
 
     try:
-        diagnostics = WorkflowValidator.validate(
-            workflow_ir=workflow_ir,
-            extracted_params=validation_params,
-            workflow_file=workflow_file,
-        )
+        diagnostics = validate_with_placeholder_inputs(workflow_ir, workflow_file=workflow_file)
     except Exception as exc:
         logger.warning(
             "WorkflowValidator.validate raised %s during analyze-cache; findings may be incomplete",
