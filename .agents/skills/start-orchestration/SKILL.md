@@ -50,7 +50,9 @@ between what documents claim and what code does.
    or `--since DATE` only when the user's stated focus reaches back further) ·
    `git worktree list` · the runner's live-agent/task listing
    (`TaskList` in Claude, `collaboration.list_agents` in Codex).
-3. Diff reality against `CURRENT-STATE.md`. Anything that moved → correct it first.
+3. Diff reality against `CURRENT-STATE.md`. Anything that moved → correct it first (the boot
+   fold is the ONE sanctioned mid-session edit: fix the stale In-flight/SHA lines so a crash
+   before close leaves a true resume picture; everything else waits for the close rewrite).
 4. Create your session file `sessions/session-NN.md`; open with a short state summary + your
    proposed next action, and let the user steer before acting.
 
@@ -74,7 +76,8 @@ body's, the state file's — decays. Verification is the job, not overhead.
    don't design it. Corrections carry provenance ("Refreshed <date> against main — <what
    changed>"). *For a security-heavy or architecturally complex draft spec*, you may commission
    the review fan-out as a **SPEC review** (`review_target` = "SPEC review, not a code-diff
-   review …"; `review-architecture-fit` is the natural spec lens) — spec accuracy is
+   review …"; the user expects the full plan-mode battery per the deep-review skill — direct
+   launches, `review-architecture-fit` plus every lens the seam earns — not one lens) — spec accuracy is
    orchestrator work, an explicit carve-out from "never runs deep-review", which bans diff/plan
    review only. Disposition: A = fold accuracy corrections
    now · B = record design gaps as a "RESOLVE AT START" constraint block in the spec (constraint

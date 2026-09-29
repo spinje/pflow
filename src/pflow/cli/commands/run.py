@@ -429,7 +429,11 @@ def _prepare_gate_resolver(
     from pflow.execution.gate_prompt import build_gate_resolver, can_prompt
 
     auto_approve = frozenset(ctx.obj.get("auto_approve") or ())
+    # Set only by resume's `--approve yes|no` (_dispatch_resume): a single-use answer
+    # for the paused gate. Normal runs leave it None — there is no answer flag on `pflow run`.
+    approval_answer = ctx.obj.get("approval_answer")
     nodes = ir_data.get("nodes", [])
+    fully_answered = _fully_answered_gate_ids(ctx, nodes)
     # Defensive: schema validation (which requires "id" on every node) hasn't
     # run yet at this call site. Filtering falsy ids here (rather than at each
     # sorted() call below) keeps a malformed node dict from raising TypeError
@@ -459,7 +463,18 @@ def _prepare_gate_resolver(
                 f"sub-workflow still matches by name.{hint}{gated_list}",
                 err=True,
             )
-        unapproved = [gate_id for gate_id in gated if gate_id not in auto_approve]
+        unapproved = [gate_id for gate_id in gated if gate_id not in fully_answered]
+        # Resume's `--approve yes` on a LOOP step covers iteration 1 only, and later
+        # iterations cannot pause (`_gate_pausable`) — so they fail: warn with that verb.
+        answered_loop = approval_answer[0] if approval_answer and approval_answer[0] in unapproved else None
+        if answered_loop and not can_prompt(output_controller):
+            click.echo(
+                f"Warning: --approve yes answers only the first iteration of loop step '{answered_loop}'; "
+                f"later iterations fail in this non-interactive run unless pre-approved "
+                f"(--auto-approve={answered_loop}).",
+                err=True,
+            )
+        unapproved = [gate_id for gate_id in unapproved if gate_id != answered_loop]
         if unapproved and not can_prompt(output_controller):
             flags = " ".join(f"--auto-approve={gate_id}" for gate_id in unapproved)
             # A non-interactive gate pauses durably — EXCEPT when the
@@ -475,10 +490,26 @@ def _prepare_gate_resolver(
                 err=True,
             )
 
-    # `gate_deny` is set only by resume's `--approve no` (_dispatch_resume);
-    # normal runs default it empty here via .get — there is no deny flag on `pflow run`.
-    deny = frozenset(ctx.obj.get("gate_deny") or ())
-    return build_gate_resolver(auto_approve, output_controller, deny=deny)
+    return build_gate_resolver(auto_approve, output_controller, approval_answer=approval_answer)
+
+
+def _fully_answered_gate_ids(ctx: click.Context, nodes: list[dict[str, Any]]) -> frozenset[str]:
+    """Gate ids a flag answers for EVERY occurrence this invocation — the pre-flight
+    warning and the ``--dry-run`` footer omit these, and only these.
+
+    ``--auto-approve`` always qualifies. Resume's single-use ``--approve`` answer
+    qualifies unless it is a "yes" on a looping step: that step's later
+    iterations are new actions the answer does not cover (#615). A "no" ends
+    the run at the gate, so it always qualifies.
+    """
+    answered = frozenset(ctx.obj.get("auto_approve") or ())
+    answer = ctx.obj.get("approval_answer")
+    if answer is not None:
+        node_id, approved = answer
+        loops = any(node.get("id") == node_id and node.get("loop") for node in nodes)
+        if not (approved and loops):
+            answered |= {node_id}
+    return answered
 
 
 def _display_denied_result(ctx: click.Context, result: Any, output_format: str) -> None:
@@ -748,11 +779,10 @@ def _display_plan_result(
     if output_format == "json":
         click.echo(json.dumps(format_plan_json(plan), indent=2, default=str))
     else:
-        # Gates already resolved by a flag this invocation — `--auto-approve`, or a
-        # resume `--approve yes|no` (which primes auto_approve / gate_deny). Drop them
-        # from the footer so the preview doesn't tell the agent to pre-approve a gate
-        # it has already answered.
-        answered_gate_ids = frozenset(ctx.obj.get("auto_approve") or ()) | frozenset(ctx.obj.get("gate_deny") or ())
+        # Drop gates a flag already answers so the preview doesn't tell the agent to
+        # pre-approve a gate it has already answered.
+        ir_data = workflow.ir if isinstance(workflow, ResolvedWorkflow) else workflow
+        answered_gate_ids = _fully_answered_gate_ids(ctx, ir_data.get("nodes", []))
         click.echo(format_plan_text(plan, answered_gate_ids=answered_gate_ids))
 
     has_error = any(d.severity == Severity.ERROR for d in plan.diagnostics)
@@ -1343,8 +1373,8 @@ def run(
         ctx.obj["cache"] = cache
         ctx.obj["only_node"] = only_node
         ctx.obj["auto_approve"] = auto_approve
-        # Only resume's `--approve no` populates this (no deny flag on run).
-        ctx.obj["gate_deny"] = ()
+        # Only resume's `--approve yes|no` populates this (no answer flag on run).
+        ctx.obj["approval_answer"] = None
 
         print_flag = ctx.obj.get("print_flag", False)
         output_format = ctx.obj.get("output_format", "text")

@@ -35,3 +35,10 @@ pruned to the rows that pass its bar; git history holds the removed ones._
   full, DECISIONS pruned to five rows, knowledge base retired → code homes + ADR 0014,
   Codex runner model → `gpt-6-astra`, #616 fixed on the PR branch; handover in
   `scratchpads/handoffs/`).
+- 08 (2026-09-28) — shipped #631/#632/#633/#637/#638/#640/#641/#642/#645/#646/#647/#649 (lane B ×12:
+  #620 #622-bug #623 #624 #625 #628 #629 #634 #635 #636 #639 #644-p1); filed #629 #630 #634 #635
+  #636 #639 #643 #644 #648; #551 closed dup. Task 170 spec rewritten after a six-lens SPEC battery +
+  ADR-0006 amendment + ADR-0015; Task 170 plan committed (first Fable-planner run), build parked;
+  Task 118 → then (blocked by 170). Read for: #620 escape ruling and #630/#621/#550 deferral, the
+  Task 170 spec-battery ledger, MCP stateless-standard research (#624/#644), cost-summary
+  subscription labelling (#634), the worktree script's first live runs and `rm -f` semantics.

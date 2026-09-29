@@ -95,21 +95,32 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
 _CLEAN_SUCCESS_ACTIONS = frozenset({"", "default", "end"})
 
 
-def _gate_pausable(request: Any, config: NodeConfig, node: Any, action: Any) -> bool:
+def _gate_pausable(request: Any, config: NodeConfig, node: Any, action: Any, iteration: int | None) -> bool:
     """Only stamp ``paused`` when the resume path can honor the token (Task 171: pause = promise).
 
-    Approvals always resume — the entry is the gated node itself, which never ran
-    (the gate fires at step 7.5, before ``node.start``). Escalations resume at the
-    node's SUCCESSOR, so they are pausable only when that successor is resolvable.
-    Each clause mirrors a refusal arm in ``resume_preflight._resolve_between_nodes_entry``
-    (execution/resume_preflight.py) KIND-for-kind, so the producer never emits a token the
-    resume path bounces. The CLI-side refusals stay as belt-and-braces — the
-    workflow can be edited between pause and resume (hash gate + ``--force``).
+    Loop re-entry state is engine-ephemeral: a resumed loop node restarts at
+    iteration 1, so no gate kind can resume mid-loop.
+
+    Approvals resume AT the gated node, and the gate fires at step 7.5 (before
+    ``node.start``), so the gated action never ran — but inside a loop only the
+    FIRST iteration (``iteration`` = the loop's 1-based ``__iteration__``) is
+    honorable. From the second on, the restart would re-run the approved
+    iterations and spend the answer on an action the human never saw (#615), so
+    the gate fails loudly instead (its error names ``--auto-approve``).
+    Approvals need no preflight mirror: their entry is the gated node itself,
+    never a between-nodes successor.
+
+    Escalations resume at the node's SUCCESSOR, so they are pausable only when
+    that successor is resolvable. Each escalation clause mirrors a refusal arm in
+    ``resume_preflight._resolve_between_nodes_entry`` (execution/resume_preflight.py)
+    KIND-for-kind, so the producer never emits a token the resume path bounces.
+    The CLI-side refusals stay as belt-and-braces — the workflow can be edited
+    between pause and resume (hash gate + ``--force``).
     """
     if request.kind == GATE_KIND_APPROVAL:
-        return True
+        return config.loop_config is None or iteration == 1
     return (
-        # Loop re-entry state is engine-ephemeral — a restored loop node can't resume mid-loop.
+        # A restored loop node can't resume mid-loop (see above).
         config.loop_config is None
         # A code node is a dynamic router: its successor can't be known from the graph alone.
         and config.node_type_name != "PythonCodeNode"
@@ -1552,7 +1563,7 @@ class WorkflowEngine:
                     # (workflow content in the trace) is a tracked follow-up.
                     and self.workflow_path is not None
                     and not self.workflow_path.startswith("ir-hash:")
-                    and _gate_pausable(gate_exc.request, config, node, action)
+                    and _gate_pausable(gate_exc.request, config, node, action, shared.get("__iteration__"))
                 ):
                     self.trace.gate_outcome = "paused"
                     # The trailer payload (Task 171 pause record): everything the

@@ -354,6 +354,106 @@ def test_multiple_gates_chain_pauses_again_and_supersedes(home, tmp_path):
     assert len(list((home / ".pflow" / "debug").glob("workflow-trace-*.json"))) == 3
 
 
+_LOOP_GATE_WF = """# Gated Loop
+
+An approval-gated loop step that appends one line per approved iteration.
+
+## Inputs
+
+### marker
+
+Path of the file each iteration appends to.
+
+- type: string
+- required: true
+
+## Steps
+
+### gated
+
+Append one line per iteration.
+
+- type: code
+- approval: required
+- inputs:
+    iteration: ${__iteration__}
+    marker: ${marker}
+- loop:
+    while: ${gated.result}
+    max_iterations: 3
+
+```python code
+iteration: int
+marker: str
+with open(marker, "a", encoding="utf-8") as handle:
+    handle.write(f"effect {iteration}\\n")
+result: bool = iteration < 3
+```
+"""
+
+
+@pytest.fixture
+def loop_gate(tmp_path):
+    """``(workflow path, marker path)`` for the gated loop."""
+    wf = tmp_path / "gated_loop.pflow.md"
+    wf.write_text(_LOOP_GATE_WF, encoding="utf-8")
+    return wf, tmp_path / "effects.txt"
+
+
+def _effects(marker: Path) -> list[str]:
+    return marker.read_text(encoding="utf-8").splitlines() if marker.exists() else []
+
+
+def test_approve_yes_on_loop_gate_answers_one_iteration_then_fails_loudly(home, loop_gate):
+    """#615: `--approve yes` answers the ONE paused gate — iteration 1 runs, and
+    iteration 2 (a new action) is NOT pre-approved. Resume would restart the loop
+    at iteration 1, so iteration 2 must not issue an unhonorable token: it fails
+    (exit 1) naming `--auto-approve`."""
+    wf, marker = loop_gate
+    token = _pause(wf, f"marker={marker}")
+    assert _effects(marker) == []
+
+    resumed = _runner().invoke(cli, ["resume", token, "--approve", "yes"])
+    assert resumed.exit_code == 1, resumed.stderr
+    assert _effects(marker) == ["effect 1"]
+    assert "Resume token" not in resumed.stdout
+    assert "Gate 'gated' approved via --approve yes" in resumed.stderr
+    assert "pre-approved via --auto-approve" not in resumed.stderr
+    # Up front: the pre-flight warning names the real outcome (fail, not pause).
+    assert "answers only the first iteration of loop step 'gated'" in resumed.stderr
+    assert "will pause at" not in resumed.stderr
+    assert "--auto-approve=gated" in resumed.stdout + resumed.stderr
+
+
+def test_dry_run_with_answer_on_loop_gate_still_names_auto_approve(home, loop_gate):
+    """The answer covers iteration 1 only, so the preview must keep telling the
+    agent how to approve the rest — before any side effect fires."""
+    wf, marker = loop_gate
+    token = _pause(wf, f"marker={marker}")
+    result = _runner().invoke(cli, ["resume", token, "--approve", "yes", "--dry-run"])
+    assert result.exit_code == 0, result.stderr
+    assert "--auto-approve=gated" in result.stdout + result.stderr
+    assert _effects(marker) == []
+
+
+def test_approve_yes_with_auto_approve_runs_gated_loop_to_completion(home, loop_gate):
+    """The explicit whole-loop approval still authorizes every iteration."""
+    wf, marker = loop_gate
+    token = _pause(wf, f"marker={marker}")
+    resumed = _runner().invoke(cli, ["resume", token, "--approve", "yes", "--auto-approve", "gated"])
+    assert resumed.exit_code == 0, resumed.stderr
+    assert _effects(marker) == ["effect 1", "effect 2", "effect 3"]
+    assert "Warning:" not in resumed.stderr
+
+
+def test_approve_no_on_loop_gate_runs_no_iteration(home, loop_gate):
+    wf, marker = loop_gate
+    token = _pause(wf, f"marker={marker}")
+    denied = _runner().invoke(cli, ["resume", token, "--approve", "no"])
+    assert denied.exit_code == 3, denied.stderr
+    assert _effects(marker) == []
+
+
 # ── Escalation answer flows (real EscalatingNode via registry injection) ──────
 
 # Declared output pins stdout to the CONSUMER's line — without it, auto-detect's
