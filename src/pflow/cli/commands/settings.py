@@ -6,6 +6,7 @@ from typing import ClassVar
 
 import click
 
+from pflow.core.llm_providers import CURATED_PROVIDERS, CuratedProvider
 from pflow.core.settings import OUTPUT_MODES, LLMSettings, PflowSettings, SettingsManager
 
 
@@ -467,71 +468,36 @@ def llm_show() -> None:
 # Source: https://docs.litellm.ai/docs/providers (verified against
 # litellm.validate_environment for the canonical short-list).
 #
-# Schema: (provider_name, env_vars_tuple, semantics, note)
-#   semantics: "single" | "or" | "and" | "local"
-#   - "or": any one of env_vars satisfies auth
-#   - "and": all of env_vars must be set
-#   - "local": no remote auth (env var, if any, is config like a server URL)
-#
-# Maintenance: when bumping LiteLLM, cross-check against
-# litellm.models_by_provider keys for any popular additions. The list is
-# curated — completeness < correctness. For providers not listed, the
-# convention is <PROVIDER>_API_KEY where <PROVIDER> matches the slash-prefix.
-_LLM_PROVIDERS: tuple[tuple[str, tuple[str, ...], str, str | None], ...] = (
-    # OR semantics — either key works.
-    ("gemini", ("GEMINI_API_KEY", "GOOGLE_API_KEY"), "or", None),
-    # AND semantics — all required.
-    ("bedrock", ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"), "and", "Or use AWS IAM role / ~/.aws/credentials"),
-    ("azure", ("AZURE_API_KEY", "AZURE_API_BASE", "AZURE_API_VERSION"), "and", None),
-    ("vertex_ai", ("VERTEXAI_PROJECT", "VERTEXAI_LOCATION"), "and", "Or use gcloud GOOGLE_APPLICATION_CREDENTIALS"),
-    # Local — no key, just a server URL config.
-    ("ollama", ("OLLAMA_API_BASE",), "local", "URL of local Ollama server, not a key"),
-    ("vllm", (), "local", "Typically no auth required"),
-    ("hosted_vllm", (), "local", "Typically no auth required"),
-    # Single-key providers — alphabetical.
-    ("ai21", ("AI21_API_KEY",), "single", None),
-    ("anthropic", ("ANTHROPIC_API_KEY",), "single", None),
-    ("anyscale", ("ANYSCALE_API_KEY",), "single", None),
-    ("baseten", ("BASETEN_API_KEY",), "single", None),
-    ("cerebras", ("CEREBRAS_API_KEY",), "single", None),
-    ("cohere", ("COHERE_API_KEY",), "single", None),
-    ("databricks", ("DATABRICKS_API_KEY",), "single", None),
-    ("deepinfra", ("DEEPINFRA_API_KEY",), "single", None),
-    ("deepseek", ("DEEPSEEK_API_KEY",), "single", None),
-    ("fireworks_ai", ("FIREWORKS_AI_API_KEY",), "single", None),
-    ("groq", ("GROQ_API_KEY",), "single", None),
-    ("huggingface", ("HUGGINGFACE_API_KEY",), "single", None),
-    ("mistral", ("MISTRAL_API_KEY",), "single", None),
-    ("openai", ("OPENAI_API_KEY",), "single", None),
-    ("openrouter", ("OPENROUTER_API_KEY",), "single", None),
-    ("perplexity", ("PERPLEXITYAI_API_KEY",), "single", None),
-    ("replicate", ("REPLICATE_API_KEY",), "single", None),
-    ("together_ai", ("TOGETHERAI_API_KEY",), "single", "Note: not TOGETHER_API_KEY"),
-    ("voyage", ("VOYAGE_API_KEY",), "single", None),
-    ("xai", ("XAI_API_KEY",), "single", None),
-)
-
-
-def _provider_status(env_vars: tuple[str, ...], semantics: str) -> str:
+def _provider_status(provider: CuratedProvider) -> str:
     """Return display status: "set" | "-" | "n/a"."""
-    if semantics == "local":
+    if provider.semantics == "local":
         return "n/a"
-    if not env_vars:
+    if not provider.env_vars:
         return "-"
+
+    from pflow.core.llm_config import ALLOWED_PROVIDERS, resolve_provider_api_key
+
+    # Status = what the runtime would actually use: the adapter sends registry
+    # providers the key resolve_provider_api_key() picks, while LiteLLM reads
+    # curated-only providers' keys straight from os.environ.
+    if provider.name in ALLOWED_PROVIDERS:
+        return "set" if resolve_provider_api_key(provider.name) is not None else "-"
 
     def _present(var: str) -> bool:
         return bool(os.environ.get(var, "").strip())
 
-    ok = all(_present(v) for v in env_vars) if semantics == "and" else any(_present(v) for v in env_vars)
+    env_vars = provider.env_vars
+    ok = all(_present(v) for v in env_vars) if provider.semantics == "and" else any(_present(v) for v in env_vars)
     return "set" if ok else "-"
 
 
-def _format_env_vars(env_vars: tuple[str, ...], semantics: str) -> str:
+def _format_env_vars(provider: CuratedProvider) -> str:
+    env_vars = provider.env_vars
     if not env_vars:
         return "(no key needed)"
-    if semantics == "single" or len(env_vars) == 1:
+    if provider.semantics == "single" or len(env_vars) == 1:
         return env_vars[0]
-    joiner = " and " if semantics == "and" else " or "
+    joiner = " and " if provider.semantics == "and" else " or "
     return joiner.join(env_vars)
 
 
@@ -563,27 +529,22 @@ def llm_providers(keyword: str | None, output_format: str) -> None:
     # be visible in os.environ so the installed-status check sees them.
     inject_settings_env_vars()
 
-    entries = _LLM_PROVIDERS
-    if keyword:
-        needle = keyword.lower()
-        entries = tuple(e for e in entries if needle in e[0].lower())
-
-    # Sort: actionable rows (single/or/and) first, then local. Alphabetical within each.
-    _priority = {"single": 0, "or": 0, "and": 0, "local": 1}
-    rows = sorted(entries, key=lambda e: (_priority.get(e[2], 2), e[0]))
+    rows = [p for p in CURATED_PROVIDERS if not keyword or keyword.lower() in p.name.lower()]
+    # Actionable rows (single/or/and) first, then local. Alphabetical within each.
+    rows.sort(key=lambda p: (p.semantics == "local", p.name))
 
     if output_format == "json":
         click.echo(
             json.dumps(
                 [
                     {
-                        "name": name,
-                        "env_vars": list(env_vars),
-                        "semantics": semantics,
-                        "status": _provider_status(env_vars, semantics),
-                        "note": note,
+                        "name": p.name,
+                        "env_vars": list(p.env_vars),
+                        "semantics": p.semantics,
+                        "status": _provider_status(p),
+                        "note": p.note,
                     }
-                    for name, env_vars, semantics, note in rows
+                    for p in rows
                 ],
                 indent=2,
             )
@@ -595,16 +556,15 @@ def llm_providers(keyword: str | None, output_format: str) -> None:
         click.echo("Try: pflow settings llm providers              # see all", err=True)
         return
 
-    vars_col = [_format_env_vars(env_vars, semantics) for _, env_vars, semantics, _ in rows]
-    name_w = max(max(len(r[0]) for r in rows), len("PROVIDER"))
+    vars_col = [_format_env_vars(p) for p in rows]
+    name_w = max(max(len(p.name) for p in rows), len("PROVIDER"))
     vars_w = max(max(len(v) for v in vars_col), len("ENV VARS"))
 
     click.echo(f"{'PROVIDER':<{name_w}}  {'ENV VARS':<{vars_w}}  STATUS")
-    for (name, env_vars, semantics, note), vars_str in zip(rows, vars_col, strict=True):
-        status = _provider_status(env_vars, semantics)
-        click.echo(f"{name:<{name_w}}  {vars_str:<{vars_w}}  {status}")
-        if note:
-            click.echo(f"{'':<{name_w}}  ({note})")
+    for p, vars_str in zip(rows, vars_col, strict=True):
+        click.echo(f"{p.name:<{name_w}}  {vars_str:<{vars_w}}  {_provider_status(p)}")
+        if p.note:
+            click.echo(f"{'':<{name_w}}  ({p.note})")
 
     click.echo(f"\nShowing {len(rows)} curated provider(s).")
     click.echo("Convention for unlisted providers: <PROVIDER>_API_KEY (matches slash-prefix).")

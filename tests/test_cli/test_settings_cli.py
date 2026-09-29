@@ -1,5 +1,7 @@
 """Tests for settings CLI commands."""
 
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -832,6 +834,173 @@ class TestLLMSettingsPersistence:
 # ============================================================================
 # Registry Settings Subgroup Tests
 # ============================================================================
+
+
+# Characterization oracle for `pflow settings llm providers` with no key set
+# anywhere. Captured from the pre-#606 command; the table moved into
+# core/llm_providers.py without changing a byte of this output.
+_PROVIDERS_TABLE_NO_KEYS = """\
+PROVIDER      ENV VARS                                                STATUS
+ai21          AI21_API_KEY                                            -
+anthropic     ANTHROPIC_API_KEY                                       -
+anyscale      ANYSCALE_API_KEY                                        -
+azure         AZURE_API_KEY and AZURE_API_BASE and AZURE_API_VERSION  -
+baseten       BASETEN_API_KEY                                         -
+bedrock       AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY             -
+              (Or use AWS IAM role / ~/.aws/credentials)
+cerebras      CEREBRAS_API_KEY                                        -
+cohere        COHERE_API_KEY                                          -
+databricks    DATABRICKS_API_KEY                                      -
+deepinfra     DEEPINFRA_API_KEY                                       -
+deepseek      DEEPSEEK_API_KEY                                        -
+fireworks_ai  FIREWORKS_AI_API_KEY                                    -
+gemini        GEMINI_API_KEY or GOOGLE_API_KEY                        -
+groq          GROQ_API_KEY                                            -
+huggingface   HUGGINGFACE_API_KEY                                     -
+mistral       MISTRAL_API_KEY                                         -
+openai        OPENAI_API_KEY                                          -
+openrouter    OPENROUTER_API_KEY                                      -
+perplexity    PERPLEXITYAI_API_KEY                                    -
+replicate     REPLICATE_API_KEY                                       -
+together_ai   TOGETHERAI_API_KEY                                      -
+              (Note: not TOGETHER_API_KEY)
+vertex_ai     VERTEXAI_PROJECT and VERTEXAI_LOCATION                  -
+              (Or use gcloud GOOGLE_APPLICATION_CREDENTIALS)
+voyage        VOYAGE_API_KEY                                          -
+xai           XAI_API_KEY                                             -
+hosted_vllm   (no key needed)                                         n/a
+              (Typically no auth required)
+ollama        OLLAMA_API_BASE                                         n/a
+              (URL of local Ollama server, not a key)
+vllm          (no key needed)                                         n/a
+              (Typically no auth required)
+
+Showing 27 curated provider(s).
+Convention for unlisted providers: <PROVIDER>_API_KEY (matches slash-prefix).
+Set a key:  pflow settings set-env <ENV_VAR> "<value>"
+Full LiteLLM list: https://docs.litellm.ai/docs/providers
+"""
+
+# JSON counterpart of the oracle above: (name, env_vars, semantics, status, note) per row, in output order.
+_PROVIDERS_JSON_NO_KEYS: list[tuple[str, tuple[str, ...], str, str, str | None]] = [
+    ("ai21", ("AI21_API_KEY",), "single", "-", None),
+    ("anthropic", ("ANTHROPIC_API_KEY",), "single", "-", None),
+    ("anyscale", ("ANYSCALE_API_KEY",), "single", "-", None),
+    ("azure", ("AZURE_API_KEY", "AZURE_API_BASE", "AZURE_API_VERSION"), "and", "-", None),
+    ("baseten", ("BASETEN_API_KEY",), "single", "-", None),
+    ("bedrock", ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"), "and", "-", "Or use AWS IAM role / ~/.aws/credentials"),
+    ("cerebras", ("CEREBRAS_API_KEY",), "single", "-", None),
+    ("cohere", ("COHERE_API_KEY",), "single", "-", None),
+    ("databricks", ("DATABRICKS_API_KEY",), "single", "-", None),
+    ("deepinfra", ("DEEPINFRA_API_KEY",), "single", "-", None),
+    ("deepseek", ("DEEPSEEK_API_KEY",), "single", "-", None),
+    ("fireworks_ai", ("FIREWORKS_AI_API_KEY",), "single", "-", None),
+    ("gemini", ("GEMINI_API_KEY", "GOOGLE_API_KEY"), "or", "-", None),
+    ("groq", ("GROQ_API_KEY",), "single", "-", None),
+    ("huggingface", ("HUGGINGFACE_API_KEY",), "single", "-", None),
+    ("mistral", ("MISTRAL_API_KEY",), "single", "-", None),
+    ("openai", ("OPENAI_API_KEY",), "single", "-", None),
+    ("openrouter", ("OPENROUTER_API_KEY",), "single", "-", None),
+    ("perplexity", ("PERPLEXITYAI_API_KEY",), "single", "-", None),
+    ("replicate", ("REPLICATE_API_KEY",), "single", "-", None),
+    ("together_ai", ("TOGETHERAI_API_KEY",), "single", "-", "Note: not TOGETHER_API_KEY"),
+    (
+        "vertex_ai",
+        ("VERTEXAI_PROJECT", "VERTEXAI_LOCATION"),
+        "and",
+        "-",
+        "Or use gcloud GOOGLE_APPLICATION_CREDENTIALS",
+    ),
+    ("voyage", ("VOYAGE_API_KEY",), "single", "-", None),
+    ("xai", ("XAI_API_KEY",), "single", "-", None),
+    ("hosted_vllm", (), "local", "n/a", "Typically no auth required"),
+    ("ollama", ("OLLAMA_API_BASE",), "local", "n/a", "URL of local Ollama server, not a key"),
+    ("vllm", (), "local", "n/a", "Typically no auth required"),
+]
+
+# Every env-var-shaped token in the oracle, so each test starts from a clean slate.
+_PROVIDER_ENV_VARS = sorted(set(re.findall(r"\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b", _PROVIDERS_TABLE_NO_KEYS)))
+
+
+def _status_by_name(output: str) -> dict[str, str]:
+    """Map provider name -> STATUS column from the text table (rows only, not notes)."""
+    rows = [line.split() for line in output.splitlines()[1:] if line and not line.startswith(" ")]
+    return {cells[0]: cells[-1] for cells in rows if cells[-1] in {"set", "-", "n/a"}}
+
+
+class TestLLMProvidersCommand:
+    """Test pflow settings llm providers — output shape and key status."""
+
+    @pytest.fixture(autouse=True)
+    def _no_provider_keys(self, monkeypatch: pytest.MonkeyPatch, isolated_settings: Path) -> None:
+        for var in _PROVIDER_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+
+    def test_text_table_unchanged(self, runner: CliRunner) -> None:
+        result = runner.invoke(settings, ["llm", "providers"])
+        assert result.exit_code == 0
+        assert result.output == _PROVIDERS_TABLE_NO_KEYS
+
+    def test_json_output_unchanged(self, runner: CliRunner) -> None:
+        result = runner.invoke(settings, ["llm", "providers", "--output-format", "json"])
+        assert result.exit_code == 0
+        expected = [
+            {"name": name, "env_vars": list(env_vars), "semantics": semantics, "status": status, "note": note}
+            for name, env_vars, semantics, status, note in _PROVIDERS_JSON_NO_KEYS
+        ]
+        # Byte-exact: key order and indentation are part of the agent-facing contract.
+        assert result.output == json.dumps(expected, indent=2) + "\n"
+
+    def test_keyword_filters_case_insensitively(self, runner: CliRunner) -> None:
+        result = runner.invoke(settings, ["llm", "providers", "GEM", "--output-format", "json"])
+        assert result.exit_code == 0
+        # Gemini's env-var order is semantic (canonical first governs which key is sent).
+        assert json.loads(result.output) == [
+            {
+                "name": "gemini",
+                "env_vars": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+                "semantics": "or",
+                "status": "-",
+                "note": None,
+            }
+        ]
+
+    def test_status_follows_env_var_semantics(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GOOGLE_API_KEY", "g-key")  # gemini alias: "or" is satisfied
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "a-key")  # bedrock: "and" is only half satisfied
+        monkeypatch.setenv("GROQ_API_KEY", "q-key")  # curated single-key row
+
+        status = _status_by_name(runner.invoke(settings, ["llm", "providers"]).output)
+
+        assert status["gemini"] == "set"
+        assert status["bedrock"] == "-"
+        assert status["groq"] == "set"
+        assert status["anthropic"] == "-"
+        assert status["ollama"] == "n/a"
+
+    def test_status_is_what_the_runtime_would_use_under_empty_export(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch, isolated_settings: Path
+    ) -> None:
+        """An exported-but-empty var must not hide a key stored in settings.
+
+        inject_settings_env_vars() never overwrites a var already in os.environ,
+        even an empty one, so the empty value is what the process sees.
+        Registry providers still get the stored key (the adapter passes
+        resolve_provider_api_key() explicitly), so they are "set". Curated-only
+        providers are resolved by LiteLLM from os.environ, so their status must
+        come from os.environ, not from settings. (Injection itself is skipped
+        under pytest; this pins which source each row type reads.)
+        """
+        manager = SettingsManager(settings_path=isolated_settings)
+        manager.set_env("ANTHROPIC_API_KEY", "sk-stored")
+        manager.set_env("GROQ_API_KEY", "gq-stored")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+        monkeypatch.setenv("GROQ_API_KEY", "")
+
+        status = _status_by_name(runner.invoke(settings, ["llm", "providers"]).output)
+
+        assert status["anthropic"] == "set"
+        assert status["groq"] == "-"
 
 
 class TestRegistryOutputModeCommand:
