@@ -14,6 +14,7 @@ from pflow.core.diagnostic import exception_to_diagnostics
 from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.execution_cache import ExecutionCache
 from pflow.core.param_coercion import coerce_param_for_node
+from pflow.core.stdout_reservation import reserve_stdout
 from pflow.core.user_errors import MCPError
 from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.registry import Registry
@@ -154,7 +155,8 @@ def _execute_and_display_results(
         _display_execution_banner(resolved_node, execution_params)
 
     try:
-        action = node.run(shared_store)
+        with reserve_stdout():
+            action = node.run(shared_store)
         execution_time_ms = int((time.perf_counter() - start_time) * 1000)
         outputs = _extract_node_outputs(resolved_node, shared_store, execution_params)
 

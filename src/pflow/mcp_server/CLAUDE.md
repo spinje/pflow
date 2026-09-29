@@ -22,7 +22,7 @@ mcp_server/
 
 | Concern | Owner |
 |---|---|
-| Startup, settings environment, stdio | `main.py:run_server` |
+| Startup, settings environment | `main.py:run_server`; stdio transport in `server.py:PflowMCP.run_stdio_async` |
 | Public server instructions and registration | `server.py:register_tools`; `tools/__init__.py` |
 | Tool/resource exception boundary | `server.py:PflowMCP`, `_should_render` |
 | Public tool schemas/docstrings | `tools/CLAUDE.md` |
@@ -32,7 +32,8 @@ mcp_server/
 
 ## Boundaries to preserve
 
-- **stdout carries only MCP protocol messages.** Log to stderr.
+- **stdout carries only MCP protocol messages.** Log to stderr. `server.py:PflowMCP.run_stdio_async`
+  holds the real stdout for the protocol via `core/stdout_reservation.py`; fd 1 points at stderr.
 - `main.py` injects settings environment before LLM operations. FastMCP owns its
   event loop: call `mcp.run("stdio")`, never wrap it in `asyncio.run()`.
 - Tools offload synchronous services with `asyncio.to_thread`; blocking core work
