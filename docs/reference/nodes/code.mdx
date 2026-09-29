@@ -28,7 +28,7 @@ The code node runs Python in-process with direct access to input data as native 
 | `stderr` | str | Captured stderr output |
 | `error` | str | Error message (only on failure) |
 
-`stdout` and `stderr` hold what your code prints, kept separate per batch item. Output from a `threading.Thread` your code starts itself is not captured — it goes to pflow's own streams — so return data from threads through `result`.
+`stdout` and `stderr` hold what your code prints, kept separate per batch item. Output from threads your code starts itself (`threading.Thread`, `ThreadPoolExecutor`, `loop.run_in_executor`) is not captured — it goes to pflow's own streams — so return data from threads through `result`. Don't wrap calls in `contextlib.redirect_stdout` to silence them: prints are already captured, and the redirect swaps the process-wide stream, which misroutes output when batch items run in parallel.
 
 ## Type annotations
 
