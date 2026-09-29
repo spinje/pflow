@@ -10,6 +10,7 @@
 | CLI capture and real process boundaries | `tests/test_cli/CLAUDE.md` |
 | Runner and cross-layer regressions | `tests/test_execution/`, `tests/test_integration/test_failed_node_invariant.py` |
 | Compiler, engine, batch, cache, tracing | `tests/test_runtime/`; template validation has its own `CLAUDE.md` |
+| `${…}` validator-vs-runtime parity (row corpus per surface), grammar table | `tests/test_integration/test_template_parity.py`, `tests/test_core/test_template_grammar.py`; a failing row is a divergence to fix, not a row to edit |
 | Node behavior and agent backends | `tests/test_nodes/`; Claude SDK constraint below |
 | Registry/scanning; MCP client versus server | `tests/test_registry/`; `tests/test_mcp/` versus `tests/test_mcp_server/` |
 | Example/document contracts | `tests/test_docs/`, `examples/CLAUDE.md` |

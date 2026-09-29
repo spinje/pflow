@@ -1,0 +1,65 @@
+{
+  "diagnostics": [
+    {
+      "context": {
+        "annotation": "dict",
+        "category": "validation",
+        "expected_type": "dict",
+        "inferred_type": "list",
+        "input_key": "x",
+        "node_type": "code",
+        "path": "nodes[id=downstream].params.inputs.x",
+        "template": "${upstream.result}"
+      },
+      "message": "Input 'x' expects dict but receives list from ${upstream.result}.",
+      "node_id": "downstream",
+      "severity": "error",
+      "source": "validator",
+      "suggestions": [
+        "Change the type annotation (in params.code): x: list",
+        "Or change ${upstream.result} to return dict",
+        "Or accept any type (in params.code): x: Any"
+      ],
+      "title": "Validation Error"
+    }
+  ],
+  "error": "Input 'x' expects dict but receives list from ${upstream.result}.",
+  "errors": [
+    {
+      "annotation": "dict",
+      "category": "validation",
+      "context": {
+        "annotation": "dict",
+        "category": "validation",
+        "expected_type": "dict",
+        "inferred_type": "list",
+        "input_key": "x",
+        "node_type": "code",
+        "path": "nodes[id=downstream].params.inputs.x",
+        "template": "${upstream.result}"
+      },
+      "expected_type": "dict",
+      "inferred_type": "list",
+      "input_key": "x",
+      "message": "Input 'x' expects dict but receives list from ${upstream.result}.",
+      "node_id": "downstream",
+      "node_type": "code",
+      "path": "nodes[id=downstream].params.inputs.x",
+      "severity": "error",
+      "source": "validator",
+      "suggestions": [
+        "Change the type annotation (in params.code): x: list",
+        "Or change ${upstream.result} to return dict",
+        "Or accept any type (in params.code): x: Any"
+      ],
+      "template": "${upstream.result}",
+      "title": "Validation Error"
+    }
+  ],
+  "status": "failed",
+  "success": false,
+  "workflow": {
+    "action": "unsaved",
+    "name": "<REPO>/examples/invalid/code-annotation-type-mismatch.pflow.md"
+  }
+}

@@ -1,0 +1,280 @@
+{
+  "diagnostics": [
+    {
+      "context": {
+        "available_context_keys": [
+          "fallback"
+        ],
+        "category": "template_error",
+        "is_output_resolution": true,
+        "output_failures": [
+          {
+            "kind": "output",
+            "output_name": "first_output",
+            "source_expr": "${primary.stdout}",
+            "source_file": "<REPO>/examples/error-handling/source-line-multi-output.pflow.md",
+            "source_line": 37,
+            "template": "${primary.stdout}",
+            "unresolved_references": [
+              {
+                "coalesce_expr": null,
+                "corrected_var": null,
+                "failure": {
+                  "category": "shell_failure",
+                  "command": "exit 1",
+                  "data": {
+                    "command": "exit 1",
+                    "exit_code": 1,
+                    "stderr": "",
+                    "stdout": ""
+                  },
+                  "error": "Command failed with exit code 1",
+                  "exit_code": 1,
+                  "stderr": "",
+                  "stdout": ""
+                },
+                "in_coalesce": false,
+                "is_output_source": true,
+                "peer_suggestions": [
+                  "fallback"
+                ],
+                "root": "primary",
+                "secondary_hint": null,
+                "status": "failed",
+                "var": "primary.stdout"
+              }
+            ]
+          }
+        ],
+        "param_key": "output 'first_output'",
+        "unresolved_references": [
+          {
+            "coalesce_expr": null,
+            "corrected_var": null,
+            "failure": {
+              "category": "shell_failure",
+              "command": "exit 1",
+              "data": {
+                "command": "exit 1",
+                "exit_code": 1,
+                "stderr": "",
+                "stdout": ""
+              },
+              "error": "Command failed with exit code 1",
+              "exit_code": 1,
+              "stderr": "",
+              "stdout": ""
+            },
+            "in_coalesce": false,
+            "is_output_source": true,
+            "peer_suggestions": [
+              "fallback"
+            ],
+            "root": "primary",
+            "secondary_hint": null,
+            "status": "failed",
+            "var": "primary.stdout"
+          }
+        ]
+      },
+      "message": "Unresolved variables in output 'first_output': ${primary.stdout}",
+      "severity": "error",
+      "source": "runtime",
+      "title": "Template Resolution Failed"
+    },
+    {
+      "context": {
+        "category": "shell_failure",
+        "type": "on_error_recovery"
+      },
+      "message": "Node 'primary' failed \u2014 on-error \u2192 'fallback'",
+      "node_id": "primary",
+      "severity": "warning",
+      "source": "runtime"
+    }
+  ],
+  "error": "Unresolved variables in output 'first_output': ${primary.stdout}",
+  "errors": [
+    {
+      "available_context_keys": [
+        "fallback"
+      ],
+      "category": "template_error",
+      "context": {
+        "available_context_keys": [
+          "fallback"
+        ],
+        "category": "template_error",
+        "is_output_resolution": true,
+        "output_failures": [
+          {
+            "kind": "output",
+            "output_name": "first_output",
+            "source_expr": "${primary.stdout}",
+            "source_file": "<REPO>/examples/error-handling/source-line-multi-output.pflow.md",
+            "source_line": 37,
+            "template": "${primary.stdout}",
+            "unresolved_references": [
+              {
+                "coalesce_expr": null,
+                "corrected_var": null,
+                "failure": {
+                  "category": "shell_failure",
+                  "command": "exit 1",
+                  "data": {
+                    "command": "exit 1",
+                    "exit_code": 1,
+                    "stderr": "",
+                    "stdout": ""
+                  },
+                  "error": "Command failed with exit code 1",
+                  "exit_code": 1,
+                  "stderr": "",
+                  "stdout": ""
+                },
+                "in_coalesce": false,
+                "is_output_source": true,
+                "peer_suggestions": [
+                  "fallback"
+                ],
+                "root": "primary",
+                "secondary_hint": null,
+                "status": "failed",
+                "var": "primary.stdout"
+              }
+            ]
+          }
+        ],
+        "param_key": "output 'first_output'",
+        "unresolved_references": [
+          {
+            "coalesce_expr": null,
+            "corrected_var": null,
+            "failure": {
+              "category": "shell_failure",
+              "command": "exit 1",
+              "data": {
+                "command": "exit 1",
+                "exit_code": 1,
+                "stderr": "",
+                "stdout": ""
+              },
+              "error": "Command failed with exit code 1",
+              "exit_code": 1,
+              "stderr": "",
+              "stdout": ""
+            },
+            "in_coalesce": false,
+            "is_output_source": true,
+            "peer_suggestions": [
+              "fallback"
+            ],
+            "root": "primary",
+            "secondary_hint": null,
+            "status": "failed",
+            "var": "primary.stdout"
+          }
+        ]
+      },
+      "is_output_resolution": true,
+      "message": "Unresolved variables in output 'first_output': ${primary.stdout}",
+      "output_failures": [
+        {
+          "kind": "output",
+          "output_name": "first_output",
+          "source_expr": "${primary.stdout}",
+          "source_file": "<REPO>/examples/error-handling/source-line-multi-output.pflow.md",
+          "source_line": 37,
+          "template": "${primary.stdout}",
+          "unresolved_references": [
+            {
+              "coalesce_expr": null,
+              "corrected_var": null,
+              "failure": {
+                "category": "shell_failure",
+                "command": "exit 1",
+                "data": {
+                  "command": "exit 1",
+                  "exit_code": 1,
+                  "stderr": "",
+                  "stdout": ""
+                },
+                "error": "Command failed with exit code 1",
+                "exit_code": 1,
+                "stderr": "",
+                "stdout": ""
+              },
+              "in_coalesce": false,
+              "is_output_source": true,
+              "peer_suggestions": [
+                "fallback"
+              ],
+              "root": "primary",
+              "secondary_hint": null,
+              "status": "failed",
+              "var": "primary.stdout"
+            }
+          ]
+        }
+      ],
+      "param_key": "output 'first_output'",
+      "severity": "error",
+      "source": "runtime",
+      "title": "Template Resolution Failed",
+      "unresolved_references": [
+        {
+          "coalesce_expr": null,
+          "corrected_var": null,
+          "failure": {
+            "category": "shell_failure",
+            "command": "exit 1",
+            "data": {
+              "command": "exit 1",
+              "exit_code": 1,
+              "stderr": "",
+              "stdout": ""
+            },
+            "error": "Command failed with exit code 1",
+            "exit_code": 1,
+            "stderr": "",
+            "stdout": ""
+          },
+          "in_coalesce": false,
+          "is_output_source": true,
+          "peer_suggestions": [
+            "fallback"
+          ],
+          "root": "primary",
+          "secondary_hint": null,
+          "status": "failed",
+          "var": "primary.stdout"
+        }
+      ]
+    }
+  ],
+  "execution": {
+    "duration_ms": null,
+    "nodes_executed": 1,
+    "nodes_total": 2,
+    "steps": [
+      {
+        "cached": false,
+        "duration_ms": 0,
+        "node_id": "primary",
+        "status": "failed"
+      },
+      {
+        "cached": false,
+        "duration_ms": 0,
+        "node_id": "fallback",
+        "status": "completed"
+      }
+    ]
+  },
+  "status": "failed",
+  "success": false,
+  "workflow": {
+    "action": "unsaved",
+    "name": "<REPO>/examples/error-handling/source-line-multi-output.pflow.md"
+  }
+}

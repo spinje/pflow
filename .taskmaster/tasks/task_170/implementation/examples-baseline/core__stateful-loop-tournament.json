@@ -1,0 +1,58 @@
+{
+  "advisories": [],
+  "diagnostics": [],
+  "duration_ms": 0,
+  "execution": {
+    "duration_ms": 0,
+    "nodes_executed": 2,
+    "nodes_total": 2,
+    "steps": [
+      {
+        "cached": false,
+        "duration_ms": 0,
+        "node_id": "run-rounds",
+        "status": "completed"
+      },
+      {
+        "cached": false,
+        "duration_ms": 0,
+        "node_id": "announce",
+        "status": "completed"
+      }
+    ]
+  },
+  "metrics": {
+    "total": {
+      "cost_usd": 0.0,
+      "tokens_input": 0,
+      "tokens_output": 0,
+      "tokens_total": 0,
+      "total_calls": 0
+    },
+    "workflow": {
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "models_used": [],
+      "node_timings": {
+        "announce": 0,
+        "run-rounds": 0
+      },
+      "nodes_executed": 2,
+      "tokens_input": 0,
+      "tokens_output": 0,
+      "tokens_total": 0
+    }
+  },
+  "nodes_executed": 2,
+  "result": {
+    "stdout": "Winner: ada"
+  },
+  "status": "success",
+  "success": true,
+  "total_cost_usd": 0.0,
+  "warnings": [],
+  "workflow": {
+    "action": "unsaved",
+    "name": "<REPO>/examples/core/stateful-loop-tournament.pflow.md"
+  }
+}

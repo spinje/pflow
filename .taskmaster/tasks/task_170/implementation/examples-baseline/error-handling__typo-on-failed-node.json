@@ -1,0 +1,280 @@
+{
+  "diagnostics": [
+    {
+      "context": {
+        "available_context_keys": [
+          "fallback"
+        ],
+        "category": "template_error",
+        "is_output_resolution": true,
+        "output_failures": [
+          {
+            "kind": "output",
+            "output_name": "content",
+            "source_expr": "${primary.stddout}",
+            "source_file": "<REPO>/examples/error-handling/typo-on-failed-node.pflow.md",
+            "source_line": 38,
+            "template": "${primary.stddout}",
+            "unresolved_references": [
+              {
+                "coalesce_expr": null,
+                "corrected_var": "primary.stdout",
+                "failure": {
+                  "category": "shell_failure",
+                  "command": "exit 7",
+                  "data": {
+                    "command": "exit 7",
+                    "exit_code": 7,
+                    "stderr": "",
+                    "stdout": ""
+                  },
+                  "error": "Command failed with exit code 7",
+                  "exit_code": 7,
+                  "stderr": "",
+                  "stdout": ""
+                },
+                "in_coalesce": false,
+                "is_output_source": true,
+                "peer_suggestions": [
+                  "fallback"
+                ],
+                "root": "primary",
+                "secondary_hint": "primary.stdout",
+                "status": "failed",
+                "var": "primary.stddout"
+              }
+            ]
+          }
+        ],
+        "param_key": "output 'content'",
+        "unresolved_references": [
+          {
+            "coalesce_expr": null,
+            "corrected_var": "primary.stdout",
+            "failure": {
+              "category": "shell_failure",
+              "command": "exit 7",
+              "data": {
+                "command": "exit 7",
+                "exit_code": 7,
+                "stderr": "",
+                "stdout": ""
+              },
+              "error": "Command failed with exit code 7",
+              "exit_code": 7,
+              "stderr": "",
+              "stdout": ""
+            },
+            "in_coalesce": false,
+            "is_output_source": true,
+            "peer_suggestions": [
+              "fallback"
+            ],
+            "root": "primary",
+            "secondary_hint": "primary.stdout",
+            "status": "failed",
+            "var": "primary.stddout"
+          }
+        ]
+      },
+      "message": "Unresolved variables in output 'content': ${primary.stddout}",
+      "severity": "error",
+      "source": "runtime",
+      "title": "Template Resolution Failed"
+    },
+    {
+      "context": {
+        "category": "shell_failure",
+        "type": "on_error_recovery"
+      },
+      "message": "Node 'primary' failed \u2014 on-error \u2192 'fallback'",
+      "node_id": "primary",
+      "severity": "warning",
+      "source": "runtime"
+    }
+  ],
+  "error": "Unresolved variables in output 'content': ${primary.stddout}",
+  "errors": [
+    {
+      "available_context_keys": [
+        "fallback"
+      ],
+      "category": "template_error",
+      "context": {
+        "available_context_keys": [
+          "fallback"
+        ],
+        "category": "template_error",
+        "is_output_resolution": true,
+        "output_failures": [
+          {
+            "kind": "output",
+            "output_name": "content",
+            "source_expr": "${primary.stddout}",
+            "source_file": "<REPO>/examples/error-handling/typo-on-failed-node.pflow.md",
+            "source_line": 38,
+            "template": "${primary.stddout}",
+            "unresolved_references": [
+              {
+                "coalesce_expr": null,
+                "corrected_var": "primary.stdout",
+                "failure": {
+                  "category": "shell_failure",
+                  "command": "exit 7",
+                  "data": {
+                    "command": "exit 7",
+                    "exit_code": 7,
+                    "stderr": "",
+                    "stdout": ""
+                  },
+                  "error": "Command failed with exit code 7",
+                  "exit_code": 7,
+                  "stderr": "",
+                  "stdout": ""
+                },
+                "in_coalesce": false,
+                "is_output_source": true,
+                "peer_suggestions": [
+                  "fallback"
+                ],
+                "root": "primary",
+                "secondary_hint": "primary.stdout",
+                "status": "failed",
+                "var": "primary.stddout"
+              }
+            ]
+          }
+        ],
+        "param_key": "output 'content'",
+        "unresolved_references": [
+          {
+            "coalesce_expr": null,
+            "corrected_var": "primary.stdout",
+            "failure": {
+              "category": "shell_failure",
+              "command": "exit 7",
+              "data": {
+                "command": "exit 7",
+                "exit_code": 7,
+                "stderr": "",
+                "stdout": ""
+              },
+              "error": "Command failed with exit code 7",
+              "exit_code": 7,
+              "stderr": "",
+              "stdout": ""
+            },
+            "in_coalesce": false,
+            "is_output_source": true,
+            "peer_suggestions": [
+              "fallback"
+            ],
+            "root": "primary",
+            "secondary_hint": "primary.stdout",
+            "status": "failed",
+            "var": "primary.stddout"
+          }
+        ]
+      },
+      "is_output_resolution": true,
+      "message": "Unresolved variables in output 'content': ${primary.stddout}",
+      "output_failures": [
+        {
+          "kind": "output",
+          "output_name": "content",
+          "source_expr": "${primary.stddout}",
+          "source_file": "<REPO>/examples/error-handling/typo-on-failed-node.pflow.md",
+          "source_line": 38,
+          "template": "${primary.stddout}",
+          "unresolved_references": [
+            {
+              "coalesce_expr": null,
+              "corrected_var": "primary.stdout",
+              "failure": {
+                "category": "shell_failure",
+                "command": "exit 7",
+                "data": {
+                  "command": "exit 7",
+                  "exit_code": 7,
+                  "stderr": "",
+                  "stdout": ""
+                },
+                "error": "Command failed with exit code 7",
+                "exit_code": 7,
+                "stderr": "",
+                "stdout": ""
+              },
+              "in_coalesce": false,
+              "is_output_source": true,
+              "peer_suggestions": [
+                "fallback"
+              ],
+              "root": "primary",
+              "secondary_hint": "primary.stdout",
+              "status": "failed",
+              "var": "primary.stddout"
+            }
+          ]
+        }
+      ],
+      "param_key": "output 'content'",
+      "severity": "error",
+      "source": "runtime",
+      "title": "Template Resolution Failed",
+      "unresolved_references": [
+        {
+          "coalesce_expr": null,
+          "corrected_var": "primary.stdout",
+          "failure": {
+            "category": "shell_failure",
+            "command": "exit 7",
+            "data": {
+              "command": "exit 7",
+              "exit_code": 7,
+              "stderr": "",
+              "stdout": ""
+            },
+            "error": "Command failed with exit code 7",
+            "exit_code": 7,
+            "stderr": "",
+            "stdout": ""
+          },
+          "in_coalesce": false,
+          "is_output_source": true,
+          "peer_suggestions": [
+            "fallback"
+          ],
+          "root": "primary",
+          "secondary_hint": "primary.stdout",
+          "status": "failed",
+          "var": "primary.stddout"
+        }
+      ]
+    }
+  ],
+  "execution": {
+    "duration_ms": null,
+    "nodes_executed": 1,
+    "nodes_total": 2,
+    "steps": [
+      {
+        "cached": false,
+        "duration_ms": 0,
+        "node_id": "primary",
+        "status": "failed"
+      },
+      {
+        "cached": false,
+        "duration_ms": 0,
+        "node_id": "fallback",
+        "status": "completed"
+      }
+    ]
+  },
+  "status": "failed",
+  "success": false,
+  "workflow": {
+    "action": "unsaved",
+    "name": "<REPO>/examples/error-handling/typo-on-failed-node.pflow.md"
+  }
+}

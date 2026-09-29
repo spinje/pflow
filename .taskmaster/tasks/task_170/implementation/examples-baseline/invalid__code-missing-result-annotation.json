@@ -1,0 +1,66 @@
+{
+  "diagnostics": [
+    {
+      "context": {
+        "category": "validation",
+        "missing": [
+          "result",
+          "next"
+        ],
+        "node_type": "code",
+        "path": "nodes[id=split].params.code"
+      },
+      "message": "Code must declare result type annotation (result: <type> = ...) or next type annotation (next: str = ...) for routing",
+      "node_id": "split",
+      "see_also": [
+        "code"
+      ],
+      "severity": "error",
+      "source": "validator",
+      "suggestions": [
+        "Add a result annotation at the top of the code block: result: <type> = ...",
+        "Or, to route to a downstream node, declare: next: str = \"<target-node-id>\""
+      ],
+      "title": "Validation Error"
+    }
+  ],
+  "error": "Code must declare result type annotation (result: <type> = ...) or next type annotation (next: str = ...) for routing",
+  "errors": [
+    {
+      "category": "validation",
+      "context": {
+        "category": "validation",
+        "missing": [
+          "result",
+          "next"
+        ],
+        "node_type": "code",
+        "path": "nodes[id=split].params.code"
+      },
+      "message": "Code must declare result type annotation (result: <type> = ...) or next type annotation (next: str = ...) for routing",
+      "missing": [
+        "result",
+        "next"
+      ],
+      "node_id": "split",
+      "node_type": "code",
+      "path": "nodes[id=split].params.code",
+      "see_also": [
+        "code"
+      ],
+      "severity": "error",
+      "source": "validator",
+      "suggestions": [
+        "Add a result annotation at the top of the code block: result: <type> = ...",
+        "Or, to route to a downstream node, declare: next: str = \"<target-node-id>\""
+      ],
+      "title": "Validation Error"
+    }
+  ],
+  "status": "failed",
+  "success": false,
+  "workflow": {
+    "action": "unsaved",
+    "name": "<REPO>/examples/invalid/code-missing-result-annotation.pflow.md"
+  }
+}
