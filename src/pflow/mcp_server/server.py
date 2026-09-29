@@ -21,7 +21,7 @@ from mcp.server.stdio import stdio_server
 
 from pflow.core.diagnostic import Diagnostic, Severity, exception_to_diagnostics
 from pflow.core.diagnostic_render import format_diagnostic
-from pflow.core.stdout_reservation import reserve_stdout
+from pflow.core.stdio_reservation import reserve_stdin, reserve_stdout
 from pflow.core.suggestion_utils import find_similar_items
 
 logger = logging.getLogger(__name__)
@@ -250,17 +250,20 @@ class PflowMCP(FastMCP):
             raise ResourceError(_render_exception(original)) from original
 
     async def run_stdio_async(self) -> None:
-        """Serve stdio with stdout reserved for the protocol.
+        """Serve stdio with stdin and stdout reserved for the protocol.
 
-        FastMCP's own version writes JSON-RPC to whatever ``sys.stdout`` is, so a
-        stray write from a running workflow would corrupt the protocol stream.
+        FastMCP's own version reads and writes JSON-RPC on whatever ``sys.stdin`` /
+        ``sys.stdout`` are, so a running workflow that reads stdin would eat protocol
+        bytes, and a stray write would corrupt the protocol stream.
         """
-        with reserve_stdout() as protocol:
-            protocol_stream = anyio.wrap_file(TextIOWrapper(protocol, encoding="utf-8"))
-            async with stdio_server(stdout=protocol_stream) as (read_stream, write_stream):
+        with reserve_stdin() as protocol_in, reserve_stdout() as protocol_out:
+            in_stream = anyio.wrap_file(TextIOWrapper(protocol_in, encoding="utf-8"))
+            out_stream = anyio.wrap_file(TextIOWrapper(protocol_out, encoding="utf-8"))
+            async with stdio_server(stdin=in_stream, stdout=out_stream) as (read_stream, write_stream):
                 # `_mcp_server` is FastMCP's private low-level server, renamed in SDK 2.x, so
-                # this breaks loudly at the #644 migration. DELETE this override then, don't
-                # port it: SDK 2.x's stdio_server diverts fd 1 to stderr itself.
+                # this breaks loudly at the #644 migration. DELETE this override then, both
+                # halves, don't port it: SDK 2.x's stdio_server points fd 0 at the null
+                # device and fd 1 at stderr itself.
                 low_level = self._mcp_server
                 await low_level.run(read_stream, write_stream, low_level.create_initialization_options())
 
