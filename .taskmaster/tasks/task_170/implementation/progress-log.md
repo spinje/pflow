@@ -616,3 +616,9 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
   - Nothing at importance ≥3 was fixed; nothing contradicts the ledger or an ADR.
 - Self-checks: fully happy with the two fixes. Both keep the code shape: one condition each, and one removes a false branch. test-reflect: both new tests are revert-red and assert exact values; nothing shallow was added.
 - Next: the orchestrator commits the review fixes; the Dev-2 ruling (now including finding 3) and the prose-wrap ruling stay open. Not committed; 4c not started.
+
+## [2026-09-30 20:30] task-orchestrator — 4b closed; 4d runs before 4c (ruling wait)
+- Verified + committed C2's 4b review fixes `24fdd2a8` (`make test` 10086 passed / 2 failed (ruling rows) / 13 xfailed (4c); `make check` green). The indexed-`??` type Warning folds into the Dev-2 surfacing (same cause).
+- Ruling (importance 1, reversible): **4d before 4c.** 4c needs the pending R5 ruling; 4d (graph scope + `scan.ts`, type-rule homes, display strippers) shares no code path with the cache chunker/renderer — the plan's 4c→4d order is not load-bearing between those two. 4c follows once R5 lands.
+- Rotation: C2 at ~500k → **fresh Agent D (Opus/medium) for 4d**; 4c then goes to D resumed if healthy.
+- Next: launch D on 4d.
