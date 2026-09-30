@@ -15,6 +15,7 @@ Shared parsing, diagnostics, configuration, and execution utilities.
 | Change save/load, validation, discovery, or static graphs | `workflow/CLAUDE.md` |
 | Change LLM requests, normalization, or provider policy | `llm_client.py::complete`, `litellm_runtime.py`, `llm_reasoning_map.py` |
 | Change model/key selection or settings | `llm_config.py`, `llm_providers.py`, `settings.py` |
+| Change which catalog models `settings llm models` lists | `llm_providers.py::provider_models` (the callable rule, `CuratedProvider.catalog_groups`) |
 | Change prompt-cache rendering/overlap/TTL | `prompt_cache.py`, `prompt_refs.py`, `cache_overlap.py`, `cache_ttl.py`; capabilities in `llm_capabilities.py` |
 | Change cache recommendations or analysis reports | `prompt_cache_analysis/CLAUDE.md` |
 | Change stdin or terminal progress | `shell_integration.py`, `output_controller.py` |

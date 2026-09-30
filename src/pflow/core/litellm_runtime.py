@@ -27,7 +27,8 @@ Hybrid bundled-first, upstream-on-miss
 The bundled snapshot is stale for brand-new models that LiteLLM hasn't
 bundled yet (e.g., ``gemini/gemini-3.5-flash`` is in upstream but absent
 from the LiteLLM 1.86.1 wheel). ``ensure_model_priced(model)`` (runtime
-pricing) and ``try_load_upstream_catalog()`` (validator membership) each
+pricing) and ``try_load_upstream_catalog()`` (catalog readers: validator
+membership, ``pflow settings llm models``) each
 fetch upstream at most once per process and merge it through one helper,
 ``_merge_upstream_catalog``: every upstream entry whose key the bundled
 catalog lacks is added under that exact key, and no bundled entry is ever
@@ -141,10 +142,10 @@ def _merge_upstream_catalog(litellm: Any) -> None:
     litellm.add_known_models(model_cost_map=new_entries)
 
 
-# Validator-side latch — independent from the runtime-side ``_upstream_attempted``
+# Catalog-reader latch — independent from the runtime-side ``_upstream_attempted``
 # above. See ``try_load_upstream_catalog`` for the rationale (the runtime path
-# treats fetch failure as best-effort; the validator path needs to know whether
-# the membership check is authoritative).
+# treats fetch failure as best-effort; catalog readers need to know whether the
+# fetch succeeded — validator authority, the model listing's live/offline label).
 _validator_upstream_attempted = False
 _validator_upstream_fetch_succeeded = False
 
@@ -335,7 +336,7 @@ def estimate_completion_cost_usd(
 
 
 def try_load_upstream_catalog() -> bool:
-    """Validator-side best-effort upstream catalog merge.
+    """Best-effort upstream catalog merge for catalog readers (validator membership, ``settings llm models``).
 
     Independent of ``ensure_model_priced``'s runtime latch. Returns True if
     the in-memory catalog is in a state usable for model-membership checks
