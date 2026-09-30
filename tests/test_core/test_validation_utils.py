@@ -212,6 +212,19 @@ def test_save_and_validate_only_agree_on_relative_child_outputs(parent_with_typo
     assert _error_messages(list(exc_info.value.validation_errors)) == expected
 
 
+def test_save_and_validate_only_accept_correct_relative_child_output(parent_with_typo_from_foreign_cwd: Path) -> None:
+    """Positive control: the corrected ``${sub.result}`` passes both entry points from the same foreign cwd."""
+    from pflow.core.workflow.save_service import save_workflow_with_options
+    from pflow.execution.runner import WorkflowRunner
+
+    parent = parent_with_typo_from_foreign_cwd
+    parent.write_text(_PARENT_MD.replace("${sub.reslt}", "${sub.result}"), encoding="utf-8")
+
+    assert WorkflowRunner().validate(str(parent), {}).valid
+    saved_path, _, _ = save_workflow_with_options("good-parent", parent.read_text(encoding="utf-8"), source_path=parent)
+    assert saved_path.exists()
+
+
 def test_analyze_cache_agrees_with_validate_only_on_relative_child_outputs(
     parent_with_typo_from_foreign_cwd: Path,
 ) -> None:
