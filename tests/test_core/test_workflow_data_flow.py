@@ -122,6 +122,11 @@ class TestCacheVarRoots:
     def test_declared_inner_root_is_clean(self):
         assert self._messages("p.stdout[${i}]") == []
 
+    def test_literal_var_is_rejected(self):
+        """``${42}`` is a Literal, not a reference: the runtime gates the chunk on the root
+        ``"42"`` and silently drops it, so the validator must keep rejecting it."""
+        assert any("'42' is not a declared input" in m for m in self._messages("42"))
+
 
 class TestBuildExecutionOrder:
     """Test the topological sort for execution order."""

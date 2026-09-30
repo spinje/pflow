@@ -353,6 +353,14 @@ class TestParameterTypeLookup:
         assert param_type == "any"
 
 
+def test_index_into_a_union_of_lists_is_an_unknown_element():
+    """An element type comes only from a single ``list[X]``; a union never yields a torn type string."""
+    workflow_ir = {"enable_namespacing": True, "nodes": [{"id": "p"}]}
+    node_outputs = {"p.values": {"type": "list[str]|list[int]"}, "p.names": {"type": "list[str]"}}
+    assert infer_template_type("p.values[0]", workflow_ir, node_outputs) == "any"
+    assert infer_template_type("p.names[0]", workflow_ir, node_outputs) == "str"
+
+
 class TestInferTemplateTypeBatchIndexedAccess:
     """Verify infer_template_type descends into batch item structure on indexed paths.
 

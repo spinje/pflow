@@ -39,10 +39,11 @@ useful unknown-type error with a validator exception.
   filters by node id, since batch nodes may share an alias. `ROOT_ONLY` roots
   are checked by `core/workflow/data_flow.py`, over the same surfaces.
 - Carry values, output sources and cache vars have their own passes (one
-  diagnostic per mistake) and join only unused-input accounting
-  (`_extract_cache_templates_for_unused_check`,
-  `_extract_output_templates_for_unused_check`). Feeding cache vars to path
-  validation produces two diagnostics for one mistake.
+  diagnostic per mistake). Output sources and cache vars also join unused-input
+  accounting (`_extract_output_templates_for_unused_check`,
+  `_extract_cache_templates_for_unused_check`); carry values do not — they may
+  only reference the loop node itself. Feeding cache vars to path validation
+  produces two diagnostics for one mistake.
 - Literal operands are not references. `TemplateResolver.is_literal_operand`
   is a coarse first-character check for already-parsed operands, not a
   literal validator.

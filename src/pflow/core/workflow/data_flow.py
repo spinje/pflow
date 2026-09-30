@@ -1052,14 +1052,15 @@ def _validate_cache_block(  # noqa: C901
 
 
 def _cache_var_roots(var_expr: str) -> list[str]:
-    """The roots a chunk var reads: each Reference of a single-operand var, inner
-    dynamic-index references included. A ``??`` chain or an Issue keeps the whole
-    var's lexical root — the one ``prompt_cache._resolve_chunk_value`` gates the
-    chunk on; the Issue pass reports an Issue.
+    """The roots a chunk var reads: each Reference of a one-Reference var, inner
+    dynamic-index references included. Anything else — a ``??`` chain, a literal
+    (``${42}``), an Issue — keeps the whole var's lexical root, the one
+    ``prompt_cache._resolve_chunk_value`` gates the chunk on; the Issue pass reports an Issue.
     """
     expressions = parse("${" + var_expr + "}").expressions
-    if expressions and expressions[0].raw == var_expr and len(expressions[0].operands) == 1:
-        return [ref.root for ref in expressions[0].references]
+    operands = expressions[0].operands if expressions and expressions[0].raw == var_expr else ()
+    if len(operands) == 1 and isinstance(operands[0], Reference):
+        return [ref.root for ref in operands[0].references]
     return [TemplateResolver.extract_root_node_id(var_expr)]
 
 

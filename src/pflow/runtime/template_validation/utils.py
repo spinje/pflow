@@ -89,7 +89,8 @@ def descend_index(info: Mapping[str, Any]) -> tuple[dict[str, Any] | None, bool]
     types = {outer_base_type(member.strip()) for member in declared.split("|")}
     if types & (LIST_TYPES | {"any"}):
         structure = info.get("structure") or {}
-        element = _PARAMETERIZED_LIST.match(declared)
+        # Only a single `list[X]` names its element; a union's element is unknown
+        element = _PARAMETERIZED_LIST.match(declared) if "|" not in declared else None
         element_type = element.group(1) if element else ("dict" if structure else "any")
         return {"type": element_type, "structure": structure}, False
     if types & {"str", "string"}:

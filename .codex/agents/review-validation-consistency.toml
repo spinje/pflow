@@ -152,7 +152,7 @@ This is a known source of drift. Template references are validated by TWO indepe
 
 **`core/workflow/data_flow.py`** — validates data flow:
 - Checks: does the referenced node exist? Does it run before this node?
-- Uses positive pattern matching via `_PFLOW_VAR_RE` (compiled from `TemplateResolver._VAR_NAME_PATTERN`) — refs that don't match the pflow variable shape are skipped (covers bash syntax like `${var:-default}`, `${#array[@]}`, and truncated nested templates). See `core/workflow/CLAUDE.md` "Pflow vs bash syntax".
+- Checks the `parse().references` of every node surface (`template_surfaces.iter_node_surfaces`: params, `batch.items`, loop fields), dynamic-index inner refs included. Bash syntax like `${var:-default}` opens no Expression: it is an Issue, reported by the one Issue pass (`template_validation/validator.py::_validate_malformed_templates`), never a dependency. See `core/workflow/CLAUDE.md` "References, not text".
 - Includes forward error edges in topological sort — error handler outputs treated as always-available
 - Scopes `inputs` keys per-node correctly
 
@@ -213,7 +213,7 @@ These boundaries and gaps exist today. If changes touch these areas, check wheth
 
 1. **Branch-conditional output availability** — validator doesn't track which nodes are on conditional branches vs main flow. Templates referencing branch-only nodes are validated as if they always execute.
 2. **On-error edge outputs** — `data_flow.py` includes forward error edges, treating error-handler outputs as always-available.
-3. **Positive-match pattern in data flow** — `data_flow.py` uses `_PFLOW_VAR_RE` for positive matching; templates that don't match the pflow variable shape (bash syntax, truncated nested templates) are skipped. Edge cases at the pattern boundary may bypass data flow validation.
+3. **Issues are not dependencies** — `data_flow.py` sees only parsed References; a `${…}` that opens no Expression (bash syntax, a malformed template) is reported by the Issue pass, which runs only in template validation (`WorkflowValidator` with params), not on the compile path.
 4. **Coalesce validation boundary** — data flow still checks operand roots, while template Pass 5 excludes multi-operand coalesce from field/path checks so optional fields can fall through at runtime. Do not exempt regressions in this supported optional-field behavior as a known gap.
 5. **`inputs` scoping divergence** — `data_flow.py` scopes per-node, `template_validation/` scopes globally. Different models for the same concept.
 

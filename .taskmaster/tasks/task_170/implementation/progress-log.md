@@ -569,3 +569,50 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
   - Dev 11 → `.claude/agents/review-validation-consistency.md:158/:219` is corrected BEFORE the 4b review dispatch (the lens reads it); the test-docstring staleness waits for phase 5.
 - Committed 4b as WIP (the two ruling rows red).
 - Next: C2 runs the 4b mid-task review (`review-validation-consistency` + `review-impact-completeness`).
+
+## [2026-09-30 20:10] Agent C2 (Opus) — phase-4b mid-task review (gate-runner)
+- Did:
+  - Fixed the lens instruction file first. `.claude/agents/review-validation-consistency.md` §4 data_flow bullet and known-gap 3 now say that data_flow checks `parse().references` over `iter_node_surfaces`, and that bash `${VAR:-x}` is an Issue reported by the one Issue pass (template validation only, not the compile path). Then ran `make sync-claude-assets` (1 file).
+  - Ran deep-review in code mode on `d8443162..b3732f62` through the pflow fan-out: provider codex (cross-model against me, the Claude builder), lenses exactly `review-validation-consistency` + `review-impact-completeness`.
+  - The target (`scratchpads/task-170/phase4b/review/target.txt`) carried: the scope, the per-lens focus, Dev 2 and Dev 8 as named items to check, and the deferred list (the prose-wrap rows, R5/4c, 4d, the phase-5 deletions, Passes 6/7/9 walks, #643(c) ruled (a), `workflow_executor.py:771`).
+  - Waited in-turn and read the report in full (`…/review/report.md`).
+  - Coverage: both lenses reported on the exact scope, no gaps. Both were read-only; neither ran probes.
+- Findings, each dispositioned (verified by execution against a byte copy of `d8443162`; probe `…/review/probe.py`):
+  1. **Critical (validation-consistency): a literal cache var `${42}` bypasses the root check → CONFIRMED, FIXED.**
+     - Base: "Cache chunk '42' references '${42}' but '42' is not a declared input…". 4b: no error. The runtime gates on root `"42"` → ABSENT, so the chunk and its prose are silently dropped.
+     - Cause: `_cache_var_roots` took the Reference path for any single-operand var, and a Literal has no references.
+     - Fix: only a one-**Reference** var reads its references; anything else keeps the lexical whole-var root.
+     - Test: `TestCacheVarRoots::test_literal_var_is_rejected`, red before the fix.
+  2. **Warning (validation-consistency): the greedy `list[X]` match tears union types → CONFIRMED, FIXED.**
+     - `descend_index({"type": "list[str]|list[int]"})` gave element type `str]|list[int`, which yields false Pass-6 errors.
+     - Fix: the element type comes only from a single (non-union) `list[X]`; otherwise `dict` if a structure is declared, else `any`.
+     - Test: `test_type_checker.py::test_index_into_a_union_of_lists_is_an_unknown_element` (plus the `list[str]` → `str` partner), red before the fix.
+  3. **Warning (impact-completeness): type passes check every `??` operand, including ones after a literal, so `${0 ?? b.results[0]}` / `${b.results[0] ?? 0}` into `x: int` newly error → NOT CHANGED; disputed as a new defect class.**
+     - Executed on base: `${0 ?? p.result}` into `x: int` already errors ("expects int but receives dict from ${p.result}"). Type passes 6/7/9 have always typed each operand.
+     - 4b only makes an indexed operand typed like a non-indexed one. That is Dev 2 (accepted provisionally, surfaced upward), not a new rule.
+     - `${b.results[0] ?? 0}` is a real mismatch whenever the element exists. "An operand after a literal is unreachable" is a pre-existing type-pass policy question.
+     - Named as a follow-up with Passes 6/7/9 (§6); not fixed here.
+  4. **Suggestion (impact-completeness): CLAUDE.md said carry values join unused-input accounting → CONFIRMED, FIXED (doc).** Carry values do not join, because a carry may reference only the loop node itself (`data_flow._validate_loop_carry_value_self_ref`). `template_validation/CLAUDE.md` is corrected.
+  5. Dev 8 (named item): both lenses found no concrete failure beyond the known double-unescape. Dev 2: covered by finding 3; no other new over-rejection was reported.
+  - Verified clean (both lenses):
+    - Issue coverage on every enumerated surface (nested params, batch items, loop, carry, outputs, cache).
+    - Dynamic-index inner references reach data_flow and unused-input accounting.
+    - Passes 5/8 keep the `??` field fallback; Pass 8 is scoped to its node.
+    - Plain and templated output sources count toward input use.
+    - All changed signatures' callers are migrated.
+    - Remaining path splitting in validation is diagnostic display or deferred.
+- Changed:
+  - src: `core/workflow/data_flow.py` (`_cache_var_roots`), `runtime/template_validation/utils.py` (`descend_index`), `runtime/template_validation/CLAUDE.md`, `.claude/agents/review-validation-consistency.md` (+ `.codex` twin).
+  - tests: `test_workflow_data_flow.py` +1, `test_type_checker.py` +1 (additions only).
+- Verified:
+  - `make check` green (incl. asset sync).
+  - `make test` 10086 passed / 2 failed / 13 xfailed: +2 tests; the 2 failures are still exactly the prose-wrap ruling rows.
+  - Corpus 421 passed / 2 ruling rows / 13 strict 4c xfails, no XPASS.
+  - `capture.py --check`: 29 examples, 0 differing.
+  - Both new tests were red before the fix.
+- Deviations/surprises:
+  - Finding 3 widens Dev 2's footprint beyond shell (Pass 9 / code annotations over `??` operands). It adds evidence to the Dev-2 ruling already surfaced, not a new decision.
+  - `rm -rf` is denied, so I reused my earlier byte copy `phase4b/base` (extracted at `d8443162`) for the before-tree.
+  - Nothing at importance ≥3 was fixed; nothing contradicts the ledger or an ADR.
+- Self-checks: fully happy with the two fixes. Both keep the code shape: one condition each, and one removes a false branch. test-reflect: both new tests are revert-red and assert exact values; nothing shallow was added.
+- Next: the orchestrator commits the review fixes; the Dev-2 ruling (now including finding 3) and the prose-wrap ruling stay open. Not committed; 4c not started.
