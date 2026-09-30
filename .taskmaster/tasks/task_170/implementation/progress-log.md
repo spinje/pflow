@@ -174,3 +174,8 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
 - Deviations/surprises: the only Critical sat in the accepted interim helper's logic, not in its private-API access. The fix stays inside that interim code and adds one more private pattern, which 4a deletes. No decision at importance ≥3; nothing touches the ledger or an ADR.
 - Self-checks: fully happy with the fix. The interim stand-in is now three private patterns deep (`_BRACKET_INDEX_PATTERN` pre-pass, `_DYNAMIC_INDEX_OPEN`, `_DYNAMIC_INDEX`), which is more reason for 4a to delete all of them at once. test-reflect: the new test is a mutation-proven regression test (red before the fix); nothing shallow was added.
 - Next: the orchestrator commits the review fix; phase 3 (Agent B resumed) on instruction.
+
+## [2026-09-30 02:00] task-orchestrator — phase-2 review closed; origin/main merged
+- Did: verified Agent B's review dispositions (report `scratchpads/task-170/phase2/review/report.md`: both lenses on codex, full scope, 1 Critical fixed with a failing-first test, no W/S); committed the fix `fa551740`; merged `origin/main` `08e1eb68` (#617, #618, #615, root-CLAUDE.md lens edit) as `8113641b` — clean, no conflicts.
+- Verified (merged result): `make test` 9738 passed / 70 xfailed (+28 from main's tests); `make check` green; `capture.py --check` → 29 examples, 0 differing (phase 2 + main change no example output; baseline NOT re-captured — still valid).
+- Next: resume Agent B on phase 3 (relocation to `core/templates.py`), which re-reads the merged `cli/commands/run.py|resume.py`.
