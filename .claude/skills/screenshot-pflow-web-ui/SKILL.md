@@ -144,8 +144,8 @@ A verification tool that passes on nothing is worse than none, so none of these 
 - **Exit 0 = the page was examined; now read the result.** `visual-invariants` and
   `live-reload` report `passed` in their JSON, and `passed: false` still exits 0. A
   `visual-invariants` pass covers exactly what its counts say it examined: `leaves` (always
-  ≥ 1), `dotsChecked` (`0` only when the view renders no bordered io dots at all, e.g. a
-  flat workflow in `beautiful` density; dots rendered but none measurable fail with a
+  ≥ 1), `dotsChecked` (`0` only when the view renders no io rows at all, e.g. a flat
+  workflow in `beautiful` density; io rows with no measurable border dot fail with a
   `reason`), and `edges` (a `skipped` reason when the view does not qualify).
 - **Capturing an unframed page on purpose** (the full-screen error page): pass
   `allow_empty=true` to `screenshot` or `inspect`. Settle then waits its full 8 s instead of
