@@ -452,12 +452,13 @@ class TestEscapedTemplateInPromptIsMeasured:
         )
 
     def test_lower_bound_strips_only_the_unresolved_expressions(self) -> None:
+        """The escaped `$${missing}` spells the same `${missing}` bytes as the unresolved
+        expression; only the expression is cut (by author span)."""
         ctx = _analysis_ctx({"text": "T"})
-        region = "Use $${x} for ${text} and ${missing}"
-        assert tokenize_prompt_region_lower_bound(region, model="", ctx=ctx) == (
-            estimate_tokens("", "Use ${x} for T and ")[0],
-            ("missing",),
-        )
+        region = "Use $${missing} for ${text} and ${missing}"
+        expected = estimate_tokens("", "Use ${missing} for T and ")[0]
+        assert expected != estimate_tokens("", "Use  for T and ")[0]  # the collision is observable
+        assert tokenize_prompt_region_lower_bound(region, model="", ctx=ctx) == (expected, ("missing",))
 
     def test_row_builder_prompt_resolution(self) -> None:
         from pflow.core.prompt_cache_analysis.stages.row_builder import _resolve_prompt_for_tokenization

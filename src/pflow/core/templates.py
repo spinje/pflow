@@ -176,8 +176,14 @@ class Template:
 
     @property
     def is_simple(self) -> bool:
-        """The whole source is one Expression: resolution preserves its value's type."""
-        return len(self.segments) == 1 and isinstance(self.segments[0], Expression)
+        """The whole source is one Expression: resolution preserves its value's type.
+
+        One trailing newline is tolerated (and dropped by resolution): a YAML block
+        scalar ``v: |`` ends in ``\n``, and ``${x}\n`` has always been simple.
+        """
+        if not self.segments or not isinstance(self.segments[0], Expression):
+            return False
+        return self.segments[1:] in ((), (Text("\n"),))
 
     @property
     def needs_resolution(self) -> bool:

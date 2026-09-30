@@ -43,6 +43,11 @@ def _simple_execute_single_fn(node, config, item_shared):
 class TestExtractNodeIds:
     """Test extract_node_ids_from_template utility."""
 
+    def test_dynamic_index_inner_node_is_upstream(self):
+        """A dynamic index's inner reference names an upstream node too: its stderr may
+        explain the failure (Task 170 4a review — the value view alone drops it)."""
+        assert extract_node_ids_from_template("${rows[${selector.stdout}]}") == {"rows", "selector"}
+
     def test_simple_template(self):
         """Extract node ID from simple template."""
         result = extract_node_ids_from_template("${node.stdout}")

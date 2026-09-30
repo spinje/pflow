@@ -1,5 +1,7 @@
 """Snapshot-style tests for the rewritten template error messages."""
 
+import pytest
+
 from pflow.core.diagnostic_render import format_diagnostic
 from pflow.runtime.engine.template_errors import build_template_error_diagnostic
 from pflow.runtime.node_state import FAILURE_CATEGORY_SHELL, mark_node_failed
@@ -472,6 +474,15 @@ class TestDynamicIndexDiagnostics:
         refs = diag.context["unresolved_references"]
         assert [(ref["var"], ref["status"]) for ref in refs] == [("ghost.i", "absent")]
 
+    @pytest.mark.parametrize("key", ["__index__", "__iteration__"])
+    def test_resolved_reserved_inner_is_not_a_cause(self, key):
+        """A reserved `__*__` key is never a node, so its status is ABSENT; an inner that
+        RESOLVED must not be blamed — the outer path miss is the cause."""
+        shared = {"items": [{"x": 1}], key: 0}
+        diag = build_template_error_diagnostic("p", f"${{items[${{{key}}}].nope}}", shared)
+        refs = diag.context["unresolved_references"]
+        assert [(ref["var"], ref["status"]) for ref in refs] == [(f"items[${{{key}}}].nope", "path_error")]
+
     def test_failed_outer_root_is_failed_not_absent(self):
         """A FAILED node's root is gone from the live namespace too; the status comes
         from the node state, never from the walk (failed-node invariant)."""
@@ -490,12 +501,15 @@ class TestDynamicIndexDiagnostics:
         assert ref["did_you_mean"] == "res.data[${item.i}].x"
         assert "'i}]'" not in format_diagnostic(diag)
 
-    def test_field_correction_after_a_root_index_keeps_the_index(self):
-        # The correction splices at the first field's offset, past the root's `[${i}]`.
+    def test_no_field_correction_after_a_root_index(self):
+        """After `cfg[${i}]` the root's own keys are the wrong container: a suggestion
+        built from them (`cfg[${i}].name`) could never resolve. Partner: the same typo
+        directly on the root is corrected."""
         shared = {"cfg": {"name": "n"}, "i": 0}
-        diag = build_template_error_diagnostic("p", "${cfg[${i}].nme}", shared)
-        [ref] = diag.context["unresolved_references"]
-        assert ref["did_you_mean"] == "cfg[${i}].name"
+        [indexed] = build_template_error_diagnostic("p", "${cfg[${i}].nme}", shared).context["unresolved_references"]
+        [direct] = build_template_error_diagnostic("p", "${cfg.nme}", shared).context["unresolved_references"]
+        assert (indexed["status"], indexed["did_you_mean"]) == ("path_error", None)
+        assert direct["did_you_mean"] == "cfg.name"
 
     def test_coalesce_fix_line_skips_a_dotted_root_index(self):
         """The paste-able fix names the peer's field, not a torn `j}].stdout`."""

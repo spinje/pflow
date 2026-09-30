@@ -442,17 +442,19 @@ def _tokenize_prompt_region_lower_bound_with_resolver(
         logger.debug("tokenize_prompt_region_lower_bound: template resolution raised", exc_info=True)
         return 0, tuple(refs)
 
+    # Cut the unresolved expressions out of the AUTHOR text by span and resolve the
+    # rest: stripping their `${…}` from the resolved value would also cut equal text
+    # that came from an escape or a resolved value.
+    missing = [e for e in parse(region).expressions if e.raw in resolution.unresolved]
+    if missing:
+        stripped = region
+        for expr in reversed(missing):
+            stripped = stripped[: expr.span[0]] + stripped[expr.span[1] :]
+        resolution = resolve(stripped, shared)
     resolved = resolution.value
     if not isinstance(resolved, str):
         resolved = deterministic_serialize(resolved)
-    if not resolution.unresolved:
-        return estimate_tokens(model, resolved)[0], ()
-
-    # The unresolved expressions in author order; strip their literal text from the value.
-    unresolved = tuple(e.raw for e in parse(region).expressions if e.raw in resolution.unresolved)
-    for expr in resolution.unresolved:
-        resolved = resolved.replace(f"${{{expr}}}", "")
-    return estimate_tokens(model, resolved)[0], unresolved
+    return estimate_tokens(model, resolved)[0], tuple(e.raw for e in missing)
 
 
 def extract_unique_refs(prompt: str) -> list[str]:

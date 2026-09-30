@@ -19,6 +19,7 @@ from typing import Any
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.templates import (
     DynamicIndex,
+    Field,
     Reference,
     Resolution,
     TemplateResolver,
@@ -166,10 +167,13 @@ def classify_unresolved_references(
         is_coalesce = len(parsed[0].operands) > 1
 
         for operand in operands:
+            # An inner that resolved is not a cause, whatever its root's node status
+            # (`__index__` is a reserved key, never a node).
             classified = [
                 ref
                 for inner in (seg.ref for seg in operand.path if isinstance(seg, DynamicIndex))
-                if (ref := _classify_one_reference(inner, context, in_coalesce=False, coalesce_expr=None))
+                if not lookup(inner, context)[0]
+                and (ref := _classify_one_reference(inner, context, in_coalesce=False, coalesce_expr=None))
             ]
             if not classified:
                 outer = _classify_one_reference(
@@ -327,12 +331,17 @@ def _extract_failure_display_data(category: str | None, data: Any) -> dict[str, 
 
 
 def _suggest_field_correction(reference: Reference, context: dict[str, Any]) -> str | None:
-    """Suggest the reference with its first field corrected by close-string matching."""
+    """Suggest the reference with its first field corrected by close-string matching.
+
+    Only for a field directly on the root's output: after a root index the root's
+    keys are not that field's container, so any suggestion would be wrong.
+    """
     output = context.get(reference.root)
-    first = reference.first_field()
-    if not isinstance(output, dict) or first is None:
+    first = reference.path[0] if reference.path else None
+    if not isinstance(output, dict) or not isinstance(first, Field):
         return None
-    at, field_name = first
+    field_name = first.name
+    at = len(reference.root)
     available = [str(key) for key in output]
     if field_name in available:
         return None

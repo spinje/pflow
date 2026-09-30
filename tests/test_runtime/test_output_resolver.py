@@ -521,3 +521,32 @@ class TestOutputResolutionErrors:
 
         assert "Template Resolution Failed" in formatted
         assert "${node1.stdout}" in formatted  # paste-able corrected path
+
+
+class TestAllAbsentCoalesceWithDynamicIndex:
+    """The all-absent skip reads each operand's OUTER root node status. The diagnostic
+    reports a dynamic index's unresolved inner ref in place of its outer operand, so
+    judging from it hid a node that ran or failed (Task 170 4a review)."""
+
+    @staticmethod
+    def _outputs(source: str) -> dict:
+        return {"outputs": {"o": {"source": source}}}
+
+    def test_outer_root_ran_is_an_error(self):
+        shared = {"p": {"items": []}}
+        with pytest.raises(OutputResolutionError):
+            populate_declared_outputs(shared, self._outputs("${p.items[${pick.i}] ?? q.value}"))
+
+    def test_outer_root_failed_is_an_error(self):
+        from pflow.runtime.node_state import FAILURE_CATEGORY_SHELL, mark_node_failed
+
+        shared = {"primary": {"stdout": "x"}}
+        mark_node_failed(shared, "primary", category=FAILURE_CATEGORY_SHELL, error="boom")
+        with pytest.raises(OutputResolutionError):
+            populate_declared_outputs(shared, self._outputs("${primary.stdout[${pick.i}] ?? fallback.stdout}"))
+
+    def test_every_outer_root_absent_is_skipped(self):
+        """Partner: the branch-convergence skip still applies — even with the index source present."""
+        shared = {"pick": {"i": 0}}
+        populate_declared_outputs(shared, self._outputs("${p.items[${pick.i}] ?? q.value}"))
+        assert "o" not in shared and shared == {"pick": {"i": 0}}

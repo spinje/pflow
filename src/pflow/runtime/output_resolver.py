@@ -11,7 +11,8 @@ explicitly opted into fallthrough behavior.
 
 from typing import Any
 
-from pflow.core.templates import Resolution, parse, resolve
+from pflow.core.templates import Reference, Resolution, parse, resolve
+from pflow.runtime.node_state import NodeStatus, get_node_status
 
 
 def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> Any | None:
@@ -70,7 +71,7 @@ def _diagnose_unresolved_output(
     }
 
 
-def _is_all_absent_coalesce(normalized: str, resolution: Resolution, shared_storage: dict[str, Any]) -> bool:
+def _is_all_absent_coalesce(normalized: str, shared_storage: dict[str, Any]) -> bool:
     """True if every operand of a coalesce expression is ABSENT.
 
     All-absent coalesce is the legitimate Task 128 branch-convergence fallthrough —
@@ -82,15 +83,19 @@ def _is_all_absent_coalesce(normalized: str, resolution: Resolution, shared_stor
     to see. Returns False so the caller records a failure.
 
     Non-coalesce templates always return False (caller records a failure).
+
+    Judged on each operand's OUTER root node status — not on the diagnostic's
+    classification, which reports a dynamic index's unresolved inner reference in
+    place of its outer operand (``${p.items[${pick.i}] ?? q.v}`` with ``p`` run
+    must stay an error).
     """
     template = parse(normalized)
     if not (template.is_simple and len(template.expressions[0].operands) > 1):
         return False
-
-    from pflow.runtime.engine.template_errors import classify_unresolved_references
-
-    refs = classify_unresolved_references(sorted(resolution.unresolved), shared_storage)
-    return bool(refs) and all(ref.get("status") == "absent" for ref in refs)
+    return all(
+        isinstance(op, Reference) and get_node_status(shared_storage, op.root) == NodeStatus.ABSENT
+        for op in template.expressions[0].operands
+    )
 
 
 def _record_output_failure(
@@ -154,7 +159,7 @@ def populate_declared_outputs(
         # Unresolved — silently skip only if this is a legitimate all-absent
         # coalesce (Task 128 branch-convergence). Any FAILED / PATH_ERROR operand
         # falls through to error recording so the agent sees the actual failure.
-        if _is_all_absent_coalesce(normalized, resolution, shared_storage):
+        if _is_all_absent_coalesce(normalized, shared_storage):
             continue
 
         failures.append(

@@ -330,3 +330,15 @@ def test_first_field_offset_skips_the_root_index(path: str, expected: tuple[int,
     assert reference.first_field() == expected
     if expected is not None:
         assert path[expected[0]] == "." and path[expected[0] + 1 :].startswith(expected[1])
+
+
+def test_one_trailing_newline_keeps_a_template_simple() -> None:
+    """A YAML block scalar (`v: |`) ends in `\\n`; `${x}\\n` has always been simple — type
+    preserved, newline dropped (the old `^…$` anchor matched before a final newline)."""
+    context = {"p": {"items": [1, 2]}}
+    assert resolve("${p.items}\n", context) == Resolution([1, 2])
+    assert TemplateResolver.extract_simple_template_var("${p.items}\n") == "p.items"
+    assert resolve("${missing}\n", {}) == Resolution("${missing}\n", unresolved=frozenset({"missing"}))
+    # Only one newline: anything more is complex text.
+    assert resolve("${p.items}\n\n", context) == Resolution("[1, 2]\n\n")
+    assert not parse(" ${p.items}").is_simple and not parse("${p.items} ").is_simple
