@@ -3,7 +3,7 @@
 A child started without ``stdin=`` inherits pflow's own fd 0. Under
 ``pflow mcp serve`` that is the JSON-RPC input stream, so a child that reads
 stdin eats protocol bytes and blocks the server; the shell node did exactly
-that. Each spawn must pass ``input=`` or a ``stdin=`` that can never be
+that. Each spawn must pass a ``stdin=`` or ``input=`` that can never be
 ``None`` (the child's data pipe, or ``subprocess.DEVNULL``) — the shell node's
 bug was ``stdin=PIPE if data is not None else None``, so a ``None`` result in
 a conditional counts as inheriting. The test scans the AST, so
@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+
+import pytest
 
 _SPAWNERS = frozenset({"run", "Popen", "call", "check_call", "check_output"})
 
@@ -26,13 +28,11 @@ def _can_be_none(expr: ast.expr) -> bool:
 
 
 def _sets_explicit_stdin(call: ast.Call) -> bool:
-    """Whether ``call`` passes ``input=``, or a ``stdin=`` that is never ``None``."""
-    for kw in call.keywords:
-        if kw.arg == "input":
-            return True
-        if kw.arg == "stdin":
-            return not _can_be_none(kw.value)
-    return False
+    """Whether ``call`` passes a ``stdin=`` or ``input=`` that is never ``None``.
+
+    ``subprocess.run(input=None)`` leaves stdin unset, so ``input`` gets the same check.
+    """
+    return any(kw.arg in {"stdin", "input"} and not _can_be_none(kw.value) for kw in call.keywords)
 
 
 def _stdinless_spawns(tree: ast.AST, rel: str) -> list[str]:
@@ -79,7 +79,23 @@ def test_every_spawn_passes_explicit_stdin() -> None:
 
     assert not violations, (
         "Child processes must not inherit pflow's stdin (under `pflow mcp serve` it is the "
-        "JSON-RPC stream). Pass `input=`, or a `stdin=` that is never None (the child's data "
-        "pipe or subprocess.DEVNULL), "
+        "JSON-RPC stream). Pass a `stdin=` or `input=` that is never None (the child's data "
+        "pipe/bytes or subprocess.DEVNULL), "
         "and use plain `import subprocess` so this guard can see the call.\n\n" + "\n".join(violations)
     )
+
+
+@pytest.mark.parametrize(
+    ("call", "inherits"),
+    [
+        ("subprocess.run(argv)", True),
+        ("subprocess.Popen(argv, stdin=None)", True),
+        ("subprocess.Popen(argv, stdin=subprocess.PIPE if data is not None else None)", True),
+        ("subprocess.run(argv, input=data if data else None)", True),
+        ("subprocess.Popen(argv, stdin=subprocess.PIPE if data is not None else subprocess.DEVNULL)", False),
+        ("subprocess.run(argv, stdin=subprocess.DEVNULL)", False),
+        ("subprocess.run(argv, input=b'')", False),
+    ],
+)
+def test_guard_flags_spawns_that_can_inherit_stdin(call: str, inherits: bool) -> None:
+    assert bool(_stdinless_spawns(ast.parse(call), "x.py")) is inherits
