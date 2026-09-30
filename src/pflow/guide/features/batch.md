@@ -170,7 +170,7 @@ Revise the draft, applying the review.
 
 **Alignment caveat**: zipping by position assumes both arrays are in the same order with no gaps — true only under `fail_fast` (the default). `error_handling: continue` drops failed items, which misaligns the arrays, and index access is not supported there anyway. When alignment isn't guaranteed, use the explicit zip node and match on a key.
 
-**Indexing works on a node's `.results`, not on declared inputs.** `${my_input[${__index__}]}` does not resolve — pull the per-row value from an upstream node's `.results` instead.
+A declared `array` input indexes the same way: `${my_input[${__index__}]}`.
 
 **Using results**:
 ```markdown

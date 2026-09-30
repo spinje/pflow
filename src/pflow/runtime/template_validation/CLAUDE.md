@@ -30,12 +30,12 @@ useful unknown-type error with a validator exception.
   location is added there, never as another walk.
 - `_validate_malformed_templates` is the ONE Issue pass: an Issue (an unescaped
   `${` that opens no Expression) is an ERROR on every surface, cache prose
-  included. Which Issues are errors where — the deferred #621 tolerance — is
+  included. Any future tolerance (which Issues are errors on which surface) is
   decided there only; `parse()` has no mode.
 - `operands.iter_template_operands` yields every Reference in params,
   `batch.items` and loop fields, a dynamic index's inner refs included, tagged
   `FIELD_CHECK` or `ROOT_ONLY`. Pass 5 and Pass 8 field-check `FIELD_CHECK`
-  only (a `??` operand may miss its field at runtime, #441); Pass 8 also
+  only (a `??` operand may miss its field at runtime and fall through); Pass 8 also
   filters by node id, since batch nodes may share an alias. `ROOT_ONLY` roots
   are checked by `core/workflow/data_flow.py`, over the same surfaces.
 - Carry values, output sources and cache vars have their own passes (one
@@ -95,13 +95,9 @@ flatten rich template diagnostics into canned message/suggestion strings.
 
 ## Views over one parse, paths, and type boundaries
 
-`core/templates.py::parse()` is the one tokenizer; everything here is a view
-over it. `Expression.references` is the DEPENDENCY view (roots, unused inputs,
-inner dynamic-index refs); `TemplateResolver.extract_variables` is the VALUE
-view: `${a[${i}].x}` yields the whole outer reference `a[${i}].x`, never the
-index key `i` — type passes use it. `TEMPLATE_PATTERN` / `SIMPLE_TEMPLATE_PATTERN`
-are static-discovery regexes that cannot see escape consumption; over text that
-may hold `$${`, use `parse()`.
+`core/templates.py::parse()` is the one tokenizer; every check here is a view
+over it. Root, forward-reference and unused-input accounting read the dependency
+view; type passes read the value view (`core/CLAUDE.md` → **Template language**).
 
 Paths are walked as `parse_path` segments, never `str.split('.')` (dots inside
 a dynamic index are not separators). An index — `[N]` or `[${…}]` — descends
@@ -113,8 +109,7 @@ Shell validation rejects dict/list interpolation in `command` unless the
 quoted-template opt-in (`'${var}'`) is present. This is JSON-coercion/type-check
 behavior, not a general shell-injection safety guarantee.
 
-`core/templates.is_type_compatible` permits string → dict/list because runtime can
-parse JSON containers, but not string → primitive numeric/bool conversion.
-Source unions require every member to fit; target unions accept any matching
-member. Parameterized collections compare outer types only; element types are
-not checked.
+Type compatibility is `core/templates.is_type_compatible` (template flow, not a
+literal-value check): string → dict/list is allowed because runtime parses JSON
+containers, string → numeric/bool is not; a source union needs every member to
+fit, a target union any. Parameterized collections compare outer types only.

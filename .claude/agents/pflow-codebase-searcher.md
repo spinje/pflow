@@ -54,7 +54,7 @@ Project docs are loaded as CLAUDE.md context — read them first instead of rest
 - **Architecture navigation** → `architecture/CLAUDE.md` (full doc inventory + reading paths by goal)
 - **Current system architecture** → `architecture/architecture.md` (canonical execution flow)
 - **Implementation-level docs** (load automatically when reading source in those dirs):
-  - `src/pflow/core/CLAUDE.md` — exceptions, diagnostics, parsing, settings
+  - `src/pflow/core/CLAUDE.md` — exceptions, diagnostics, parsing, settings, the `${…}` template language
   - `src/pflow/core/workflow/CLAUDE.md` — validator pipeline, save service, skill service
   - `src/pflow/runtime/CLAUDE.md` — wrapper-free engine architecture, reserved shared store keys, propagation
   - `src/pflow/runtime/engine/CLAUDE.md` — `WorkflowEngine`, `NodeConfig`, `CompiledWorkflow`, batch executor
@@ -80,7 +80,7 @@ Project docs are loaded as CLAUDE.md context — read them first instead of rest
 | Where X is tested | `grep "def test.*x" tests/ -i` |
 | Test for specific file | `glob "tests/test_{module}/test_{file}.py"` |
 | Import chain | `grep "from pflow.* import X" src/` |
-| Template usage | `grep "\\$\\{" src/pflow/` |
+| Template usage (language: `src/pflow/core/templates.py`) | `grep "parse(\|TemplateResolver\|resolve(" src/pflow/` |
 | Validation logic | `grep "validate\|Validator" src/pflow/core/` |
 | Error handling | `grep "raise\|Exception" src/pflow/core/exceptions.py` |
 | CLI commands | `grep "@click\|@.*group\|@.*command" src/pflow/cli/` |
@@ -121,7 +121,7 @@ Project docs are loaded as CLAUDE.md context — read them first instead of rest
 4. Check `context/adr/` → recorded architectural rationale
 
 **Trace template variable resolution:**
-1. Read `src/pflow/core/templates.py` → runtime resolution
+1. Read `src/pflow/core/templates.py` → the language: `parse`, `resolve` (+ `Resolution` channels), `lookup`
 2. Read `src/pflow/runtime/template_validation/validator.py` → pre-run validation
 3. Read `src/pflow/runtime/engine/template_resolution.py` → engine integration point
 4. `grep "resolve\|template" tests/test_runtime/` → test coverage

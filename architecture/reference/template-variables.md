@@ -54,17 +54,12 @@ ${variable}
 
 ### Pattern Recognition
 
-The template parser uses this regex pattern:
-
-```python
-r"(?<!\$)\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[a-zA-Z_][\w-]*(?:\[[\d]+\])?)*)?)\}"
-```
-
-This supports:
-- Simple variables
-- Nested object paths
-- Array access
-- Combined patterns
+The grammar lives in one module, `src/pflow/core/templates.py`: `parse()` turns text into
+`Text` / `Expression` / `Issue` segments (every unescaped `${` is an Expression or an Issue), and
+both the validator and the runtime consume that parse. It supports:
+- Simple variables and nested object paths
+- Array access `[N]`, and a dynamic index `[${ref}]` (one reference: `${a[${i}].x}`)
+- Coalesce `??` with JSON literal operands
 
 ### Supported Patterns
 
@@ -127,6 +122,9 @@ To output literal `${...}` text without resolution:
 ```
 
 **Output**: `${variable}` (literal string, not resolved)
+
+The escape runs through its matching `}` (one nested `{}` level included): `$${FOO:-${bar}}` is the
+literal `${FOO:-${bar}}`. A bare `$$` is untouched.
 
 **Limitation**: No backslash escape (`\${var}`) - this is known technical debt.
 
@@ -524,9 +522,10 @@ Warns if declared inputs are never used:
 
 ### Phase 2: Runtime Validation
 
-Located: `src/pflow/runtime/wrappers/template_wrapper.py`
+Located: `src/pflow/runtime/engine/template_resolution.py` (the check), `src/pflow/core/templates.py` (the judge)
 
-Runtime validation happens **after** template resolution, detecting:
+Resolution itself reports what it left literal (`Resolution.unresolved`, `Resolution.issues`);
+the engine reads those channels, detecting:
 
 #### Complete Unresolution
 
@@ -547,7 +546,7 @@ Runtime validation happens **after** template resolution, detecting:
 #        (${count} was not resolved)
 ```
 
-This is detected by comparing template variables before and after resolution using set intersection.
+Only the author's template is judged — text that arrives inside a resolved value is never re-scanned.
 
 #### False Positive Handling
 
@@ -557,8 +556,8 @@ Some nodes legitimately output data containing `${...}` patterns:
 # MCP node returns: {"text": "Cost is ${price}"}
 # This is DATA, not a template!
 #
-# Detection: Check if original param was a template
-#            If not, don't validate resolution
+# Detection: only the authored template's expressions are judged;
+#            ${price} inside a resolved value is data
 ```
 
 ### Resolution Modes

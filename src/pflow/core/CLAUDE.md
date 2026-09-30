@@ -8,7 +8,7 @@ Shared parsing, diagnostics, configuration, and execution utilities.
 |---|---|
 | Change markdown parsing or source attribution | `markdown_parser.py`; author-content YAML in `yaml_utils.py` |
 | Change external content inlining or file provenance | `file_resolver.py::resolve_file_references` mutates IR in place and records `_source_files`; `FILE_RESOLVABLE_PARAMS` allowlists content params |
-| Change `${…}` template syntax, resolution, or the unresolved/issues channels | `templates.py` (`parse` → `Template` AST, `parse_path`, `lookup`, `resolve` → `Resolution`; `TemplateResolver` is the string-helper facade); it imports only `pflow.core` — keep it a leaf (`tests/test_core/test_templates_module.py`). `parse` is cached: author text only |
+| Change `${…}` template syntax, resolution, or the unresolved/issues channels | `templates.py` — see **Template language** below |
 | Change IR shape or declared types | `ir_schema.py::FLOW_IR_SCHEMA`, `validate_ir`; `types.py::TypeSpec` |
 | Add an error or change diagnostic rendering | `exceptions.py`, `diagnostic.py`, `diagnostic_render.py` — see below |
 | Change node lifecycle/retry primitives | `node.py`; node patterns in `../nodes/CLAUDE.md` |
@@ -63,6 +63,50 @@ including permissive-mode warnings. `OutputResolutionError` carries per-output
 `output_failures` with their own source locations and no node attribution. Keep
 these structures rather than canned suggestions. Context-key conventions live in
 `runtime/template_validation/CLAUDE.md`.
+
+## Template language (`templates.py`)
+
+The whole `${…}` language is this one module: `parse` → an immutable `Template` of
+`Text` / `Expression` / `Issue` segments (every unescaped `${` is an Expression or an
+Issue), `parse_path` for a bare path, `lookup` as the one walk, `resolve` →
+`Resolution`, the type-rule sets, `is_type_compatible` and `to_string`.
+`TemplateResolver` is the permanent string-helper facade over them. It imports only
+`pflow.core` — keep it a leaf (`tests/test_core/test_templates_module.py`). No other
+module under `src/pflow/` writes a `${` regex or composes one from this module's
+symbols (`tests/test_core/test_template_grammar_seam.py`; its allowlist names the
+genuinely different languages). `web/src/graph/scan.ts` copies the grammar strings,
+so a grammar change edits it in the same step.
+
+- **Pick the view.** `Expression.references` is the dependency view — a dynamic
+  index `${a[${i}].x}` contributes `a` and `i` (data flow, graph edges, unused
+  inputs). `Expression.operands` / `TemplateResolver.extract_variables` is the value
+  view — the whole `a[${i}].x` only (typing, absence, resolution). Reading the
+  wrong one silently drops or invents a dependency.
+- **A dynamic index is one Reference**: simple and type-preserving; the inner
+  reference must resolve to an in-range `int` (not `bool`), or the whole reference
+  is unresolved.
+- **Two channels.** `Resolution.unresolved` (Expressions left literal) and
+  `Resolution.issues` (Issues carried verbatim) are the only judge of
+  "unresolved"; never decide it by comparing or re-scanning resolved text — a
+  resolved value may legitimately contain `${…}`. The channels stay separate so a
+  surface can tolerate Issues without tolerating misses.
+- **Author text only.** `parse` is `lru_cache`d; call it on template text from the
+  IR. On resolved runtime values use the uncached `has_templates` /
+  `has_references`.
+- **Raw-path mode.** `resolve_value` / `variable_exists` take user-typed paths
+  (`-o result.@type`, `read-fields result.dc:title`, `result.0`), split lexically
+  with no identifier grammar, and feed the same walk. They are not templates: do
+  not route them through `parse_path`, and do not accept raw paths inside `${…}`.
+- **Escapes** (`$${…}`) consume through their brace-balanced `}` and yield a literal
+  `${…}`; a bare `$$` is untouched. `TEMPLATE_PATTERN` / `SIMPLE_TEMPLATE_PATTERN`
+  cannot see that consumption — over text that may hold `$${`, use `parse()`.
+- **Type rules.** `is_type_compatible` is template-flow compatibility (a value may be
+  auto-parsed or stringified on its way through `${…}`), not a literal-value check:
+  literal and coerced values use `types.TypeSpec.accepts`. `to_string` is complex
+  interpolation's stringification; `prompt_cache.deterministic_serialize` differs on
+  purpose (canonical bytes for cache keys).
+- The validator walks declared structure over the same parse and rules, not the
+  runtime walk (ADR-0006): `runtime/template_validation/CLAUDE.md`.
 
 ## markdown_parser.py
 
@@ -147,10 +191,8 @@ must not become a final error. Use `failed_node_ids` when present and modern eve
 
 `TypeSpec.parse()` owns IR `type:` vocabulary; Python annotations use a different
 vocabulary. `outer_base_type()` intentionally discards generic element types for
-compatibility checks. See `architecture/core-concepts/data-type-coercion.md`.
-Template-flow compatibility (`templates.is_type_compatible`: may a declared source
-type flow through `${…}` into a param type, auto-parse and stringification
-included) is not a value check — literal/coerced values use `TypeSpec.accepts`.
+compatibility checks. See `architecture/core-concepts/data-type-coercion.md`;
+template-flow compatibility is under **Template language** above.
 
 `coerce_param_for_node()` only converts dict/list to JSON for expected `str`.
 `coerce_workflow_input()` handles declared workflow types and warns rather than

@@ -11,6 +11,7 @@
 | Runner and cross-layer regressions | `tests/test_execution/`, `tests/test_integration/test_failed_node_invariant.py` |
 | Compiler, engine, batch, cache, tracing | `tests/test_runtime/`; template validation has its own `CLAUDE.md` |
 | `${…}` validator-vs-runtime parity (row corpus per surface), grammar table | `tests/test_integration/test_template_parity.py`, `tests/test_core/test_template_grammar.py`; a failing row is a divergence to fix, not a row to edit |
+| `${…}` grammar written outside `core/templates.py`; the module's leaf-import pin | `tests/test_core/test_template_grammar_seam.py` (migrate the site, never grow the allowlist for pflow's own grammar); `tests/test_core/test_templates_module.py` |
 | Node behavior and agent backends | `tests/test_nodes/`; Claude SDK constraint below |
 | Registry/scanning; MCP client versus server | `tests/test_registry/`; `tests/test_mcp/` versus `tests/test_mcp_server/` |
 | Example/document contracts | `tests/test_docs/`, `examples/CLAUDE.md` |

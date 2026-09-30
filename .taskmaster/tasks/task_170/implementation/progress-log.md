@@ -852,3 +852,85 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
 - Dispositions (importance ≤ 2): item 1 (a cache block whose only `${` is an Issue now fails the existing no-chunk parse rule, naming the malformed template) → accepted: it is ADR-0015's stated consequence ("a block left with no `${var}` fails to parse"), not a second Issue-policy home — Issues still never raise by themselves (R2); loud replaces validator-error-plus-silent-drop. Items 2–3 (row re-derivations: `cache_prose_unclosed_r2` per the 4a span + Dev-7; `cache_prose_escape_declared_delta5` "never used" = delta-4 validator half; `cache_var_dynamic_index` `A0`→`A1` phase-1 mis-derivation) → accepted. Item 4 (`render_cache_chunks` → `(rendered, skipped)`; the undeclared-chunk warning moved into the helper and now also fires at the prepare site without a node id) → accepted; **named for the completion gate** (agent-ux: a warning that lost its node id; silent-failures/feature-interactions: possible duplicate warning per run). Item 5 (R5 = one comment site + `_resolve_chunk_value` + `data_flow._cache_var_roots`) → noted; the ruling applies there.
 - Task-159 baseline `verify.sh`: 80 pass / 7 drift — the same 7 with the pre-4c source swapped back in (Agent D executed), traced to #628's required-`source:` rule and guide wording on main → pre-existing, not this task; oracle re-recording by its owner = a follow-up for the completion handback.
 - Next: phase 5 part B (grammar-uniqueness meta-test, final docs/instruction pass, grep list, LOC) — decision-independent except the R5 and prose-wrap seams.
+
+## [2026-10-01 00:50] Agent D (Opus) — phase 5 part B: grammar-uniqueness meta-test, final grep, instruction/docs pass, LOC
+- Did:
+  - **Meta-test 2:** new `tests/test_core/test_template_grammar_seam.py` (§0.5.2).
+    - Rule A: `ast.Constant` strings containing `\$\{` or `\${`.
+    - Rule B: an `re.<fn>(…)` whose pattern argument names a `pflow.core.templates` import. Covered alias forms: `import … as`, `from pflow.core import templates as`, `from … import X as`, `TemplateResolver`, `import re as`, `from re import compile as`, and the `pattern=` keyword.
+    - Prefilter `"$" | "TemplateResolver" | "templates"`.
+    - Allowlist of 4 files, each with its reason verbatim: the seam, MCP env expansion, the YAML mask, the jsonschema patterns.
+    - A stale-entry check: each allowlisted file must still yield ≥1 Rule-A hit.
+    - 11 planted spellings, each must be flagged, plus a clean public-interface file that must yield zero hits.
+    - **Green on first run:** no site outside the allowlist writes or composes the grammar.
+  - **Final grep list** (§2 Phase 5) over `src/` is empty. Outside `src/`, the only hits are live symbols (`_render_cache_for_hash`, `_convert_to_string`), ADR history, the grammar-table docstring's "before" note, and meta-test 3 (scoped by your ruling).
+  - **Instruction files:**
+    - `core/CLAUDE.md`: the `templates.py` row now points to a new **Template language** section. It covers the module surface and leaf rule, grammar uniqueness plus the `scan.ts` same-step rule, and six rules: pick the view, dynamic index = one Reference, the two channels, author text only, raw-path mode, escapes, type rules. It ends with the ADR-0006 pointer. The types section's compatibility sentence became a pointer.
+    - `runtime/CLAUDE.md`: the template section is cut to engine-specific facts plus a pointer. The stale "shim deleted by phase 5" sentence and the incident ref are gone.
+    - `runtime/engine/CLAUDE.md` (re-read after #615): one paragraph in "Parameters, reuse, and templates". It covers channels, not text comparison; `inputs` per key; a sibling sharing the text keeps its own channel.
+    - `template_validation/CLAUDE.md`, final:
+      - the views paragraph → a pointer (its home is now core);
+      - the matrix paragraph condensed and pointed at core;
+      - the `#621` / `#441` incident refs restated as constraints.
+    - `tests/CLAUDE.md`: +1 row (grammar seam + leaf pin).
+    - `.claude/agents/pflow-codebase-searcher.md`: core CLAUDE.md scope line; the "Template usage" search row now names `core/templates.py` + `parse(|TemplateResolver|resolve(` (was `grep "\$\{"`); the trace-resolution step 1. `make sync-claude-assets` run (1 file).
+    - `core/workflow/CLAUDE.md`: already current since 4b (references over `iter_node_surfaces`); left.
+  - **Docs:**
+    - `docs/how-it-works/template-variables.mdx`: the Array notation section gains the dynamic index as one reference (type kept, out-of-range/non-int → unresolved, `??` applies). The Escaping section now says an escape runs through its matching `}` with one nested level, gives the `$${NAME:-${default}}` example, and notes that text after the `}` is templated.
+    - `src/pflow/guide/features/batch.md:~173`: **the claim was false.** `${my_input[${__index__}]}` DOES resolve now. The bold "Indexing works on a node's `.results`, not on declared inputs" is replaced by "A declared `array` input indexes the same way".
+    - `architecture/reference/template-variables.md`: the one-regex "Pattern Recognition" block is replaced by the `parse()` description. It gains the balanced-escape sentence. The runtime-validation section's nonexistent `runtime/wrappers/template_wrapper.py` path and "set intersection" detection are replaced by the channels. The "false positive" note is restated.
+- Changed:
+  - tests: `tests/test_core/test_template_grammar_seam.py` (new).
+  - docs/instructions: `src/pflow/core/CLAUDE.md`, `src/pflow/runtime/CLAUDE.md`, `src/pflow/runtime/engine/CLAUDE.md`, `src/pflow/runtime/template_validation/CLAUDE.md`, `tests/CLAUDE.md`, `.claude/agents/pflow-codebase-searcher.md` (+ `.codex` twin), `docs/how-it-works/template-variables.mdx`, `src/pflow/guide/features/batch.md`, `architecture/reference/template-variables.md`.
+  - No production code change.
+- Verified:
+  - `make check` green.
+  - `make test`: 10115 passed / 2 failed / 6 xfailed, against 10098 / 2 / 6. +17 = the new meta-test file. The 2 failures are the prose-wrap ruling rows.
+  - `make test-all-local`: 10166 passed / 2 failed (same rows) / 2 skipped / 6 xfailed.
+  - All three meta-tests green: parity corpus (apart from the 2 ruling rows), `test_template_grammar_seam.py`, and `test_import_hygiene.py` rule 4 + `test_templates_module.py`.
+  - `tests/test_docs/` incl. `test_agent_references.py`: 24 passed.
+  - Real-tree non-vacuity: a planted `src/pflow/core/_seam_probe.py` (`re.compile(TemplateResolver.TEMPLATE_PATTERN.pattern)`) made the real scan fail, naming it as Rule B. The file was removed.
+  - Guide claim executed (`scratchpads/task-170/phase5b/input-index.pflow.md`): `--validate-only` valid, and the run gives `label=alpha` / `label=beta`.
+  - Doc claims executed via `resolve()`:
+    - `$${FOO:-${bar}}` → `${FOO:-${bar}}`;
+    - `$${a} ${bar}` → `${a} B`;
+    - `${results[${i}].t}` → `{'k': 1}` (dict kept);
+    - an out-of-range index → unresolved, and with `??` → the fallback;
+    - bare `$$` untouched.
+  - **LOC** (merge-base `abcaa50f` with `origin/main`):
+    - committed branch `src/`: 52 files, +2104/−2678;
+    - including this uncommitted part: `src/**/*.py` +2029/−2631, **net −602 Python lines**; all of `src/` +2149/−2693.
+    - The target was ≤ baseline; it is met (measured, not chased).
+- Deviations/surprises (the signal):
+  1. **`guide/features/batch.md` stated the opposite of today's behavior**, a user-facing agent instruction. Indexing a declared array input by `${__index__}` works: the #262-class over-rejection flipped in 4b. The plan said "verify"; I verified, found it false, and rewrote the sentence.
+  2. **`architecture/reference/template-variables.md` had more false text than the pointer lines 4d fixed:** the old single regex, a deleted module path (`runtime/wrappers/template_wrapper.py`), and "set intersection" detection. All three are corrected. It is a long doc (1700+ lines) and I corrected only statements Task 170 made false; I did not re-audit the whole file.
+  3. **Language-level rules moved to one home.** The dependency/value-view rule and the matrix semantics lived in `template_validation/CLAUDE.md`, and the dynamic-index/channel rules in `runtime/CLAUDE.md`. All four now live in `core/CLAUDE.md` → **Template language**, and the other two files point there. The per-package files keep only their package's facts.
+  4. Meta-test 2's helper was split into `_bound_names` + `_by_symbol_patterns`, because ruff C901 flagged the single-function draft (14 > 10). The mutation ledger was re-run after the split.
+  5. **`context/CONTEXT.md` proposals** (not edited):
+     - **Issue**: "an unescaped `${` in a Template that opens no valid expression; always a validation ERROR, carried verbatim at runtime. _Avoid_: malformed template (as a noun), parse error."
+     - **Dynamic index**: "an index that is itself a Reference, `a[${i}].x`; the whole thing is one Reference, unresolved unless the inner resolves to an in-range integer. _Avoid_: nested template, nested index."
+     - Both are now used in code, CLAUDE.md files and diagnostics.
+- Self-checks:
+  - Fully happy? Yes.
+  - Residual: `core/templates.py`'s own docstrings still carry `(#630)` / `(#621)` incident refs (`Resolution`, the module docstring). They are code comments outside this part's write list; they are a one-line cleanup candidate for the completion gate.
+  - The ADRs keep the deleted symbol names by design (history).
+  - test-reflect (directed, meta-test 2 only). Ledger of 9 mutations, 8 killed:
+    - prefilter `$`-only → 6 planted Rule-B spellings red;
+    - Rule B off → 6 red;
+    - Rule A off → 9 red (plants + allowlist-stale checks);
+    - Rule A missing the `\${` spelling → the escaped-literal plant red;
+    - module aliases unbound → import-as-alias plant red;
+    - `from re import` unbound → the re-function plant red;
+    - `pattern=` keyword ignored → the re-module-alias plant red;
+    - Rule B over-broad (grammar name anywhere in the call) → the clean-interface test red.
+    - The 9th ("stale check disabled") survives by construction: in-tree, every allowlisted file does write a grammar. Its firing condition was shown directly: every entry yields ≥1 hit today, and the probe proves the scan reads real files.
+    - Nothing shallow; nothing deleted.
+- dev servers: none.
+- Next: the orchestrator commits part B. Still pending: R5 and prose-wrap rulings → the 3 R5 rows + the 2 prose-wrap rows; examples `--check` at the end; the completion gate. Not committed.
+
+## [2026-10-01 01:10] task-orchestrator — phase 5 part B verified + committed; completion gate commissioned
+- Verified (orchestrator re-run): `make test` 10115 passed / 2 failed (prose-wrap ruling rows) / 6 xfailed (R5 rows); `make check` green. D's items: 1 (`guide/features/batch.md` said the dynamic-index-over-input shape does not resolve; executed: it does → corrected) accepted; 2 (architecture doc: fixed only statements this task made false) accepted; 3 (language rules homed in `core/CLAUDE.md` "Template language") accepted; 4 CONTEXT.md terms **Issue** / **Dynamic index** → proposed in the completion handback; 5 (issue numbers in `core/templates.py` docstrings) → the gate-runner's to settle (#621 as a forward pointer to the deferred ruling may stay; incident-style references go).
+- Net `src/` Python vs merge base: +2029 / −2631 (−602).
+- **Completion gate commissioned now, with the two user rulings still pending** (prose-wrap seam: `output_resolver._normalize_source` + 2 rows; R5: the chunker comment site + `_resolve_chunk_value` + `data_flow._cache_var_roots` + 3 rows). Reason: every other line is final; both rulings land as pre-specified edits at named sites; `review-falsifier` runs LAST, after the reading battery's fixes AND the rulings, so the shipped state is attacked by execution.
+- Lens selection (Major tier: >500 lines, >50 files; engine diff ⇒ ≥ Full): **ran** `review-spec-conformance`, `review-simplicity`, `review-validation-consistency`, `review-silent-failures`, `review-impact-completeness`, `review-feature-interactions`, `review-agent-ux` (diagnostic wording changed across engine/validator/cache), `review-test-fidelity` (the corpus is the task's core deliverable) — 8 = the cap; + `review-falsifier` direct, last. **Skipped** `review-concurrency-safety` (no new threads/executors; the one shared-state hazard — cached AST across batch threads — is pinned by the frozen/tuple/fresh-`Literal.value` tests, and R10 only adds an `except`); `review-plan` / `review-architecture-fit` (plan mode only).
+- Gate-runner: a **fresh** Opus review-evaluator (Agent E), packeted with spec + plan + this log — no single builder holds the whole diff (A–D each built a slice; D, the latest, is at ~440k).

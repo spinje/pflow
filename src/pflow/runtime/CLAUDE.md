@@ -10,7 +10,7 @@ Compiles workflow IR into bare nodes plus `NodeConfig`, then executes it through
 | Compilation, node loading, input defaults | `compilation/CLAUDE.md` |
 | Routing, batching, caching, gates, loop execution | `engine/CLAUDE.md` |
 | Template rejected before execution | `template_validation/CLAUDE.md` |
-| Template resolves to the wrong value/type | `core/templates.py::TemplateResolver` (the language); engine use in `engine/template_resolution.py` |
+| Template resolves to the wrong value/type | `core/templates.py` (the language); engine use in `engine/template_resolution.py` |
 | Failed node appears successful or loses its output | `node_state.py` |
 | Nested workflow inputs, isolation, or output exposure | `workflow_executor.py::WorkflowExecutor` |
 | Persistent cache lookup/history | `cache.py::MemoizationCache` |
@@ -49,30 +49,18 @@ chunks are not valid in the child's scope.
 
 ## Template resolution
 
-The language lives in `core/templates.py`; import it from there (the old runtime
-module path is a re-export shim for tests, deleted by Task 170 phase 5).
-`TemplateResolver` preserves values' types for simple `${var}` templates and
-nested object values; complex interpolation such as `"Hello ${name}"` always
-produces a string. Resolution uses the shared store. Path traversal auto-parses
-JSON containers, but keeps numeric identifier strings intact. See
-`architecture/core-concepts/data-type-coercion.md` for the coercion boundaries.
+The language lives in `core/templates.py` (rules and gotchas: `core/CLAUDE.md` →
+**Template language**). Simple `${var}` templates preserve the value's type;
+complex interpolation such as `"Hello ${name}"` always produces a string. Path
+traversal auto-parses JSON containers but keeps numeric identifier strings intact
+(`architecture/core-concepts/data-type-coercion.md`).
 
-`$${` escapes a literal `${`: any content after it is left alone and the result
-carries a single `$` (`$${X:-y}` -> `${X:-y}`); a bare `$$` is untouched.
-`has_templates` counts an escape so `engine/template_resolution.py::split_params`
-routes escape-only params through resolution. A dynamic index such as
-`${results[${item.index}].response}` is ONE reference (simple, type-preserving):
-the inner static reference must resolve to an in-range `int`, or the whole
-reference is unresolved. Unresolved references remain literal at the resolver
-layer; engine strict/permissive handling is separate.
-
-`resolve(value, context)` returns a `Resolution`: the value plus `unresolved` (the
-text inside each `${…}` left literal) and `issues` (unescaped `${` that open no
-template). It is the ONLY judge of "unresolved": the engine's strict check, per-key
-`inputs` + Optional-input `None` injection, loop carry, declared outputs, batch
-items, the prewarm `system` and cache chunks all read `resolution.ok` /
-`resolution.unresolved`. Never decide unresolved-ness by comparing or re-scanning
-resolved text — a resolved value may legitimately contain `${…}` (#630).
+`has_templates` counts an escape, so `engine/template_resolution.py::split_params`
+routes escape-only params through resolution. Unresolved references stay literal
+at the resolver layer; strict/permissive handling is the engine's
+(`engine/CLAUDE.md` → **Parameters, reuse, and templates**). Every runtime consumer
+— strict check, Optional-input `None` injection, loop carry, declared outputs,
+batch items, the prewarm `system`, cache chunks — reads the `Resolution` channels.
 
 Carried loop inputs must affect both resolution and cache hashing. Their shared
 entry is `engine/plan_node.py::plan_node`, using
