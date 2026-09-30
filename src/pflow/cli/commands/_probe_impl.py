@@ -103,7 +103,7 @@ def _resolve_node_type(node_type: str, registry: Registry, verbose: bool) -> str
         sys.exit(1)
 
     if verbose and resolved_node != node_type:
-        click.echo(f"📝 Resolved '{node_type}' to '{resolved_node}'")
+        click.echo(f"📝 Resolved '{node_type}' to '{resolved_node}'", err=True)
 
     return resolved_node
 
@@ -188,15 +188,15 @@ def _execute_and_display_results(
 
 
 def _display_execution_banner(resolved_node: str, execution_params: dict[str, Any]) -> None:
-    click.echo(f"🔄 Running node '{resolved_node}'...")
+    click.echo(f"🔄 Running node '{resolved_node}'...", err=True)
     if not execution_params:
         return
 
     from pflow.execution.formatters.node_output_formatter import format_param_value
 
-    click.echo("   Parameters:")
+    click.echo("   Parameters:", err=True)
     for key, value in execution_params.items():
-        click.echo(f"     {key}: {format_param_value(value)}")
+        click.echo(f"     {key}: {format_param_value(value)}", err=True)
 
 
 def _extract_node_outputs(
@@ -223,7 +223,7 @@ def _store_registry_execution(
     try:
         cache.store(execution_id, resolved_node, execution_params, outputs)
         if verbose:
-            click.echo(f"💾 Stored execution in cache: {execution_id}")
+            click.echo(f"💾 Stored execution in cache: {execution_id}", err=True)
     except Exception as exception:
         if verbose:
             click.echo(f"⚠️  Warning: Failed to cache execution: {exception}", err=True)
