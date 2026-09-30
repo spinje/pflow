@@ -86,3 +86,9 @@
 - Resume point: record the ruling here; fold any string/order change into the plan's Output
   contract + mocks; then Phase 1 (by the planner if resumed to implement, else an Opus
   task-orchestrator from this plan).
+
+## [2026-09-30] task-planner — CP-1 RULING + resumed to implement
+- [RULING] main orchestrator (under the user's session grant): CP-1 ACCEPTED — M1–M13 and D5, D6,
+  D12, D13, D14 as planned; planner-implements ACCEPTED (~356k used). User wording objections, if
+  any, arrive later as string changes.
+- Next: Phase 1.

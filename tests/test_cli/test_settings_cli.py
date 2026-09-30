@@ -838,12 +838,12 @@ class TestLLMSettingsPersistence:
 
 # Characterization oracle for `pflow settings llm providers` with no key set
 # anywhere. Captured from the pre-#606 command; the table moved into
-# core/llm_providers.py without changing a byte of this output.
+# core/llm_providers.py without changing a byte of this output. Since then:
+# the anyscale row is gone (LiteLLM no longer routes it).
 _PROVIDERS_TABLE_NO_KEYS = """\
 PROVIDER      ENV VARS                                                STATUS
 ai21          AI21_API_KEY                                            -
 anthropic     ANTHROPIC_API_KEY                                       -
-anyscale      ANYSCALE_API_KEY                                        -
 azure         AZURE_API_KEY and AZURE_API_BASE and AZURE_API_VERSION  -
 baseten       BASETEN_API_KEY                                         -
 bedrock       AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY             -
@@ -875,7 +875,7 @@ ollama        OLLAMA_API_BASE                                         n/a
 vllm          (no key needed)                                         n/a
               (Typically no auth required)
 
-Showing 27 curated provider(s).
+Showing 26 curated provider(s).
 Convention for unlisted providers: <PROVIDER>_API_KEY (matches slash-prefix).
 Set a key:  pflow settings set-env <ENV_VAR> "<value>"
 Full LiteLLM list: https://docs.litellm.ai/docs/providers
@@ -885,7 +885,6 @@ Full LiteLLM list: https://docs.litellm.ai/docs/providers
 _PROVIDERS_JSON_NO_KEYS: list[tuple[str, tuple[str, ...], str, str, str | None]] = [
     ("ai21", ("AI21_API_KEY",), "single", "-", None),
     ("anthropic", ("ANTHROPIC_API_KEY",), "single", "-", None),
-    ("anyscale", ("ANYSCALE_API_KEY",), "single", "-", None),
     ("azure", ("AZURE_API_KEY", "AZURE_API_BASE", "AZURE_API_VERSION"), "and", "-", None),
     ("baseten", ("BASETEN_API_KEY",), "single", "-", None),
     ("bedrock", ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"), "and", "-", "Or use AWS IAM role / ~/.aws/credentials"),

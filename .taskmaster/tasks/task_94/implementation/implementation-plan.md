@@ -386,6 +386,8 @@ mid-task.
 - `vllm/` runs vLLM in-process (needs the `vllm` package); a vLLM *server* is `hosted_vllm/` with
   `HOSTED_VLLM_API_BASE`. The zero-model line links LiteLLM's provider docs rather than encoding
   per-row hints.
+- The callable rule trusts entries that declare no capabilities: older openai
+  `gpt-4o-*-realtime-preview` / `*-audio-preview` entries carry only `mode: chat` and stay listed.
 - "live" = bundled + upstream-only keys; a model removed upstream still shows (per spec).
 - IAM/credential-file bedrock/vertex users read `(no key — …)` — same as `providers` (#661 notes).
 
