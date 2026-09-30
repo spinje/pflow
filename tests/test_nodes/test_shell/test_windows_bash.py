@@ -263,6 +263,7 @@ class TestWindowsBashEnvironment:
         assert taskkill_argv[0].lower().endswith("taskkill.exe")
         assert taskkill_argv[1:] == ["/PID", "1234", "/T", "/F"]
         assert mock_taskkill.call_args.kwargs == {
+            "stdin": subprocess.DEVNULL,
             "stdout": subprocess.DEVNULL,
             "stderr": subprocess.DEVNULL,
             "check": False,

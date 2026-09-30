@@ -7,7 +7,7 @@ icon: "file-cog"
 The `pflow settings` command group manages pflow configuration stored in `~/.pflow/settings.json`. This includes API keys, environment variables, and node filtering.
 
 <Note>
-  **Your commands.** These are setup commands that you run directly - not your agent. API keys and security settings should always be configured by you, never by an AI agent.
+  **Your commands.** These are setup commands that you run directly - not your agent. API keys and security settings should always be configured by you, never by an AI agent. Read-only discovery (`llm show`, `llm providers`, `llm models`) is safe for agents to run.
 </Note>
 
 ## Commands
@@ -25,6 +25,8 @@ The `pflow settings` command group manages pflow configuration stored in `~/.pfl
 | `check` | Check if a node is allowed |
 | `reset` | Reset to defaults |
 | `llm show` | Show LLM model settings |
+| `llm providers` | List LLM providers and the API-key env vars each needs |
+| `llm models` | List the models your configured keys can use |
 | `llm set-default` | Set default model for all features |
 | `llm set-discovery` | Set model for discovery commands |
 | `llm set-filtering` | Set model for smart filtering |
@@ -348,6 +350,49 @@ To configure:
   pflow settings llm set-tts-model <model>
   pflow settings llm set-tts-voice <voice>
 ```
+
+### pflow settings llm models
+
+List the model ids you can pass to an LLM node's `model`, per provider.
+
+```bash
+pflow settings llm models [KEYWORDS...] [--output-format text|json]
+```
+
+- **No keyword:** up to 10 models for each provider you have a key for, each with a `see all` command.
+- **A provider name** (e.g. `anthropic`, `bedrock`): that provider's complete list, even without a key. The header shows the env var to set.
+- **Any other keyword:** filters model ids across your configured providers (or within a named provider). All keywords must match; matching ignores case.
+
+Models come from LiteLLM's model catalog, limited to ones an LLM node can call: chat and responses models, without pricing-only or deprecated entries. The list is fetched live and falls back to the snapshot bundled with LiteLLM when offline; the first line says which. The order is mechanical (by name, higher version numbers first) — not a ranking. Any LiteLLM model works as `provider/model` even if it isn't listed. The catalog can also lag behind a provider: an id it still lists may already be retired (the run then fails with `Unknown model` and names a working one).
+
+**Examples:**
+
+```bash
+pflow settings llm models                        # Your providers, 10 each
+pflow settings llm models anthropic              # One provider, complete
+pflow settings llm models fireworks_ai llama     # Narrow within a provider
+pflow settings llm models --output-format json   # For agent parsing
+```
+
+**JSON output:**
+
+```json
+{
+  "source": "live",
+  "providers": [
+    {
+      "name": "gemini",
+      "env_vars": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+      "semantics": "or",
+      "status": "set",
+      "note": null,
+      "models": ["gemini/gemini-pro-latest", "gemini/gemini-flash-latest"]
+    }
+  ]
+}
+```
+
+`source` is `live` or `offline`; `status` is `set`, `-` (no key) or `n/a` (local provider). JSON lists every matched model. Naming a provider inspects it without its key. With no provider named and no keys configured, or when nothing matches, `providers` is empty and the guidance goes to stderr.
 
 ### pflow settings llm set-default
 

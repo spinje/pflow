@@ -1197,12 +1197,10 @@ class TestLazyImportBoundary:
         starlette/uvicorn/the server only inside the command body, so a base
         install can load the CLI without the [ui] web stack.
         """
-        import importlib
+        import subprocess
 
-        # Observe a fresh import of the command module's effect, independent of
-        # whatever earlier tests loaded.
-        sys.modules.pop("pflow.ui.server", None)
-        sys.modules.pop("pflow.cli.commands.ui", None)
-        importlib.import_module("pflow.cli.commands.ui")
-
-        assert "pflow.ui.server" not in sys.modules
+        # A fresh interpreter observes the import in isolation; re-importing in this
+        # process would leave other tests holding a different module object.
+        code = "import sys, pflow.cli.commands.ui; sys.exit('pflow.ui.server' in sys.modules)"
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8")  # noqa: S603
+        assert result.returncode == 0, result.stderr or "importing pflow.cli.commands.ui loaded pflow.ui.server"

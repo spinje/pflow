@@ -110,6 +110,7 @@ def _terminate_windows_process_tree(pid: int) -> None:
     try:
         result = subprocess.run(
             [taskkill_path, "/PID", str(pid), "/T", "/F"],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
@@ -170,7 +171,7 @@ def _run_windows_bash_command(
         argv,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        stdin=subprocess.PIPE if stdin_bytes is not None else None,
+        stdin=subprocess.PIPE if stdin_bytes is not None else subprocess.DEVNULL,
         cwd=cwd,
         env=env,
         creationflags=creationflags,
@@ -217,7 +218,7 @@ def _run_posix_shell_command(
         shell=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        stdin=subprocess.PIPE if stdin_bytes is not None else None,
+        stdin=subprocess.PIPE if stdin_bytes is not None else subprocess.DEVNULL,
         cwd=cwd,
         env=env,
         # Give the shell its own process group so timeout and Ctrl-C/SystemExit
@@ -425,7 +426,7 @@ class ShellNode(Node):
     command templates and error with a helpful message guiding you to use stdin instead.
 
     Interface:
-    - Params: stdin: any  # Optional input data for the command (dict/list auto-serialized to JSON)
+    - Params: stdin: any  # Optional input data for the command (dict/list auto-serialized to JSON); absent, the command reads EOF
     - Writes: shared["stdout"]: str  # Command standard output (text or base64-encoded binary)
     - Writes: shared["stdout_is_binary"]: bool  # True if stdout is binary data
     - Writes: shared["stderr"]: str  # Command error output (text or base64-encoded binary)
