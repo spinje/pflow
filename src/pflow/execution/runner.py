@@ -423,7 +423,8 @@ class WorkflowRunner:
 
         Args:
             workflow: File path, saved name, raw markdown, or IR dict.
-            params: User-provided parameters (used for template variable existence checks).
+            params: Accepted for signature parity with run(); not consulted --
+                declared inputs are validated with placeholder values.
             source_file_path: For file reference resolution. Derived from resolution if None.
 
         Returns:
@@ -435,32 +436,14 @@ class WorkflowRunner:
             parser_diagnostics = list(resolved.diagnostics)
             file_path = source_file_path or resolved.file_path
 
-            params = dict(params)  # Copy at boundary (consistent with run())
-            ir = resolved.ir
-            if file_path:
-                params["_pflow_workflow_file"] = file_path
-
             # File resolution happens inside resolve_workflow() at the IR-load
-            # boundary. ``ir`` is already fully resolved by the time we get
-            # here. See ``execution/workflow_resolver.py`` module docstring.
+            # boundary. ``resolved.ir`` is already fully resolved by the time we
+            # get here. See ``execution/workflow_resolver.py`` module docstring.
 
-            from pflow.core.validation_utils import generate_dummy_parameters
+            from pflow.core.validation_utils import validate_with_placeholder_inputs
 
-            inputs = ir.get("inputs", {})
-            dummy_params = generate_dummy_parameters(inputs)
-            if file_path:
-                dummy_params["_pflow_workflow_file"] = file_path
-
-            from pflow.core.workflow.validator import WorkflowValidator
-            from pflow.registry import Registry
-
-            registry = Registry()
-            validator_diagnostics = WorkflowValidator.validate(
-                workflow_ir=ir,
-                extracted_params=dummy_params,
-                registry=registry,
-                skip_node_types=False,
-                workflow_file=Path(file_path) if file_path else None,
+            validator_diagnostics = validate_with_placeholder_inputs(
+                resolved.ir, workflow_file=Path(file_path) if file_path else None
             )
             diagnostics = [*resolved.diagnostics, *validator_diagnostics]
             # Compute ``valid`` from the combined list, not only ``validator_diagnostics``.
