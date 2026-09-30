@@ -33,6 +33,7 @@ from pflow.core.shell_integration import (
 from pflow.core.shell_integration import (
     read_stdin_enhanced,
 )
+from pflow.core.stdout_reservation import reserve_stdout
 from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution.result import ResolvedWorkflow
@@ -322,18 +323,20 @@ def execute_json_workflow(  # noqa: C901
     try:
         runner = WorkflowRunner()
         progress_callback = output_controller.create_progress_callback() if progress_enabled else None
-        result = runner.run(
-            workflow,
-            params,
-            config,
-            progress_callback=progress_callback,
-            gate_resolver=gate_resolver,
-            workflow_manager=WorkflowManager() if ctx.obj.get("workflow_source") == "library" else None,
-            workflow_name=workflow_name,
-            # `pflow resume` sets this before dispatching here; a normal
-            # run leaves it absent (None) — the runner then behaves exactly as before.
-            resume_source=ctx.obj.get("resume_source"),
-        )
+        # stdout carries only the result below; stray writes during execution go to stderr.
+        with reserve_stdout():
+            result = runner.run(
+                workflow,
+                params,
+                config,
+                progress_callback=progress_callback,
+                gate_resolver=gate_resolver,
+                workflow_manager=WorkflowManager() if ctx.obj.get("workflow_source") == "library" else None,
+                workflow_name=workflow_name,
+                # `pflow resume` sets this before dispatching here; a normal
+                # run leaves it absent (None) — the runner then behaves exactly as before.
+                resume_source=ctx.obj.get("resume_source"),
+            )
         _display_execution_result(ctx, result, output_key, ir_data, output_format, effective_verbose)
 
     except click.exceptions.Exit:
