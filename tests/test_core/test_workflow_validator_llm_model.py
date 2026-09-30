@@ -271,7 +271,7 @@ def test_unbundled_but_real_model_passes_via_upstream_merge(
 
     monkeypatch.setattr(httpx, "get", fake_get)
 
-    # Real register_model — let it actually merge into our patched dict so
+    # The real upstream merge writes into our patched dict, so
     # subsequent membership reads see the new entry.
     workflow = _llm_workflow("claude-sonnet-4-5")
     diagnostics = _validate(workflow)
