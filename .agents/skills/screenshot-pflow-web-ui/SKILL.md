@@ -16,7 +16,8 @@ canvas has settled** (ELK + fitView) before acting. Pass a full UI URL.
   the first row whose text starts with `row_name` (React's onMouseEnter delegates through
   native mouseover, so this drives the production hover path — the state `focus=` deep
   links cannot capture),
-  return `{ringedNodes, haloedEdges}` counts, and screenshot the hovered state:
+  return `{ringedNodes, haloedEdges}` counts, and screenshot the hovered state (no such
+  row → exit 1):
   ```bash
   uv run pflow examples/real-workflows/screenshot-pflow-web-ui/hover.pflow.md \
     url='http://127.0.0.1:8765/?workflow=<…>&density=advanced&node=<node_id>' \
@@ -25,7 +26,8 @@ canvas has settled** (ELK + fitView) before acting. Pass a full UI URL.
 - **`click.pflow.md`** → dispatch a synthetic in-page `click` (`isTrusted: false` —
   enough for React handlers, not for real input) on the first `selector` match
   (optionally narrowed by exact trimmed `text`), wait for the consequences, return
-  `{panel, before, after, visible, transform}` (`measure_id` = a flat node id to
+  `{panel, before, after, visible, transform}` (no match → exit 1, naming the candidate
+  texts; `measure_id` = a flat node id to
   rect-report — e.g. the expected camera-follow target) + screenshot. Deep links
   capture states; this captures what a click DOES (camera follow, panel
   stays-vs-swaps, focus/expansion side effects). One click per run (a reload resets
@@ -129,6 +131,24 @@ All six reuse `shared/open-and-settle.pflow.md` (open + poll-until-settled). It 
 returns the opened tab's `page_id`; every later `evaluate_script`/`take_screenshot` step
 passes it as `pageId` (the pinned server requires it — see "Pinned server version").
 
+## What counts as a pass
+
+A verification tool that passes on nothing is worse than none, so none of these do:
+
+- **Exit 1 = nothing was examined.** Every workflow fails when settle times out — no
+  framed canvas with at least one node within 8 s; the error names what the page showed —
+  and `click`/`hover` fail when their target is not found. A non-zero run has no result.
+- **Exit 0 = the page was examined; now read the result.** `visual-invariants` and
+  `live-reload` report `passed` in their JSON, and `passed: false` still exits 0. A
+  `visual-invariants` pass covers exactly what its counts say it examined: `leaves` (always
+  ≥ 1), `dotsChecked` (`0` when the view has no bordered io dots — `beautiful` density, or a
+  workflow with no inputs/outputs), and `edges` (a `skipped` reason when the view does not
+  qualify).
+- **Capturing an unframed page on purpose** (the full-screen error page): pass
+  `allow_empty=true` to `screenshot` or `inspect`. Settle then waits its full 8 s instead of
+  failing, the `viewport` output reports `settled: false`, and `inspect` may return
+  `nodes: []`. The other workflows need a rendered canvas and take no such opt-in.
+
 ## inspect output
 
 ~1K tokens for a small graph, ~11K for a big one in advanced — so **filter with `jq`
@@ -200,7 +220,12 @@ Re-add the flag when done — headless is the standing default; do not leave hea
   `pageId: ${prepare.page_id}` (required on page-scoped tools since chrome-devtools-mcp 1.8).
 - `Access denied: path … is not within any of the configured workspace roots` → the server only
   writes files under its temp dir: keep `out_dir`/`out_path` under `/tmp` (the defaults are).
-- `viewport` = the default `translate(0px, 0px) scale(1)` → check for an empty graph or incomplete settling. An unresolved `node=` falls back to framing the whole graph.
+- `canvas did not settle within … ms` → the rest of the message says why. `no canvas on the
+  page` = the URL shows the full-screen error (a wrong `workflow=` path or an invalid
+  workflow; `curl` the same `/api/graph?workflow=…` to see the 4xx). `N nodes rendered,
+  viewport transform …` = the layout never finished framing (a loaded host or a very large
+  graph); retry. An unresolved `node=` is never the cause: it falls back to framing the
+  whole graph.
 - Stale output → you didn't rebuild after a `web/` change: `make ui-build`.
 - Stale output DESPITE a rebuild (old layout/styles, even mixed old+new) → the MCP Chrome's
   **HTTP cache** heuristically reused old `assets/*` (index.html itself now sends

@@ -175,7 +175,10 @@ Capture the checked state (context for any violation).
 ### verdict
 
 The invariant verdict: `passed` + `dotsChecked`/`leaves` counts, the edge-coverage
-report (or its skip reason), and up to 20 violations per invariant.
+report (or its skip reason), and up to 20 violations per invariant. `passed` covers only
+what the counts say was examined: `dotsChecked: 0` means the view has no bordered io
+dots (`beautiful` density, or a workflow with no inputs/outputs), just as `edges.skipped`
+marks an edge check the view does not qualify for.
 
 - source: ${check.result}
 - stdout: true

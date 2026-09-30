@@ -50,16 +50,18 @@ Dispatch a synthetic mouseover on the named row, then count marks/halos.
 
 - type: mcp-chrome-devtools-evaluate_script
 - pageId: ${prepare.page_id}
+- result_format: json_block
 - function: |
     async () => {
       const name = "${row_name}";
       const rows = [...document.querySelectorAll(".io-row, .param-row")];
       const el = rows.find((r) => (r.textContent || "").startsWith(name));
-      if (!el) return { ok: false, reason: "row not found", rows: rows.length };
+      if (!el) {
+        throw new Error("hover row not found: none of " + rows.length + " .io-row/.param-row rows starts with " + JSON.stringify(name));
+      }
       el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
       await new Promise((r) => setTimeout(r, 400));
       return {
-        ok: true,
         ringedNodes: document.querySelectorAll(".hover-mark").length,
         haloedEdges: document.querySelectorAll(".edge-halo").length,
       };
@@ -79,7 +81,7 @@ Capture the hovered state.
 
 ### facts
 
-The hover dispatch result: ok + ringed-node and haloed-edge counts.
+The hover dispatch result: ringed-node and haloed-edge counts.
 
 - source: ${hover.result}
 - stdout: true
