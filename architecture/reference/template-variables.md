@@ -596,7 +596,7 @@ if unresolved_templates:
 
 ### Schema-Aware Type Validation
 
-Located: `src/pflow/runtime/template_validation/type_checker.py`
+Located: `src/pflow/core/templates.py` (`TYPE_COMPATIBILITY_MATRIX`, `is_type_compatible`); inference in `src/pflow/runtime/template_validation/type_checker.py`
 
 pflow validates that template types match parameter expectations using node interface schemas.
 
@@ -612,9 +612,12 @@ TYPE_COMPATIBILITY_MATRIX = {
     "bool": ["any", "bool", "boolean", "str", "string"],
     "dict": ["any", "dict", "object", "str", "string"],  # dict serializes to JSON
     "list": ["any", "list", "array", "str", "string"],   # list serializes to JSON
-    "NoneType": ["any", "null", "none", "str", "string"],
 }
 ```
+
+This is **template-flow** compatibility (a value flowing through `${…}` may be auto-parsed or
+stringified), not a literal-value check: `is_type_compatible("int", "str")` is `True`. Literal or
+coerced values are checked against a declared type with `TypeSpec.accepts` (`src/pflow/core/types.py`).
 
 **Interpretation**:
 - `str` can be used where `str`, `dict`, `list`, or `any` is expected (because of JSON auto-parsing)

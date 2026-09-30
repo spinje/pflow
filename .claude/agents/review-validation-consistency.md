@@ -178,7 +178,7 @@ The type system has multiple representations that must agree:
 | Node docstrings | Enhanced Interface Format strings (`str`, `dict`, `list[str]`) | `nodes/*/` |
 | Registry | Parsed type metadata | `registry/metadata_extractor.py` |
 | Canonical type vocabulary | `TypeSpec`, `CANONICAL_TYPES`, alias rules | `core/types.py` |
-| Validator | Type compatibility matrix + type checker | `runtime/template_validation/type_validation.py`, `runtime/template_validation/type_checker.py` |
+| Validator | Type compatibility matrix + type checker | `core/templates.py` (`is_type_compatible`), `runtime/template_validation/type_validation.py`, `runtime/template_validation/type_checker.py` |
 | Runtime coercion | Actual Python type handling | `runtime/engine/template_resolution.py`, `core/param_coercion.py` |
 
 For type-related changes, check:

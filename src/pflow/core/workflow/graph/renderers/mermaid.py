@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from pflow.core.templates import Expression, Issue, TemplateResolver, parse
 from pflow.core.workflow.graph.model import (
     AncestorStep,
     BatchSpec,
@@ -785,15 +786,27 @@ def _format_label(node: Node, is_decision: bool, descriptions: bool, batch_suffi
 
 
 def _first_sentence(text: str) -> str:
-    # Neutralize template refs first so a description like `${max_iterations}` does not
-    # leak ${...} into the label (and truncation never severs a ${ ... } mid-brace).
-    clean = re.sub(r"\$\{([^}]*)\}", r"\1", text)
-    clean = re.sub(r"\*\*(.+?)\*\*", r"\1", clean)
+    clean = re.sub(r"\*\*(.+?)\*\*", r"\1", _debraced(text))
     clean = re.sub(r"\*(.+?)\*", r"\1", clean)
     match = re.match(r"([^.!?]+[.!?])", clean)
     if match:
         return match.group(1)[:80]
     return clean[:80]
+
+
+def _debraced(text: str) -> str:
+    """``text`` with each ``${…}`` shown as its inner text, so a description like
+    ``${max_iterations}`` does not leak ``${`` into the label (and truncation never
+    severs one mid-brace). An escape ``$${x}`` shows its literal text ``${x}``."""
+    parts: list[str] = []
+    for seg in parse(text).segments:
+        if isinstance(seg, Expression):
+            parts.append(seg.raw)
+        elif isinstance(seg, Issue):
+            parts.append(seg.raw[2:].removesuffix("}"))
+        else:
+            parts.append(seg.text)
+    return "".join(parts)
 
 
 def _classdef_to_style(css_class: str) -> str:
@@ -837,7 +850,10 @@ def _strip_template(ref: Any) -> str:
     if not isinstance(ref, str):
         return ""
     value = ref.strip()
-    if value.startswith("${") and value.endswith("}"):
+    simple = TemplateResolver.extract_simple_template_var(value)
+    if simple is not None:
+        return simple
+    if value.startswith("${") and value.endswith("}"):  # not in the grammar: show it loosely
         return value[2:-1].strip()
     return value
 

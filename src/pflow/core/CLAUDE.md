@@ -148,6 +148,9 @@ must not become a final error. Use `failed_node_ids` when present and modern eve
 `TypeSpec.parse()` owns IR `type:` vocabulary; Python annotations use a different
 vocabulary. `outer_base_type()` intentionally discards generic element types for
 compatibility checks. See `architecture/core-concepts/data-type-coercion.md`.
+Template-flow compatibility (`templates.is_type_compatible`: may a declared source
+type flow through `${…}` into a param type, auto-parse and stringification
+included) is not a value check — literal/coerced values use `TypeSpec.accepts`.
 
 `coerce_param_for_node()` only converts dict/list to JSON for expected `str`.
 `coerce_workflow_input()` handles declared workflow types and warns rather than

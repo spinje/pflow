@@ -36,7 +36,8 @@ is excluded from Edge equality). It corrects read/quiet/type presentation, never
 or unsupported field rows. Keep its scope, batch-alias, and template-grammar filters aligned
 with backend scope analysis; it scans params, not loop conditions. Backend owners are
 `src/pflow/core/workflow/graph/model.py`, `src/pflow/core/workflow/graph/build.py`, and
-`src/pflow/core/workflow/graph/scope.py`.
+`src/pflow/core/workflow/graph/scope.py`; the grammar strings are copies of `src/pflow/core/templates.py`'s,
+so a grammar change there edits `scan.ts` in the same step (parity rows in `scan.test.ts`).
 
 ## Representative endpoints and IO
 

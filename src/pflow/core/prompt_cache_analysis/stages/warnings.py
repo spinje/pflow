@@ -478,12 +478,8 @@ def _opaque_prompt_warnings(
     prompt = node.get("params", {}).get("prompt", "")
     if not isinstance(prompt, str):
         return []
-    stripped = prompt.strip()
-    if not TemplateResolver.is_simple_template(stripped):
-        return []
-
-    inner = stripped[2:-1]
-    if TemplateResolver.is_coalesce_expression(inner):
+    inner = TemplateResolver.extract_simple_template_var(prompt.strip())
+    if inner is None or TemplateResolver.is_coalesce_expression(inner):
         return []
     root = TemplateResolver.extract_root_node_id(inner)
 
@@ -521,11 +517,8 @@ def _resolve_through_batch_alias(
     items_expr = batch.get("items", "")
     if not isinstance(items_expr, str):
         return None
-    items_stripped = items_expr.strip()
-    if not TemplateResolver.is_simple_template(items_stripped):
-        return None
-    items_inner = items_stripped[2:-1]
-    if TemplateResolver.is_coalesce_expression(items_inner):
+    items_inner = TemplateResolver.extract_simple_template_var(items_expr.strip())
+    if items_inner is None or TemplateResolver.is_coalesce_expression(items_inner):
         return None
     items_root = TemplateResolver.extract_root_node_id(items_inner)
     return nodes_by_id.get(items_root)

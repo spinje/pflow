@@ -14,7 +14,7 @@ run these passes.
 | Missing node output/path, diagnostic field suggestions | `path_validation.py` |
 | Parameter type, shell JSON coercion, code-input annotation | `type_validation.py` |
 | `${item.field}` against inferred item structure | `batch_item_validation.py` |
-| Type compatibility/inference | `type_checker.py` |
+| Type inference (compatibility: `core/templates.py::is_type_compatible`) | `type_checker.py` |
 | Index into declared structure, dotted display, safe display | `utils.py::descend_index`, `dotted_parts`, `sanitize_for_display` |
 | Output metadata or child workflow output discovery | `validator.py::extract_node_outputs`, `_resolve_child_workflow_outputs` |
 | Paths shown by node-output formatters | `utils.py::flatten_output_structure` |
@@ -113,7 +113,7 @@ Shell validation rejects dict/list interpolation in `command` unless the
 quoted-template opt-in (`'${var}'`) is present. This is JSON-coercion/type-check
 behavior, not a general shell-injection safety guarantee.
 
-`type_checker.is_type_compatible` permits string → dict/list because runtime can
+`core/templates.is_type_compatible` permits string → dict/list because runtime can
 parse JSON containers, but not string → primitive numeric/bool conversion.
 Source unions require every member to fit; target unions accept any matching
 member. Parameterized collections compare outer types only; element types are

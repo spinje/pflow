@@ -35,7 +35,7 @@ def _runtime_base_type(type_str: str) -> str:
     ``object``/``array``/``str``. Strip a parameterized generic to its outer base so
     ``list[str]`` is recognized as ``list``. Without this, a code/shell value wired
     into a ``list[str]`` param would pass validation (the validator already strips
-    generics — see ``type_checker.is_type_compatible``) but silently fail to
+    generics — see ``core.templates.is_type_compatible``) but silently fail to
     JSON-auto-parse at runtime (issue #460 / PR #461).
 
     Unions are left intact — they are never auto-parsed, and collapsing

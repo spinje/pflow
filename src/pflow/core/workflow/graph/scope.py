@@ -1,19 +1,6 @@
 """Template-reference extraction helpers for graph construction."""
 
-import re
-
-from pflow.core.templates import TemplateResolver
-
-# Extract refs from INSIDE ``${...}`` blocks only, so literal text (validator-rejected
-# but defensively handled) never produces false positives.  Two-stage scan: find each
-# ``${...}`` block, then within each block capture every ``root`` plus its full dotted
-# tail (``.field.sub.deeper`` — zero or more segments).  Handles coalesce
-# (``${a.x ?? b.y}`` — two refs per block) in any template context (bindings and
-# output sources alike — ``??`` is a general-purpose template operator, not
-# output-only).  Handles bare refs (``${data}`` — no field).  The ``(?<!\$)``
-# lookbehind skips escaped templates (``$${x}`` resolves to literal ``${x}``).
-_BRACE_BLOCK_RE = re.compile(r"(?<!\$)\$\{([^}]*)\}")
-_REF_IN_BLOCK_RE = re.compile(r"(?:^|[\s?])([a-zA-Z0-9_-]+)((?:\.[a-zA-Z0-9_-]+)*)")
+from pflow.core.templates import Field, parse
 
 
 def refs_in(value: str) -> list[tuple[str, str | None]]:
@@ -33,32 +20,17 @@ def source_refs_in(source: str) -> list[tuple[str, str | None]]:
 
 
 def refs_with_path_in(value: str) -> list[tuple[str, str | None, tuple[str, ...]]]:
-    """Extract ``(root, first_segment, remaining_segments)`` per template ref.
+    """``(root, first_field, remaining_fields)`` per Reference the runtime would resolve.
 
-    The path-preserving variant of :func:`refs_in`: ``${a.b.c.d}`` yields
-    ``("a", "b", ("c", "d"))``; ``${a.b}`` yields ``("a", "b", ())``; a bare
-    ``${a}`` yields ``("a", None, ())``. One shared walk implements all three
-    extractors so they cannot drift.
+    ``${a.b.c.d}`` → ``("a", "b", ("c", "d"))``; a bare ``${a}`` → ``("a", None, ())``.
+    Read from ``parse(value).references`` — the dependency view: literal operands,
+    escapes and Issues yield nothing, and a dynamic index yields its outer reference
+    AND its index source (``${a[${i}].x}`` → ``a``, then ``i``). Indices are not
+    fields: ``${data[0].field}`` → ``("data", "field", ())``. One walk implements all
+    three extractors so they cannot drift; ``web/src/graph/scan.ts`` mirrors it.
     """
-
     refs: list[tuple[str, str | None, tuple[str, ...]]] = []
-    for block in _BRACE_BLOCK_RE.finditer(value):
-        # Split coalesce operands and skip JSON literals (Optional A) — a
-        # literal like ${missing ?? "x"} must not surface "x" as a data-flow
-        # ref (it would draw a spurious edge from a node coincidentally named x).
-        for operand in TemplateResolver.split_coalesce_operands(block.group(1)):
-            if TemplateResolver.is_literal_operand(operand.strip()):
-                continue
-            # Grammar gate: only operands the runtime can actually resolve count
-            # as refs. Deliberately UNtrimmed — `${ a.x }` must fail (the runtime
-            # never resolves it); coalesce operands arrive pre-stripped from
-            # split_coalesce_operands. The pattern includes bracket segments, so
-            # `${data[0].x}` passes (its root keeps an edge).
-            if not re.fullmatch(TemplateResolver._VAR_NAME_PATTERN, operand):
-                continue
-            for m in _REF_IN_BLOCK_RE.finditer(operand):
-                # Group 2 is the dotted tail (".b.c") or the EMPTY STRING on a
-                # bare ref — map "" to (root, None, ()), never (root, "", ()).
-                segments = m.group(2).lstrip(".").split(".") if m.group(2) else []
-                refs.append((m.group(1), segments[0] if segments else None, tuple(segments[1:])))
+    for ref in parse(value).references:
+        fields = [seg.name for seg in ref.path if isinstance(seg, Field)]
+        refs.append((ref.root, fields[0] if fields else None, tuple(fields[1:])))
     return refs

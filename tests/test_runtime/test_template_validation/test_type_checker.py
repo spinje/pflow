@@ -2,12 +2,9 @@
 
 import pytest
 
+from pflow.core.templates import is_type_compatible
 from pflow.registry.registry import Registry
-from pflow.runtime.template_validation.type_checker import (
-    get_parameter_type,
-    infer_template_type,
-    is_type_compatible,
-)
+from pflow.runtime.template_validation.type_checker import get_parameter_type, infer_template_type
 
 
 class TestTypeCompatibility:

@@ -622,3 +622,100 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
 - Ruling (importance 1, reversible): **4d before 4c.** 4c needs the pending R5 ruling; 4d (graph scope + `scan.ts`, type-rule homes, display strippers) shares no code path with the cache chunker/renderer — the plan's 4c→4d order is not load-bearing between those two. 4c follows once R5 lands.
 - Rotation: C2 at ~500k → **fresh Agent D (Opus/medium) for 4d**; 4c then goes to D resumed if healthy.
 - Next: launch D on 4d.
+
+## [2026-09-30 21:30] Agent D (Opus) — phase 4d: graph scope + `scan.ts` mirror, type-rule homes, display strippers
+- Did:
+  - `graph/scope.py::refs_with_path_in` reads `parse(value).references`: `(root, first Field, remaining Fields)`, with Index/DynamicIndex skipped. A dynamic index yields the outer ref, then its index source. `_BRACE_BLOCK_RE`, `_REF_IN_BLOCK_RE` and the `_VAR_NAME_PATTERN` reach are deleted.
+  - `web/src/graph/scan.ts` is now a grammar mirror in the same step:
+    - regex strings copied from `core/templates.py`;
+    - one left-to-right scan: a balanced escape is literal, an OPEN is an Expression or an Issue through its first `}`, and literal operands are skipped;
+    - `pathRefs` walks segments, dynamic-index sources included.
+    - The old block regex, root-prefix regex, `VAR_NAME_RE`, `splitCoalesceOperands` and `isLiteralOperand` are deleted.
+  - §0.4 type-rule homes:
+    - `TYPE_COMPATIBILITY_MATRIX` and `is_type_compatible` moved verbatim into `core/templates.py`, which now imports `core.types.outer_base_type`. The header states template-flow vs `TypeSpec.accepts`, and the stale "Task 120 could add element checking here" sentence is dropped.
+    - `_to_string` → public `to_string`; `_convert_to_string` alias kept.
+    - `type_validation.py` imports the matrix from `core.templates`. Its `SHELL_BLOCKED_TYPES` local and the `["dict","list","object"]` list → `CONTAINER_TYPES`.
+    - `type_checker.py` keeps inference only.
+  - Display strippers:
+    - `mermaid._first_sentence` renders `parse(text)` through a new `_debraced`: Expression → raw, Issue → de-braced raw, Text → text.
+    - `_strip_template` → `extract_simple_template_var` with the loose fallback.
+    - `warnings.py` ×2 `[2:-1]` → `extract_simple_template_var`.
+  - Pointers:
+    - Task 112 (`:11/:71/:136-137/:164/:174/:194`) and `research/output-field-validation.md:44/:114`. `:44` now points at `nodes/python/python_code.py`, where annotations are actually checked (`:42/:58`).
+    - Task 120 (`:11/:13/:66`): → `TypeSpec.accepts`; the matrix is template-flow only.
+    - Task 167 (`:134-135/:182`) → `Template.segments` spans.
+    - `architecture/reference/template-variables.md:599/:608`: the matrix moved, the fictional `NoneType` row is gone, and a template-flow note is added.
+    - `core/CLAUDE.md` types section; `template_validation/CLAUDE.md:17/:116`; `template_resolution.py:38` docstring; `web/src/graph/CLAUDE.md`, whose backend-owner line now says a grammar change in `core/templates.py` must edit `scan.ts` in the same step.
+- Changed:
+  - src: `core/templates.py`, `core/workflow/graph/scope.py`, `graph/renderers/mermaid.py`, `prompt_cache_analysis/stages/warnings.py`, `template_validation/{type_checker,type_validation}.py`, `engine/template_resolution.py` (docstring), CLAUDE.md ×3.
+  - web: `src/graph/scan.ts`, `scan.test.ts`.
+  - Lens: `.claude/agents/review-validation-consistency.md:181`, synced to `.codex`.
+  - tests:
+    - `test_graph_build.py` +2: the characterization pin `${data[0].field}` → `("data","field",())`, plus the dynamic-index / escape / Issue rows; the example's DATA_FLOW edge `process-batch.results` → `correlate-batch.command`, `output_path ("stdout",)`.
+    - `test_type_checker.py:9`: the sanctioned import re-point.
+    - `scan.test.ts` +9 rows under "consumedReadPaths — runtime parity (mirrors scope.py)".
+  - Evidence: `implementation/4d-screenshots/{before-no-edge-into-correlate-batch,after-process-batch-stdout-edge}.png`.
+  - `src/` + `web/src`: +273/−228 (≈+45). Most of it is the moved matrix block (+105 in templates.py, −105 in type_checker).
+- Verified:
+  - `make check` green.
+  - `make test`: 10088 passed / 2 failed / 13 xfailed, against the 10086 / 2 / 13 baseline (+2 = the new graph_build tests). The 2 failures are exactly the ruling rows `output_prose_wrap_recorded_drift-today` and `output_escape_only_r3-today`, untouched.
+  - `make test-e2e`: 51 passed / 2 skipped (unchanged).
+  - Web: `npx vitest run` 810 passed (55 files; the 9 new rows are included), and `tsc --noEmit` is clean.
+  - `capture.py --check`: 29 examples, 0 differing.
+  - Red-first: both Python tests and 7 of the 8 first scan rows failed before the fix. The multi-index row is a partner that passed on both trees.
+  - Python↔TS differential: every `${`-bearing string constant in the three template corpora (288 templates; 210 with refs, 33 with dynamic-index inner refs, 26 escapes) was run through Python `refs_with_path_in` and the TS `templateRefs` (extracted from `scan.ts` via esbuild). Result: **0 differing**. A planted TS mutation gave 46 differing, so the probe discriminates. Scripts: `scratchpads/task-170/phase4d/{corpus.json,diff.mjs}`.
+  - UI, real surface:
+    - Graph API on this tree: edge `e3 process-batch → correlate-batch results ['stdout'] command`. On a `git archive HEAD` copy (its own bundle build, served via `PYTHONPATH`): no such edge.
+    - The screenshots show the dotted DATA_FLOW line from process-batch's `stdout` row into correlate-batch's `command` (after) and its absence (before).
+    - `visual-invariants` (after, advanced / collapse=none): passed. Contract 4 = DOM 4, 0 missing, 0 overlaps.
+  - Assumed: Windows is not exercised (no shell-dependent test added).
+- Deviations/surprises (the signal):
+  1. **`type_validation.py`'s `_generate_type_fix_suggestions` branch (`:138`) is unreachable, and was before 4d.** It runs only when `not is_type_compatible(inferred, expected)` AND inferred ∈ containers AND expected ∈ {str, string}. The matrix makes every container→str pair compatible (executed: all 8 True). I re-pointed it to `CONTAINER_TYPES` per plan, but it stays dead (~50 lines incl. the helper). Candidate deletion for the phase-5 simplicity lens; not deleted here (outside the plan's list).
+  2. **`mermaid._strip_template` gains a branch with no behavior change.** For every grammar-valid simple template, `extract_simple_template_var` equals `[2:-1].strip()`, and the plan-mandated loose fallback keeps today's text otherwise. It fails the deletion test; kept per the plan, named for the simplicity lens.
+  3. **`_debraced` (mermaid descriptions), two display differences vs today:**
+     - An escape `$${x}` now shows `${x}` (today `$x`). That is the author's literal text, stated in the docstring.
+     - An unclosed `${foo` now shows `foo` (today `${foo`).
+     - A dynamic-index Expression's raw `a[${i}].x` still contains `${`. Today's regex also leaked it (`a[${i].x}`). Not a new leak.
+  4. **Scope characterization beyond the plan's named pin:** the field tuple now keeps fields after an index everywhere: `${a.b[0].c.d}` → `("a","b",("c","d"))`, today `("a","b",())`. So `output_path` on such edges gains the deeper fields. Same rule as the pin; `build.py`'s consumers only compare `ref_field` and pass `ref_path` through. Pinned.
+  5. **`build.py:849` batch-alias detection now sees an alias used only as a dynamic-index source** (`${x[${item.i}]}`). That is the dependency view, the correct direction. No test was affected.
+  6. **TS/Python regex-flavor gap (pre-existing class, not widened):** Python `\w`/`\d`/`\b` are Unicode on `str`, JS without `u` is ASCII. So `${café.x}` is a Reference in Python and no read in the scan. The old `VAR_NAME_RE` had the same `\w`. Noted, not fixed.
+  7. Plan §4's "manual end to end after 4d" list was not run. 4d changes no runtime path (graph/display/validator type homes only), and with 4c pending, "after phase 4" = after 4c. That list belongs to 4c's close.
+  8. Pre-existing tooling bug (see the postmortem): `visual-invariants.pflow.md`'s `out_path` default is not applied. It reproduces on main's checkout and on the base copy.
+- Self-checks:
+  - Fully happy? Yes with the code. Loose ends are named above (1, 2, 6 for the lenses; 8 for tooling); none is mine to fix inside 4d.
+  - Raised and fixed during the phase:
+    - a stray `web/tsconfig.tsbuildinfo` (my `tsc -b`), removed;
+    - a missing Issue-span row, added to both tables (`${a[${i ?? 0}]}` / `${gen.result[${idx.result ?? 0}]}`), after the ledger showed that no row pinned "an Issue runs through its first `}`";
+    - the lens file's matrix row (`review-validation-consistency.md:181`), fixed and synced.
+  - test-reflect (directed, the new scope/scan rows). Mutation ledger `scratchpads/task-170/phase4d/mutate.py` (apply, run, restore from bytes):
+    - scope value view without inner refs → killed (1);
+    - scope indices as fields → killed (2);
+    - scan drops dynamic-index sources → killed (2);
+    - scan unbalanced escape → killed (3);
+    - scan Issue stops before the next OPEN → killed (1, by the added row);
+    - scan indices as fields → killed (4);
+    - **scan keeps literal operands → SURVIVED, an equivalent mutant at the interface.** No literal can produce a read: string, number, `[]` and `{}` literals fail `IDENT` in `pathRefs`, and `true`/`false`/`null` would be bare roots with no field, which never count. The skip stays so `templateRefs` equals `Expression.references`; the differential above covers it.
+    - Nothing was deleted: each new row asserts exact read paths or exact tuples, with a presence partner in the same table ("a real ref after an escape still reads").
+- Screenshot tooling postmortem (for disposition):
+  - Worked well:
+    - `screenshot.pflow.md -p` returns one path and settles reliably; both runs took under 20 s.
+    - A `git archive` base copy plus a symlinked `node_modules` gave an honest before-state (its own bundle) with no stash.
+    - The `/api/graph` JSON is the fastest edge oracle, faster than any screenshot.
+  - Friction/near-miss:
+    - (S) **`visual-invariants.pflow.md` fails with "Workflow requires input 'out_path'" despite `required: false` + a default** (the error comes at execution, after "Executing workflow (3 nodes)"; `--validate-only` passes). It also reproduces from the main checkout. The SKILL.md example command omits `out_path`, so the documented invocation fails. Workaround: pass `out_path=`. Needs an issue: either an input-default bug in the runner or in a sub-workflow call.
+    - (S) SKILL.md's "Before running" starts the server on the default port 8765 and `make ui-build`, which re-runs `npm ci`. With parallel worktrees (another lane held 8791), a per-worktree port convention would avoid cross-lane collisions. I used 8793/8794.
+  - Ideas:
+    - (M) An `edges` filter mode on `inspect.pflow.md` (edge id → source/target/labels), so edge-correctness phases need no screenshot eyeballing.
+- dev servers: none. I started `pflow ui` on 8793 (this tree) and 8794 (the base copy); both were stopped and verified down. The 8791 server belongs to another worktree (`fix-issue-650-…`) and was left alone.
+- Next: the orchestrator reviews and commits 4d. 4c (cache chunker, `render_cache_chunks`, `_resolve_static_prefix_for_cache`) is untouched and waits on the R5 ruling; D can resume it. Not committed.
+
+## [2026-09-30 22:00] task-orchestrator — 4d verified + committed; dispositions
+- Verified (orchestrator re-run): `make test` 10088 passed / 2 failed (ruling rows) / 13 xfailed (4c); `make check` green; screenshot `4d-screenshots/after-process-batch-stdout-edge.png` read — the dotted DATA_FLOW edge from `process-batch`'s `stdout` row into `correlate-batch` is present (absent in the `before-` shot). No process rooted in this worktree (`pgrep -fl feat-task-170` empty).
+- Dispositions of Agent D's items:
+  - 1 (dead `_generate_type_fix_suggestions` branch at `type_validation.py:~138`) → phase 5: delete it if still unreachable (simplicity; ~50 lines).
+  - 2 (`mermaid._strip_template` branch that changes nothing) → phase 5: drop it (fails the deletion test; the user lens outranks the plan's line).
+  - 3 (graph edges keep fields after an index everywhere) → accepted: same rule as the planned `${data[0].field}` characterization delta, pinned.
+  - 4 (surviving `scan.ts` literal-skip mutant, unobservable through the public output) → accepted; covered by the Python-vs-scan differential (288 templates, 0 diffs).
+  - 5 (plan §4 manual end-to-end list) → runs at 4c's close + at completion, as D says.
+  - 6 tooling postmortem (`visual-invariants.pflow.md` ignores its `out_path` default → "Workflow requires input 'out_path'"; the skill's documented command fails as written) → **issue** (pre-existing on main, shared tooling — not fixed in this PR while other producers are live); named in the completion handback.
+- Next: 4c waits on the R5 ruling (and the prose-wrap ruling) — Agent D resumed on 4c when R5 lands.

@@ -8,9 +8,9 @@ Add strict validation in `prepare_inputs()` that fails fast when CLI-provided va
 > - **This task (120):** *workflow `## Inputs`* (caller-supplied via CLI/stdin) checked against *declared input types*. Lives in `prepare_inputs()` (`src/pflow/runtime/compilation/ir_preparation.py`), which already collects errors and has the declared types.
 > - **Task 112:** *node `params`* (author-written, inside the workflow) checked against *node interface metadata*. Lives in the compile/validation pipeline.
 >
-> They are **not duplicates** (distinct boundary + source of truth) but they **must share one type-compatibility primitive and one error format**. The compatibility matrix already exists in `src/pflow/runtime/template_validation/type_checker.py` (Task 84). **Reuse it instead of hand-rolling a second table** (see the corrected Implementation Notes below). See Task 112's "Sibling checkpoint" note for the symmetric pointer.
+> They are **not duplicates** (distinct boundary + source of truth) but they **must share one type-compatibility primitive and one error format**. The primitive is `TypeSpec.accepts` (`src/pflow/core/types.py`) for literal/coerced values. The template-flow matrix (`src/pflow/core/templates.py::is_type_compatible`, Task 84) is **not** a literal-value check — it approves `string`→`object` because templates auto-parse — so it must not decide this checkpoint. **Reuse `TypeSpec.accepts` instead of hand-rolling a second table** (see the corrected Implementation Notes below). See Task 112's "Sibling checkpoint" note for the symmetric pointer.
 
-> **Stale notes corrected 2026-06-07 (post-Task 154).** Task 154 (Type Vocabulary Coherence, done 2026-04-17) shrank the `## Inputs`/`## Outputs` `type:` vocabulary to **seven canonical JSON-Schema names only** (`string`, `integer`, `number`, `boolean`, `object`, `array`, `any`) and **removed the Python aliases** (`str`, `int`, `float`, `dict`, `list`). The original `TYPE_CHECKS` map and `_normalize_type` references below predate 154 and list those deleted aliases — they are illustrative-but-stale. Implement against the canonical-only vocabulary and reuse `type_checker.py` rather than the snippet's bespoke map. (`_normalize_type` does not exist in the codebase.)
+> **Stale notes corrected 2026-06-07 (post-Task 154).** Task 154 (Type Vocabulary Coherence, done 2026-04-17) shrank the `## Inputs`/`## Outputs` `type:` vocabulary to **seven canonical JSON-Schema names only** (`string`, `integer`, `number`, `boolean`, `object`, `array`, `any`) and **removed the Python aliases** (`str`, `int`, `float`, `dict`, `list`). The original `TYPE_CHECKS` map and `_normalize_type` references below predate 154 and list those deleted aliases — they are illustrative-but-stale. Implement against the canonical-only vocabulary and reuse `TypeSpec.accepts` (`core/types.py`) rather than the snippet's bespoke map. (`_normalize_type` does not exist in the codebase.)
 
 ## Status
 not started
@@ -63,7 +63,7 @@ Type checking after coercion:
 # ⚠ STALE (pre-Task 154) — see "Stale notes corrected" at top of file.
 # The Python aliases ("str", "int", "float", "dict", "list") were REMOVED from
 # the input vocabulary by Task 154. Use the 7 canonical JSON-Schema names only,
-# and prefer reusing template_validation/type_checker.py over this bespoke map.
+# and prefer reusing TypeSpec.accepts (core/types.py) over this bespoke map.
 # Map declared types to expected Python types
 TYPE_CHECKS = {
     "string": str, "str": str,

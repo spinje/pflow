@@ -8,7 +8,7 @@ Add validation that checks literal parameter values against node interface metad
 > - **This task (112):** *node `params`* (author-written, inside the workflow) checked against *node interface metadata* (registry docstrings / MCP JSON Schema). Lives in the compile/validation pipeline.
 > - **Task 120:** *workflow `## Inputs`* (caller-supplied via CLI/stdin) checked against *declared input types*. Lives in `prepare_inputs()`.
 >
-> They are **not duplicates** (distinct boundary + source of truth) but they **must share one type-compatibility primitive and one error format** — otherwise pflow ends up with two divergent type engines. The compatibility matrix already exists in `src/pflow/runtime/template_validation/type_checker.py` (Task 84: int→float widening, str↔dict/list JSON coercion, `any` universal). **Both checkpoints should call that single primitive** rather than reimplementing it. If 112 and 120 are scheduled together, consider lifting the shared rules into one small home both call. See Task 120's "Sibling checkpoint" note for the symmetric pointer.
+> They are **not duplicates** (distinct boundary + source of truth) but they **must share one type-compatibility primitive and one error format** — otherwise pflow ends up with two divergent type engines. That primitive is `TypeSpec.accepts` (`src/pflow/core/types.py`) for literal/coerced values. The template-flow matrix (`src/pflow/core/templates.py::is_type_compatible`, Task 84) is **not** a literal-value check — it approves `int`→`str` and `string`→`object` because templates stringify and auto-parse — so it must not decide these checkpoints. **Both checkpoints should call `TypeSpec.accepts`** rather than reimplementing it. If 112 and 120 are scheduled together, consider lifting the shared rules into one small home both call. See Task 120's "Sibling checkpoint" note for the symmetric pointer.
 
 ## Status
 not started
@@ -68,7 +68,7 @@ Investigation revealed the following about pflow's current validation:
 | Check | Status | Location |
 |-------|--------|----------|
 | Template path existence (`${node.output}`) | ✅ | `template_validator.py` |
-| Template type compatibility | ✅ | `type_checker.py` (Task 84) |
+| Template type compatibility | ✅ | `core/templates.py::is_type_compatible` (Task 84; template flow, not literal values) |
 | Nested template paths (`${node.result.data}`) | ✅ | `template_validator.py` |
 | Shell command type safety | ✅ | `template_validator.py` |
 
@@ -133,8 +133,8 @@ Before implementing, investigate:
    - See `src/pflow/registry/metadata_extractor.py` for parsing
 
 3. **How does template type checking work?**
-   - `src/pflow/runtime/type_checker.py` — existing type checking logic
-   - Has compatibility matrix (str ↔ dict/list, int → float, etc.)
+   - `src/pflow/core/types.py` — `TypeSpec.accepts`, the literal/coerced-value check
+   - `src/pflow/core/templates.py::is_type_compatible` — template-flow compatibility only (not a literal-value check)
    - May be reusable for literal checking
 
 4. **MCP tool schema access:**
@@ -161,7 +161,7 @@ Before implementing, investigate:
      Parameter 'model' expects type 'str', got 'int' (value: 6)
    ```
 
-3. Type compatibility rules (from `type_checker.py`):
+3. Template-flow compatibility rules (`core/templates.py::is_type_compatible`; literal values use `TypeSpec.accepts` instead):
    - Bidirectional JSON: `str` ↔ `dict`/`list` (auto-parse)
    - Numeric widening: `int` → `float` → `str`
    - Universal `any`: compatible with all types
@@ -171,7 +171,7 @@ Before implementing, investigate:
 - **Scope: literal params only** — Template validation already exists (Task 84)
 - **Use existing metadata** — Don't create new schema, use interface metadata
 - **Strictness: error, not warning** — Invalid types should fail validation
-- **Follow existing patterns** — Extend template_validator or type_checker
+- **Follow existing patterns** — Extend template_validator; check literal values with `TypeSpec.accepts`
 
 ## Open Questions
 
@@ -191,7 +191,7 @@ Before starting, read these files to understand current validation:
 
 ```
 src/pflow/runtime/compiler.py          # Where compilation happens
-src/pflow/runtime/type_checker.py      # Existing type checking logic
+src/pflow/core/types.py                # TypeSpec.accepts (literal-value check)
 src/pflow/runtime/template_validator.py # Template validation (pattern to follow)
 src/pflow/core/workflow_validator.py   # Validation pipeline
 src/pflow/registry/metadata_extractor.py # How interface metadata is parsed

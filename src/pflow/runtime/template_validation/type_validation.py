@@ -9,21 +9,26 @@ from collections.abc import Sequence
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
-from pflow.core.templates import Field, Reference, Segment, TemplateResolver, parse, parse_path
+from pflow.core.templates import (
+    CONTAINER_TYPES,
+    Field,
+    Reference,
+    Segment,
+    TemplateResolver,
+    is_type_compatible,
+    parse,
+    parse_path,
+)
 from pflow.core.types import outer_base_type
 from pflow.registry import Registry
-from pflow.runtime.template_validation.type_checker import (
-    get_parameter_type,
-    infer_template_type,
-    is_type_compatible,
-)
+from pflow.runtime.template_validation.type_checker import get_parameter_type, infer_template_type
 
 # Types that are safe in shell commands (string-like or unknown type)
 # When a union contains one of these, runtime coercion to string is acceptable.
 _SHELL_SAFE_TYPES = {"str", "string", "any"}
 
 
-def _is_shell_safe_type(inferred_type: str, blocked_types: set[str]) -> tuple[bool, str | None]:
+def _is_shell_safe_type(inferred_type: str, blocked_types: frozenset[str]) -> tuple[bool, str | None]:
     """Check if a type is safe for shell command embedding.
 
     Args:
@@ -130,7 +135,7 @@ def _check_string_template_types(
         if not is_type_compatible(inferred_type, expected_type):
             suggestions: list[str] | None = None
             available_fields: list[str] = []
-            if inferred_type in ["dict", "list", "object"] and expected_type in ["str", "string"]:
+            if inferred_type in CONTAINER_TYPES and expected_type in ["str", "string"]:
                 suggestions, available_fields = _generate_type_fix_suggestions(template, node_outputs, expected_type)
 
             diagnostics.append(
@@ -204,10 +209,6 @@ def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict
         Diagnostics for structured data in shell commands
     """
     diagnostics: list[Diagnostic] = []
-    # Types that cannot be safely embedded in shell command strings.
-    # Includes both Python type names (dict, list) and JSON Schema names (object, array)
-    # since workflow IR may use either convention.
-    SHELL_BLOCKED_TYPES = {"dict", "object", "list", "array"}
 
     for node in workflow_ir.get("nodes", []):
         node_type = node.get("type")
@@ -244,7 +245,7 @@ def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict
                 continue
 
             # Check if type is safe (handles Fix 0 and Tier 1)
-            is_safe, blocked_type = _is_shell_safe_type(inferred_type, SHELL_BLOCKED_TYPES)
+            is_safe, blocked_type = _is_shell_safe_type(inferred_type, CONTAINER_TYPES)
             if not is_safe and blocked_type:
                 blocked_templates.append((template, blocked_type))
 
