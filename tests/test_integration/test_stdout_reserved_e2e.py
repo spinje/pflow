@@ -23,13 +23,16 @@ pytestmark = pytest.mark.e2e
 
 # The thread print is unflushed on purpose: it sits in the (block-buffered) sys.stdout
 # until the reservation ends, which must flush it to stderr, not to the restored stdout.
+# The subprocess inherits stdout (the path under test) but not stdin: under `mcp serve` on
+# Windows an inherited stdin — the JSON-RPC pipe the SDK is blocked reading — hangs the
+# child until the next message arrives (#657).
 STRAY_CODE = """\
 import subprocess, sys, threading
 print("CAPTURED")
 worker = threading.Thread(target=lambda: print("THREAD-STRAY"))
 worker.start()
 worker.join()
-subprocess.run([sys.executable, "-c", "print('SUBPROC-STRAY')"], check=True)
+subprocess.run([sys.executable, "-c", "print('SUBPROC-STRAY')"], stdin=subprocess.DEVNULL, check=True)
 result: str = "done"
 """
 
