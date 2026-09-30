@@ -207,3 +207,9 @@
   - S2 did-you-mean misses typos / can mislead on short words; S3 an exact provider name always
     selects (spec rule) — SKIPPED (take-or-leave; spec-settled).
 - Next: final gates, spec Status, task review, PR.
+
+## [2026-09-30] task-planner (implementing) — close-out
+- Did: spec Status → done + Completed 2026-09-30; `task-review.md` written.
+- Verified: final gates on the merged result — `make check` green, `make test-all-local` 9431
+  passed, 2 skipped.
+- Next: create-pr; hand back PR #, head SHA, `gh pr checks`.

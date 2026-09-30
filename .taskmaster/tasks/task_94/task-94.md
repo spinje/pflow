@@ -28,7 +28,11 @@ the `llm` node runs.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-09-30
 
 ## Priority
 
