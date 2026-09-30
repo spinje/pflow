@@ -768,3 +768,87 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
 - Verified (orchestrator re-run): `make test` 10085 passed / 2 failed (ruling rows) / 13 xfailed (4c); `make check` green.
 - Rulings (importance 1): meta-test 3 (`tests/test_import_hygiene.py` rule 4 naming `pflow.runtime.template_resolver`) **stays** — it is the spec's meta-test 3 and still catches a lazy import or a re-created module; the phase-5 grep list's `runtime\.template_resolver` entry is scoped to `src/` + every test except that meta-test. `cache_overlap` now reading the parse (dynamic-index refs overlap a cached root; escaped refs no longer false-duplicate) → accepted, pinned. The three always-null Pass-6 JSON keys removed with the dead branch → accepted (no reader).
 - Next: 4c on the R5 ruling; then phase 5 part B.
+
+## [2026-09-30 23:50] Agent D (Opus) — phase 4c (all but R5): chunker on parse spans, one `render_cache_chunks`, static prefix over segments (delta 5, R2)
+- Did:
+  - **Chunker on spans** (`markdown_parser._parse_cache_code_block`):
+    - Every `parse(content).expressions` entry is a chunk. `name = var_expr = content[span[0]+2:span[1]-1]`, with `assert == expr.raw`.
+    - `prose_before` is the escaped source slice, verbatim.
+    - Escapes and Issues are prose (R2); duplicate / no-chunk / trailing-discard are unchanged.
+    - `_CACHE_TEMPLATE_RE` is deleted.
+    - A no-chunk block whose only `${` is an Issue now raises "Malformed template syntax in '## Cache': '<issue>' is not a valid '${var}' reference." Before, it said "must contain at least one '${var}'", which is false for such a block.
+  - **One renderer:** `prompt_cache.render_cache_chunks(cache_ctx, shared) -> (list[RenderedChunk], skipped)`, where `RenderedChunk(name, prose, value)` is frozen.
+    - Prose is unescaped by `_render_segments`; the value (`_resolve_chunk_value` → `deterministic_serialize`) stays verbatim.
+    - `plan_node._render_cache_for_hash` is now 3 lines over it, with the hash dict shape unchanged. `build_cache_system_blocks` (the LLM node + prewarm) builds `prose + value` from it.
+    - The undeclared-subset warning moved into the helper.
+  - **`_resolve_static_prefix_for_cache` = `_render_segments(text, shared)`:** Text unescaped; each Expression resolved → `deterministic_serialize`, else raw; an Issue verbatim. Its stale "Python repr" docstring is rewritten.
+  - **R5 left pending, named sites** (today's observable behavior kept; the 3 `cache_var_coalesce_*` rows keep `today`, and their R5 `after` items stay strict xfail):
+    - (1) the comment-marked spot in the chunker loop (`markdown_parser.py`, "R5 (ruling pending)"): ruling (a) adds `if len(expr.operands) > 1: raise MarkdownParseError("coalesce is not supported in a ## Cache chunk")` there;
+    - (2) `prompt_cache._resolve_chunk_value` (whole-var root gate: ruling (b) resolves per operand here);
+    - (3) C2's `data_flow._cache_var_roots` whole-var-root branch for `??`/Issue, untouched.
+  - **Tests (sanctioned):**
+    - `test_prompt_cache_rendering.py:~427` identity pin retargeted: `plan_node.render_cache_chunks is prompt_cache.render_cache_chunks`.
+    - Third byte-symmetry test `test_hash_render_and_prep_render_byte_equivalent_with_escapes`: prose `$${HOME}`, `$${a[${i}]}`, bare `$$`; values `"value keeps $${x}"` and a dict holding `$${y}`. hash texts == prep texts == the exact expected bytes.
+    - `test_cache_block_parser.py` +10: 7 chunk rows, 2 Issue-only-block rows, 1 escape-only block.
+    - `test_prompt_cache.py`: the Round-5 `TEMPLATE_PATTERN` parity test is replaced by 4 static-prefix parse rows.
+  - **Docs:**
+    - `docs/how-it-works/prompt-caching.mdx:46` now says prose is verbatim except `$${…}` → literal `${…}` (and is prose, not a chunk). `guide/features/prompt-caching.md` does not repeat the claim, so it is untouched.
+    - `core/workflow/graph/CLAUDE.md`: `cached_prefix` keeps `prose_before` escaped.
+- Changed:
+  - src: `core/markdown_parser.py`, `core/prompt_cache.py`, `runtime/engine/plan_node.py` (the logger is dropped, now unused), `nodes/llm/llm.py` (two `noqa: F401` "meta-test identity" imports deleted, docstring).
+  - tests: the four files above plus `test_template_parity.py` (rows below; the now-unused `CACHE_PROSE_ISSUE` constant is deleted).
+  - src diff: +110/−119.
+- Verified:
+  - `make check` green.
+  - `make test`: 10098 passed / 2 failed / 6 xfailed, against 10085 / 2 / 13. Deltas:
+    - passed +13 = parser +10, prompt_cache +4−1, rendering +1−1 (escape test added, sentinel test deleted);
+    - xfailed −7 = 7 flipped `after` items now plain passes.
+    - The 2 failures are exactly the prose-wrap ruling rows.
+  - `make test-e2e`: 51 passed / 2 skipped.
+  - `capture.py --check`: 29 examples, 0 differing.
+  - Corpus: 315 passed, 6 xfailed = the 3 R5 rows × 2 sides, all strict. No XPASS left; every 4c XPASS was flipped or re-derived (below).
+  - Red-first against HEAD source (byte copies swapped in, then restored): every new parser row, the Issue-block rows, the escape-only row and the static-prefix escape rows fail on HEAD.
+  - **Task-159 baseline** (`verify.sh`): 80 passed, 7 drifted, 0 harness errors. **All 7 drift identically with HEAD's source swapped in**, so they pre-date 4c. They are:
+    - the analyze-cache "## Blocking errors — 'source' is a required property" block, from #628's sourceless-output rule (5 × `03-analyze-cache-modes`, `10-live-recordings/03`);
+    - guide wording (`12-…/04-guide-auto-detect`: `agent` vs `claude-code`, code-node thread-output line).
+    - None touches cache rendering, and there is no trace-format change. The oracle needs a re-record by its owner, not by this task.
+  - **Real surface** (`scratchpads/task-170/phase4c/surface/`, isolated `HOME`, placeholder `ANTHROPIC_API_KEY`):
+    - `home-escape.pflow.md` has cache prose `Shell note: expand $${HOME} yourself…` + `${topic}`.
+    - `uv run pflow --validate-only` → "✓ Workflow is valid". `--dry-run --output-format json` → `execute`, `cache_key eb3d829d…`.
+    - The real run went through the real CLI `main()` with ONLY the LLM adapter swapped for the repo's `tests/shared/llm_mock.MockLLMClient` (`run_mocked.py`): exit 0, output `ok`. The system block sent was `"Shell note: expand ${HOME} yourself; …\n\ncaching"`.
+    - The trace `llm_system` holds `${HOME}` (no `$${HOME}`).
+    - A second `--dry-run` → `cached`, `hash_match`, **same key `eb3d829d…`**: dry-run's hash render and the run's prepare/hash agree.
+- Deviations/surprises (the signal):
+  1. **Issue-only cache block → parse error (user-visible).** Under R2 an Issue is prose, so `Base: ${p.out.items.0}` (row `cache_var_issue_shape`) has no chunk. It used to be validator ERROR + runtime chunk silently ABSENT; now both sides raise the parse error with the standard "Malformed template" wording. Row runtime re-derived `Absent` → `Raises(MarkdownParseError, MALFORMED)`. Loud beats silent; I chose to name the Issue in the message.
+  2. **`cache_prose_unclosed_r2`: phase 1's `after` contradicts the 4a Issue-span ruling.**
+     - The `after` expected `Resolves("Unclosed ${a then S")` with a note that "an unclosed `${a` no longer swallows text". Under the ruled span (to the first `}`), the Issue `${a then ${p.out_str}` swallows the only chunk, so the block fails to parse.
+     - Re-derived: validator `Error(MALFORMED)` (per your Dev-7 instruction; it arrives via the parse error), runtime `Raises(MarkdownParseError, MALFORMED)`. Pinned in the parser rows too.
+  3. **`cache_prose_escape_declared_delta5` validator re-derived to `Error("never used as template variable: topic")`.** Before, `$${topic}` "used" `topic` through a bogus chunk; now the escape is literal and the input is genuinely unused. This is a correct delta-5 consequence, not a new rule.
+  4. **`cache_var_dynamic_index` runtime `after` said `Base: A0`; the correct value is `Base: A1`**, because `i` takes its declared default 1 (`I_INPUT`). A phase-1 mis-derivation.
+  5. **API shape vs plan:** `render_cache_chunks` returns `(rendered, skipped)`, not a bare list, because the prepare site needs `chunks_skipped` for `llm_usage`. The undeclared-chunk warning now lives in the helper, so it fires at the prepare site too, and it no longer names the node: `CacheRenderContext` has no node id, and threading one through for a bypass-only warning did not pass the deletion test.
+  6. **R5 "one small, clearly named branch":** there is no code branch, only a comment at the exact spot. A `??` Expression needs no special handling to keep today's behavior, so a branch that does nothing would fail the deletion test (the user lens). Applying ruling (a) is a 3-line insertion there.
+  7. **Tests beyond §5:**
+     - `test_chunk_absent_sentinel_class_is_shared` is deleted. It asserted that `plan_node` and `llm` both re-export `_ChunkAbsentSentinel`; the ABSENT filter now exists once, inside `render_cache_chunks`, so the invariant is structural. That also let the two `noqa` identity imports in `llm.py` go.
+     - `test_static_prefix_uses_resolver_pattern_object_directly` is replaced: it pinned `TEMPLATE_PATTERN`, which the helper no longer uses.
+  8. `_render_segments(text, shared | None)`: one helper serves prose (no context → Expressions verbatim) and the static prefix (context → resolved). I considered two functions; one keeps the Text/Issue rule in one place.
+- Self-checks:
+  - Fully happy? Yes, with 1, 2 and 5 surfaced for your call.
+  - Residual: `_resolve_chunk_value` still gates on the lexical `extract_root_node_id(var_expr)`. That is intentional until R5; for a single-Reference var it equals `parse` root. The `assert` in the chunker guards an invariant, not user input.
+  - test-reflect (directed, byte-symmetry test + chunker rows). Mutation ledger `scratchpads/task-170/phase4c/mutate.py` (byte-copy restore), 7 of 7 killed:
+    - prose not unescaped (both sites) → the escape symmetry test;
+    - hash site re-escapes its prose → the escape symmetry test;
+    - prepare unescapes `prose + value` together → the escape symmetry test (value `$${x}` must stay);
+    - IR `prose_before` unescaped → parser row;
+    - Issues become chunks → parser row;
+    - static prefix not unescaped → static-prefix row;
+    - no-chunk error loses the Issue → Issue-block row.
+    - The symmetry test asserts EXACT expected bytes at both sites, not just hash == prep, so a symmetric-but-wrong render cannot fake-pass.
+    - Nothing shallow found; nothing deleted beyond item 7.
+- dev servers: none.
+- Next: the orchestrator commits 4c-minus-R5. On the R5 ruling, D applies it: (a) the 3-line reject at the chunker comment + delete the `_cache_var_roots` whole-var-root branch + flip the 3 rows; or (b) per-operand resolution in `_resolve_chunk_value` + re-derive the rows. Then part B. Not committed.
+
+## [2026-10-01 00:10] task-orchestrator — 4c (minus R5) verified + committed
+- Verified (orchestrator re-run): `make test` 10098 passed / 2 failed (prose-wrap ruling rows) / 6 xfailed (the 3 R5 rows); `make check` green.
+- Dispositions (importance ≤ 2): item 1 (a cache block whose only `${` is an Issue now fails the existing no-chunk parse rule, naming the malformed template) → accepted: it is ADR-0015's stated consequence ("a block left with no `${var}` fails to parse"), not a second Issue-policy home — Issues still never raise by themselves (R2); loud replaces validator-error-plus-silent-drop. Items 2–3 (row re-derivations: `cache_prose_unclosed_r2` per the 4a span + Dev-7; `cache_prose_escape_declared_delta5` "never used" = delta-4 validator half; `cache_var_dynamic_index` `A0`→`A1` phase-1 mis-derivation) → accepted. Item 4 (`render_cache_chunks` → `(rendered, skipped)`; the undeclared-chunk warning moved into the helper and now also fires at the prepare site without a node id) → accepted; **named for the completion gate** (agent-ux: a warning that lost its node id; silent-failures/feature-interactions: possible duplicate warning per run). Item 5 (R5 = one comment site + `_resolve_chunk_value` + `data_flow._cache_var_roots`) → noted; the ruling applies there.
+- Task-159 baseline `verify.sh`: 80 pass / 7 drift — the same 7 with the pre-4c source swapped back in (Agent D executed), traced to #628's required-`source:` rule and guide wording on main → pre-existing, not this task; oracle re-recording by its owner = a follow-up for the completion handback.
+- Next: phase 5 part B (grammar-uniqueness meta-test, final docs/instruction pass, grep list, LOC) — decision-independent except the R5 and prose-wrap seams.

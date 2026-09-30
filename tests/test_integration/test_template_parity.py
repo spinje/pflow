@@ -779,7 +779,6 @@ def flips(today: Outcome, after: Outcome, phase: str, why: str) -> Expect:
 
 MALFORMED = "Malformed template"  # the ONE Issue pass keeps today's message shape (plan §0.3)
 # An Expression in cache prose (dict IR only); an Issue there is MALFORMED (Dev-7 ruling)
-CACHE_PROSE_ISSUE = "cache prose may not contain template references"
 
 
 # ---------------------------------------------------------------------------
@@ -1541,9 +1540,10 @@ CACHE_ROWS: tuple[Row, ...] = (
         "cache_var_issue_shape",
         "cache",
         "Base: ${p.out.items.0}",
-        # Flipped in 4b — the Issue pass covers cache vars
+        # Flipped in 4b — the Issue pass covers cache vars. Re-derived in 4c (R2): the Issue is
+        # prose, so the block has no chunk and parsing names it (was: the chunk silently ABSENT)
         now(Error(MALFORMED)),
-        now(Absent()),
+        now(Raises("MarkdownParseError", MALFORMED)),
         prompt_cache=("p.out.items.0",),
     ),
     Row(
@@ -1586,13 +1586,11 @@ CACHE_ROWS: tuple[Row, ...] = (
         "cache_prose_escape_declared_delta5",
         "cache",
         "Cost $${topic} then ${p.out_str}",
-        now(Ok()),
-        flips(
-            Resolves((" then S",)),
-            Resolves(("Cost ${topic} then S",)),
-            "4c",
-            "delta 5 (ADR-0015): `$${` is honoured in cache prose and unescaped at render",
-        ),
+        # Flipped in 4c — delta 5 (ADR-0015): `$${` is honoured in cache prose and unescaped at
+        # render. Validator re-derived: the escape no longer reads `topic`, so the declared input
+        # is (correctly) unused (was Ok via the bogus `topic` chunk)
+        now(Error("never used as template variable: topic")),
+        now(Resolves(("Cost ${topic} then S",))),
         prompt_cache=("p.out_str",),
         declared_inputs=TOPIC_INPUT,
     ),
@@ -1600,13 +1598,9 @@ CACHE_ROWS: tuple[Row, ...] = (
         "cache_prose_escape_undeclared_delta5",
         "cache",
         "Home $${HOME} then ${p.out_str}",
-        flips(Error("'HOME' is not a declared input"), Ok(), "4c", "delta 5: the escaped span is not a chunk"),
-        flips(
-            Raises("CompilationError", "Data flow validation failed"),
-            Resolves(("Home ${HOME} then S",)),
-            "4c",
-            "delta 5",
-        ),
+        # Flipped in 4c — delta 5: the escaped span is not a chunk
+        now(Ok()),
+        now(Resolves(("Home ${HOME} then S",))),
         prompt_cache=("p.out_str",),
     ),
     Row(
@@ -1623,31 +1617,22 @@ CACHE_ROWS: tuple[Row, ...] = (
         "cache_prose_unclosed_r2",
         "cache",
         "Unclosed ${a then ${p.out_str}",
-        flips(
-            Error("is not a declared input"),
-            Error(CACHE_PROSE_ISSUE),
-            "4c",
-            "R2: the Issue is prose to the chunker and an ERROR to the validator",
-        ),
-        flips(
-            Raises("CompilationError", "Data flow validation failed"),
-            Resolves(("Unclosed ${a then S",)),
-            "4c",
-            "R2: an unclosed `${a` no longer swallows text to the next `}`",
-        ),
+        # Flipped in 4c (R2) and re-derived: the Issue runs to its first `}` (the 4a span ruling),
+        # so it swallows `${p.out_str}` and the block has no chunk — parsing names the Issue with
+        # the standard malformed message (Dev-7 ruling). Phase 1's `after` assumed the Issue stops
+        # before the next `${`.
+        now(Error(MALFORMED)),
+        now(Raises("MarkdownParseError", MALFORMED)),
         prompt_cache=("p.out_str",),
     ),
     Row(
         "cache_var_dynamic_index",
         "cache",
         "Base: ${p.out_arr[${i}].x}",
-        flips(Error("undeclared cache chunk"), Ok(), "4c", "chunk names are sliced from Expression spans"),
-        flips(
-            Raises("CompilationError", "Data flow validation failed"),
-            Resolves(("Base: A0",)),
-            "4c",
-            "chunk names are sliced from Expression spans",
-        ),
+        # Flipped in 4c — chunk names are sliced from Expression spans. Runtime re-derived: `i`
+        # takes its declared default 1 (phase 1's `after` said A0)
+        now(Ok()),
+        now(Resolves(("Base: A1",))),
         prompt_cache=("p.out_arr[${i}].x",),
         declared_inputs=I_INPUT,
     ),

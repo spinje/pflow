@@ -43,7 +43,7 @@ ${constraints.response}
 ```
 ````
 
-Each chunk is one prose label followed by exactly one `${var}` reference. The prose travels into the cached system prefix verbatim — what you write is what the LLM sees as the cache label.
+Each chunk is one prose label followed by exactly one `${var}` reference. The prose travels into the cached system prefix verbatim, except that a `$${...}` escape renders as a literal `${...}` (and is prose, not a chunk) — what you write is what the LLM sees as the cache label.
 
 LLM nodes opt in via `prompt_cache:`, listing chunks **in the same order** they appear in the `## Cache` block:
 

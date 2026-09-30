@@ -179,27 +179,24 @@ def test_static_prefix_resolves_multiple_refs_in_one_string() -> None:
     assert result == "X and Y"
 
 
-# --- Regex parity invariant (Round-5 lock) ---------------------------------
+# --- The static prefix reads the template parse (Task 170) ------------------
 
 
-def test_static_prefix_uses_resolver_pattern_object_directly() -> None:
-    """Lock the parity contract: ``_resolve_static_prefix_for_cache`` runs
-    its substitution via ``TemplateResolver.TEMPLATE_PATTERN`` (the exact
-    same compiled object the resolver itself uses). If a future refactor
-    re-compiles a "matching" literal in this module, the byte-identity
-    invariant could drift silently — this test catches it.
-
-    Verified via behavior: a template that the resolver's pattern matches
-    must also be substituted by the helper. We don't introspect the
-    function bytecode (fragile across CPython versions).
-    """
-    from pflow.core.templates import TemplateResolver
-
-    # Pattern matches both ``${var}`` and ``${a ?? b}`` (coalesce). The
-    # helper must too.
-    template = "${name}"
-    assert TemplateResolver.TEMPLATE_PATTERN.search(template), "sanity: pattern matches simple template"
-    assert _resolve_static_prefix_for_cache(template, {"name": "X"}) == "X"
+@pytest.mark.parametrize(
+    ("template", "expected"),
+    [
+        # An escape is unescaped like everywhere else (was: `$${HOME}` sent verbatim).
+        ("Home $${HOME} for ${a}", "Home ${HOME} for X"),
+        ("$${a[${i}]} then ${a}", "${a[${i}]} then X"),
+        # A dynamic index resolves as one reference; a coalesce falls through.
+        ("${rows[${i}].k} ${nope ?? a}", "V X"),
+        # An Issue and an unresolved Expression stay verbatim.
+        ("${x y} and ${nope}", "${x y} and ${nope}"),
+    ],
+)
+def test_static_prefix_reads_the_template_parse(template: str, expected: str) -> None:
+    shared = {"a": "X", "i": 0, "rows": [{"k": "V"}]}
+    assert _resolve_static_prefix_for_cache(template, shared) == expected
 
 
 # --- _compute_marker_chunk_indices: deterministic multi-breakpoint placement -

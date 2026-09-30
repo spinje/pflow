@@ -168,6 +168,50 @@ def test_cache_block_with_no_template_var_rejected() -> None:
         parse_markdown(_wrap(body))
 
 
+# ------------------------------------------------------------------------------
+# Chunks are the template parse's Expressions (Task 170, ADR-0015, R2)
+# ------------------------------------------------------------------------------
+
+
+def _chunks(block: str) -> list[tuple[str, str]]:
+    items = parse_markdown(_wrap(f"```cache\n{block}\n```")).ir["cache"]["items"]
+    return [(item["name"], item["prose_before"]) for item in items]
+
+
+@pytest.mark.parametrize(
+    ("block", "expected"),
+    [
+        # An escape is prose, kept ESCAPED in the IR (graph build re-emits it as template text).
+        ("Home $${HOME} then ${a}", [("a", "Home $${HOME} then ")]),
+        ("$${x} ${a} $${y} ${b}", [("a", "$${x} "), ("b", " $${y} ")]),
+        # A trailing escape is discarded like any trailing prose.
+        ("${a} tail $${x}", [("a", "")]),
+        # An Issue is prose (R2) — the validator's Issue pass reports it.
+        ("Empty ${} then ${a}", [("a", "Empty ${} then ")]),
+        ("${a} then ${b c} then ${d}", [("a", ""), ("d", " then ${b c} then ")]),
+        # A dynamic index is one chunk, named by its raw source slice.
+        ("Row ${p.rows[${i}].x}", [("p.rows[${i}].x", "Row ")]),
+        # R5 pending: a `??` Expression is a chunk like any other today.
+        ("Base ${a ?? b}", [("a ?? b", "Base ")]),
+    ],
+)
+def test_chunks_are_the_parsed_expressions(block: str, expected: list[tuple[str, str]]) -> None:
+    assert _chunks(block) == expected
+
+
+@pytest.mark.parametrize("block", ["Only ${x y} here", "Unclosed ${a then ${b}"])
+def test_block_whose_only_template_is_an_issue_names_it(block: str) -> None:
+    """An Issue is prose, so the block has no chunk — the error names the Issue
+    (an unclosed ``${a`` runs to its first ``}`` and swallows ``${b}``)."""
+    with pytest.raises(MarkdownParseError, match=r"Malformed template syntax in '## Cache': '\$\{"):
+        parse_markdown(_wrap(f"```cache\n{block}\n```"))
+
+
+def test_escape_only_block_is_rejected_like_prose() -> None:
+    with pytest.raises(MarkdownParseError, match=r"must contain at least one"):
+        parse_markdown(_wrap("```cache\nJust $${literal} text.\n```"))
+
+
 def test_cache_section_without_code_block_rejected() -> None:
     """`## Cache` with only a ``- ttl:`` and no code block must error."""
     body = "- ttl: 5m"

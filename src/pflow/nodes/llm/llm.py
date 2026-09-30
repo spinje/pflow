@@ -28,9 +28,7 @@ from pflow.core.node import Node
 from pflow.core.prompt_cache import (
     CacheRenderContext,
     _build_cache_control_marker,
-    _ChunkAbsentSentinel,  # noqa: F401 — meta-test identity check
     _looks_like_routed_anthropic,
-    _resolve_chunk_value,  # noqa: F401 — meta-test identity check
     _resolve_static_prefix_for_cache,
 )
 from pflow.core.prompt_cache_analysis.below_min_tokens_detector import (
@@ -933,9 +931,8 @@ def _build_system_blocks(
     Below-min markers are stripped at request time by
     ``_strip_below_min_cache_markers``.
 
-    The ABSENT filter MUST stay symmetric with
-    ``runtime/engine/plan_node._render_cache_for_hash`` — both sites import
-    ``_resolve_chunk_value`` from ``pflow.core.prompt_cache``.
+    Byte symmetry with ``runtime/engine/plan_node._render_cache_for_hash`` holds
+    because both go through ``prompt_cache.render_cache_chunks``.
     """
     from pflow.core.prompt_cache import build_cache_system_blocks
 

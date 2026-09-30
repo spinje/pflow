@@ -1,9 +1,9 @@
 """C1.2 — LLMNode.prep cache rendering (Anthropic-flavored multi-breakpoint).
 
 Both the hash side (``runtime/engine/plan_node._render_cache_for_hash``) and
-the prep side (``LLMNode.prep`` in this test) must call the SHARED
-``_resolve_chunk_value`` helper from ``pflow.core.prompt_cache`` and apply the
-SAME ``_CHUNK_ABSENT`` filter. If they diverge, memo cache hash is keyed on
+the prep side (``LLMNode.prep`` in this test) must render through the SHARED
+``render_cache_chunks`` helper from ``pflow.core.prompt_cache`` (value resolution,
+the ``_CHUNK_ABSENT`` filter, prose unescaping). If they diverge, memo cache hash is keyed on
 bytes A while the adapter sends bytes A' — the silent stale-cache class.
 
 Tests assert on ``mock_llm_client.call_history_full[-1]["system"]`` to
@@ -424,34 +424,18 @@ def _import_module(dotted: str) -> Any:
     return importlib.import_module(dotted)
 
 
-def test_resolve_chunk_value_is_imported_locally_at_both_sites() -> None:
-    """Both ``plan_node._render_cache_for_hash`` and ``LLMNode.prep`` must
-    expose ``_resolve_chunk_value`` as a LOCAL module attribute pointing at
-    the canonical helper from ``pflow.core.prompt_cache``.
+def test_render_cache_chunks_is_the_one_renderer_at_both_sites() -> None:
+    """The hash site renders through the SAME ``render_cache_chunks`` object that
+    ``build_cache_system_blocks`` (the prepare site: LLM node and prewarm) calls.
 
-    This identity check catches "Break B": one site reimports the helper
-    from a different location. It does NOT catch "Break A" (one site inlines
-    a divergent implementation while still keeping the import) — that's
-    structurally undetectable without AST scanning.
+    Catches "Break B": the hash site re-importing a renderer from somewhere else.
+    A divergent inline implementation is caught by the byte-equivalence tests below.
     """
-    llm_module = _import_module("pflow.nodes.llm.llm")
+    import pflow.core.prompt_cache as prompt_cache
+
     plan_node_module = _import_module("pflow.runtime.engine.plan_node")
 
-    # Both modules must expose ``_resolve_chunk_value`` as a local attribute
-    # (set up by ``from pflow.core.prompt_cache import _resolve_chunk_value``).
-    assert hasattr(llm_module, "_resolve_chunk_value")
-    assert hasattr(plan_node_module, "_resolve_chunk_value")
-    # And both must point at the same function object (same shared helper).
-    assert llm_module._resolve_chunk_value is plan_node_module._resolve_chunk_value
-
-
-def test_chunk_absent_sentinel_class_is_shared(mock_llm_client) -> None:
-    """The ABSENT-filter sentinel class must be the SAME class at both
-    sites — otherwise ``isinstance`` filter breaks asymmetrically."""
-    llm_module = _import_module("pflow.nodes.llm.llm")
-    plan_node_module = _import_module("pflow.runtime.engine.plan_node")
-
-    assert llm_module._ChunkAbsentSentinel is plan_node_module._ChunkAbsentSentinel
+    assert plan_node_module.render_cache_chunks is prompt_cache.render_cache_chunks
 
 
 # --- Hash-vs-prep render byte equivalence ----------------------------------
@@ -1564,3 +1548,42 @@ class TestRoutedAnthropicAdvisory:
 
         # Pre-existing authoritative warning survives.
         assert shared["__warnings__"]["n"] is pre_existing
+
+
+def test_hash_render_and_prep_render_byte_equivalent_with_escapes(mock_llm_client) -> None:
+    """ADR-0015: prose ``$${HOME}`` renders as ``${HOME}`` at BOTH sites, while a chunk
+    VALUE containing ``$${x}`` is data and stays verbatim at both. An implementation
+    that unescapes ``prose + value`` together, or only at one site, fails."""
+    from pflow.runtime.engine.plan_node import _render_cache_for_hash
+    from pflow.runtime.engine.types import NodeConfig
+
+    mock_llm_client.set_response("*", None, "ok")
+    shared = {"a": "value keeps $${x}", "b": {"k": "$${y}"}}
+    cache_ctx = _ctx(
+        chunks=[("a", "Home is $${HOME}:\n"), ("b", "Then $${a[${i}]} and $$ alone:\n")],
+        subset=("a", "b"),
+    )
+    _install_prompt_cache(shared, "emit", cache_ctx)
+    config = NodeConfig(
+        node_id="emit",
+        node_type_name="LLMNode",
+        template_config=None,
+        batch_config=None,
+        namespaced=True,
+        interface_metadata=None,
+        prompt_cache_items=("a", "b"),
+        prewarm=False,
+    )
+    hash_rendered = _render_cache_for_hash(config, shared)
+    assert hash_rendered is not None
+    hash_texts = [h["prose"] + h["value"] for h in hash_rendered]
+
+    _make_node("emit").run(shared)
+    prep_texts = [b["text"] for b in mock_llm_client.call_history_full[-1]["system"]]
+
+    expected = [
+        "Home is ${HOME}:\nvalue keeps $${x}",
+        'Then ${a[${i}]} and $$ alone:\n{"k":"$${y}"}',
+    ]
+    assert hash_texts == expected
+    assert prep_texts == expected
