@@ -546,6 +546,12 @@ class TestInputsResolvedPerKey:
         assert merged["inputs"] == {"opt": None, "idx": None}
         assert errors == []
 
+    def test_bracketed_reference_outside_a_dynamic_index_counts_as_resolved(self):
+        """`[${idx}]` in prose is an ordinary expression that resolved, not an inner index."""
+        config = self._config({"opt": "item [${idx}] ${branch.stdout}"}, {"opt"})
+        with pytest.raises(ValueError, match=r"\$\{branch\.stdout\}"):
+            resolve_templates(config, {"idx": 0}, "n")
+
     def test_partially_resolved_optional_input_is_not_injected(self):
         """One present root means the miss is a real error, not a skipped branch."""
         config = self._config({"opt": "${a.x} ${b.y}"}, {"opt"})

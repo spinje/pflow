@@ -88,6 +88,8 @@ class TemplateResolver:
     # The opening of a dynamic-index reference (`${a[${` …) — a template the pre-pass
     # could not rewrite (inner absent / non-int), never an Issue.
     _DYNAMIC_INDEX_OPEN = re.compile(r"\$\{" + _VAR_NAME_PATTERN + r"\[\$\{")
+    # One dynamic index inside its outer reference: group 1 is `${outer` up to the `[`.
+    _DYNAMIC_INDEX = re.compile(r"(\$\{" + _VAR_NAME_PATTERN + r")\[\$\{" + _VAR_NAME_PATTERN + r"\}\]")
 
     @staticmethod
     def has_templates(value: Any) -> bool:

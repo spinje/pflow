@@ -201,9 +201,12 @@ def _left_to_absent_nodes(template: Any, resolution: Resolution, context: dict[s
     """
     if not isinstance(template, str) or not resolution.unresolved or resolution.issues:
         return False
-    # Phase-2 stand-in for parse(template).expressions: neutralize dynamic indices
-    # so TEMPLATE_PATTERN sees the outer references.
-    outer_text = TemplateResolver._BRACKET_INDEX_PATTERN.sub("[0]", template)
+    # Phase-2 stand-in for parse(template).expressions: neutralize the dynamic indices
+    # INSIDE an outer reference (a bracketed `[${x}]` in prose stays an expression) so
+    # TEMPLATE_PATTERN sees the outer references. Each pass removes one index per reference.
+    outer_text, previous = template, None
+    while outer_text != previous:
+        previous, outer_text = outer_text, TemplateResolver._DYNAMIC_INDEX.sub(r"\1[0]", outer_text)
     operands = [
         operand
         for expr in TemplateResolver.TEMPLATE_PATTERN.findall(outer_text)

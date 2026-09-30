@@ -144,3 +144,33 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
   - Self-check: answered in-context in B's entry (regression found + fixed, residual doubts stated); test-reflect directed + resolved. Not re-asked.
 - Main-merge plan: `origin/main` is `8bb82c30` (#617 PR #651, #618 PR #653 `nodes/python/output_capture.py`, #615 PR #655 incl. `runtime/engine/engine.py::_gate_pausable`, `runtime/engine/CLAUDE.md`, `cli/commands/run.py|resume.py`). Merge AFTER the phase-2 mid-task review's fixes land and BEFORE phase 3 (phase 3 re-points `cli/` + `execution/` imports on the current files); `make check` + `make test` on the merged result; then `capture.py --check` — any examples diff there is main's (#618 touches code-node capture), logged, and the baseline re-captured on the merge commit so phase 5 diffs only Task 170. Phase 5's `runtime/engine/CLAUDE.md` edit re-reads #615's version.
 - Next: commit phase 2; commission the mid-task review (`review-silent-failures` + `review-impact-completeness`) with Agent B as gate-runner.
+
+## [2026-09-30 01:40] Agent B (Opus) — phase-2 mid-task review (gate-runner)
+- Did: ran deep-review in code mode on `006bd80b..a32052f6` through the pflow fan-out. Provider codex (cross-model; I am the Claude builder), lenses exactly `review-silent-failures` + `review-impact-completeness`. The review target told both lenses about the accepted deviations 1–4 and the deferred sites (four cost-analysis sites → 4a, `workflow_executor.py:771` ruling, `_resolve_static_prefix_for_cache` → 4c, R12). Waited in-turn and read the merged report in full (`scratchpads/task-170/phase2/review/report.md`). Coverage: both lenses reported on the exact scope, with no coverage gaps.
+- Findings, each dispositioned:
+  1. **Critical, `review-silent-failures`: a partially resolved optional input silently becomes `None` → CONFIRMED by execution, FIXED.**
+     - Repro: an optional input `"item [${idx}] ${branch.stdout}"` with `idx` present and `branch` absent. At `a32052f6` it gets `{'opt': None}` with no error; at `006bd80b` it raised "Unresolved variables … ${branch.stdout}" (probe: `scratchpads/task-170/phase2/review/probe_critical.py`).
+     - Cause: `_left_to_absent_nodes` neutralized EVERY `[${…}]` with `_BRACKET_INDEX_PATTERN`, including a bracketed expression in prose. The resolved `${idx}` vanished from the operand set.
+     - Fix: new `TemplateResolver._DYNAMIC_INDEX` (`(\${VAR)\[\${VAR}\]`) replaced with `\1[0]`, looped until stable (one index per reference per pass). Only indices inside an outer reference are neutralized.
+     - Test: new `TestInputsResolvedPerKey::test_bracketed_reference_outside_a_dynamic_index_counts_as_resolved` fails before the fix (1 failed) and passes after.
+     - Re-verified: the dynamic-index injection probes (`${g.out_arr[${g.i}].x}`, `${…[${__index__}]…}`, `${…[${h.i}]…}`) plus a chained `${g.a[${i}].b[${j}].c}` all still get `None`.
+     - This is interim code; 4a deletes it together with the accepted private reach.
+     - Why my phase-2 verdict differential missed it: that differential judged `resolve()` verdicts only, never the injection predicate. The lens found a gap the differential could not reach.
+  2. Warnings / Suggestions: none from either lens.
+  3. Verified clean (per lenses):
+     - Channel adoption at every phase-2 consumer (strict/permissive check, per-key inject, carry, prewarm, output source + declared outputs, batch string form, cache chunk).
+     - Found-`None` / falsy values stay distinct from a miss.
+     - A required sibling keeps its channel.
+     - Every changed-signature caller is updated.
+     - `unresolved_expressions` / `issues` never reach `last_resolutions` or the trace.
+     - Raw-path consumers are untouched.
+     - The deferred sites match their rulings.
+- Changed: `src/pflow/runtime/template_resolver.py` (+`_DYNAMIC_INDEX`), `src/pflow/runtime/engine/template_resolution.py` (`_left_to_absent_nodes` neutralization), `tests/test_runtime/test_node_wrapper_template_validation.py` (+1 test).
+- Verified:
+  - `make check` green. `make test` 9710 passed / 70 xfailed (+1 over the phase-2 commit = the new test).
+  - Freeze harness 818 passed. Corpus 419 passed / 70 xfailed.
+  - Verdict differential unchanged: 5130 combos, values identical, only the two delta-1 classes differ.
+  - Assumed: none.
+- Deviations/surprises: the only Critical sat in the accepted interim helper's logic, not in its private-API access. The fix stays inside that interim code and adds one more private pattern, which 4a deletes. No decision at importance ≥3; nothing touches the ledger or an ADR.
+- Self-checks: fully happy with the fix. The interim stand-in is now three private patterns deep (`_BRACKET_INDEX_PATTERN` pre-pass, `_DYNAMIC_INDEX_OPEN`, `_DYNAMIC_INDEX`), which is more reason for 4a to delete all of them at once. test-reflect: the new test is a mutation-proven regression test (red before the fix); nothing shallow was added.
+- Next: the orchestrator commits the review fix; phase 3 (Agent B resumed) on instruction.
