@@ -193,7 +193,7 @@ def test_static_prefix_uses_resolver_pattern_object_directly() -> None:
     must also be substituted by the helper. We don't introspect the
     function bytecode (fragile across CPython versions).
     """
-    from pflow.runtime.template_resolver import TemplateResolver
+    from pflow.core.templates import TemplateResolver
 
     # Pattern matches both ``${var}`` and ``${a ?? b}`` (coalesce). The
     # helper must too.

@@ -8,7 +8,7 @@ This fixes the double-serialization bug where:
   instead of the correct {"key": {"nested": "value"}}
 """
 
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver
 
 
 class TestInlineObjectTypePreservation:

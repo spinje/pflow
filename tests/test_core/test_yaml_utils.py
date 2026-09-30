@@ -100,6 +100,15 @@ class TestBraceAwareTemplates:
     def test_inline_matches_block_for_object_operand(self) -> None:
         assert load("{ x: ${a ?? {}} }") == load("x: ${a ?? {}}")
 
+    def test_escape_survives_the_flow_form_verbatim(self) -> None:
+        # The mask has no `$$` handling: `$${y}` is masked like `${y}` and restored
+        # byte-for-byte, so the template parse (not YAML) consumes the escape.
+        assert load("{ x: $${y}, z: ${w} }") == {"x": "$${y}", "z": "${w}"}
+
+    def test_dynamic_index_is_captured_whole(self) -> None:
+        # One nested `{}` level covers the inner `${i}`: the mapping value is the whole reference.
+        assert load("{ x: ${a[${i}].x} }") == {"x": "${a[${i}].x}"}
+
 
 class TestCollisionResistance:
     """W1: authored text that looks like a placeholder must not be corrupted."""

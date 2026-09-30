@@ -362,8 +362,8 @@ class TestInferTemplateTypeBatchIndexedAccess:
     """Verify infer_template_type descends into batch item structure on indexed paths.
 
     Pre-fix behavior: ``${node.results[0].field}`` returned ``None`` — Pass 6/9
-    silently skipped type checking through batch outputs. Post-fix: traversal
-    mirrors path_validation.py::_validate_array_access, using
+    silently skipped type checking through batch outputs. Post-fix: an index
+    descends through ``utils.descend_index`` (the rule Pass 5 validates with), using
     ``output_info["items"]`` as the structure source for indexed base parts.
     """
 

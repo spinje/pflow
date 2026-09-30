@@ -660,11 +660,6 @@ def _strings(value: Any) -> Iterator[str]:
 class TemplateResolver:
     """String-in/string-out helpers over ``parse`` / ``resolve`` / the walk."""
 
-    # Kept by name until phase 5: `cache_overlap.py` composes `_VAR_NAME_PATTERN` by
-    # symbol; `test_template_grammar.py` reads `_LITERAL_PATTERN`.
-    _VAR_NAME_PATTERN = _VAR_NAME_PATTERN
-    _LITERAL_PATTERN = _LITERAL_PATTERN
-
     # Static-discovery views built from the tokenizer's grammar (dynamic index
     # included). They cannot see escape CONSUMPTION (`$${a[${i}]}` still shows
     # `${i}`), so discovery over text that may hold escapes uses ``parse()``.

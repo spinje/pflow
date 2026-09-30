@@ -9,8 +9,8 @@ This module tests that:
 from contextlib import contextmanager
 from unittest.mock import patch
 
+from pflow.core.templates import TemplateResolver
 from pflow.registry import Registry
-from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation.validator import _extract_all_templates
 from tests.shared.diagnostic_helpers import split_template_diagnostics
 

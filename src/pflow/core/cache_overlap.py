@@ -20,16 +20,10 @@ directly as the path string — no var_by_name lookup needed.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pflow.core.templates import TemplateResolver
-
-# Filter for valid pflow variable refs. Bash syntax (${var:-default},
-# ${var%pattern}, ${#count}) and truncated nested templates fail this match
-# and must be skipped — they cannot overlap a cache chunk by definition.
-_PFLOW_VAR_RE = re.compile(rf"^{TemplateResolver._VAR_NAME_PATTERN}$")
+from pflow.core.templates import Reference, parse
 
 
 @dataclass(frozen=True)
@@ -107,33 +101,18 @@ def _batch_aliases(node: dict[str, Any]) -> set[str]:
     return {str(batch.get("as", "item"))}
 
 
-def _is_batch_scoped_ref(ref: str, aliases: set[str]) -> bool:
-    """True iff ``ref`` is rooted at a batch alias (``${item.X}``, ``${item}``)."""
-    return any(ref == alias or ref.startswith(f"{alias}.") or ref.startswith(f"{alias}[") for alias in aliases)
-
-
 def _extract_body_refs(prompt_text: str, batch_aliases: set[str]) -> list[str]:
-    """Return unique pflow variable refs found in the prompt body, in source order.
+    """Unique value-position References in the prompt body, by source text, in order.
 
-    Coalesce operands (``${a ?? b}``) are split and checked independently.
-    Bash syntax (``${var:-default}``) and batch-scoped refs (``${item.X}``)
-    are filtered out — they cannot overlap a stable cache chunk.
+    Each ``??`` operand counts on its own; literals, escapes and Issues (bash
+    ``${var:-default}``) yield nothing, and batch-scoped refs (``${item.X}``) are
+    skipped — none can overlap a stable cache chunk.
     """
     body_refs: list[str] = []
-    seen_refs: set[str] = set()
-    for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt_text):
-        for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
-            if operand in seen_refs:
-                continue
-            # Literal operands (Optional A) are values, not cache-chunk refs.
-            if TemplateResolver.is_literal_operand(operand):
-                continue
-            if not _PFLOW_VAR_RE.match(operand):
-                continue
-            if _is_batch_scoped_ref(operand, batch_aliases):
-                continue
-            seen_refs.add(operand)
-            body_refs.append(operand)
+    for expr in parse(prompt_text).expressions:
+        for op in expr.operands:
+            if isinstance(op, Reference) and op.root not in batch_aliases and op.raw not in body_refs:
+                body_refs.append(op.raw)
     return body_refs
 
 
@@ -160,9 +139,7 @@ def compute_overlaps(
     """Detect overlaps between cached chunks and prompt-body references.
 
     Returns an empty list when ``prompt_text`` is empty / non-string OR
-    ``prompt_cache`` is empty. Body refs that fail ``_PFLOW_VAR_RE`` (bash
-    syntax) or that are batch-scoped (``${item.X}``) are skipped — they
-    cannot overlap a cache chunk by definition.
+    ``prompt_cache`` is empty. Body refs are ``_extract_body_refs``'s.
 
     Overlap kinds: see :class:`Overlap`.
     """

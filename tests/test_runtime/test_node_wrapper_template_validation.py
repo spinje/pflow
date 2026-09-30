@@ -10,6 +10,7 @@ in pflow.runtime.engine.template_resolution.
 
 import pytest
 
+from pflow.core.templates import resolve
 from pflow.runtime.engine.template_resolution import (
     build_type_cache,
     inject_none_for_optional_inputs,
@@ -17,7 +18,6 @@ from pflow.runtime.engine.template_resolution import (
     split_params,
 )
 from pflow.runtime.engine.types import TemplateConfig
-from pflow.runtime.template_resolver import resolve
 
 
 def _resolve(

@@ -5,7 +5,7 @@ lists, and deeply nested structures are properly resolved by the template
 resolution engine, not just detected by the validator.
 """
 
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver
 
 
 class TestNestedTemplateResolution:

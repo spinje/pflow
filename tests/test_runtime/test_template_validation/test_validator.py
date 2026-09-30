@@ -991,7 +991,7 @@ class TestBatchTemplateValidation:
         into ['item', 'draft_index}]', causing validation error:
         "Node 'drafts' does not output 'results[${item'"
 
-        Fix: Use _split_template_path() which preserves dots inside ${...}.
+        Fix: the validator reads parsed path segments (`core.templates.parse_path`).
         """
         workflow_ir = {
             "nodes": [

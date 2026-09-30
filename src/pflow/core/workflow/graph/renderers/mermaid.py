@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from pflow.core.templates import Expression, Issue, TemplateResolver, parse
+from pflow.core.templates import Expression, Issue, parse
 from pflow.core.workflow.graph.model import (
     AncestorStep,
     BatchSpec,
@@ -850,10 +850,7 @@ def _strip_template(ref: Any) -> str:
     if not isinstance(ref, str):
         return ""
     value = ref.strip()
-    simple = TemplateResolver.extract_simple_template_var(value)
-    if simple is not None:
-        return simple
-    if value.startswith("${") and value.endswith("}"):  # not in the grammar: show it loosely
+    if value.startswith("${") and value.endswith("}"):
         return value[2:-1].strip()
     return value
 

@@ -5910,7 +5910,7 @@ def test_resolve_child_input_value_swallows_batch_items_resolve_exceptions(
     resolution; this test fails by raising the injected exception.
     """
     from pflow.core.prompt_cache_analysis.sub_workflow_walker import _resolve_child_input_value
-    from pflow.runtime.template_resolver import TemplateResolver
+    from pflow.core.templates import TemplateResolver
 
     parent_ir = {
         "nodes": [

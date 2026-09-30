@@ -1,6 +1,6 @@
 """Tests for template variable resolution with path support."""
 
-from pflow.runtime.template_resolver import Resolution, TemplateResolver, resolve
+from pflow.core.templates import Resolution, TemplateResolver, resolve
 
 
 class TestTemplateDetection:

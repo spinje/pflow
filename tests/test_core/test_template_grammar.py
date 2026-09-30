@@ -27,8 +27,7 @@ from typing import Any
 import pytest
 
 from pflow.core.json_utils import try_parse_json
-from pflow.core.templates import Expression, Issue, Text, parse
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import Expression, Issue, Literal, TemplateResolver, Text, parse
 
 CTX: Mapping[str, Any] = MappingProxyType({
     "a": [{"x": "v"}],
@@ -303,7 +302,9 @@ LITERALS_BAD_JSON: tuple[str, ...] = (r'"\q"', r'"\u12"', '"a\tb"')
 
 
 def _is_literal(text: str) -> bool:
-    return re.fullmatch(TemplateResolver._LITERAL_PATTERN, text) is not None
+    """Whether ``${text}`` parses as one Literal operand (the literal grammar, through ``parse``)."""
+    template = parse("${" + text + "}")
+    return template.is_simple and isinstance(template.expressions[0].operands[0], Literal)
 
 
 def test_literal_grammar_matches_round_trip_json() -> None:

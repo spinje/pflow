@@ -10,7 +10,7 @@ correctly exempts both 'a' and 'b' from shell type validation.
 
 import re
 
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver
 from pflow.runtime.template_validation.type_validation import _build_quoted_templates
 
 # ---------------------------------------------------------------------------

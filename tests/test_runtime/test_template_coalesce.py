@@ -14,7 +14,7 @@ Semantics:
   error, so genuine typos are caught
 """
 
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver
 
 
 class TestCoalesceRegex:

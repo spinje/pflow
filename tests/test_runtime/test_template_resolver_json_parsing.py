@@ -8,7 +8,7 @@ Focus on high-value tests that verify real behavior:
 5. Recursive JSON parsing (JSON-in-JSON)
 """
 
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver
 
 
 class TestJsonNestedAccess:

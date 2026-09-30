@@ -1,6 +1,6 @@
 """Tests for template resolver array index support."""
 
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver
 
 
 class TestArrayIndexSupport:

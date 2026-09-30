@@ -1167,7 +1167,7 @@ BATCH_ROWS: tuple[Row, ...] = (
         # Flipped in 4b — coalesce roots in `batch.items` are root-checked (surface parity)
         now(Error("typo")),
         now(Resolves(["L0", "L1"])),
-        mutation="drop `batch.items` from _node_template_value_sources",
+        mutation="drop `batch.items` from template_surfaces.iter_node_surfaces",
     ),
     Row("batch_items_inline_list", "batch_items", ["${p.out_str}", "lit"], now(Ok()), now(Resolves(["S", "lit"]))),
     Row(
@@ -2180,20 +2180,20 @@ _RAW_CONTEXT: Mapping[str, Any] = MappingProxyType({"result": _RAW_RESULT, "batc
 class TestRawPaths:
     @pytest.mark.parametrize(("path", "value"), RAW_PATHS)
     def test_walk_pair(self, path: str, value: Any) -> None:
-        from pflow.runtime.template_resolver import TemplateResolver
+        from pflow.core.templates import TemplateResolver
 
         context = dict(_RAW_CONTEXT)
         assert TemplateResolver.variable_exists(path, context) is True
         assert TemplateResolver.resolve_value(path, context) == value
 
     def test_walk_pair_miss(self) -> None:
-        from pflow.runtime.template_resolver import TemplateResolver
+        from pflow.core.templates import TemplateResolver
 
         assert TemplateResolver.variable_exists("result.nope", dict(_RAW_CONTEXT)) is False
         assert TemplateResolver.resolve_value("result.nope", dict(_RAW_CONTEXT)) is None
 
     def test_template_reader_agrees_where_grammar_accepts(self) -> None:
-        from pflow.runtime.template_resolver import TemplateResolver
+        from pflow.core.templates import TemplateResolver
 
         grammar_paths = [path for path, _ in RAW_PATHS if TemplateResolver.is_simple_template("${" + path + "}")]
         assert grammar_paths == ["batch.results[0].result"]

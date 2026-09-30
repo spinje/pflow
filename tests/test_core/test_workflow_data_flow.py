@@ -330,9 +330,8 @@ class TestValidateDataFlow:
     def test_nested_dict_param_path_reaches_deep_key(self):
         """Nested dict params: diagnostic path must point at the deepest offending key.
 
-        Regression guard for review feedback on PR #244 — ``_check_param_value``
-        used to recurse into dict/list values without extending ``param_name``,
-        so a typo in ``headers.Authorization`` reported its path as
+        Regression guard for review feedback on PR #244 — the param walk used to
+        recurse into dict/list values without extending the reported key, so a typo in ``headers.Authorization`` reported its path as
         ``nodes[id=X].params.headers`` instead of ``...params.headers.Authorization``.
         """
         workflow = {
@@ -840,8 +839,8 @@ class TestBatchDataFlowValidation:
 class TestNestedParamValidation:
     """Test that data flow validation recurses into nested dict/list params.
 
-    Covers the fix for GitHub issue #108: _validate_node_params now recurses
-    into dict and list values using _check_param_value(), rather than only
+    Covers the fix for GitHub issue #108: data-flow validation walks every
+    string inside dict and list params (``iter_node_surfaces``), rather than only
     checking top-level string params.
     """
 

@@ -23,53 +23,6 @@ MAX_DISPLAYED_SUGGESTIONS = 3  # Cognitive limit for processing alternatives
 MAX_FLATTEN_DEPTH = 5  # Prevent infinite recursion on circular refs
 
 
-def split_template_path(template: str) -> list[str]:
-    """Split template path on dots, preserving dots inside ${...}.
-
-    Standard str.split(".") breaks nested templates like ${item.field}
-    inside array brackets. This function correctly handles:
-
-    - drafts.results[${item.draft_index}].response
-      -> ['drafts', 'results[${item.draft_index}]', 'response']
-
-    - node.data[${__index__}].field
-      -> ['node', 'data[${__index__}]', 'field']
-
-    Args:
-        template: Template path string (without ${} wrapper)
-
-    Returns:
-        List of path components with nested templates preserved
-    """
-    parts: list[str] = []
-    current = ""
-    depth = 0  # Track nesting level of ${...}
-
-    i = 0
-    while i < len(template):
-        if template[i : i + 2] == "${":
-            depth += 1
-            current += template[i : i + 2]
-            i += 2
-        elif template[i] == "}" and depth > 0:
-            depth -= 1
-            current += template[i]
-            i += 1
-        elif template[i] == "." and depth == 0:
-            if current:
-                parts.append(current)
-            current = ""
-            i += 1
-        else:
-            current += template[i]
-            i += 1
-
-    if current:
-        parts.append(current)
-
-    return parts
-
-
 _PARAMETERIZED_LIST = re.compile(r"^(?:list|array)\[(.+)\]$")
 
 

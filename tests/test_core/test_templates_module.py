@@ -4,17 +4,6 @@ import subprocess
 
 import pytest
 
-import pflow.core.templates as templates
-import pflow.runtime.template_resolver as shim
-
-
-def test_shim_re_exports_the_same_objects() -> None:
-    """Tests still import the old path (until the shim is deleted); a copy of the class
-    would split monkeypatches (``patch.object(TemplateResolver, ...)``) between two objects."""
-    assert shim.TemplateResolver is templates.TemplateResolver
-    assert shim.Resolution is templates.Resolution
-    assert shim.resolve is templates.resolve
-
 
 @pytest.mark.e2e
 def test_importing_templates_loads_no_runtime_and_no_litellm(

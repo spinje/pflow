@@ -5,19 +5,15 @@ Pass 7: Blocks structured data (dict/list) in shell command parameters.
 Pass 9: Validates code-node input annotations against template source types.
 """
 
-from collections.abc import Sequence
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.templates import (
     CONTAINER_TYPES,
-    Field,
     Reference,
-    Segment,
     TemplateResolver,
     is_type_compatible,
     parse,
-    parse_path,
 )
 from pflow.core.types import outer_base_type
 from pflow.registry import Registry
@@ -133,11 +129,6 @@ def _check_string_template_types(
         if not inferred_type or inferred_type == "any":
             continue
         if not is_type_compatible(inferred_type, expected_type):
-            suggestions: list[str] | None = None
-            available_fields: list[str] = []
-            if inferred_type in CONTAINER_TYPES and expected_type in ["str", "string"]:
-                suggestions, available_fields = _generate_type_fix_suggestions(template, node_outputs, expected_type)
-
             diagnostics.append(
                 Diagnostic(
                     severity=Severity.ERROR,
@@ -148,16 +139,12 @@ def _check_string_template_types(
                         f"Type mismatch in parameter '{param_name}': template ${{{template}}} has type "
                         f"'{inferred_type}' but parameter expects '{expected_type}'."
                     ),
-                    suggestions=suggestions,
                     context={
                         "category": "validation",
                         "path": f"nodes[id={node_id}].params.{param_name}",
                         "template": f"${{{template}}}",
                         "inferred_type": inferred_type,
                         "expected_type": expected_type,
-                        "available_fields": available_fields or None,
-                        "available_fields_total": len(available_fields) if available_fields else None,
-                        "available_fields_label": "matching outputs" if available_fields else None,
                     },
                 )
             )
@@ -312,55 +299,6 @@ def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict
                 )
 
     return diagnostics
-
-
-# ---------------------------------------------------------------------------
-# Type fix suggestions
-# ---------------------------------------------------------------------------
-
-
-def _generate_type_fix_suggestions(
-    template: str, node_outputs: dict[str, Any], expected_type: str
-) -> tuple[list[str], list[str]]:
-    """Generate structured suggestions for type mismatches with actual available fields.
-
-    Args:
-        template: The template variable that has the wrong type
-        node_outputs: Node output metadata from registry
-        expected_type: The type that was expected
-
-    Returns:
-        Tuple of (suggestions, available_fields)
-    """
-    # For nested templates like node.output.field, we need to traverse to find structure
-    # Find the structure for this template by traversing
-    structure = None
-    ref = parse_path(template)
-    if ref is not None:
-        # The output the reference reads: namespaced ``node.output``, else a bare root
-        first = ref.path[0] if ref.path else None
-        namespaced = node_outputs.get(f"{ref.root}.{first.name}") if isinstance(first, Field) else None
-        output_info, remaining = (namespaced, ref.path[1:]) if namespaced else (node_outputs.get(ref.root), ref.path)
-        if output_info is not None:
-            structure = _traverse_to_structure(output_info.get("structure", {}), remaining)
-
-    if not structure:
-        return ([f"Access a specific field, for example ${{{template}.field}}.", "Serialize the value to JSON."], [])
-
-    # Find fields that match the expected type
-    matching_fields = []
-    for field_name, field_info in structure.items():
-        if isinstance(field_info, dict) and "type" in field_info:
-            field_type = field_info["type"]
-            # Check if this field matches the expected type
-            if field_type in [expected_type, "str", "string"] and expected_type in ["str", "string"]:
-                matching_fields.append(field_name)
-
-    if matching_fields:
-        suggestions = [f"Use ${{{template}.{field}}}" for field in matching_fields[:5]]
-        available_fields = [f"${{{template}.{field}}}" for field in matching_fields]
-        return (suggestions, available_fields)
-    return (["Access a nested field or serialize the value to JSON."], [])
 
 
 def _infer_missing_annotation_type(
@@ -925,26 +863,3 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
         )
 
     return diagnostics
-
-
-def _traverse_to_structure(structure: dict[str, Any], segments: Sequence[Segment]) -> dict[str, Any] | None:
-    """The structure dict at ``segments`` below ``structure``, or None if not found.
-
-    Only fields move: a list field's structure is already its element structure,
-    so an index stays put.
-    """
-    if not segments or not structure:
-        return structure
-
-    current = structure
-    for segment in segments:
-        if not isinstance(segment, Field):
-            continue
-        field_info = current.get(segment.name)
-        if not isinstance(field_info, dict):
-            return None
-        current = field_info.get("structure", {})
-        if not current:
-            return None
-
-    return current

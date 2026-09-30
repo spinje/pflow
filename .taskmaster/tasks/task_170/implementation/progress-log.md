@@ -719,3 +719,52 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
   - 5 (plan §4 manual end-to-end list) → runs at 4c's close + at completion, as D says.
   - 6 tooling postmortem (`visual-invariants.pflow.md` ignores its `out_path` default → "Workflow requires input 'out_path'"; the skill's documented command fails as written) → **issue** (pre-existing on main, shared tooling — not fixed in this PR while other producers are live); named in the completion handback.
 - Next: 4c waits on the R5 ruling (and the prose-wrap ruling) — Agent D resumed on 4c when R5 lands.
+
+## [2026-09-30 22:40] Agent D (Opus) — phase 5 part A: shim + dead-helper deletions, cache_overlap on the parse, 4d items 1–2 (no cache-block work)
+- Did:
+  - Deleted `src/pflow/runtime/template_resolver.py` (the shim). Re-pointed every `pflow.runtime.template_resolver` import in `tests/` to `pflow.core.templates`: 22 import sites in 20 files, lazy imports included. Grep-driven; the plan said 17.
+  - Deleted `test_templates_module.py::test_shim_re_exports_the_same_objects`: it tested the deleted shim.
+  - No `.claude`/CLAUDE.md/docs file named the old path. `test_agent_references` stays green; no asset sync was needed for this item.
+  - Deleted `template_validation/utils.py::split_template_path`, its `__init__` export, and `test_nested_templates.py::TestSplitTemplatePath` (8 tests, sanctioned). There were zero src callers: the 4a `type_checker` stop-gap was already gone (verified by grep).
+  - `cache_overlap.py`:
+    - `_PFLOW_VAR_RE` deleted, along with its reach into `TemplateResolver._VAR_NAME_PATTERN`, `_is_batch_scoped_ref` and the `TEMPLATE_PATTERN` + split + literal-skip loop.
+    - `_extract_body_refs` now reads value-position `Reference` operands of `parse(prompt).expressions`, skipping `op.root in batch_aliases`.
+    - `_canonicalize_path` stays (§6).
+  - Deleted the class-level `TemplateResolver._VAR_NAME_PATTERN` / `_LITERAL_PATTERN` aliases. Their last user, `test_template_grammar.py::_is_literal`, now asks the parse through the interface: `${text}` is simple and its operand is a `Literal`.
+  - 4d item 1: deleted the unreachable Pass-6 suggestion branch, `_generate_type_fix_suggestions`, and `_traverse_to_structure`, which became dead with it. The mismatch diagnostic loses three context keys that were always `None` (`available_fields`, `_total`, `_label`) and `suggestions=None`. Also deleted the `Field`/`Segment`/`Sequence`/`parse_path` imports.
+  - 4d item 2: `mermaid._strip_template` is back to its pre-4d body (the no-op grammar branch is dropped). `TemplateResolver` is no longer imported there.
+  - `test_yaml_utils.py::TestBraceAwareTemplates` +2 pins: `$${y}` survives the flow form verbatim beside `${w}`; `${a[${i}].x}` is captured whole.
+  - Stale test text re-worded: `test_workflow_data_flow.py:333/:844` (`_check_param_value`), `test_type_checker.py:366` (`_validate_array_access` → `utils.descend_index`), `test_validator.py:994` (`_split_template_path`), and the parity mutation string at `:1170` (`_node_template_value_sources` → `template_surfaces.iter_node_surfaces`).
+- Changed:
+  - src: `runtime/template_resolver.py` (deleted), `core/cache_overlap.py`, `core/templates.py`, `core/workflow/graph/renderers/mermaid.py`, `runtime/template_validation/{__init__,utils,type_validation}.py`. src diff: +12/−186.
+  - tests: the 20 re-pointed files, plus `test_cache_overlap.py` (+4 parametrized rows), `test_yaml_utils.py` (+2), `test_templates_module.py` (−1), `test_nested_templates.py` (−8).
+- Verified:
+  - `make check` green.
+  - `make test`: 10085 passed / 2 failed / 13 xfailed. Baseline was 10088 / 2 / 13; the delta −3 = −8 TestSplitTemplatePath −1 shim test +4 overlap rows +2 yaml pins. The 2 failures are exactly the prose-wrap ruling rows.
+  - `make test-e2e`: 51 passed / 2 skipped (unchanged).
+  - `capture.py --check`: 29 examples, 0 differing.
+  - Gate grep `runtime.template_resolver|split_template_path|_PFLOW_VAR_RE` over `src/ tests/` → only `tests/test_import_hygiene.py:32/:172/:177`; see Deviation 1.
+  - The plan's full phase-5 grep list over `src/ tests/ .claude/` → only `markdown_parser.py:_CACHE_TEMPLATE_RE` (4c) and the hygiene pin. `test_template_grammar.py:5` also mentions `_PERMISSIVE_PATTERN`, as a history note ("before —").
+  - Overlap rows red-first: against the HEAD `cache_overlap.py`, 2 of the 4 rows fail. The dynamic-index overlap was missed before, and `$${a[${items}]}` was a false duplicate, because `TEMPLATE_PATTERN` cannot see escape consumption. The other 2 rows are partners.
+- Deviations/surprises (the signal):
+  1. **The gate grep cannot be empty while spec meta-test 3 lives.** `test_import_hygiene.py::test_core_does_not_import_the_template_shim` names `pflow.runtime.template_resolver` by design (spec Structure: "No module under core/ imports pflow.runtime.template_resolver or its shim (meta-test 3)"). I kept it; the spec outranks the grep.
+     - With the shim gone, a top-level core import of it now fails loudly anyway. The pin still catches a lazy import, or a re-created module.
+     - Options: (a) keep, which is what I did; (b) delete it and amend the spec's meta-test 3. Importance 2, reversible.
+  2. **`cache_overlap` behavior deltas.** Both are consistent with delta 3 and 4 and are pinned by the new rows:
+     - A dynamic-index body ref (`${items[${i}].x}`) now overlaps a chunk `items` as `cache_contains_body`. Before, it was excluded by the static-only `_PFLOW_VAR_RE`.
+     - An escaped span no longer yields refs (`$${a[${items}]}` was a false `duplicate`).
+     - The plan's `parse_path(operand) is not None` gate is not written: an operand the parse yields as a `Reference` already passed that grammar, so the gate would be dead.
+     - A dotted inner index (`a[${i.j}].x`) still canonicalizes unevenly through the §6 `_canonicalize_path`. The outcome is still right for a chunk `a`.
+  3. **Pass-6 type-mismatch JSON shape.** The diagnostic `context` no longer carries `available_fields: null`, `available_fields_total: null` or `available_fields_label: null`. These were always null, since the branch that set them could not run. No test or renderer depended on them (`diagnostic_render` reads `available_fields` with `.get`).
+  4. **Near-miss (process):** while producing the red-first run I used `git stash -- <file>`, and it also stashed the staged shim deletion. My new `cache_overlap.py` briefly existed only in that stash. I restored it from the stash, diffed it, confirmed the tests green, and dropped only my own stash entry. The other `stash@{0}` (a different branch's WIP) was untouched. Nothing was lost; noted so the next agent uses byte copies, as the mutation script does.
+- Self-checks:
+  - Fully happy? Yes, with Deviation 1 left for the orchestrator's call.
+  - Residual: `_is_shell_safe_type` still takes a `blocked_types` parameter that now has one caller, always passing `CONTAINER_TYPES`. It could fold, but that is outside the listed items.
+  - test-reflect (directed as "not needed unless you add logic"): logic was added in `cache_overlap`, so I applied it to the 4 new rows. Each asserts the exact `(chunk, body_ref, kind)` list. The two behavior rows were red on the old code; the two partners (index source is not a ref; a real ref after an escape still counts) guard against over-correcting. The yaml pins assert exact dicts. Nothing shallow; nothing deleted beyond the sanctioned tests.
+- dev servers: none (none started).
+- Next: the orchestrator commits part A and rules on Deviation 1. Part B (meta-test 2, the instruction/docs pass, the final grep, LOC, completion examples `--check`) and 4c wait on R5. Not committed.
+
+## [2026-09-30 23:00] task-orchestrator — phase 5 part A verified + committed
+- Verified (orchestrator re-run): `make test` 10085 passed / 2 failed (ruling rows) / 13 xfailed (4c); `make check` green.
+- Rulings (importance 1): meta-test 3 (`tests/test_import_hygiene.py` rule 4 naming `pflow.runtime.template_resolver`) **stays** — it is the spec's meta-test 3 and still catches a lazy import or a re-created module; the phase-5 grep list's `runtime\.template_resolver` entry is scoped to `src/` + every test except that meta-test. `cache_overlap` now reading the parse (dynamic-index refs overlap a cached root; escaped refs no longer false-duplicate) → accepted, pinned. The three always-null Pass-6 JSON keys removed with the dead branch → accepted (no reader).
+- Next: 4c on the R5 ruling; then phase 5 part B.
