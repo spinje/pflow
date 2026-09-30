@@ -226,3 +226,183 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
   - Hoisting ~15 lazy imports makes `core/` import `core.templates` eagerly. The pin proves it is a `pflow.core`-only leaf, and the CLI lazy-import tests (`test_cli/test_lazy_imports.py`, part of `make test`) stay green.
   - test-reflect: n/a beyond the planted-violation checks above (mechanical relocation).
 - Next: the orchestrator commits phase 3; phase 4a (Agent C).
+
+## [2026-09-30 10:30] Agent C (Opus) — phase 4a: STOPPED before any src/ edit (Issue span vs output prose-wrap rows)
+- Did: read the plan (§0, §1, 4a, §5, §6), the spec, the full log, the guidance CLAUDE.md files, `core/templates.py`, both corpus files and `output_resolver.py`. Captured the baseline. Before writing any code I prototyped the §0.1 tokenizer (`scratchpads/task-170/phase4a/span_probe.py`) to test Agent B's heads-up, following the launch instruction "if the grammar can't keep both rows without a row change, STOP and hand back with the options".
+- Changed: nothing under `src/` or `tests/`; this log entry only.
+- Verified (executed):
+  - Baseline: `make test` 9740 passed / 70 xfailed (matches the phase-3 numbers).
+  - **The corpus pins two Issue-span rules that exclude each other.** Structural twins: `${a[${i ?? 0}]}` and `${prefix ${p.out_str}}` (the normalized output source). Both are an OPEN, junk, a nested valid `${…}`, then `}`.
+    - Plan span ("to the first `}`"):
+      - `${a[${i ?? 0}]}` → one Issue `${a[${i ?? 0}`;
+      - `${arr[${idx ?? 0}]}` → Issue;
+      - `${a[${b[${c}]}]}` → Issue `${a[${b[${c}`.
+      - These are the three grammar `after` rows (`has False`, no variables, verbatim) and `silent_coalesce_inner_index` → StaticLiteral. All four need this rule.
+      - But under this rule `${prefix ${p.out_str}}` → Issue `${prefix ${p.out_str}` (it swallows the inner reference), and `${${p.out_str}}` → Issue `${${p.out_str}`. The value is verbatim and the `issues` channel is non-empty, so `populate_declared_outputs` raises.
+      - That breaks `output_prose_wrap_recorded_drift` (`now(Resolves("${prefix S}"))`) and `output_escape_only_r3` (`now(Resolves("${S}"))`).
+    - "Stop before the next OPEN" span:
+      - It keeps the inner `${p.out_str}` as an Expression (value `${prefix S}` / `${S}`).
+      - It makes `${i ?? 0}` / `${idx ?? 0}` / `${b[${c}]}` live Expressions, so the three grammar rows and the StaticLiteral row break.
+      - It would still need an output-resolver-only rule that tolerates an Issue next to a resolved Expression, because `issues = parse().issues` makes the output loud.
+  - **The plan contradicts itself on the same seam.** The 4a table (`implementation-plan.md:723`) sets `_normalize_source` = `source if has_templates(source) else "${"+source+"}"`. Executed on today's resolver:
+    - `prefix ${p.out_str}` → `'prefix S'`, ok. That FIXES the drift, while §6 (`:1008`), §0.3 (`:245`) and the spec (behavior freeze + Out of scope) say "recorded, not fixed".
+    - `$${p.out_str}` → `'${p.out_str}'`, ok. So `output_escape_only_r3`'s runtime `now(Resolves("${S}"))` cannot survive R4 under any grammar. It exists only through the `$`-prefix branch that R4 deletes. Phase 1 mis-derived it as `now`.
+    - `$p.out_str` → `${$p.out_str}`, which is unresolved and loud (R4 as intended). The corpus row `output_dollar_prefix_r4` says 4b while the plan table puts R4 in 4a. That would be an explained early XPASS, so it is not a blocker by itself.
+- Deviations/surprises: this is a planning bug, surfaced rather than absorbed. The fence (two `now` rows), the plan's grammar (§0.1 Issue span) and the plan's 4a normalizer cannot all hold. **Options (the orchestrator decides; importance ≥3 because the spec freezes the drift value):**
+  - **(1) Recommended, simplest final code.** Keep the plan grammar ("to the first `}`") and apply the plan's 4a normalizer as written (the `$` branch deleted; a source that already contains template syntax is used as-is; otherwise it is wrapped). The normalizer then never creates Issues the author didn't write.
+    - Row re-derivations: `output_prose_wrap_recorded_drift` runtime → `Resolves("prefix S")` (the drift is fixed, needs a spec edit to the freeze and Out-of-scope lines); `output_escape_only_r3` runtime → `Resolves("${p.out_str}")`; `output_dollar_prefix_r4` runtime flips early in 4a (explained XPASS).
+    - Validator: 4b's §0.3 already keeps `prefix ${n.stdout}` OK on the raw text, so validator and runtime agree on a sensible value.
+  - **(2) Spec-conservative.** Keep the plan grammar and today's normalizer (R4 stays in 4b per the row).
+    - Row re-derivations: prose-wrap runtime → `Raises(OutputResolutionError)` (the drift goes from a garbage value to loud); `output_escape_only_r3` → Raises.
+    - Cost: a validator-OK source now fails at run time. 4b keeps the validator OK for prose sources, so that under-check becomes permanent unless 4b adds an ERROR. It also deviates from the plan's 4a normalizer line.
+  - **(3) Keep both row values.** Use the "stop before next OPEN" span plus an output-resolver rule that an Issue beside a resolved Expression rides silently.
+    - Cost: it breaks four 4a rows (three grammar rows + `silent_coalesce_inner_index`). It revives the phase-2 interim echo class in a new home, and `${arr[${idx ?? 0}]}` stops being an Issue-only static value. Not recommended: more rules, and the ledger's grammar class blurs.
+  - (4) Rejected: a normalizer special case that recomputes `${` + resolve(source) + `}` to reproduce the garbage value.
+- Self-checks: fully happy with stopping here. The probe covers exactly the five contested shapes, and nothing else in 4a depends on this ruling except `_normalize_source`, the Issue span, and the three output rows. The rest of 4a (AST, `parse`/`parse_path`/`lookup`, facade, engine/loop/diagnostic/cost-analysis consumers) is unblocked once the span rule is fixed. test-reflect: n/a (no tests written).
+- Next: the orchestrator rules on (1)/(2)/(3), plus the R4 timing: 4a per the plan table, or 4b per the row. Then resume Agent C on 4a with the ruling.
+
+## [2026-09-30 10:45] task-orchestrator — 4a output-source span conflict: ESCALATED (3/5); 4a proceeds on the rest
+- Agent C's stop verified by reading its probe results against the rows and `implementation-plan.md:723` (the plan's 4a normalizer fixes the prose-wrap drift, contradicting spec Behavior-freeze + Out-of-scope and plan §0.3/§6). Spec contradiction ⇒ escalation, not an orchestrator call.
+- **ESCALATED (3/5)** to the main orchestrator, options (1)/(2)/(3) as in Agent C's entry; **recommendation (1)**: plan grammar (Issue span to the first `}`) + the plan's 4a normalizer (`source if has_templates(source) else "${"+source+"}"`, `$` branch deleted). Why: the normalizer stops manufacturing Issues the author never wrote; validator (4b parses the raw source → OK) and runtime then agree on `prefix S` with zero extra rules; option (2) leaves a permanent validator-OK/runtime-raises gap, (3) adds a tolerance rule and blurs the ledger's grammar class. Cost of (1): one user-visible change outside the Sanctioned deltas (a prose-wrapped `source:` interpolates instead of yielding `'${prefix S}'`) ⇒ spec edits (freeze line, Out-of-scope line, sanctioned list). Supporting evidence: docs/guide show only simple sources (`guide/core.md:636` `source: ${source_name}`), so no documented behavior changes.
+- Orchestrator ruling (1/5): **R4 lands in 4a** with the normalizer edit (plan table); `output_dollar_prefix_r4`'s runtime row flips as an explained early XPASS.
+- `output_escape_only_r3` runtime `now(Resolves("${S}"))` is a phase-1 mis-derivation under R4 in every option (the value exists only via the deleted `$` branch) — re-derived with the ruling.
+- Resume point: Agent C resumed on ALL decision-independent 4a work now; `_normalize_source`, the three output rows, and the Issue-span choice for them wait for the ruling (the plan span is used everywhere else — both options (1) and (2) keep it). If the ruling has not arrived when the rest is done, C hands back with only those rows open.
+
+## [2026-09-30 14:10] Agent C (Opus) — phase 4a: AST, parse/parse_path/lookup, facade, runtime consumers (resumed per the 10:45 orchestrator ruling; the prose-wrap seam is still open)
+- Did: rewrote `core/templates.py` over a typed parse:
+  - Frozen, slotted AST: `Text`, `Field`, `Index`, `DynamicIndex`, `Reference`, `Literal`, `Expression`, `Issue`, `Template`.
+  - `parse` (`lru_cache(4096)`), `parse_path`, `lookup`, and one `_walk` shared by templates and raw paths.
+  - Every `TemplateResolver` method now sits over them, and the public patterns are rebuilt from the tokenizer's grammar.
+  - The literal grammar is tightened to JSON escapes. `has_references` is new, and `CONTAINER_TYPES` / `LIST_TYPES` are added.
+  - The core no longer reaches into the facade: the walk, stringify and raw-lexer helpers are module-level, and the facade delegates.
+  - Migrated every runtime consumer in the plan's 4a table, plus two whose meaning the facade shifted (below).
+  - Issue span per the ruling: "to the first `}`", everywhere. R4 is in 4a per the ruling.
+- Changed (src):
+  - `core/templates.py`.
+  - `engine/template_resolution.py`: `is_simple` via `parse`; injection over `parse(t).expressions`; type sets from `core.templates`.
+  - `engine/template_errors.py`: operands classified from the parse, inner references first; `lookup` for found-ness; "absent" from node status; field correction over segments; the type-error var is the first Expression.
+  - `engine/engine.py`: `_diagnose_carry_ref` over the parse only; `_gate_pausable` untouched, and the hunks are at `:35` and `:159-171` only.
+  - `engine/loop_control.py`: `evaluate_loop_condition` goes through `resolve`.
+  - `engine/batch_executor.py`: R10.
+  - `output_resolver.py`: R4 (`$` branch deleted); `_is_all_absent_coalesce` over the parse. The rest of `_normalize_source` waits for the ruling.
+  - `execution/plan.py`: R11.
+  - Cost analysis (`row_builder`, `token_estimation` ×2, `sub_workflow_walker`): `resolve()` channels. The lower bound strips unresolved expressions by raw text.
+  - `core/diagnostic_render.py::_extract_field_path` over `Reference.first_field()`.
+  - `core/user_errors.py`: an Issue-only output failure names its source.
+  - `core/workflow/validator.py::_params_reference_alias` → `parse().references`.
+  - `template_validation/type_checker.py::infer_template_type`: a dynamic index types like a static one.
+  - `template_validation/batch_item_validation.py`: Pass 8 collects `parse().references`.
+  - `core/CLAUDE.md`, `runtime/CLAUDE.md`, `template_validation/CLAUDE.md`: regex table rows for the deleted patterns replaced; the `extract_variables` value-view note rewritten.
+- Changed (tests):
+  - NEW `tests/test_core/test_templates.py` (295 items): AST shapes and spans; views; frozen AST, tuples and cache identity; fresh `Literal.value`; bounded cache; never-raises over 236 strings with uncached-scan agreement; the eight `TestSplitTemplatePath` expectations re-homed as `parse_path` rows plus 6 out-of-grammar rows; the dynamic-index walk (int / range / bool / None / str / float); non-int warning plus `??`; `first_field`; facade helpers.
+  - Grammar corpus (sanctioned): the discovery column now reads `parse()`; the 17 `flips_in="4a"` rows are flipped; `test_strict_matches_are_discoverable` is REPLACED by `test_parse_covers_every_open_and_reassembles_losslessly` (82 openings counted by escape-blanking, independent of the tokenizer); the literal "bad escapes today/after" pair is folded into the rejects test.
+  - Parity corpus: 14 row sides flipped (`today` item and marker deleted); R10's today test deleted and its after unmarked; the new row `batch_item_field_inside_dynamic_index_pass8`.
+  - Sanctioned: `test_nested_templates.py:54-59` pin flipped.
+  - Re-derivations: see Deviations 5–8.
+  - New consumer tests:
+    - loop dynamic-index condition (until/while);
+    - `TestDynamicIndexDiagnostics` ×5;
+    - R11 per-item warning;
+    - alias inside a dynamic index;
+    - carry diagnosis over segments;
+    - `infer_template_type` dynamic index;
+    - `TestEscapedTemplateInPromptIsMeasured` ×4.
+- Verified:
+  - `make check` green.
+  - `make test`: **10048 passed, 2 failed, 37 xfailed**, against the baseline 9740 passed / 70 xfailed.
+    - Items 9810 → 10087 (+277) = `test_templates` +295, grammar −19, parity −13, token_estimation +4, error_messages +5, and +1 each in loop_control, plan_batch_sub_workflow, sub_workflow_validation, loop_config, type_checker.
+    - xfailed −33 = 17 grammar + 1 literal + 14 parity + 1 R10.
+    - The 2 failures are exactly the ruling rows (below).
+  - `make test-e2e` 47 passed / 2 skipped (unchanged). Freeze harness 819: 818 plus the one new `test_type_checker` test; edits are sanctioned or listed below. `test_trace_integration.py` 21 passed and unmodified; no trace field.
+  - Corpus: 418 passed / 2 failed (the ruling rows) / 37 xfailed. Every remaining xfail is strict, and no XPASS is left.
+  - Examples `capture.py --check`: 29 examples, 0 differing.
+  - Handoff greps:
+    - `resolve_nested_index_templates|_BRACKET_INDEX_PATTERN|_INTERPOLATION_PATTERN|_DYNAMIC_INDEX_OPEN|_DYNAMIC_INDEX|_COALESCE_EXPR_PATTERN|_OPERAND_PATTERN` over `src/` and `tests/` → empty.
+    - The plan grep in `runtime/engine/`, `output_resolver.py`, `prompt_cache_analysis/` → only `trace_loading.py:559`, `token_estimation.py:462`, `discrepancy/predict.py:374` (all IR/author text, §6 long tail) and a docstring `split(".")` in `prompt_cache_analysis/__init__.py:148`. None scans resolved text.
+  - Differentials (executed against a byte copy of the phase-3 module):
+    - Raw-path walk: 210 combos, 2 differ, both deviation 3.
+    - Templates: 864 combos. Differences are delta 3 (104), delta 4 (16), the literal grammar (32), the Issue-span class `${prefix ${a}}` / `${${a}}` (32, the ruling seam) and Issue-beside-expression now in `issues` (5; `${a.b.0} ${b}`, which the validator already rejects). Nothing else.
+  - Mutation ledger, each a counted failure on top of the 2 ruling reds:
+    - bool inner index;
+    - shared `Literal.value`;
+    - Issue span stops before the next OPEN (4 grammar rows);
+    - unclosed escape consumes to the next `}`;
+    - inner accepts `??`;
+    - multi-index accepted;
+    - negative index;
+    - `issues` channel dropped (9 more);
+    - `first_field` ignores the root index;
+    - classify outer first;
+    - R11 arm dropped;
+    - alias via the value view;
+    - token site rescans the resolved text;
+    - row_builder rescans the resolved text;
+    - type_checker lexical split;
+    - loop via the raw reader (4 more);
+    - injection ignores literals;
+    - R10 off;
+    - simple gate on the old grammar;
+    - Pass 8 value view.
+    - Equivalent mutant: dropping `(?<!\$)` in `_SCAN` turns nothing red. The escape alternative always wins at the earlier index and no token ends in `$`, the same class as phase 1's `_INTERPOLATION_PATTERN` finding. Kept as documentation.
+  - Real surface (`uv run pflow …`, files in `scratchpads/task-170/phase4a/surface/`):
+    - `dyn-dict.pflow.md`: batch `${first.results[${__index__}].stdout}` (a JSON string) into `row: dict` → exit 0, output `dict:alice` / `dict:bob`. Delta 3: before, the rewritten text was not simple, so a str was delivered (corpus row `dyn_shape_json_string_element`). `--validate-only` → "Workflow is valid".
+    - `dyn-oob.pflow.md`: `${make.result[${idx}].x}` with idx=5 → exit 1, "Unresolved variables in parameter 'inputs': ${make.result[${idx}].x}", naming the author's reference.
+    - `escapes.pflow.md`: `$${a[${i}]} | $${FOO:-${bar}} | ${bar}` → exit 0, output `${a[${i}]} | ${FOO:-${bar}} | B` (delta 4). It needed a declared `i`, because the validator's escape blindness flips in 4b.
+  - Python 3.10: checked `match` over slotted frozen dataclasses, `X | Y` aliases and `lru_cache.cache_info()` under `uv run --python 3.10`.
+  - Assumed: Windows is not exercised; no shell-dependent test was added, except that `dyn-dict` is a manual surface run only.
+- **Open, waiting for the ruling (per the 10:45 instruction):** `output_prose_wrap_recorded_drift` and `output_escape_only_r3` runtime `today` items fail, and only because of the ruling-dependent span. Today they observe `OutputResolutionError: "Unresolved template in output 'o': prefix ${p.out_str}"` and `…: $${p.out_str}`. What each option changes:
+  - (1) `_normalize_source` = `source if source.startswith("${") or TemplateResolver.has_templates(source) else "${" + source + "}"`, one line (executed):
+    - prose-wrap runtime → `now(Resolves("prefix S"))`: the drift is fixed, so the spec's freeze and Out-of-scope lines need an edit;
+    - escape_only_r3 runtime → `now(Resolves("${p.out_str}"))`;
+    - `$p.out_str` / `p.out_str.0` stay loud (R4 and the Issue rows hold).
+    - Design note: use `has_templates`, not `has_references`. With `has_references`, an escape-only source would be wrapped into an Issue.
+  - (2) No code change (the current code IS option 2). Row edits: prose-wrap → `now(Raises("OutputResolutionError", "prefix ${p.out_str}"))`; escape_only_r3 → `now(Raises("OutputResolutionError", "$${p.out_str}"))`. Validator OK plus a runtime error stays until 4b adds a check.
+  - (3) Unchanged from my 10:30 entry. It would reopen the four grammar/static rows this phase just flipped.
+- Deviations/surprises (the signal):
+  1. **The facade's `extract_variables` change reaches the validator in 4a, not 4b.** Three consequences:
+     - (a) The delta-6 rows `dyn_shape_json_string_element` (validator) and `dyn_type_pass_code_annotation_delta6` XPASSed early. They are flipped, explained by the diff.
+     - (b) `dyn_type_pass_mismatch_partner` went red. Its "expects int" was produced by typing the INNER `${idx}` (the wrong reason delta 6 removes). With the outer reference, `infer_template_type` returned None, because it split on every `.` and stripped only `[N]`. Fix: `split_template_path` plus `_strip_index` in `type_checker.py`, a file outside the 4a list. 4b/4d replace it with `parse_path` segments. Phase 5 must re-point it when `split_template_path` dies.
+     - (c) **A real validator regression the corpus did not catch.** Pass 8 lost `${item.nope}` inside `${p.out_arr[${item.nope}]}`, which the phase-3 tree flags (executed on both trees). Fixed in `batch_item_validation._collect_templates_from_value` (dependency view) and pinned by the new row. Outside the 4a list as well. 4b's operand iterator subsumes it.
+  2. **Two more facade meaning-shift consumers migrated beyond the table:**
+     - `core/workflow/validator.py::_params_reference_alias`: under the value view, an alias read only inside a dynamic index is missed.
+     - `diagnostic_render._extract_field_path`: the plan's formula `var[len(root):].lstrip(".")` would regress a static root index to `peer.[0].stdout`. Implemented over `Reference.first_field()`, a new AST method shared with `template_errors`' field correction, so the segment-to-text grammar has one home.
+  3. **One walk changes one raw-path shape:** `x[0][1]` / `x.k[0][1]` over a JSON-array-string element now resolves (a strict widening; before, the parse happened only before a chain). The plan asked for "the same `_walk`"; keeping the legacy rule would need a second index rule. Pinned in `test_raw_path_reader_chains_indices_through_json_strings`.
+  4. The plan's §0.1 traversability sets (`TRAVERSABLE_TYPES`, `TRUSTED_TRAVERSABLE_TYPES`) are NOT added yet: they have no 4a consumer and land with 4b/4d. `to_string` stays `_convert_to_string` (4d per §0.4). `TemplateResolver._get_dict_value` is deleted: nothing calls it, only a test docstring mentions it (`test_template_resolver.py:319`, and `test_template_feature_combinations.py:57` for `_try_parse_json_for_traversal`); both are stale docstrings in tests, left as-is.
+  5. Test edits beyond §5, each re-derived:
+     - `test_template_resolver.py::test_rewritten_dynamic_index_is_unresolved` → `test_dynamic_index_miss_is_the_authors_reference` (phase 2's interim; delta 3).
+     - `test_template_error_messages.py::test_rewritten_…_path_error` → the author's reference.
+     - `test_output_resolver.py::test_resolves_dollar_format` → `test_dollar_format_is_not_a_source` (R4, freeze-harness file; §5 lists no R4 test edit).
+     - `test_cache_analysis_token_estimation.py::test_tokenize_prompt_region_returns_none_when_resolved_value_contains_literal_template_bytes` → `…measures_resolved_values_containing_template_text`. It pinned exactly the resolve-then-rescan the plan retires at these sites.
+  6. **Monkeypatch sites:**
+     - The two `token_estimation` tests are re-targeted from `TemplateResolver.resolve_template` to `token_estimation.resolve`. That is the new call path; both still guard the except-clause breadth, and without the re-target they fail loudly, not silently.
+     - `test_cache_analysis_analyze.py:5930` still intercepts through `sub_workflow_walker.py:580` (the batch-items `resolve_template`, not migrated), so its assertion is unchanged and meaningful.
+  7. Corpus re-derivations beyond "delete today + marker":
+     - `dyn_permissive_outer_field_missing` `end_to_end` → `Resolves("${p.out_arr[${idx}].nope}")`.
+     - `dyn_batch_item_inner_renderer`: the override is dropped, as the phase-2 note said.
+     - `dyn_loop_while_r1` gains `end_to_end=Resolves(2)`: validator-clean now, so it runs end to end, where the observation is the iteration count.
+     - `output_dollar_prefix_r4` runtime flipped early (R4 is in 4a by ruling).
+     - `output_dollar_prefix_typo_partner` stays `now` because the divergence was fixed, not the row: the Issue-only summary names the source.
+  8. R11 wording: "Batch item N: 'inputs:' left ${…} unresolved (strict mode). Runtime will reject this item." The planner has no mode in scope, hence the qualifier.
+  9. Observations, not acted on (long tail per §6):
+     - `discrepancy/predict._node_templates_touch` and `trace_loading` now see a dynamic index's outer root instead of its inner one via the rebuilt `TEMPLATE_PATTERN` (both partial views before and after).
+     - `prompt_cache._resolve_static_prefix_for_cache` now resolves `${a[${i}].x}` whole, where before it spliced `${i}` into `${a[0].x}` garbage. 4c owns the site.
+     - `sub_workflow_walker:533`'s escape behavior has no direct test (only the two sibling sites do); it follows the same `resolution.unresolved` rule.
+  10. A single-string param with an Issue next to a resolved Expression (`${a.b.0} ${b}`) now fails strict at runtime, where the phase-2 interim was silent. The validator already rejects it (malformed count), so it is reachable only through programmatic IR. The same applies to a prewarm `system` of that shape (now dropped, Absent).
+- Self-checks:
+  - Fully happy? Almost:
+    - The Pass 8 regression (deviation 1c) was found only by this self-check's "which validator consumers read `extract_variables` as a dependency view?" audit, executed on both trees. It is fixed and pinned now, and it is the kind of thing the mid-task `review-impact-completeness` lens should re-sweep: any other consumer of `extract_variables` or the rebuilt `TEMPLATE_PATTERN` that means "dependencies".
+    - The type_checker fix is a stop-gap (lexical `split("[",1)`), honest but not the 4b/4d shape.
+    - The two open rows are not mine to close.
+  - test-reflect (directed):
+    - DELETED `test_spans_slice_the_source`: it duplicates `test_parse_shape`'s exact spans and the grammar-file coverage invariant.
+    - DEEPENED the diagnostic absence checks with presence partners: `did_you_mean` exact beside the `'i}]'` absence; the exact coalesce fix line beside the torn-text absence.
+    - DEEPENED `test_field_correction_after_a_root_index…`: its first draft had a nonsense fixture, replaced with a dict root plus a `[${i}]` miss.
+    - KEPT the rest: each was killed by a counted mutation above, and `test_parse_and_resolve_never_raise` also asserts the uncached scans agree with the cached parse.
+    - Found a MISSING row (Pass 8 inner ref) and added it with a mutation check.
+- Next: the orchestrator relays the (1)/(2) ruling. On (1) I apply the one-line normalizer and the two row flips; on (2), the two row edits only. Then the mid-task review (`review-silent-failures`, `review-impact-completeness`, `review-test-fidelity`) on this diff. Not committed.
+
+## [2026-09-30 11:30] task-orchestrator — 4a verified (pending ruling); WIP checkpoint commit
+- Verified (orchestrator re-run): `make test` 10048 passed / 2 failed / 37 xfailed — the 2 failures are exactly `output_prose_wrap_recorded_drift-today` and `output_escape_only_r3-today` (the escalated seam; code currently implements option 2); `make check` green.
+- Deviations 1–10 read; all within the phase's intent and explained. Accepted: 1b/1c edits outside the 4a file list (`type_checker.py` stop-gap — phase 5 re-points it when `split_template_path` dies; `batch_item_validation.py` Pass-8 dependency view — 4b's iterator subsumes it); 2 (two more meaning-shift consumers); 3 (raw-path `x[0][1]` over JSON-string element widens — one walk, pinned); 4 (traversability sets deferred to 4b/4d — no 4a consumer); 5–8 (re-derivations); 10 (Issue beside a resolved expression now strict-loud; validator already rejects it).
+- Committed as a WIP checkpoint (disaster recovery for a ~465k-token phase) with the two ruling rows red; the ruling commit follows. Not a phase-complete commit.
+- Next: on the ruling, resume Agent C for the seam; then the 4a mid-task review with Agent C as gate-runner (its window is ~465k — healthy enough for one review round on its own diff; **4b rotates to a fresh C2** per plan §2 4b).

@@ -1015,12 +1015,8 @@ PARAM_ROWS: tuple[Row, ...] = (
         "param",
         "${p.out_arr[${idx ?? 0}]}",
         flips(Ok(), Error(MALFORMED), "4b", "delta 2: a `??` inner index is an Issue"),
-        flips(
-            Resolves("${p.out_arr[0]}"),
-            StaticLiteral(),
-            "4a",
-            "an Issue-only value is static; the rewrite pre-pass dies",
-        ),
+        # Flipped in 4a — an Issue-only value is static; the rewrite pre-pass died
+        now(StaticLiteral()),
         declared_inputs=IDX,
         extra_params=USE_IDX,
         mutation="skip the `[${` nested count",
@@ -1109,7 +1105,7 @@ PARAM_ROWS: tuple[Row, ...] = (
             "4b",
             "delta 4: an input used only inside an escape is unused — the escape is literal",
         ),
-        flips(Resolves("${FOO:-B}"), Resolves("${FOO:-${bar}}"), "4a", "delta 4: the escape consumes through `}`"),
+        now(Resolves("${FOO:-${bar}}")),  # flipped in 4a — delta 4: the escape consumes through `}`
         declared_inputs=BAR_INPUT,
     ),
     Row(
@@ -1117,7 +1113,7 @@ PARAM_ROWS: tuple[Row, ...] = (
         "param",
         "$${FOO:-${bar}}",
         now(Ok()),
-        flips(Resolves("${FOO:-B}"), Resolves("${FOO:-${bar}}"), "4a", "delta 4: the escape consumes through `}`"),
+        now(Resolves("${FOO:-${bar}}")),  # flipped in 4a — delta 4: the escape consumes through `}`
         declared_inputs=BAR_INPUT,
         extra_params={"sink_str": "${bar}"},
     ),
@@ -1216,6 +1212,17 @@ BATCH_ROWS: tuple[Row, ...] = (
         now(Unresolved(("item.nope",))),
         upstream_batch=True,
         batch_items="${b.results}",
+    ),
+    Row(
+        "batch_item_field_inside_dynamic_index_pass8",
+        "batch_param",
+        "${p.out_arr[${item.nope}]}",
+        # Pass 8 reads the dependency view: the inner `item.nope` is an item-field read.
+        now(Error("${item.nope} references field 'nope' which is not available on batch items")),
+        now(Unresolved(("item.nope",))),
+        upstream_batch=True,
+        batch_items="${b.results}",
+        mutation="Pass 8 collects value-position operands only (loses dynamic-index inner refs)",
     ),
     Row("batch_results_index", "param", "${b.results[0].item.x}", now(Ok()), now(Resolves("A0")), upstream_batch=True),
     Row(
@@ -1324,9 +1331,8 @@ OUTPUT_ROWS: tuple[Row, ...] = (
         "output_source",
         "$p.out_str",
         now(Error("non-existent source '$p'")),
-        flips(
-            Resolves("S"), Raises("OutputResolutionError", "o"), "4b", "R4: the runtime-only `$node.x` form is removed"
-        ),
+        # Flipped in 4a (R4 moved from 4b by orchestrator ruling) — the runtime-only `$node.x` form is removed
+        now(Raises("OutputResolutionError", "o")),
         mutation="restore _normalize_source's `$` branch",
     ),
     Row(
@@ -1650,18 +1656,11 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         "dyn_shape_json_string_element",
         "param",
         "${p.out_arr[${idx}]}",
-        flips(
-            Error("has type 'number' but parameter expects 'dict'"),
-            Ok(),
-            "4b",
-            "delta 6: an index key is not a candidate value for the type pass",
-        ),
-        flips(
-            Resolves('{"a": 1}'),
-            Resolves({"a": 1}),
-            "4a",
-            "delta 3: a dynamic-index template is simple, so the dict gate auto-parses",
-        ),
+        # Flipped early in 4a (row said 4b) — delta 6: the type pass reads `extract_variables`,
+        # which now yields the outer reference, not the index key
+        now(Ok()),
+        # Flipped in 4a — delta 3: a dynamic-index template is simple, so the dict gate auto-parses
+        now(Resolves({"a": 1})),
         consumer="sink",
         declared_inputs=IDX,
         extra_params=USE_IDX,
@@ -1688,8 +1687,9 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         declared_inputs=IDX,
         extra_params=USE_IDX,
         mode="permissive",
-        # Permissive: the recorded error is a warning — the run completes with the literal.
-        end_to_end=Resolves("${p.out_arr[0].nope}"),
+        # Permissive: the recorded error is a warning — the run completes with the literal
+        # (the author's reference since 4a; the rewritten `p.out_arr[0].nope` before).
+        end_to_end=Resolves("${p.out_arr[${idx}].nope}"),
     ),
     Row(
         "dyn_strict_out_of_range",
@@ -1724,12 +1724,8 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         "param",
         "${p.out_arr[${idx}].x}",
         now(Ok()),
-        flips(
-            Resolves("${p.out_arr[abc].x}"),
-            Unresolved(("p.out_arr[${idx}].x",)),
-            "4a",
-            "delta 3: any inner failure makes the whole reference unresolved",
-        ),
+        # Flipped in 4a — delta 3: any inner failure makes the whole reference unresolved
+        now(Unresolved(("p.out_arr[${idx}].x",))),
         declared_inputs=IDX_STR,
         extra_params=USE_IDX,
     ),
@@ -1744,16 +1740,13 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         now(Unresolved(("p.out_arr[${item.i}].x",), forbid=("'i}]'",))),
         batch_items="${p.out.items}",
         payload=with_payload(out={**P["out"], "items": [{"i": 5}]}),
-        # Phase 2: the run's error line names the REWRITTEN reference (the unresolved set holds
-        # it); 4a names the author's `p.out_arr[${item.i}].x` and drops this override.
-        end_to_end=Unresolved(("p.out_arr[5].x",), forbid=("'i}]'",)),
     ),
     Row(
         "dyn_coalesce_non_int_inner",
         "param",
         '${p.out_arr[${idx}].x ?? "fb"}',
         now(Ok()),
-        flips(Resolves('${p.out_arr[abc].x ?? "fb"}'), Resolves("fb"), "4a", "delta 3: `??` falls through"),
+        now(Resolves("fb")),  # flipped in 4a — delta 3: `??` falls through
         declared_inputs=IDX_STR,
         extra_params=USE_IDX,
     ),
@@ -1794,12 +1787,8 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         "output_source",
         "${p.out_arr[${idx}].x}",
         now(Ok()),
-        flips(
-            Resolves("${p.out_arr[abc].x}"),
-            Raises("OutputResolutionError", "p.out_arr[${idx}].x"),
-            "4a",
-            "ledger: a non-coalesce unresolved declared output is an error",
-        ),
+        # Flipped in 4a — ledger: a non-coalesce unresolved declared output is an error
+        now(Raises("OutputResolutionError", "p.out_arr[${idx}].x")),
         declared_inputs=IDX_STR,
         extra_params=USE_IDX,
     ),
@@ -1807,12 +1796,13 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         "dyn_loop_while_r1",
         "loop_while",
         "${p.out_arr[${idx}]}",
-        flips(
-            Error("not a single ${...} reference"), Ok(), "4a", "R1: a dynamic-index simple template is a loop shape"
-        ),
-        flips(Resolves(False), Resolves(True), "4a", "R1: loop control resolves the dynamic index"),
+        # Flipped in 4a — R1: a dynamic-index simple template is a loop shape, and loop control resolves it
+        now(Ok()),
+        now(Resolves(True)),
         declared_inputs=IDX,
         extra_params=USE_IDX,
+        # Validator-clean since 4a, so it runs end to end: truthy every pass → the cap (2) stops it.
+        end_to_end=Resolves(2),
     ),
     Row(
         "dyn_loop_while_typo_partner",
@@ -1827,8 +1817,9 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         "dyn_loop_carry_r1",
         "loop_carry",
         "${s.result.lst[${i}]}",
-        flips(Error("carry values must reference"), Ok(), "4a", "R1: a dynamic-index carry is a self reference"),
-        flips(Raises("CompilationError", "Data flow validation failed"), Resolves("c1"), "4a", "R1"),
+        # Flipped in 4a — R1: a dynamic-index carry is a self reference
+        now(Ok()),
+        now(Resolves("c1")),
         declared_inputs=I_INPUT,
         extra_params={"iu": "${i}"},
     ),
@@ -1836,12 +1827,8 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         "dyn_type_pass_code_annotation_delta6",
         "param",
         "${p.out_arr[${idx}]}",
-        flips(
-            Error("expects dict but receives str"),
-            Ok(),
-            "4b",
-            "delta 6: a dynamic-index simple template is not 'complex'",
-        ),
+        # Flipped early in 4a (row said 4b) — delta 6: a dynamic-index simple template is not 'complex'
+        now(Ok()),
         now(Resolves({"x": "A0"})),
         consumer="code:dict",
         declared_inputs=IDX,
@@ -1995,21 +1982,15 @@ def _parallel_prewarm_ir(tmp_path: Path) -> dict[str, Any]:
 
 
 class TestRunnerOnlyRows:
-    def test_r10_parallel_prewarm_bad_first_item_today(self, tmp_path: Path) -> None:
-        """R10 today: the pre-warm compile resolves item[0] strictly and fails the WHOLE run,
-        even under ``error_handling: continue`` (the sequential path degrades instead).
+    def test_r10_parallel_prewarm_bad_first_item(self, tmp_path: Path) -> None:
+        """R10 (flipped in 4a): item[0]'s strict template miss skips the pre-warm, so the
+        per-item loop applies ``error_handling: continue`` — before, it failed the WHOLE run.
 
-        Mutation: catch the pre-warm template failure → this item goes red.
+        Mutation: let the pre-warm template failure propagate → the run fails.
         """
         ir = _parallel_prewarm_ir(tmp_path)
         assert validator_errors(ir, {}) == []
         result = _run(ir)
-        assert result.status.value == "failed"
-        assert any("Unresolved variables in parameter 'inputs': ${item.x}" in d.message for d in result.errors)
-
-    @_xfail("4a", "R10: a pre-warm template failure skips the pre-warm; the per-item loop applies `continue`")
-    def test_r10_parallel_prewarm_bad_first_item_after(self, tmp_path: Path) -> None:
-        result = _run(_parallel_prewarm_ir(tmp_path))
         assert result.status.value == "degraded"
         assert [r["got"] for r in result.shared_after["s"]["results"]] == ["A1"]
 

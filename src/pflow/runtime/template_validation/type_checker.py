@@ -4,11 +4,12 @@ This module provides compile-time type checking for template variables,
 ensuring that resolved values match expected parameter types.
 """
 
-import re
 from typing import Any
 
 from pflow.core.types import outer_base_type
 from pflow.registry.registry import Registry
+
+from .utils import split_template_path
 
 # Type compatibility matrix
 # source_type -> list of compatible target types
@@ -138,11 +139,12 @@ def infer_template_type(  # noqa: C901
         >>> infer_template_type("node.result.count", workflow_ir, node_outputs)
         'int'
     """
-    parts = template.split(".")
+    # Dots inside a dynamic index (`items[${i.j}]`) are not separators.
+    parts = split_template_path(template)
 
-    # Handle array indices in base path (e.g., "items[0]" -> "items")
+    # Handle array indices in base path (e.g., "items[0]" / "items[${i}]" -> "items")
     base_var = parts[0]
-    base_var_clean = re.sub(r"\[\d+\]", "", base_var)
+    base_var_clean = _strip_index(base_var)
 
     enable_namespacing = workflow_ir.get("enable_namespacing", True)
 
@@ -166,7 +168,7 @@ def infer_template_type(  # noqa: C901
                 return None  # Invalid: just node ID
 
             # Clean the output key from array indices too
-            output_key_part = re.sub(r"\[\d+\]", "", parts[1])
+            output_key_part = _strip_index(parts[1])
             node_output_key = f"{base_var_clean}.{output_key_part}"
 
             if node_output_key not in node_outputs:
@@ -204,6 +206,12 @@ def infer_template_type(  # noqa: C901
     return None
 
 
+def _strip_index(part: str) -> str:
+    """``items[0]`` / ``items[${i}]`` -> ``items`` (one index per segment): a dynamic
+    index types like a static one."""
+    return part.split("[", 1)[0]
+
+
 def _infer_nested_type(path_parts: list[str], output_info: dict[str, Any]) -> str | None:
     """Infer type by traversing nested structure.
 
@@ -228,7 +236,7 @@ def _infer_nested_type(path_parts: list[str], output_info: dict[str, Any]) -> st
     current = structure
     for i, part in enumerate(path_parts):
         # Remove array indices for field lookup: items[0] -> items
-        field_name = re.sub(r"\[\d+\]", "", part)
+        field_name = _strip_index(part)
 
         if field_name not in current:
             return None

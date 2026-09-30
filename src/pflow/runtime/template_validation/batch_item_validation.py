@@ -8,7 +8,7 @@ that referenced fields actually exist on each item.
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
-from pflow.core.templates import TemplateResolver
+from pflow.core.templates import TemplateResolver, parse
 from pflow.runtime.template_validation.path_validation import validate_nested_path
 from pflow.runtime.template_validation.utils import (
     find_similar_paths,
@@ -101,10 +101,11 @@ def _infer_batch_item_structure(
 def _collect_templates_from_value(
     value: Any,
 ) -> set[str]:
-    """Recursively collect template variables from a parameter value."""
+    """Recursively collect every reference in a parameter value — a dynamic index's
+    inner reference included (``${p.out[${item.i}]}`` reads ``item.i``)."""
     templates: set[str] = set()
     if isinstance(value, str) and TemplateResolver.has_templates(value):
-        templates.update(TemplateResolver.extract_variables(value))
+        templates.update(ref.raw for ref in parse(value).references)
     elif isinstance(value, dict):
         for val in value.values():
             templates.update(_collect_templates_from_value(val))

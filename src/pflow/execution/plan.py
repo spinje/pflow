@@ -39,7 +39,7 @@ from typing import Any, Literal
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import CompilationError, LoopConditionError, ResumeNotResumableError
-from pflow.core.templates import TemplateResolver
+from pflow.core.templates import resolve
 from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
 from pflow.execution.result import Plan, PlanEntry, PlanSummary, ResumePlanInfo
 from pflow.registry import Registry
@@ -1538,23 +1538,27 @@ def _resolve_per_item_sub_workflow_inputs(
     """Resolve child inputs for one batch item, falling back to item[0] shape.
 
     Returns (inputs, diagnostic). Diagnostic is non-None when resolution
-    produced a non-dict — runtime would raise ValueError in that case, so
-    we surface a WARNING to make the plan honest about a likely runtime failure.
+    produced a non-dict or left a template unresolved — runtime would reject the
+    item in that case, so we surface a WARNING to make the plan honest about a
+    likely runtime failure.
     """
     if raw_inputs_template is None:
         return default_inputs, None
     per_item_context = {**shared, batch_config.item_alias: item, "__index__": idx}
-    resolved_inputs = TemplateResolver.resolve_nested(raw_inputs_template, per_item_context)
-    if isinstance(resolved_inputs, dict):
+    resolution = resolve(raw_inputs_template, per_item_context, auto_parse=True)
+    resolved_inputs = resolution.value
+    if not isinstance(resolved_inputs, dict):
+        problem = f"resolved to {type(resolved_inputs).__name__}, expected dict"
+    elif not resolution.ok:
+        left = sorted(f"${{{expr}}}" for expr in resolution.unresolved) + sorted(resolution.issues)
+        problem = f"left {', '.join(left)} unresolved (strict mode)"
+    else:
         return resolved_inputs, None
     diag = Diagnostic(
         severity=Severity.WARNING,
         source="planner",
         node_id=node_id,
-        message=(
-            f"Batch item {idx}: 'inputs:' resolved to {type(resolved_inputs).__name__}, "
-            f"expected dict. Runtime will reject this item."
-        ),
+        message=f"Batch item {idx}: 'inputs:' {problem}. Runtime will reject this item.",
         context={"category": "validation", "batch_item_index": idx},
     )
     return default_inputs, diag

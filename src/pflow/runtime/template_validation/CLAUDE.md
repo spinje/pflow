@@ -92,17 +92,17 @@ table is the map). `TemplateResolver` patterns live in `core/templates.py`:
 |---|---|---|
 | `_PERMISSIVE_PATTERN` | `validator.py`, validation discovery | Sees nested bracket templates; skips `$${` escapes like `TEMPLATE_PATTERN` |
 | `_TEMPLATE_OPEN` | `validator.py`, malformed-template count | Every unescaped `${`; compared against valid-template count |
-| `TEMPLATE_PATTERN` | `TemplateResolver`, runtime resolution | Strict operand grammar and dollar-escape guard |
-| `SIMPLE_TEMPLATE_PATTERN` | `TemplateResolver`, simple-template test | Whole string is one expression → type preserved |
-| `_INTERPOLATION_PATTERN` | `TemplateResolver`, complex resolution | One pass: escape, expression, or Issue (unmatched `${`) |
-| `_BRACKET_INDEX_PATTERN` | `TemplateResolver`, nested-index pre-pass | Rewrites `[${i}]` to `[N]` before resolution |
+| `parse()` | `core/templates.py`, the one tokenizer | Text / Expression / Issue segments; resolution runs on it |
+| `TEMPLATE_PATTERN` | `TemplateResolver`, static discovery view | Built from `parse()`'s grammar (dynamic index included); cannot see escape consumption — use `parse()` over text that may hold `$${` |
+| `SIMPLE_TEMPLATE_PATTERN` | `TemplateResolver`, static discovery view | Whole string is one expression; `is_simple_template` reads `parse()` |
 | `TEMPLATE_EXTRACT_PATTERN` | `TemplateResolver`, diagnostic/data-flow discovery | Broad extraction; downstream checks decide validity |
 
 Path checks use the permissive field-checkable set. Type/shell passes use
-`TemplateResolver.extract_variables`: for nested bracket templates they see the
-inner variable, not the complete outer reference. This is a type-checking
-limitation, not evidence that the outer value is safe. Use `split_template_path`,
-never `str.split('.')`, which splits dots inside nested expressions.
+`TemplateResolver.extract_variables`, the VALUE view: `${a[${i}].x}` yields the
+whole outer reference `a[${i}].x`, never the index key `i` (dependencies —
+roots, unused inputs — need `parse(t).references`, which includes inner refs).
+Use `split_template_path`, never `str.split('.')`, which splits dots inside
+nested expressions.
 
 Shell validation rejects dict/list interpolation in `command` unless the
 quoted-template opt-in (`'${var}'`) is present. This is JSON-coercion/type-check

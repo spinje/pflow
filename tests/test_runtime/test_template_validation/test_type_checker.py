@@ -387,6 +387,14 @@ class TestInferTemplateTypeBatchIndexedAccess:
         assert infer_template_type("batch_node.results[0].result", workflow_ir, batch_node_outputs) == "array"
         assert infer_template_type("batch_node.results[0].stdout", workflow_ir, batch_node_outputs) == "str"
 
+    def test_dynamic_index_types_like_a_static_one(self, batch_node_outputs):
+        """Task 170 4a: type passes see the whole dynamic-index Reference (not its index key),
+        so inference must read ``[${…}]`` as an index — dots inside it are not separators."""
+        workflow_ir = {"nodes": [{"id": "batch_node", "type": "code"}], "enable_namespacing": True}
+        for index in ("0", "${i}", "${item.pos.n}"):
+            path = f"batch_node.results[{index}].stdout"
+            assert infer_template_type(path, workflow_ir, batch_node_outputs) == "str", path
+
     def test_indexed_access_unknown_field_returns_none(self, batch_node_outputs):
         workflow_ir = {"nodes": [{"id": "batch_node", "type": "code"}], "enable_namespacing": True}
         assert infer_template_type("batch_node.results[0].nonexistent", workflow_ir, batch_node_outputs) is None

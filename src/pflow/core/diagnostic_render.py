@@ -12,6 +12,7 @@ from pflow.core.diagnostic import (
     Diagnostic,
     Severity,
 )
+from pflow.core.templates import parse_path
 
 _CACHE_CATEGORIES: frozenset[str] = frozenset({CACHE_FAILURE_CATEGORY, CACHE_WARNING_CATEGORY, CACHE_ADVISORY_CATEGORY})
 
@@ -728,11 +729,15 @@ def _describe_failure_category(category: str) -> str:
 def _extract_field_path(var: str) -> str:
     """Extract the post-root field path from a variable reference.
 
-    ``primary.stdout`` → ``stdout``, ``primary.data.inner`` → ``data.inner``.
+    ``primary.stdout`` → ``stdout``, ``primary.data.inner`` → ``data.inner``;
+    a root index is skipped and a dynamic index stays whole
+    (``a[${i.j}].x[${k}]`` → ``x[${k}]``). No field after the root → ``var``.
     """
-    if "." not in var:
-        return var
-    return var.split(".", 1)[1]
+    ref = parse_path(var)
+    if ref is None:  # a raw path outside the template grammar: split lexically
+        return var.split(".", 1)[1] if "." in var else var
+    first = ref.first_field()
+    return var[first[0] + 1 :] if first else var
 
 
 def _format_api_response_lines(raw_response: dict[str, Any]) -> list[str]:

@@ -8,7 +8,7 @@ Shared parsing, diagnostics, configuration, and execution utilities.
 |---|---|
 | Change markdown parsing or source attribution | `markdown_parser.py`; author-content YAML in `yaml_utils.py` |
 | Change external content inlining or file provenance | `file_resolver.py::resolve_file_references` mutates IR in place and records `_source_files`; `FILE_RESOLVABLE_PARAMS` allowlists content params |
-| Change `${…}` template syntax, resolution, or the unresolved/issues channels | `templates.py` (`TemplateResolver`, `resolve` → `Resolution`); it imports only `pflow.core` — keep it a leaf (`tests/test_core/test_templates_module.py`) |
+| Change `${…}` template syntax, resolution, or the unresolved/issues channels | `templates.py` (`parse` → `Template` AST, `parse_path`, `lookup`, `resolve` → `Resolution`; `TemplateResolver` is the string-helper facade); it imports only `pflow.core` — keep it a leaf (`tests/test_core/test_templates_module.py`). `parse` is cached: author text only |
 | Change IR shape or declared types | `ir_schema.py::FLOW_IR_SCHEMA`, `validate_ir`; `types.py::TypeSpec` |
 | Add an error or change diagnostic rendering | `exceptions.py`, `diagnostic.py`, `diagnostic_render.py` — see below |
 | Change node lifecycle/retry primitives | `node.py`; node patterns in `../nodes/CLAUDE.md` |

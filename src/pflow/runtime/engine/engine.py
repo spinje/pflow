@@ -32,7 +32,7 @@ from pflow.core.exceptions import (
 from pflow.core.gate import GATE_KIND_APPROVAL
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_cache import CacheRenderContext
-from pflow.core.templates import TemplateResolver, resolve
+from pflow.core.templates import Field, Reference, TemplateResolver, parse, resolve
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 from pflow.runtime.node_state import (
     FAILURE_CATEGORY_EXCEPTION,
@@ -156,25 +156,22 @@ def _diagnose_carry_ref(template: str, node_id: str, latest: Any) -> tuple[str, 
     - any path that descends through a NON-dict value (e.g. a JSON string or list),
       which might still resolve at runtime — never claim absence we can't prove.
     """
-    if not isinstance(latest, dict):
+    parsed = parse(template)
+    if not isinstance(latest, dict) or not parsed.is_simple:
         return None
-    var = TemplateResolver.extract_simple_template_var(template)
-    if var is None or TemplateResolver.is_coalesce_expression(var):
+    operands = parsed.expressions[0].operands
+    ref = operands[0]
+    if len(operands) > 1 or not isinstance(ref, Reference) or ref.root != node_id:
         return None
-    prefix = f"{node_id}."
-    if not var.startswith(prefix):
-        return None
-    # Path after the node id; strip any [index] suffix per segment (dict-keyed walk).
-    segments = [seg.split("[", 1)[0] for seg in var[len(prefix) :].split(".") if seg]
     current: Any = latest
     walked: list[str] = []
-    for seg in segments:
-        if not isinstance(current, dict):
-            return None  # descends into a non-dict — may still resolve; defer
-        if seg not in current:
-            return (".".join([*walked, seg]), _loop_available_outputs(current), ".".join(walked))
-        walked.append(seg)
-        current = current[seg]
+    for seg in ref.path:
+        if not isinstance(seg, Field) or not isinstance(current, dict):
+            return None  # an index, or a non-dict value — may still resolve; defer
+        if seg.name not in current:
+            return (".".join([*walked, seg.name]), _loop_available_outputs(current), ".".join(walked))
+        walked.append(seg.name)
+        current = current[seg.name]
     return None  # fully resolved — not a carry failure
 
 

@@ -60,10 +60,11 @@ JSON containers, but keeps numeric identifier strings intact. See
 `$${` escapes a literal `${`: any content after it is left alone and the result
 carries a single `$` (`$${X:-y}` -> `${X:-y}`); a bare `$$` is untouched.
 `has_templates` counts an escape so `engine/template_resolution.py::split_params`
-routes escape-only params through resolution. Nested
-index templates such as `${results[${item.index}].response}` resolve the inner
-expression first; one nesting level is supported. Unresolved references remain
-literal at the resolver layer; engine strict/permissive handling is separate.
+routes escape-only params through resolution. A dynamic index such as
+`${results[${item.index}].response}` is ONE reference (simple, type-preserving):
+the inner static reference must resolve to an in-range `int`, or the whole
+reference is unresolved. Unresolved references remain literal at the resolver
+layer; engine strict/permissive handling is separate.
 
 `resolve(value, context)` returns a `Resolution`: the value plus `unresolved` (the
 text inside each `${…}` left literal) and `issues` (unescaped `${` that open no

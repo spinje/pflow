@@ -26,12 +26,13 @@ class TestResolveOutputSource:
         result = resolve_output_source("${node2.result}", shared)
         assert result == "value2"
 
-    def test_resolves_dollar_format(self):
-        """Test that $node.key format resolves correctly."""
+    def test_dollar_format_is_not_a_source(self):
+        """The runtime-only ``$node.key`` form is removed (Task 170 R4): the validator
+        always rejected it, so the runtime rejects it too instead of resolving it."""
         shared = {"node1": {"output": "value1"}}
 
-        result = resolve_output_source("$node1.output", shared)
-        assert result == "value1"
+        assert resolve_output_source("$node1.output", shared) is None
+        assert resolve_output_source("${node1.output}", shared) == "value1"
 
     def test_resolves_plain_format(self):
         """Test that plain node.key format resolves correctly."""

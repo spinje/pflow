@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pflow.core.templates import TemplateResolver
+from pflow.core.templates import TemplateResolver, resolve
 from pflow.core.trace_tree import normalize_workflow_path_key
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult, resolve_sub_workflow
 
@@ -530,13 +530,13 @@ def _resolve_child_input_value(edge: CrossWorkflowEdge, parent_ctx: AnalysisCont
             shared[edge.parent_batch_alias] = first_item
 
     try:
-        resolved = TemplateResolver.resolve_template(value, shared)
+        resolution = resolve(value, shared)
     except Exception:
         logger.debug("failed to resolve child workflow input value", exc_info=True)
         return None
-    if isinstance(resolved, str) and TemplateResolver.TEMPLATE_PATTERN.search(resolved):
+    if resolution.unresolved:
         return None
-    return _normalize_empty(resolved)
+    return _normalize_empty(resolution.value)
 
 
 def _unchecked_parent_memo_roots(

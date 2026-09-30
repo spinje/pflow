@@ -1,10 +1,10 @@
 """Task 170 grammar table (1a) and walk-pair consistency rows (1f).
 
 Pure-function rows over today's template language: for each template, what the
-strict runtime grammar (``TEMPLATE_PATTERN``) finds, what the validator's
-discovery view finds (``_PERMISSIVE_PATTERN`` today; re-targeted to ``parse()``
-Expressions in phase 4a — only the column's FUNCTION changes, never an expected
-cell except on rows tagged ``flips_in="4a"``), ``has_templates``,
+strict runtime grammar (``TEMPLATE_PATTERN``) finds, what the discovery view
+finds (``parse()`` Expressions since phase 4a; ``_PERMISSIVE_PATTERN`` before —
+only the column's FUNCTION changed, and the expected cells only on the rows that
+flipped in 4a), ``has_templates``,
 ``is_simple_template``, ``extract_variables`` and ``resolve_template`` on one
 small context. Every cell was measured by running the code, not derived.
 
@@ -17,6 +17,7 @@ If a row fails, fix the divergence, never the row (from phase 2 on).
 
 from __future__ import annotations
 
+import itertools
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -26,8 +27,8 @@ from typing import Any
 import pytest
 
 from pflow.core.json_utils import try_parse_json
+from pflow.core.templates import Expression, Issue, Text, parse
 from pflow.runtime.template_resolver import TemplateResolver
-from pflow.runtime.template_validation.validator import _PERMISSIVE_PATTERN
 
 CTX: Mapping[str, Any] = MappingProxyType({
     "a": [{"x": "v"}],
@@ -74,8 +75,8 @@ class G:
 
 
 def discovery_view(template: str) -> tuple[str, ...]:
-    """The validator's template discovery (phase 4a: ``parse(t).expressions`` sources)."""
-    return tuple(m.group(0) for m in _PERMISSIVE_PATTERN.finditer(template))
+    """Template discovery: the source text of every ``parse()`` Expression."""
+    return tuple(template[start:end] for start, end in (e.span for e in parse(template).expressions))
 
 
 def observe(template: str) -> dict[str, Any]:
@@ -116,12 +117,12 @@ GRAMMAR_ROWS: tuple[G, ...] = (
     G('${_x}', ('${_x}',), ('${_x}',), True, True, frozenset({'_x'}), '${_x}'),
     G('${x1}', ('${x1}',), ('${x1}',), True, True, frozenset({'x1'}), '${x1}'),
     G('${1x}', (), (), False, False, frozenset(), '${1x}'),
-    G('${c.result.0}', (), ('${c.result.0}',), False, False, frozenset(), '${c.result.0}',
-      after={'discovery': ()}, flips_in='4a', why='delta 2: an Issue, not an Expression: the discovery view drops it'),
-    G('${data.result.}', (), ('${data.result.}',), False, False, frozenset(), '${data.result.}',
-      after={'discovery': ()}, flips_in='4a', why='delta 2: an Issue, not an Expression: the discovery view drops it'),
-    G('${data..result.x}', (), ('${data..result.x}',), False, False, frozenset(), '${data..result.x}',
-      after={'discovery': ()}, flips_in='4a', why='delta 2: an Issue, not an Expression: the discovery view drops it'),
+    G('${c.result.0}', (), (), False, False, frozenset(), '${c.result.0}',
+      why='delta 2: an Issue, not an Expression: the discovery view drops it'),
+    G('${data.result.}', (), (), False, False, frozenset(), '${data.result.}',
+      why='delta 2: an Issue, not an Expression: the discovery view drops it'),
+    G('${data..result.x}', (), (), False, False, frozenset(), '${data..result.x}',
+      why='delta 2: an Issue, not an Expression: the discovery view drops it'),
     G('${m[0][1]}', (), (), False, False, frozenset(), '${m[0][1]}'),
     G('${m[0]}', ('${m[0]}',), ('${m[0]}',), True, True, frozenset({'m[0]'}), [1, 2]),
     G('${node.field[0]}', ('${node.field[0]}',), ('${node.field[0]}',), True, True, frozenset({'node.field[0]'}), '${node.field[0]}'),
@@ -143,26 +144,26 @@ GRAMMAR_ROWS: tuple[G, ...] = (
     G('$$', (), (), False, False, frozenset(), '$$'),
     G('$', (), (), False, False, frozenset(), '$'),
     G('Type $${ to open. Hi ${name}', ('${name}',), ('${name}',), True, False, frozenset({'name'}), 'Type ${ to open. Hi Al'),
-    G('$${a[${i}]}', ('${i}',), ('${i}',), True, False, frozenset({'i'}), '${a[0]}',
-      after={'discovery': (), 'variables': frozenset(), 'resolved': '${a[${i}]}'}, flips_in='4a', why='delta 4: the escape consumes through the balanced `}`'),
-    G('$${FOO:-${bar}}', ('${bar}',), ('${bar}',), True, False, frozenset({'bar'}), '${FOO:-B}',
-      after={'discovery': (), 'variables': frozenset(), 'resolved': '${FOO:-${bar}}'}, flips_in='4a', why='delta 4: the escape consumes through the balanced `}`'),
+    G('$${a[${i}]}', ('${i}',), (), True, False, frozenset(), '${a[${i}]}',
+      why='delta 4: the escape consumes through the balanced `}`'),
+    G('$${FOO:-${bar}}', ('${bar}',), (), True, False, frozenset(), '${FOO:-${bar}}',
+      why='delta 4: the escape consumes through the balanced `}`'),
     G('${VAR:-x}', (), (), False, False, frozenset(), '${VAR:-x}'),
     G('${#x}', (), (), False, False, frozenset(), '${#x}'),
-    G('${a[${i}]}', ('${i}',), ('${a[${i}]}',), True, False, frozenset({'i'}), {'x': 'v'},
-      after={'strict': ('${a[${i}]}',), 'simple': True, 'variables': frozenset({'a[${i}]'})}, flips_in='4a', why='delta 3: a dynamic-index template is one simple Reference'),
-    G('${a[${i}].x}', ('${i}',), ('${a[${i}].x}',), True, False, frozenset({'i'}), 'v',
-      after={'strict': ('${a[${i}].x}',), 'simple': True, 'variables': frozenset({'a[${i}].x'})}, flips_in='4a', why='delta 3: one Reference; inner refs are not variables'),
-    G('${a[${i}].x ?? b}', ('${i}',), ('${a[${i}].x ?? b}',), True, False, frozenset({'i'}), 'v',
-      after={'strict': ('${a[${i}].x ?? b}',), 'simple': True, 'variables': frozenset({'a[${i}].x', 'b'})}, flips_in='4a', why='delta 3'),
-    G('${a[${i ?? 0}]}', ('${i ?? 0}',), ('${a[${i ?? 0}]}',), True, False, frozenset({'i'}), '${a[0]}',
-      after={'discovery': (), 'has': False, 'variables': frozenset(), 'resolved': '${a[${i ?? 0}]}'}, flips_in='4a', why='delta 2: a `??` inner index is an Issue (static, verbatim)'),
-    G('${a[${i.j}]}', ('${i.j}',), ('${a[${i.j}]}',), True, False, frozenset({'i.j'}), '${a[${i.j}]}',
-      after={'strict': ('${a[${i.j}]}',), 'simple': True, 'variables': frozenset({'a[${i.j}]'})}, flips_in='4a', why='delta 3: a dotted inner is a plain static Reference'),
-    G('${a[${j.k}].x}', ('${j.k}',), ('${a[${j.k}].x}',), True, False, frozenset({'j.k'}), 'v',
-      after={'strict': ('${a[${j.k}].x}',), 'simple': True, 'variables': frozenset({'a[${j.k}].x'})}, flips_in='4a', why='delta 3'),
-    G('${a[${b[${c}]}]}', ('${c}',), ('${a[${b[${c}]}',), True, False, frozenset({'c'}), '${a[${b[{"result": "C"}]}]}',
-      after={'strict': ('${b[${c}]}',), 'discovery': (), 'has': False, 'variables': frozenset(), 'resolved': '${a[${b[${c}]}]}'}, flips_in='4a', why='delta 2: nested dynamic indices are an Issue'),
+    G('${a[${i}]}', ('${a[${i}]}',), ('${a[${i}]}',), True, True, frozenset({'a[${i}]'}), {'x': 'v'},
+      why='delta 3: a dynamic-index template is one simple Reference'),
+    G('${a[${i}].x}', ('${a[${i}].x}',), ('${a[${i}].x}',), True, True, frozenset({'a[${i}].x'}), 'v',
+      why='delta 3: one Reference; inner refs are not variables'),
+    G('${a[${i}].x ?? b}', ('${a[${i}].x ?? b}',), ('${a[${i}].x ?? b}',), True, True, frozenset({'a[${i}].x', 'b'}), 'v',
+      why='delta 3'),
+    G('${a[${i ?? 0}]}', ('${i ?? 0}',), (), False, False, frozenset(), '${a[${i ?? 0}]}',
+      why='delta 2: a `??` inner index is an Issue (static, verbatim)'),
+    G('${a[${i.j}]}', ('${a[${i.j}]}',), ('${a[${i.j}]}',), True, True, frozenset({'a[${i.j}]'}), '${a[${i.j}]}',
+      why='delta 3: a dotted inner is a plain static Reference'),
+    G('${a[${j.k}].x}', ('${a[${j.k}].x}',), ('${a[${j.k}].x}',), True, True, frozenset({'a[${j.k}].x'}), 'v',
+      why='delta 3'),
+    G('${a[${b[${c}]}]}', ('${b[${c}]}',), (), False, False, frozenset(), '${a[${b[${c}]}]}',
+      why='delta 2: nested dynamic indices are an Issue'),
     G('${a ?? "${b}"}', ('${a ?? "${b}"}',), ('${a ?? "${b}"}',), True, True, frozenset({'a'}), [{'x': 'v'}]),
     G('${x ?? 0}', ('${x ?? 0}',), ('${x ?? 0}',), True, True, frozenset({'x'}), 'hi'),
     G('${x ?? 007}', (), (), False, False, frozenset(), '${x ?? 007}'),
@@ -170,12 +171,12 @@ GRAMMAR_ROWS: tuple[G, ...] = (
     G('${missing ?? [1,2]}', (), (), False, False, frozenset(), '${missing ?? [1,2]}'),
     G('${missing ?? "a??b"}', (), (), False, False, frozenset(), '${missing ?? "a??b"}'),
     G('${missing ?? "a?b"}', ('${missing ?? "a?b"}',), ('${missing ?? "a?b"}',), True, True, frozenset({'missing'}), 'a?b'),
-    G('${missing ?? "\\q"}', ('${missing ?? "\\q"}',), ('${missing ?? "\\q"}',), True, True, frozenset({'missing'}), '${missing ?? "\\q"}',
-      after={'strict': (), 'discovery': (), 'has': False, 'simple': False, 'variables': frozenset()}, flips_in='4a', why='the literal grammar tightens to JSON-valid escapes: a `bad_literal` Issue'),
-    G('${missing ?? "\\u12"}', ('${missing ?? "\\u12"}',), ('${missing ?? "\\u12"}',), True, True, frozenset({'missing'}), '${missing ?? "\\u12"}',
-      after={'strict': (), 'discovery': (), 'has': False, 'simple': False, 'variables': frozenset()}, flips_in='4a', why='the literal grammar tightens to JSON-valid escapes: a `bad_literal` Issue'),
-    G('${missing ?? "a\tb"}', ('${missing ?? "a\tb"}',), ('${missing ?? "a\tb"}',), True, True, frozenset({'missing'}), '${missing ?? "a\tb"}',
-      after={'strict': (), 'discovery': (), 'has': False, 'simple': False, 'variables': frozenset()}, flips_in='4a', why='the literal grammar tightens to JSON-valid escapes: a `bad_literal` Issue'),
+    G('${missing ?? "\\q"}', (), (), False, False, frozenset(), '${missing ?? "\\q"}',
+      why='the literal grammar tightens to JSON-valid escapes: a `bad_literal` Issue'),
+    G('${missing ?? "\\u12"}', (), (), False, False, frozenset(), '${missing ?? "\\u12"}',
+      why='the literal grammar tightens to JSON-valid escapes: a `bad_literal` Issue'),
+    G('${missing ?? "a\tb"}', (), (), False, False, frozenset(), '${missing ?? "a\tb"}',
+      why='the literal grammar tightens to JSON-valid escapes: a `bad_literal` Issue'),
     G('${missing ?? true}', ('${missing ?? true}',), ('${missing ?? true}',), True, True, frozenset({'missing'}), True),
     G('${missing ?? truthy}', ('${missing ?? truthy}',), ('${missing ?? truthy}',), True, True, frozenset({'missing', 'truthy'}), '${missing ?? truthy}'),
     G('${missing ?? null}', ('${missing ?? null}',), ('${missing ?? null}',), True, True, frozenset({'missing'}), None),
@@ -193,10 +194,10 @@ GRAMMAR_ROWS: tuple[G, ...] = (
     G('${missing ?? b}', ('${missing ?? b}',), ('${missing ?? b}',), True, True, frozenset({'b', 'missing'}), 'fb'),
     G('${missing.f ?? missing2 ?? b}', ('${missing.f ?? missing2 ?? b}',), ('${missing.f ?? missing2 ?? b}',), True, True, frozenset({'b', 'missing.f', 'missing2'}), 'fb'),
     G('${x} $${x}', ('${x}',), ('${x}',), True, False, frozenset({'x'}), 'hi ${x}'),
-    G('${a[${missing}].x}', ('${missing}',), ('${a[${missing}].x}',), True, False, frozenset({'missing'}), '${a[${missing}].x}',
-      after={'strict': ('${a[${missing}].x}',), 'simple': True, 'variables': frozenset({'a[${missing}].x'})}, flips_in='4a', why='delta 3'),
-    G('${arr[${idx ?? 0}]}', ('${idx ?? 0}',), ('${arr[${idx ?? 0}]}',), True, False, frozenset({'idx'}), '${arr[0]}',
-      after={'discovery': (), 'has': False, 'variables': frozenset(), 'resolved': '${arr[${idx ?? 0}]}'}, flips_in='4a', why='delta 2: a `??` inner index is an Issue (static, verbatim)'),
+    G('${a[${missing}].x}', ('${a[${missing}].x}',), ('${a[${missing}].x}',), True, True, frozenset({'a[${missing}].x'}), '${a[${missing}].x}',
+      why='delta 3'),
+    G('${arr[${idx ?? 0}]}', ('${idx ?? 0}',), (), False, False, frozenset(), '${arr[${idx ?? 0}]}',
+      why='delta 2: a `??` inner index is an Issue (static, verbatim)'),
     G('${x??b}', ('${x??b}',), ('${x??b}',), True, True, frozenset({'b', 'x'}), 'hi'),
     G('${ x ?? b }', (), (), False, False, frozenset(), '${ x ?? b }'),
     # Rows the table grew while measuring (not in the first probe list).
@@ -230,25 +231,47 @@ def test_grammar_table_size_and_uniqueness() -> None:
     templates = [row.template for row in GRAMMAR_ROWS]
     assert len(templates) == len(set(templates))
     assert len(templates) == 76
-    assert sum(row.flips_in is not None for row in GRAMMAR_ROWS) == 17
+    # All 17 pending rows flipped in 4a (their `today` items deleted).
+    assert sum(row.flips_in is not None for row in GRAMMAR_ROWS) == 0
 
 
-def test_strict_matches_are_discoverable() -> None:
-    """Every strict match lies inside some discovery match.
+_OPEN = re.compile(r"(?<!\$)\$\{")
+_ESCAPE = re.compile(r"\$\$\{(?:[^{}]|\{[^{}]*\})*\}|\$\$\{")
 
-    Tautological by construction today (the permissive grammar extends the strict
-    one); phase 4a REPLACES it with the span-coverage invariant over ``parse()``
-    (Expression/Issue spans cover exactly the unescaped ``${`` that survive escape
-    consumption, and segments reassemble the source losslessly).
+
+def _unescape(gap: str) -> str:
+    return _ESCAPE.sub(lambda m: m.group(0)[1:], gap)
+
+
+def test_parse_covers_every_open_and_reassembles_losslessly() -> None:
+    """Every unescaped ``${`` that survives escape consumption lies in exactly one
+    Expression/Issue span, every span starts at one, and the source is the spans
+    plus the Text segments (re-escaped gaps) — nothing lost, nothing invented.
+
+    The surviving openings are counted independently of the tokenizer: blank out
+    every escape match (left to right) and find the ``${`` left.
     """
-    checked = 0
+    covered = 0
     for row in GRAMMAR_ROWS:
-        discovered = [m.span() for m in _PERMISSIVE_PATTERN.finditer(row.template)]
-        for match in TemplateResolver.TEMPLATE_PATTERN.finditer(row.template):
-            start, end = match.span()
-            assert any(d_start <= start and end <= d_end for d_start, d_end in discovered), row.template
-            checked += 1
-    assert checked == 53
+        source = row.template
+        template = parse(source)
+        tokens = [seg for seg in template.segments if isinstance(seg, (Expression, Issue))]
+        spans = [tok.span for tok in tokens]
+        assert all(a[1] <= b[0] for a, b in itertools.pairwise(spans)), source  # ordered, disjoint
+        blanked = _ESCAPE.sub(lambda m: " " * len(m.group(0)), source)
+        opens = [m.start() for m in _OPEN.finditer(blanked)]
+        assert all(any(start <= at < end for start, end in spans) for at in opens), source
+        assert all(start in opens for start, _ in spans), source
+        # Reassembly: the gaps between spans, unescaped, are exactly the Text segments.
+        edges = [0, *(x for span in spans for x in span), len(source)]
+        gaps = [_unescape(source[edges[i] : edges[i + 1]]) for i in range(0, len(edges), 2)]
+        texts = [seg.text for seg in template.segments if isinstance(seg, Text)]
+        assert [g for g in gaps if g] == texts, source
+        for tok in tokens:
+            expected = f"${{{tok.raw}}}" if isinstance(tok, Expression) else tok.raw
+            assert source[tok.span[0] : tok.span[1]] == expected, source
+        covered += len(opens)
+    assert covered == 82
 
 
 # ---------------------------------------------------------------------------
@@ -275,8 +298,8 @@ LITERALS_OK: tuple[str, ...] = (
     r'"\n"',
 )
 LITERALS_REJECTED: tuple[str, ...] = ("007", "01", "[1,2]", '{"a":1}', '"a??b"', "1.", "truthy", '"unterminated')
-# Match the literal grammar today but do not parse as JSON (the three known mismatches).
-LITERALS_BAD_TODAY: tuple[str, ...] = (r'"\q"', r'"\u12"', '"a\tb"')
+# Look like literals but are not JSON: the grammar rejects them (tightened in 4a).
+LITERALS_BAD_JSON: tuple[str, ...] = (r'"\q"', r'"\u12"', '"a\tb"')
 
 
 def _is_literal(text: str) -> bool:
@@ -291,17 +314,8 @@ def test_literal_grammar_matches_round_trip_json() -> None:
 
 
 def test_literal_grammar_rejects_non_literals() -> None:
-    assert [text for text in LITERALS_REJECTED if _is_literal(text)] == []
-
-
-def test_literal_grammar_bad_escapes_today() -> None:
-    """Pinned: the grammar accepts these; JSON does not (a validates-clean, never-resolves literal)."""
-    assert all(_is_literal(text) and not try_parse_json(text)[0] for text in LITERALS_BAD_TODAY)
-
-
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="4a: the literal grammar tightens to JSON-valid escapes")
-def test_literal_grammar_bad_escapes_after() -> None:
-    assert [text for text in LITERALS_BAD_TODAY if _is_literal(text)] == []
+    assert [text for text in LITERALS_REJECTED + LITERALS_BAD_JSON if _is_literal(text)] == []
+    assert not any(try_parse_json(text)[0] for text in LITERALS_BAD_JSON)
 
 
 # ---------------------------------------------------------------------------

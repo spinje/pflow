@@ -14,7 +14,7 @@ from typing import Any
 
 from pflow.core.json_utils import try_parse_json
 from pflow.core.param_coercion import coerce_param_for_node
-from pflow.core.templates import Resolution, TemplateResolver, resolve
+from pflow.core.templates import CONTAINER_TYPES, LIST_TYPES, Reference, Resolution, TemplateResolver, parse, resolve
 from pflow.core.types import outer_base_type
 
 from .template_errors import (
@@ -154,14 +154,14 @@ def validate_resolved_type(
         actual_type = type(resolved_value).__name__
         return build_type_error_message(param_key, resolved_value, template_str, expected_type, actual_type)
 
-    # Correct type matches
-    if expected_type in ("dict", "object") and isinstance(resolved_value, dict):
+    if expected_type not in CONTAINER_TYPES:
         return None
-    if expected_type in ("list", "array") and isinstance(resolved_value, list):
+    # Correct type matches
+    if isinstance(resolved_value, list if expected_type in LIST_TYPES else dict):
         return None
 
     # dict/list parameters receiving strings — likely failed JSON parse
-    if expected_type in ("dict", "list", "object", "array") and isinstance(resolved_value, str):
+    if isinstance(resolved_value, str):
         trimmed = resolved_value.strip()
         if trimmed and trimmed[0] in ("{", "["):
             return build_json_parse_error_message(param_key, resolved_value, template_str, expected_type, trimmed)
@@ -186,7 +186,7 @@ def resolve_template_parameter(key: str, template: Any, context: dict[str, Any])
         return resolution.value, False, resolution
 
     resolution = resolve(template, context)
-    is_simple = isinstance(template, str) and TemplateResolver.is_simple_template(template)
+    is_simple = isinstance(template, str) and parse(template).is_simple
     return resolution.value, is_simple, resolution
 
 
@@ -201,22 +201,8 @@ def _left_to_absent_nodes(template: Any, resolution: Resolution, context: dict[s
     """
     if not isinstance(template, str) or not resolution.unresolved or resolution.issues:
         return False
-    # Phase-2 stand-in for parse(template).expressions: neutralize the dynamic indices
-    # INSIDE an outer reference (a bracketed `[${x}]` in prose stays an expression) so
-    # TEMPLATE_PATTERN sees the outer references. Each pass removes one index per reference.
-    outer_text, previous = template, None
-    while outer_text != previous:
-        previous, outer_text = outer_text, TemplateResolver._DYNAMIC_INDEX.sub(r"\1[0]", outer_text)
-    operands = [
-        operand
-        for expr in TemplateResolver.TEMPLATE_PATTERN.findall(outer_text)
-        for operand in TemplateResolver.split_coalesce_operands(expr)
-    ]
-    return all(
-        not TemplateResolver.is_literal_operand(operand)
-        and TemplateResolver.extract_root_node_id(operand) not in context
-        for operand in operands
-    )
+    operands = [op for expr in parse(template).expressions for op in expr.operands]
+    return all(isinstance(op, Reference) and op.root not in context for op in operands)
 
 
 def inject_none_for_optional_inputs(
@@ -303,12 +289,9 @@ def resolve_templates(  # noqa: C901
         # Auto-parse JSON strings for structured parameters (only simple templates)
         if is_simple_template and isinstance(resolved_value, str):
             expected_type = template_config.expected_types.get(key)
-            if expected_type in ("dict", "list", "object", "array"):
+            if expected_type in CONTAINER_TYPES:
                 success, parsed = try_parse_json(resolved_value)
-                type_matches = (expected_type in ("dict", "object") and isinstance(parsed, dict)) or (
-                    expected_type in ("list", "array") and isinstance(parsed, list)
-                )
-                if success and type_matches:
+                if success and isinstance(parsed, list if expected_type in LIST_TYPES else dict):
                     resolved_value = parsed
 
         # Reverse: serialize dict/list -> str when expected type is str

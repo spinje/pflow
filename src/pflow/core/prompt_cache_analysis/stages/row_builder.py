@@ -12,7 +12,7 @@ from pflow.core.llm_config import get_default_workflow_model
 from pflow.core.llm_usage import normalize_litellm_usage_tokens
 from pflow.core.prompt_cache import deterministic_serialize
 from pflow.core.prompt_refs import PromptRef, classify_prompt_refs, first_per_item_position
-from pflow.core.templates import TemplateResolver
+from pflow.core.templates import resolve
 
 from ..context import AnalysisContext
 from ..token_estimation import (
@@ -913,20 +913,20 @@ def _resolve_prompt_for_tokenization(prompt: str, ctx: AnalysisContext, node: di
     shared = _build_shared_store_for_refs(refs, ctx)
 
     try:
-        resolved = TemplateResolver.resolve_template(prompt, shared)
+        resolution = resolve(prompt, shared)
     except Exception:
         # Defensive: a malformed template shouldn't take down the analyzer.
         logger.debug("template resolution raised on prompt for node %r", node.get("id"), exc_info=True)
         return prompt, True
 
+    resolved = resolution.value
     if not isinstance(resolved, str):
         # Single-ref templates can return non-string values (e.g. dict).
         from pflow.core.prompt_cache import deterministic_serialize
 
         resolved = deterministic_serialize(resolved)
 
-    has_unresolved = bool(TemplateResolver.TEMPLATE_PATTERN.search(resolved))
-    return resolved, has_unresolved
+    return resolved, bool(resolution.unresolved)
 
 
 def _extract_declared_chunks(cache_block: Any) -> list[str]:

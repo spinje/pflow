@@ -552,3 +552,46 @@ def test_plan_batch_sub_workflow_non_dict_per_item_inputs_emits_warning(tmp_path
     assert len(warnings) == 1
     assert "item 1" in warnings[0].message.lower() or "Batch item 1" in warnings[0].message
     assert "str" in warnings[0].message
+
+
+def test_plan_batch_sub_workflow_unresolved_per_item_inputs_emits_warning(tmp_path) -> None:
+    """An item whose ``inputs:`` leave a template unresolved gets the same honest WARNING
+    (Task 170 R11): strict runtime rejects that item, and the plan must not look clean.
+
+    Mutation: judge only the resolved value's type (drop the ``not resolution.ok`` arm);
+    the item-1 warning disappears.
+    """
+    child_path = tmp_path / "child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+    write_workflow_file(
+        {
+            "inputs": {"value": {"type": "string"}},
+            "nodes": [{"id": "echo", "type": "shell", "cache": True, "params": {"command": "printf ${value}"}}],
+            "edges": [],
+        },
+        child_path,
+    )
+    write_workflow_file(
+        {
+            "inputs": {"items": {"type": "array"}},
+            "nodes": [
+                {
+                    "id": "fanout",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {"value": "${item.v}"}},
+                    "batch": {"items": "${items}"},
+                }
+            ],
+            "edges": [],
+        },
+        parent_path,
+    )
+
+    plan = _plan_workflow_file(parent_path, {"items": [{"v": "ok"}, {"w": "no-v"}]})
+
+    sub_plan = plan.entries[0].sub_plan
+    assert sub_plan is not None
+    warnings = [d.message for d in sub_plan.diagnostics if d.severity.name == "WARNING"]
+    assert warnings == [
+        "Batch item 1: 'inputs:' left ${item.v} unresolved (strict mode). Runtime will reject this item."
+    ]

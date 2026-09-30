@@ -195,7 +195,9 @@ def _build_output_error_summary(failures: list[dict[str, Any]]) -> str:
             if len(refs) > 3:
                 ref_summary += f" (+{len(refs) - 3} more)"
             return f"Unresolved variables in output '{f['output_name']}': {ref_summary}"
-        return f"Unresolved template in output '{f['output_name']}'"
+        # No reference to name (e.g. a malformed source): name the source itself.
+        source = f.get("source_expr")
+        return f"Unresolved template in output '{f['output_name']}'" + (f": {source}" if source else "")
 
     names = ", ".join(f"'{f['output_name']}'" for f in failures)
     return f"Unresolved variables in outputs {names}"

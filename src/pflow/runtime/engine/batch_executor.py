@@ -215,7 +215,15 @@ def _pre_warm_compile_cache(
         if config.template_config:
             from .template_resolution import resolve_templates
 
-            merged_params, _, _ = resolve_templates(config.template_config, temp_shared, config.node_id)
+            try:
+                merged_params, _, _ = resolve_templates(config.template_config, temp_shared, config.node_id)
+            except ValueError as exc:
+                if getattr(exc, "_pflow_template_diagnostic", None) is None:
+                    raise
+                # Item[0]'s strict template miss must not fail the whole batch: skip
+                # the pre-warm so the per-item loop applies `error_handling` to it.
+                logger.debug(f"Skipped compile pre-warm for '{config.node_id}': item[0] left a template unresolved")
+                return
             node.params = merged_params
 
         # Run prep() to populate _loaded_ir_cache. Pre-warm's job is to do

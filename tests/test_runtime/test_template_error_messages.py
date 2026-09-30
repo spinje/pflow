@@ -455,9 +455,52 @@ class TestDiagnosticClassifiesTheResolutionSet:
         assert diag.message == "Unresolved variables in parameter 'p': ${zeta.v}, ${alpha.v}"
         assert [ref["var"] for ref in diag.context["unresolved_references"]] == ["zeta.v", "alpha.v"]
 
-    def test_rewritten_dynamic_index_is_named_as_a_path_error(self):
-        """The outer root ran, so the rewritten reference is a field miss on it — not an absent inner node."""
+    def test_dynamic_index_miss_is_named_as_a_path_error(self):
+        """The outer root ran, so the author's reference is a field miss on it — not an absent inner node."""
         shared = {"items": [{"x": 1}], "i": 0}
         diag = build_template_error_diagnostic("p", "${items[${i}].nope}", shared)
         refs = diag.context["unresolved_references"]
-        assert [(ref["var"], ref["status"]) for ref in refs] == [("items[0].nope", "path_error")]
+        assert [(ref["var"], ref["status"]) for ref in refs] == [("items[${i}].nope", "path_error")]
+
+
+class TestDynamicIndexDiagnostics:
+    """A dynamic index is one Reference: the diagnostic names it whole (Task 170 delta 3)."""
+
+    def test_unresolved_inner_is_the_cause_and_is_named(self):
+        shared = {"items": [{"x": 1}]}
+        diag = build_template_error_diagnostic("p", "${items[${ghost.i}].x}", shared)
+        refs = diag.context["unresolved_references"]
+        assert [(ref["var"], ref["status"]) for ref in refs] == [("ghost.i", "absent")]
+
+    def test_failed_outer_root_is_failed_not_absent(self):
+        """A FAILED node's root is gone from the live namespace too; the status comes
+        from the node state, never from the walk (failed-node invariant)."""
+        shared = _shared_with_failed_primary()
+        shared["i"] = 0
+        diag = build_template_error_diagnostic("p", "${primary.lines[${i}]}", shared)
+        refs = diag.context["unresolved_references"]
+        assert [(ref["var"], ref["status"]) for ref in refs] == [("primary.lines[${i}]", "failed")]
+
+    def test_field_correction_keeps_the_inner_reference_whole(self):
+        """The first field after the root is corrected; the inner `${item.i}` is untouched
+        (a lexical split used to tear it into `i}]`)."""
+        shared = {"res": {"data": [{"x": 1}]}, "item": {"i": 0}}
+        diag = build_template_error_diagnostic("p", "${res.dta[${item.i}].x}", shared)
+        [ref] = diag.context["unresolved_references"]
+        assert ref["did_you_mean"] == "res.data[${item.i}].x"
+        assert "'i}]'" not in format_diagnostic(diag)
+
+    def test_field_correction_after_a_root_index_keeps_the_index(self):
+        # The correction splices at the first field's offset, past the root's `[${i}]`.
+        shared = {"cfg": {"name": "n"}, "i": 0}
+        diag = build_template_error_diagnostic("p", "${cfg[${i}].nme}", shared)
+        [ref] = diag.context["unresolved_references"]
+        assert ref["did_you_mean"] == "cfg[${i}].name"
+
+    def test_coalesce_fix_line_skips_a_dotted_root_index(self):
+        """The paste-able fix names the peer's field, not a torn `j}].stdout`."""
+        shared = {**_shared_with_failed_primary(), "i": {"j": 0}}
+        diag = build_template_error_diagnostic("p", "${primary[${i.j}].stdout}", shared)
+        rendered = format_diagnostic(diag)
+        assert "${primary[${i.j}].stdout ?? fallback.stdout}" in rendered
+        assert "j}]" not in rendered.replace("${i.j}]", "")

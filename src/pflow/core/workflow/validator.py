@@ -12,7 +12,7 @@ from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity, deduplicate_diagnostics, format_child_provenance
 from pflow.core.exceptions import SchemaValidationError, WorkflowValidationError
-from pflow.core.templates import TemplateResolver
+from pflow.core.templates import TemplateResolver, parse
 from pflow.registry import Registry
 
 logger = logging.getLogger(__name__)
@@ -1732,16 +1732,13 @@ class WorkflowValidator:
     @staticmethod
     def _params_reference_alias(value: Any, alias: str) -> bool:
         """Return True iff any ``${<alias>...}`` template reference appears
-        anywhere within ``value`` (strings, dicts, lists). Uses the template
-        extractor's own parse of variable roots rather than a substring needle
-        so single-character aliases (``as: i``) don't match unrelated variables
-        like ``${input.x}``.
+        anywhere within ``value`` (strings, dicts, lists) — a dynamic index's
+        inner reference included (``${paths[${item.i}]}``). Uses parsed reference
+        roots rather than a substring needle so single-character aliases
+        (``as: i``) don't match unrelated variables like ``${input.x}``.
         """
         if isinstance(value, str):
-            for var in TemplateResolver.extract_variables(value):
-                if TemplateResolver.extract_root_node_id(var) == alias:
-                    return True
-            return False
+            return any(ref.root == alias for ref in parse(value).references)
         if isinstance(value, dict):
             return any(WorkflowValidator._params_reference_alias(v, alias) for v in value.values())
         if isinstance(value, list):

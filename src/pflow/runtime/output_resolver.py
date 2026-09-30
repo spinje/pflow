@@ -11,15 +11,14 @@ explicitly opted into fallthrough behavior.
 
 from typing import Any
 
-from pflow.core.templates import Resolution, TemplateResolver, resolve
+from pflow.core.templates import Resolution, parse, resolve
 
 
 def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> Any | None:
     """Resolve a source expression to get output value.
 
-    Handles multiple source expression formats:
+    Handles two source expression formats:
     - ${node.output} - Template format with brackets
-    - $node.output - Dollar prefix format
     - node.output - Plain format
 
     Supports the full template syntax including coalesce (??), nested index
@@ -42,8 +41,6 @@ def _normalize_source(source_expr: str) -> str:
     """Normalize a source expression to ${...} template format."""
     if source_expr.startswith("${"):
         return source_expr
-    if source_expr.startswith("$"):
-        return "${" + source_expr[1:] + "}"
     return "${" + source_expr + "}"
 
 
@@ -86,8 +83,8 @@ def _is_all_absent_coalesce(normalized: str, resolution: Resolution, shared_stor
 
     Non-coalesce templates always return False (caller records a failure).
     """
-    inner = TemplateResolver.extract_simple_template_var(normalized)
-    if not (inner and TemplateResolver.is_coalesce_expression(inner)):
+    template = parse(normalized)
+    if not (template.is_simple and len(template.expressions[0].operands) > 1):
         return False
 
     from pflow.runtime.engine.template_errors import classify_unresolved_references

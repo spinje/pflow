@@ -571,10 +571,10 @@ class TestResolutionChannels:
         assert resolve("${x}", {"x": None}) == Resolution(None)
         assert resolve("[${x}]", {"x": None}) == Resolution("[]")
 
-    def test_rewritten_dynamic_index_is_unresolved(self):
-        """Delta 1: an int inner index with a missing outer path is reported as rewritten."""
+    def test_dynamic_index_miss_is_the_authors_reference(self):
+        """Delta 3: an int inner index with a missing outer path leaves the whole reference."""
         result = resolve("${a[${i}].x}", {"i": 0, "a": [{"y": "v"}]})
-        assert result == Resolution("${a[0].x}", unresolved=frozenset({"a[0].x"}))
+        assert result == Resolution("${a[${i}].x}", unresolved=frozenset({"a[${i}].x"}))
 
     def test_issue_is_its_own_channel(self):
         """An unescaped `${` that opens no template is an Issue, never an unresolved expression."""

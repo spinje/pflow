@@ -51,12 +51,11 @@ class TestNestedIndexTemplates:
         result = TemplateResolver.resolve_template("${results[0].val}", context)
         assert result == "first"
 
-    def test_non_integer_index_partial_resolve(self):
-        """Non-integer index produces partial resolution (documents behavior)."""
+    def test_non_integer_index_leaves_template_unchanged(self):
+        """A non-int inner index makes the whole reference unresolved (Task 170 delta 3)."""
         context = {"item": {"index": "str"}, "results": ["a", "b", "c"]}
         result = TemplateResolver.resolve_template("${results[${item.index}]}", context)
-        # Inner template resolves, outer can't - produces malformed but debuggable output
-        assert result == "${results[str]}"
+        assert result == "${results[${item.index}]}"
 
     def test_nested_with_item_field(self):
         """${results[${item.draft_index}]} - custom field index (bug fix verification)."""

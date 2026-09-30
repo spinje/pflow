@@ -48,7 +48,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
-from pflow.core.templates import TemplateResolver
+from pflow.core.templates import TemplateResolver, parse, resolve
 
 if TYPE_CHECKING:
     from .context import AnalysisContext
@@ -404,15 +404,16 @@ def _tokenize_prompt_region_with_resolver(
 
     shared = build_shared_store_for_refs(refs, ctx, use_projection_resolver=use_projection_resolver)
     try:
-        resolved = TemplateResolver.resolve_template(region, shared)
+        resolution = resolve(region, shared)
     except (AttributeError, KeyError, TypeError, ValueError):
-        logger.debug("tokenize_prompt_region: resolve_template raised", exc_info=True)
+        logger.debug("tokenize_prompt_region: template resolution raised", exc_info=True)
         return None
 
+    if resolution.unresolved:
+        return None
+    resolved = resolution.value
     if not isinstance(resolved, str):
         resolved = deterministic_serialize(resolved)
-    if TemplateResolver.TEMPLATE_PATTERN.search(resolved):
-        return None
     return estimate_tokens(model, resolved)[0]
 
 
@@ -436,20 +437,22 @@ def _tokenize_prompt_region_lower_bound_with_resolver(
 
     shared = build_shared_store_for_refs(refs, ctx, use_projection_resolver=use_projection_resolver)
     try:
-        resolved = TemplateResolver.resolve_template(region, shared)
+        resolution = resolve(region, shared)
     except (AttributeError, KeyError, TypeError, ValueError):
-        logger.debug("tokenize_prompt_region_lower_bound: resolve_template raised", exc_info=True)
+        logger.debug("tokenize_prompt_region_lower_bound: template resolution raised", exc_info=True)
         return 0, tuple(refs)
 
+    resolved = resolution.value
     if not isinstance(resolved, str):
         resolved = deterministic_serialize(resolved)
-
-    unresolved = tuple(match.group(1) for match in TemplateResolver.TEMPLATE_PATTERN.finditer(resolved))
-    if not unresolved:
+    if not resolution.unresolved:
         return estimate_tokens(model, resolved)[0], ()
 
-    stripped = TemplateResolver.TEMPLATE_PATTERN.sub("", resolved)
-    return estimate_tokens(model, stripped)[0], unresolved
+    # The unresolved expressions in author order; strip their literal text from the value.
+    unresolved = tuple(e.raw for e in parse(region).expressions if e.raw in resolution.unresolved)
+    for expr in resolution.unresolved:
+        resolved = resolved.replace(f"${{{expr}}}", "")
+    return estimate_tokens(model, resolved)[0], unresolved
 
 
 def extract_unique_refs(prompt: str) -> list[str]:
