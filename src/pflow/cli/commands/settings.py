@@ -32,22 +32,22 @@ class SettingsGroup(click.Group):
 def settings() -> None:
     """Manage pflow settings — credentials, LLM models, and node filtering.
 
-      \b
-      Credentials:
-        pflow settings set-env API_TOKEN "sk-..."    Store API key
-        pflow settings set-env GITHUB_TOKEN "ghp-..."
-        pflow settings show                          Verify stored values
-      \b
-      LLM provider keys (via environment variables or pflow settings):
-        export ANTHROPIC_API_KEY=sk-ant-...
-        export GEMINI_API_KEY=AI...
-        pflow settings set-env OPENAI_API_KEY "sk-..."
-        pflow settings llm providers                 # Full list of LLM providers and their env vars
-    pflow settings llm models                    # Models you can use with your keys
-      \b
-      Stored credentials are available as fallbacks for declared workflow inputs.
-      Precedence: CLI params > shell env > settings env > workflow defaults.
-      Credentials must still be declared as inputs — they are not injected implicitly.
+    \b
+    Credentials:
+      pflow settings set-env API_TOKEN "sk-..."    Store API key
+      pflow settings set-env GITHUB_TOKEN "ghp-..."
+      pflow settings show                          Verify stored values
+    \b
+    LLM provider keys (via environment variables or pflow settings):
+      export ANTHROPIC_API_KEY=sk-ant-...
+      export GEMINI_API_KEY=AI...
+      pflow settings set-env OPENAI_API_KEY "sk-..."
+      pflow settings llm providers                 # Full list of LLM providers and their env vars
+      pflow settings llm models                    # Models you can use with your keys
+    \b
+    Stored credentials are available as fallbacks for declared workflow inputs.
+    Precedence: CLI params > shell env > settings env > workflow defaults.
+    Credentials must still be declared as inputs — they are not injected implicitly.
     """
     pass
 

@@ -1238,6 +1238,14 @@ class TestLLMModelsCommand:
         assert result.stdout == json.dumps(expected, indent=2) + "\n"
         assert result.stderr == ""
 
+    def test_settings_help_lists_the_command_beside_providers(self, runner: CliRunner) -> None:
+        lines = runner.invoke(settings, ["--help"]).output.splitlines()
+        providers = next(line for line in lines if "pflow settings llm providers" in line)
+        models = next(line for line in lines if "pflow settings llm models" in line)
+        assert lines.index(models) == lines.index(providers) + 1
+        assert models.index("pflow") == providers.index("pflow")
+        assert models.index("#") == providers.index("#")
+
     def test_offline_label_names_the_bundled_version(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
         from importlib.metadata import version
 

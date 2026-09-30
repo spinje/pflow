@@ -363,7 +363,7 @@ pflow settings llm models [KEYWORDS...] [--output-format text|json]
 - **A provider name** (e.g. `anthropic`, `bedrock`): that provider's complete list, even without a key. The header shows the env var to set.
 - **Any other keyword:** filters model ids across your configured providers (or within a named provider). All keywords must match; matching ignores case.
 
-Models come from LiteLLM's model catalog, limited to ones an LLM node can call: chat and responses models, without pricing-only or deprecated entries. The list is fetched live and falls back to the snapshot bundled with LiteLLM when offline; the first line says which. The order is mechanical (by name, higher version numbers first) — not a ranking. Any LiteLLM model works as `provider/model` even if it isn't listed.
+Models come from LiteLLM's model catalog, limited to ones an LLM node can call: chat and responses models, without pricing-only or deprecated entries. The list is fetched live and falls back to the snapshot bundled with LiteLLM when offline; the first line says which. The order is mechanical (by name, higher version numbers first) — not a ranking. Any LiteLLM model works as `provider/model` even if it isn't listed. The catalog can also lag behind a provider: an id it still lists may already be retired (the run then fails with `Unknown model` and names a working one).
 
 **Examples:**
 

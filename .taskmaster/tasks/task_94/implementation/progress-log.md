@@ -184,3 +184,26 @@
   EXECUTED, reverted).
 - Verified: `make test-all-local` 9430 passed, 2 skipped — twice.
 - Next: falsifier result, then close-out.
+
+## [2026-09-30] task-planner (implementing) — completion gate: falsifier (direct, Opus, run last on the merged state)
+- Result: 14 of 16 promises HELD (keywords, streams/exit codes text+JSON, live/offline label across
+  ten upstream states incl. timeout, cap-only-overview + every printed rung runs, 2,076 listed ids
+  route with their prefix, validator accepts live-listed ids, pointer on all three describe
+  surfaces with zero catalog requests incl. a real `pflow mcp serve`, `providers` diff = intended
+  only, show/set-env/list-env unchanged vs main, status labels, local/zero-model guidance, groups,
+  no network elsewhere).
+- Dispositions:
+  - W2 `pflow settings --help` misaligned (my help-line insert had the wrong indent; ruff then
+    re-indented the whole docstring) — FIXED: main's docstring restored + the line at the
+    `providers` depth; regression test asserts the two lines align (fails on the pre-fix file,
+    EXECUTED).
+  - W1 listed gemini ids fail at run time (`learnlm-1.5-pro-experimental`, `gemini-gemma-2-27b-it`,
+    `gemini-exp-1206` — retired upstream, still in the catalog with no `deprecation_date`) —
+    ACCEPTED as a named limitation: no catalog signal separates them; filtering by name is
+    curation. Documented in `settings.mdx` and the plan's Known limitations; the failure is loud
+    and pflow's error names a working id. Reported in the handback.
+  - S1 `… | head -1` exits 1 — CLI-wide SIGPIPE handling (`main.py:_setup_signals`), not this
+    diff; follow-up candidate.
+  - S2 did-you-mean misses typos / can mislead on short words; S3 an exact provider name always
+    selects (spec rule) — SKIPPED (take-or-leave; spec-settled).
+- Next: final gates, spec Status, task review, PR.
