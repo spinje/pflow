@@ -45,7 +45,7 @@ from pflow.runtime.node_state import (
     get_node_failure,
     mark_node_failed,
 )
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.runtime.template_resolver import TemplateResolver, resolve
 
 from .api_warning_detector import detect_api_warning
 from .batch_executor import _collect_batch_trace, execute_batch
@@ -67,7 +67,7 @@ from .instrumentation import (
 from .loop_control import evaluate_loop_condition, is_carry_iteration, loop_runtime_scope, resolve_loop_cap
 from .namespaced_store import NamespacedSharedStore
 from .plan_node import NodePlan, plan_node
-from .template_resolution import contains_unresolved_template, resolve_templates
+from .template_resolution import resolve_templates
 from .types import CompiledWorkflow, NodeConfig
 
 # Map node class names to failure categories for step 17.5 (error-action
@@ -242,7 +242,7 @@ def _assert_carried_inputs_resolved(config: NodeConfig, plan: NodePlan, shared: 
     for key, template in carry.items():
         diag = _diagnose_carry_ref(template, node_id, latest)
         if resolved_inputs is not None:
-            unresolved = key not in resolved_inputs or contains_unresolved_template(resolved_inputs[key], template)
+            unresolved = key not in resolved_inputs or _plan_left_unresolved(plan, template)
         else:
             # strict: plan_node raised before resolving — only flag a self-ref whose
             # output the body demonstrably omitted (so an unrelated template error
@@ -256,6 +256,21 @@ def _assert_carried_inputs_resolved(config: NodeConfig, plan: NodePlan, shared: 
                 # name no specific field; list the loop node's top-level outputs.
                 missing_path, key_available, parent_prefix = None, available, ""
             raise _carry_unresolved_error(node_id, key, template, missing_path, key_available, parent_prefix)
+
+
+def _plan_left_unresolved(plan: NodePlan, template: str) -> bool:
+    """Whether resolution left the carry ``template`` literal (permissive: recorded, not raised).
+
+    Reads the ``inputs`` template-error entry's unresolved set — the resolver's own
+    verdict, so a carried value that merely CONTAINS ``${…}`` text is not flagged.
+    A carry value is a simple self-reference (the validator enforces it), so its
+    expression text is the one to look for.
+    """
+    var = TemplateResolver.extract_simple_template_var(template)
+    return any(
+        entry.get("unresolved") == ["inputs"] and var in entry["unresolved_expressions"]
+        for entry in plan.template_errors
+    )
 
 
 def build_prompt_cache_dict(
@@ -394,12 +409,12 @@ def _resolve_template_string(raw: Any, shared: dict[str, Any]) -> str | None:
     if not isinstance(raw, str):
         return str(raw) if raw is not None else None
     try:
-        resolved = TemplateResolver.resolve_template(raw, shared)
+        resolution = resolve(raw, shared)
     except (AttributeError, KeyError, TypeError, ValueError):
         return None
-    if not isinstance(resolved, str) or TemplateResolver.TEMPLATE_PATTERN.search(resolved):
+    if not resolution.ok or not isinstance(resolution.value, str):
         return None
-    return resolved
+    return resolution.value
 
 
 def parse_only_path(only_node: str | None) -> tuple[str | None, str | None]:

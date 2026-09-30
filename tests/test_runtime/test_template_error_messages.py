@@ -443,3 +443,21 @@ class TestPermissiveModeWarningRendering:
         assert "\n" not in rendered
         assert "[fetch]" in rendered
         assert "In parameter" not in rendered
+
+
+class TestDiagnosticClassifiesTheResolutionSet:
+    """The diagnostic names exactly what resolution left literal, in the author's order (#630)."""
+
+    def test_names_only_unresolved_expressions_in_source_order(self):
+        # `${a ?? b}` resolved (b ran), so its absent `a` operand is not an unresolved reference.
+        shared = {"b": {"v": 1}, "mid": {"x": 2}}
+        diag = build_template_error_diagnostic("p", "${zeta.v} ${a ?? b} ${mid.x} ${alpha.v}", shared)
+        assert diag.message == "Unresolved variables in parameter 'p': ${zeta.v}, ${alpha.v}"
+        assert [ref["var"] for ref in diag.context["unresolved_references"]] == ["zeta.v", "alpha.v"]
+
+    def test_rewritten_dynamic_index_is_named_as_a_path_error(self):
+        """The outer root ran, so the rewritten reference is a field miss on it — not an absent inner node."""
+        shared = {"items": [{"x": 1}], "i": 0}
+        diag = build_template_error_diagnostic("p", "${items[${i}].nope}", shared)
+        refs = diag.context["unresolved_references"]
+        assert [(ref["var"], ref["status"]) for ref in refs] == [("items[0].nope", "path_error")]

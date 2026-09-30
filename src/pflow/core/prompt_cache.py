@@ -143,37 +143,33 @@ def _resolve_chunk_value(chunk: CacheChunkIR, shared: dict[str, Any]) -> ChunkRe
 
     1. **Branch absent**: the upstream node has ``NodeStatus.ABSENT`` (e.g.
        conditional branch not taken). Detected before calling resolve.
-    2. **Permissive-mode echo**: ``TemplateResolver.resolve_template`` does
-       NOT raise on a missing var — it returns the literal ``"${var_expr}"``
-       string verbatim (this is the resolver's permissive default, distinct
-       from ``resolve_templates`` plural which raises in strict mode). If
-       the resolver echoes the input, the var didn't resolve; treat that as
-       absent so the filter contract holds. Without this guard the literal
-       would get folded into the deterministic serialization and silently
-       produce a stable hash with the placeholder string in it — and the
-       prep-side render would do the same — creating false byte-equivalence
+    2. **Left literal**: ``resolve`` does NOT raise on a missing var — it
+       leaves ``"${var_expr}"`` literal and reports it (``not resolution.ok``;
+       distinct from ``resolve_templates`` plural which raises in strict mode).
+       Treat that as absent so the filter contract holds. Without this guard
+       the literal would get folded into the deterministic serialization and
+       silently produce a stable hash with the placeholder string in it — and
+       the prep-side render would do the same — creating false byte-equivalence
        across structurally different runs.
 
     Returns the deterministic string representation otherwise. Cache
     chunks are validated to reference declared inputs/step outputs (B2.3),
     so for valid workflows the absent branches are: explicit ``NodeStatus.ABSENT``
     upstream OR a transient state where the value isn't yet seeded (the
-    permissive echo case).
+    left-literal case).
     """
     from pflow.runtime.node_state import NodeStatus, get_node_status
-    from pflow.runtime.template_resolver import TemplateResolver
+    from pflow.runtime.template_resolver import TemplateResolver, resolve
 
     upstream_node = TemplateResolver.extract_root_node_id(chunk.var_expr)
     if get_node_status(shared, upstream_node) == NodeStatus.ABSENT:
         return _CHUNK_ABSENT
-    template = "${" + chunk.var_expr + "}"
-    resolved = TemplateResolver.resolve_template(template, shared)
-    # Permissive-mode echo: resolver returned the unchanged template string
-    # because the var didn't resolve. Collapse to the absent sentinel so the
-    # filter symmetry between hash and prep sites holds.
-    if isinstance(resolved, str) and resolved == template:
+    resolution = resolve("${" + chunk.var_expr + "}", shared)
+    # The var didn't resolve (the resolver left it literal). Collapse to the
+    # absent sentinel so the filter symmetry between hash and prep sites holds.
+    if not resolution.ok:
         return _CHUNK_ABSENT
-    return _deterministic_serialize(resolved)
+    return _deterministic_serialize(resolution.value)
 
 
 # --- Per-provider cache_control marker translation -------------------------

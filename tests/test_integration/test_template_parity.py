@@ -924,24 +924,16 @@ PARAM_ROWS: tuple[Row, ...] = (
         "${p.out_str} $${p.out_str}",
         now(Ok()),
         # Today's report names no reference at all — the generic #630 message.
-        flips(
-            Unresolved(("Unresolved template in parameter 'sink_any'",)),
-            Resolves("S ${p.out_str}"),
-            "2",
-            "delta 1 (#630): strict mode consumes the resolver's unresolved set",
-        ),
+        # Flipped in phase 2 — delta 1 (#630): strict mode consumes the resolver's unresolved set
+        now(Resolves("S ${p.out_str}")),
     ),
     Row(
         "upstream_text_names_referenced_var_630",
         "param",
         "${p.out_str} ${b}",
         now(Ok()),
-        flips(
-            Unresolved(("Unresolved template in parameter 'sink_any'",)),
-            Resolves("has ${b} B"),
-            "2",
-            "delta 1 (#630): a resolved value's `${b}` text is not an unresolved reference",
-        ),
+        # Flipped in phase 2 — delta 1 (#630): a resolved value's `${b}` text is not an unresolved reference
+        now(Resolves("has ${b} B")),
         declared_inputs=B_INPUT,
         payload=with_payload(out_str="has ${b}"),
     ),
@@ -1450,12 +1442,8 @@ PREWARM_ROWS: tuple[Row, ...] = (
         "prewarm_system",
         "Use $${x} literally",
         now(Ok()),
-        flips(
-            Absent(),
-            Resolves("Use ${x} literally"),
-            "2",
-            "delta 1: the warm-up stops re-scanning its resolved `system`",
-        ),
+        # Flipped in phase 2 — delta 1: the warm-up stops re-scanning its resolved `system`
+        now(Resolves("Use ${x} literally")),
         end_to_end=Resolves("Use ${x} literally"),
     ),
     Row(
@@ -1685,12 +1673,8 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         "param",
         "${p.out_arr[${idx}].nope}",
         now(Ok()),
-        flips(
-            Resolves("${p.out_arr[0].nope}"),
-            Unresolved(("p.out_arr[",)),
-            "2",
-            "delta 1/3: the rewritten reference is in the unresolved set",
-        ),
+        # Flipped in phase 2 — delta 1/3: the rewritten reference is in the unresolved set
+        now(Unresolved(("p.out_arr[",))),
         declared_inputs=IDX,
         extra_params=USE_IDX,
     ),
@@ -1699,27 +1683,21 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         "param",
         "${p.out_arr[${idx}].nope}",
         now(Ok()),
-        flips(
-            Resolves("${p.out_arr[0].nope}"),
-            Unresolved(("p.out_arr[",)),
-            "2",
-            "delta 1/3: permissive mode records the rewritten reference as a template error",
-        ),
+        # Flipped in phase 2 — delta 1/3: permissive mode records the rewritten reference as a template error
+        now(Unresolved(("p.out_arr[",))),
         declared_inputs=IDX,
         extra_params=USE_IDX,
         mode="permissive",
+        # Permissive: the recorded error is a warning — the run completes with the literal.
+        end_to_end=Resolves("${p.out_arr[0].nope}"),
     ),
     Row(
         "dyn_strict_out_of_range",
         "param",
         "${p.out_arr[${idx}].x}",
         now(Ok()),
-        flips(
-            Resolves("${p.out_arr[5].x}"),
-            Unresolved(("p.out_arr[",)),
-            "2",
-            "delta 1/3: the rewritten reference is in the unresolved set",
-        ),
+        # Flipped in phase 2 — delta 1/3: the rewritten reference is in the unresolved set
+        now(Unresolved(("p.out_arr[",))),
         declared_inputs=IDX,
         extra_params=USE_IDX,
         params={"idx": 5},
@@ -1760,14 +1738,15 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         "batch_param",
         "${p.out_arr[${item.i}].x}",
         now(Ok()),
-        flips(
-            Resolves(["${p.out_arr[5].x}"]),
-            Unresolved(("p.out_arr[${item.i}].x",), forbid=("'i}]'",)),
-            "4a",
-            "delta 3 + the field-segment renderer must not tear the inner reference",
-        ),
+        # Flipped early in phase 2 (row said 4a; §1 puts OOB in 2) — delta 3 + the field-segment
+        # renderer must not tear the inner reference: an out-of-range int index is the rewritten
+        # reference, now in the unresolved set.
+        now(Unresolved(("p.out_arr[${item.i}].x",), forbid=("'i}]'",))),
         batch_items="${p.out.items}",
         payload=with_payload(out={**P["out"], "items": [{"i": 5}]}),
+        # Phase 2: the run's error line names the REWRITTEN reference (the unresolved set holds
+        # it); 4a names the author's `p.out_arr[${item.i}].x` and drops this override.
+        end_to_end=Unresolved(("p.out_arr[5].x",), forbid=("'i}]'",)),
     ),
     Row(
         "dyn_coalesce_non_int_inner",
@@ -1792,7 +1771,9 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         "param",
         "${g.out_arr[${idx}].x}",
         now(Ok()),
-        flips(Resolves("${g.out_arr[0].x}"), Resolves(None), "4a", "delta 3: Optional inputs get None"),
+        # Flipped early in phase 2 (row said 4a) — delta 3: Optional inputs get None. Injection
+        # reads the OUTER root (plan §0.2), so the present inner index no longer blocks it.
+        now(Resolves(None)),
         consumer="code:Optional[str]",
         ghost=True,
         declared_inputs=IDX,
@@ -1803,12 +1784,8 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         "output_source",
         "${p.out_arr[${idx}].nope}",
         now(Ok()),
-        flips(
-            Resolves("${p.out_arr[0].nope}"),
-            Raises("OutputResolutionError", "p.out_arr["),
-            "2",
-            "ledger: a non-coalesce unresolved declared output is an error (handback Q1 ruling)",
-        ),
+        # Flipped in phase 2 — ledger: a non-coalesce unresolved declared output is an error (handback Q1 ruling)
+        now(Raises("OutputResolutionError", "p.out_arr[")),
         declared_inputs=IDX,
         extra_params=USE_IDX,
     ),
@@ -2142,26 +2119,20 @@ class TestHistoricalFixtures:
         )
         return build_ir(row, tmp_path)
 
-    def test_630_escape_beside_same_reference_today(self, tmp_path: Path) -> None:
-        """#630 repro 1 (``echo "${greeting} | $${greeting}"``) through a code node."""
-        result = _run(self._issue_630_ir(tmp_path, "${b} | $${b}", "S"))
-        assert not result.success
-        assert any("Unresolved template in parameter 'inputs'" in d.message for d in result.errors)
-
-    @_xfail("2", "delta 1 (#630): the resolver's unresolved set is the judge")
     def test_630_escape_beside_same_reference_after(self, tmp_path: Path) -> None:
+        """#630 repro 1 (``echo "${greeting} | $${greeting}"``) through a code node.
+
+        Delta 1 (#630): the resolver's unresolved set is the judge.
+        """
         result = _run(self._issue_630_ir(tmp_path, "${b} | $${b}", "S"))
         assert result.success, [d.message for d in result.errors]
         assert result.shared_after["s"]["result"] == "B | ${b}"
 
-    def test_630_upstream_value_containing_reference_text_today(self, tmp_path: Path) -> None:
-        """#630 repro 2 (``echo "${src.stdout} ${b}"`` with ``${b}`` in the upstream value)."""
-        result = _run(self._issue_630_ir(tmp_path, "${p.out_str} ${b}", "src says ${b}"))
-        assert not result.success
-        assert any("Unresolved template in parameter 'inputs'" in d.message for d in result.errors)
-
-    @_xfail("2", "delta 1 (#630): a resolved value's text is never re-scanned")
     def test_630_upstream_value_containing_reference_text_after(self, tmp_path: Path) -> None:
+        """#630 repro 2 (``echo "${src.stdout} ${b}"`` with ``${b}`` in the upstream value).
+
+        Delta 1 (#630): a resolved value's text is never re-scanned.
+        """
         result = _run(self._issue_630_ir(tmp_path, "${p.out_str} ${b}", "src says ${b}"))
         assert result.success, [d.message for d in result.errors]
         assert result.shared_after["s"]["result"] == "src says ${b} B"

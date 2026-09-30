@@ -1,6 +1,6 @@
 """Tests for template variable resolution with path support."""
 
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.runtime.template_resolver import Resolution, TemplateResolver, resolve
 
 
 class TestTemplateDetection:
@@ -535,3 +535,71 @@ class TestEscapeAndSinglePassInterpolation:
         assert TemplateResolver.has_templates({"k": ["$${A}"]})
         assert not TemplateResolver.has_templates("echo $$")
         assert TemplateResolver.extract_variables("$${HOME} ${name}") == {"name"}
+
+
+class TestResolutionChannels:
+    """``resolve()`` reports exactly what it left literal — the engine's single judge (#630).
+
+    ``unresolved`` holds the text inside ``${…}`` of each expression that stayed literal;
+    ``issues`` holds each unescaped ``${`` that opens no template. Text that came from a
+    resolved value is in neither.
+    """
+
+    def test_fully_resolved_is_ok(self):
+        assert resolve("Hi ${name}", {"name": "Al"}) == Resolution("Hi Al")
+        assert resolve("Hi ${name}", {"name": "Al"}).ok
+
+    def test_escape_is_not_unresolved_beside_the_same_reference(self):
+        """#630 repro 1: `$${x}` is literal text, so only the real `${x}` is judged."""
+        assert resolve("${x} $${x}", {"x": "hi"}) == Resolution("hi ${x}")
+        assert resolve("${x} $${x}", {}) == Resolution("${x} ${x}", unresolved=frozenset({"x"}))
+
+    def test_resolved_value_containing_template_text_is_not_unresolved(self):
+        """#630 repro 2 and the MCP `${OLD_VAR}` case: resolved data is never re-judged."""
+        context = {"src": {"stdout": "has ${b}"}, "b": "B", "mcp": {"result": {"message": "uses ${OLD_VAR}"}}}
+        assert resolve("${src.stdout} ${b}", context) == Resolution("has ${b} B")
+        assert resolve("${mcp.result}", context) == Resolution({"message": "uses ${OLD_VAR}"})
+
+    def test_partial_resolution_names_only_the_miss(self):
+        result = resolve("Hello ${name}, you have ${count} items", {"name": "Alice"})
+        assert result == Resolution("Hello Alice, you have ${count} items", unresolved=frozenset({"count"}))
+
+    def test_coalesce_miss_reports_the_whole_expression(self):
+        assert resolve("${a ?? b.x}", {"b": {}}).unresolved == {"a ?? b.x"}
+
+    def test_found_none_is_resolved_not_missing(self):
+        assert resolve("${x}", {"x": None}) == Resolution(None)
+        assert resolve("[${x}]", {"x": None}) == Resolution("[]")
+
+    def test_rewritten_dynamic_index_is_unresolved(self):
+        """Delta 1: an int inner index with a missing outer path is reported as rewritten."""
+        result = resolve("${a[${i}].x}", {"i": 0, "a": [{"y": "v"}]})
+        assert result == Resolution("${a[0].x}", unresolved=frozenset({"a[0].x"}))
+
+    def test_issue_is_its_own_channel(self):
+        """An unescaped `${` that opens no template is an Issue, never an unresolved expression."""
+        context = {"src": {"result": {"items": ["a"]}}}
+        result = resolve("${src.result.items.0}", context)
+        assert result == Resolution("${src.result.items.0}", issues=frozenset({"${src.result.items.0}"}))
+        assert not result.ok
+        # an unclosed opening runs to the end of the string
+        assert resolve("${abc", {}).issues == {"${abc"}
+
+    def test_nested_containers_aggregate_both_channels(self):
+        value = {"a": ["${m1}", {"b": "x ${m2}"}], "c": "${ok}", "d": {"e": "${bad.0}"}, "n": 3}
+        result = resolve(value, {"ok": 1})
+        assert result.value == {"a": ["${m1}", {"b": "x ${m2}"}], "c": 1, "d": {"e": "${bad.0}"}, "n": 3}
+        assert result.unresolved == {"m1", "m2"}
+        assert result.issues == {"${bad.0}"}
+        assert not result.ok
+
+    def test_auto_parse_flag(self):
+        """Only ``auto_parse=True`` parses a simple template's JSON-container string."""
+        context = {"s": '{"a": 1}', "n": "1458059302022549698"}
+        assert resolve("${s}", context).value == '{"a": 1}'
+        assert resolve("${s}", context, auto_parse=True).value == {"a": 1}
+        assert resolve(["${s}"], context).value == ['{"a": 1}']
+        assert resolve(["${s}"], context, auto_parse=True).value == [{"a": 1}]
+        # complex templates and numeric strings never parse
+        assert resolve("x ${s}", context, auto_parse=True).value == 'x {"a": 1}'
+        assert resolve("${n}", context, auto_parse=True).value == "1458059302022549698"

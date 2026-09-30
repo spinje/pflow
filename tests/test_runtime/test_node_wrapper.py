@@ -9,7 +9,6 @@ import pytest
 
 from pflow.runtime.engine.template_resolution import (
     build_type_cache,
-    contains_unresolved_template,
     resolve_templates,
     split_params,
 )
@@ -191,32 +190,3 @@ class TestErrorHandling:
         # Only string should be in template_params
         assert template_params == {"string": "${var}"}
         assert len(static_params) == 4
-
-
-class TestContainsUnresolvedTemplate:
-    """Test the contains_unresolved_template helper function."""
-
-    def test_fully_resolved(self):
-        """Fully resolved string should return False."""
-        assert contains_unresolved_template("hello world", "hello world") is False
-
-    def test_unresolved_simple(self):
-        """Unresolved simple template should return True."""
-        assert contains_unresolved_template("${missing}", "${missing}") is True
-
-    def test_partially_resolved(self):
-        """Partially resolved string should return True if original vars remain."""
-        # resolved_value still has ${count} which was in the original
-        assert (
-            contains_unresolved_template(
-                "Hello Alice, you have ${count} items",
-                "Hello ${name}, you have ${count} items",
-            )
-            is True
-        )
-
-    def test_resolved_data_with_dollar_sign(self):
-        """Data containing ${...} from resolved content should NOT be flagged."""
-        # The resolved value has a different ${...} than the original template
-        mcp_result = {"message": "The old format used ${OLD_VAR} syntax"}
-        assert contains_unresolved_template(mcp_result, "${mcp.result}") is False

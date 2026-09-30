@@ -8,7 +8,8 @@ ${identifier} with optional path traversal (${data.field.subfield}).
 import json
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from pflow.core.json_utils import try_parse_json
@@ -59,9 +60,13 @@ class TemplateResolver:
     # Must not be preceded by $: `$${` is the escape for a literal `${`.
     TEMPLATE_PATTERN = re.compile(rf"(?<!\$)\$\{{({_COALESCE_EXPR_PATTERN})\}}")
 
-    # Single-pass interpolation: each match is either an escape (`$${` -> `${`) or a
-    # template. One left-to-right pass means resolved values are never re-scanned.
-    _INTERPOLATION_PATTERN = re.compile(rf"(?P<escape>\$\$\{{)|(?<!\$)\$\{{(?P<expr>{_COALESCE_EXPR_PATTERN})\}}")
+    # Single-pass interpolation: each match is an escape (`$${` -> `${`), a template,
+    # or an Issue — an unescaped `${` that opens no template (kept verbatim; only its
+    # `${` is consumed, so a template nested after it still resolves). One
+    # left-to-right pass means resolved values are never re-scanned.
+    _INTERPOLATION_PATTERN = re.compile(
+        rf"(?P<escape>\$\$\{{)|(?<!\$)\$\{{(?P<expr>{_COALESCE_EXPR_PATTERN})\}}|(?P<issue>(?<!\$)\$\{{)"
+    )
 
     # Loose extraction pattern for validation/diagnostics code.
     # Captures everything between ${ and } (including coalesce ??).
@@ -79,6 +84,10 @@ class TemplateResolver:
     # Examples: ${results[${__index__}].field}, ${a[${idx}].x ?? b.x}
     # Captures: (1) the full inner template including ${...}
     _BRACKET_INDEX_PATTERN = re.compile(r"\[(\$\{" + _VAR_NAME_PATTERN + r"\})\]")
+
+    # The opening of a dynamic-index reference (`${a[${` …) — a template the pre-pass
+    # could not rewrite (inner absent / non-int), never an Issue.
+    _DYNAMIC_INDEX_OPEN = re.compile(r"\$\{" + _VAR_NAME_PATTERN + r"\[\$\{")
 
     @staticmethod
     def has_templates(value: Any) -> bool:
@@ -104,7 +113,7 @@ class TemplateResolver:
             return False
 
     @staticmethod
-    def resolve_nested_index_templates(template: str, context: dict[str, Any]) -> str:
+    def resolve_nested_index_templates(template: str, context: Mapping[str, Any]) -> str:
         """Pre-process bracket index templates by resolving [${var}] to [N].
 
         Finds [${var}] patterns anywhere in the string and replaces them with
@@ -314,7 +323,7 @@ class TemplateResolver:
         return parts[1].split(".", 1)[0].split("[", 1)[0]
 
     @staticmethod
-    def resolve_coalesce(expr: str, context: dict[str, Any]) -> tuple[Any, str]:
+    def resolve_coalesce(expr: str, context: Mapping[str, Any]) -> tuple[Any, str]:
         """Resolve a coalesce expression, trying operands left to right.
 
         Semantics:
@@ -358,16 +367,12 @@ class TemplateResolver:
                 # string) — skip; the validator surfaces a targeted error.
                 continue
 
-            root = TemplateResolver._ROOT_SPLIT_PATTERN.split(operand)[0]
-
-            if root not in context:
-                continue  # Root absent — branch didn't execute, try next
-
-            if TemplateResolver.variable_exists(operand, context):
-                return (TemplateResolver.resolve_value(operand, context), "resolved")
-            # Root present but field/path absent — treat like "not there" and
-            # try the next operand (issue #441). A bare reference with no
-            # fallback falls out of the loop as "unresolved" below.
+            # Root absent (branch didn't run) OR field/path absent — either way
+            # "not there": try the next operand (issue #441). A bare reference
+            # with no fallback falls out of the loop as "unresolved" below.
+            found, value = TemplateResolver._walk(TemplateResolver._split_raw_path(operand), context)
+            if found:
+                return (value, "resolved")
 
         return (None, "unresolved")
 
@@ -456,84 +461,51 @@ class TemplateResolver:
 
         return False, None
 
-    @staticmethod
-    def _check_array_indices(
-        current: Any, indices_str: str, is_last_element: bool, part_index: int, total_parts: int
-    ) -> tuple[bool, Any]:
-        """Check array indices and return validity status and current value.
-
-        Args:
-            current: Current value to check indices against
-            indices_str: String containing indices like "[0][1]"
-            is_last_element: Whether this is the last element to check
-            part_index: Index of current part in the path
-            total_parts: Total number of parts in the path
-
-        Returns:
-            Tuple of (is_valid, new_current) where is_valid indicates if indices are valid
-        """
-        indices = re.findall(r"\[(\d+)\]", indices_str)
-        for idx, index_str in enumerate(indices):
-            index = int(index_str)
-            if not isinstance(current, list) or index >= len(current):
-                return False, current
-
-            # Check if we need to traverse further
-            need_to_traverse = part_index < total_parts - 1 or idx < len(indices) - 1
-            if need_to_traverse:
-                current = current[index]
-                if current is None:
-                    return False, current  # Can't traverse through None
-
-        return True, current
+    # Raw-path lexer: split on dots outside brackets, then peel a trailing
+    # `[N][M]…` chain off each part. No identifier grammar — user-typed paths
+    # (`-o result.@type`, `read-fields result.dc:title`) walk as written.
+    _RAW_DOT_SPLIT = re.compile(r"\.(?![^\[]*\])")
+    _RAW_INDEXED_PART = re.compile(r"^([^[]+)((?:\[\d+\])+)$")
 
     @staticmethod
-    def _traverse_path_part(current: Any, part: str, part_index: int, total_parts: int) -> tuple[bool, Any]:
-        """Traverse a single path part and return validity status and new current value.
+    def _split_raw_path(path: str) -> list[tuple[str, tuple[int, ...]]]:
+        """Split a raw path into ``(key, indices)`` parts: ``"a.b[1][2].c"`` ->
+        ``[("a", ()), ("b", (1, 2)), ("c", ())]``."""
+        parts: list[tuple[str, tuple[int, ...]]] = []
+        for part in TemplateResolver._RAW_DOT_SPLIT.split(path):
+            match = TemplateResolver._RAW_INDEXED_PART.match(part)
+            if match:
+                indices = tuple(int(i) for i in re.findall(r"\d+", match.group(2)))
+                parts.append((match.group(1), indices))
+            else:
+                parts.append((part, ()))
+        return parts
 
-        Args:
-            current: Current value in the traversal
-            part: Path part to traverse (may include array indices)
-            part_index: Index of current part in the path
-            total_parts: Total number of parts in the path
+    @staticmethod
+    def _walk(parts: list[tuple[str, tuple[int, ...]]], context: Mapping[str, Any]) -> tuple[bool, Any]:
+        """The one path walk: ``(found, value)``.
 
-        Returns:
-            Tuple of (is_valid, new_current) where is_valid indicates if traversal succeeded
+        Found means the walk reached a value — possibly ``None`` (a found ``None``
+        is not "missing"). A key reads a Mapping, auto-parsing a JSON-container
+        string first; an index chain needs a list (a JSON-array string is parsed
+        once, before the chain) and ``0 <= N < len``. Anything else — including
+        walking on through a ``None`` — is not found.
         """
-        # Check if this part has array indices
-        array_match = re.match(r"^([^[]+)((?:\[\d+\])+)$", part)
-
-        if array_match:
-            base_name = array_match.group(1)
-            indices_str = array_match.group(2)
-
-            # Get base value (with JSON auto-parsing)
-            found, current = TemplateResolver._get_dict_value(current, base_name)
+        current: Any = context
+        for key, indices in parts:
+            found, current = TemplateResolver._get_dict_value(current, key)
             if not found:
-                return False, current
-
-            # Parse JSON string if needed before array access
-            current = TemplateResolver._try_parse_json_for_traversal(current)
-
-            # Check array indices
-            is_last = part_index == total_parts - 1
-            return TemplateResolver._check_array_indices(current, indices_str, is_last, part_index, total_parts)
-
-        # Regular property access (with JSON auto-parsing)
-        found, value = TemplateResolver._get_dict_value(current, part)
-        if not found:
-            return False, current
-
-        if part_index < total_parts - 1:
-            # Not the last part - check for None
-            if value is None:
-                return False, value
-            return True, value
-
+                return False, None
+            if indices:
+                current = TemplateResolver._try_parse_json_for_traversal(current)
+            for index in indices:
+                if not isinstance(current, list) or index >= len(current):
+                    return False, None
+                current = current[index]
         return True, current
 
     @staticmethod
-    def variable_exists(var_name: str, context: dict[str, Any]) -> bool:
+    def variable_exists(var_name: str, context: Mapping[str, Any]) -> bool:
         """Check if a variable exists in context, regardless of its value.
 
         This method distinguishes between "variable doesn't exist" and
@@ -541,28 +513,15 @@ class TemplateResolver:
 
         Args:
             var_name: Variable name with optional path and array indices
-            context: Dictionary containing values to check
+            context: Mapping containing values to check
 
         Returns:
             True if variable exists (even if None), False if not found
         """
-        if "." in var_name or "[" in var_name:
-            # Split on dots, but not dots inside brackets
-            parts = re.split(r"\.(?![^\[]*\])", var_name)
-            current = context
-
-            for i, part in enumerate(parts):
-                valid, current = TemplateResolver._traverse_path_part(current, part, i, len(parts))
-                if not valid:
-                    return False
-
-            return True
-        else:
-            # Simple variable - just check if key exists
-            return var_name in context
+        return TemplateResolver._walk(TemplateResolver._split_raw_path(var_name), context)[0]
 
     @staticmethod
-    def resolve_value(var_name: str, context: dict[str, Any]) -> Any | None:
+    def resolve_value(var_name: str, context: Mapping[str, Any]) -> Any | None:
         """Resolve a variable name (possibly with path and array indices) from context.
 
         Handles path traversal for nested data access:
@@ -574,63 +533,13 @@ class TemplateResolver:
 
         Args:
             var_name: Variable name with optional path and array indices
-            context: Dictionary containing values to resolve from
+            context: Mapping containing values to resolve from
 
         Returns:
-            Resolved value or None if path cannot be resolved
+            Resolved value or None if path cannot be resolved (use
+            ``variable_exists`` to tell a found ``None`` from a miss)
         """
-        if "." in var_name or "[" in var_name:
-            # Split on dots, but not dots inside brackets
-            # This regex splits on dots that are not followed by ] without [
-            parts = re.split(r"\.(?![^\[]*\])", var_name)
-            value = context
-
-            for part in parts:
-                # Check if this part has array indices
-                # Match: name[0] or name[0][1]
-                array_match = re.match(r"^([^[]+)((?:\[\d+\])+)$", part)
-
-                if array_match:
-                    base_name = array_match.group(1)
-                    indices_str = array_match.group(2)  # e.g., "[0][1]"
-
-                    # Get the base value (with JSON auto-parsing)
-                    found, value = TemplateResolver._get_dict_value(value, base_name)
-                    if not found:
-                        logger.debug(
-                            f"Cannot resolve path '{var_name}': '{base_name}' not found",
-                            extra={"var_name": var_name, "failed_at": base_name},
-                        )
-                        return None
-
-                    # Parse JSON string if needed before array access
-                    value = TemplateResolver._try_parse_json_for_traversal(value)
-
-                    # Extract and apply all indices
-                    indices = re.findall(r"\[(\d+)\]", indices_str)
-                    for index_str in indices:
-                        index = int(index_str)
-                        if isinstance(value, list) and 0 <= index < len(value):
-                            value = value[index]
-                        else:
-                            logger.debug(
-                                f"Cannot resolve path '{var_name}': index {index} out of bounds or not a list",
-                                extra={"var_name": var_name, "failed_at": f"{part}[{index}]"},
-                            )
-                            return None
-                else:
-                    # Regular property access (with JSON auto-parsing)
-                    found, value = TemplateResolver._get_dict_value(value, part)
-                    if not found:
-                        logger.debug(
-                            f"Cannot resolve path '{var_name}': '{part}' not found",
-                            extra={"var_name": var_name, "failed_at": part},
-                        )
-                        return None
-            return value
-        else:
-            # Simple variable lookup
-            return context.get(var_name)
+        return TemplateResolver._walk(TemplateResolver._split_raw_path(var_name), context)[1]
 
     @staticmethod
     def _convert_to_string(value: Any) -> str:
@@ -677,8 +586,8 @@ class TemplateResolver:
             return str(value)
 
     @staticmethod
-    def resolve_template(template: str, context: dict[str, Any]) -> Any:
-        """Resolve a template string to its value.
+    def resolve_template(template: str, context: Mapping[str, Any]) -> Any:
+        """Resolve a template string to its value (``resolve(template, context).value``).
 
         For simple templates (entire string is "${var}"), preserves the original type.
         For complex templates (text around variables), returns a string.
@@ -687,7 +596,7 @@ class TemplateResolver:
 
         Args:
             template: String containing template variables
-            context: Dictionary containing values to resolve from
+            context: Mapping containing values to resolve from
 
         Returns:
             - For simple templates: The resolved value with original type preserved
@@ -705,115 +614,92 @@ class TemplateResolver:
             >>> TemplateResolver.resolve_template("Missing: ${undefined}", context)
             'Missing: ${undefined}'
         """
-        # Pre-process nested index templates: ${outer[${inner}]} -> ${outer[0]}
-        template = TemplateResolver.resolve_nested_index_templates(template, context)
-
-        # Check for simple template first - preserve type
-        var_name = TemplateResolver.extract_simple_template_var(template)
-        if var_name is not None:
-            if TemplateResolver.is_coalesce_expression(var_name):
-                value, status = TemplateResolver.resolve_coalesce(var_name, context)
-                if status == "resolved":
-                    logger.debug(
-                        f"Resolved coalesce template '${{{var_name}}}' -> {value!r} (type: {type(value).__name__})",
-                        extra={"var_name": var_name, "value_type": type(value).__name__},
-                    )
-                    return value
-                # unresolved (no operand resolved): return template unchanged
-                return template
-            elif TemplateResolver.is_literal_operand(var_name):
-                # Bare literal template (Optional A): ${0}, ${"x"}, ${null}.
-                ok, value = try_parse_json(var_name)
-                if ok:
-                    return value
-                # Malformed literal — leave unchanged; validator surfaces it.
-                return template
-            elif TemplateResolver.variable_exists(var_name, context):
-                resolved = TemplateResolver.resolve_value(var_name, context)
-                logger.debug(
-                    f"Resolved simple template '${{{var_name}}}' -> {resolved!r} (type: {type(resolved).__name__})",
-                    extra={"var_name": var_name, "value_type": type(resolved).__name__},
-                )
-                return resolved
-            else:
-                # Variable doesn't exist - return template unchanged for debugging
-                logger.debug(
-                    f"Simple template variable '${{{var_name}}}' could not be resolved",
-                    extra={"var_name": var_name},
-                )
-                return template
-
-        # Complex template - do string interpolation
-        def interpolate(match: re.Match[str]) -> str:
-            if match.group("escape"):
-                return "${"
-            resolved = TemplateResolver._resolve_inline_expr(match.group("expr"), context)
-            return match.group(0) if resolved is None else resolved
-
-        return TemplateResolver._INTERPOLATION_PATTERN.sub(interpolate, template)
+        return resolve(template, context).value
 
     @staticmethod
-    def _resolve_inline_expr(var_expr: str, context: dict[str, Any]) -> str | None:
-        """Resolve one template expression embedded in a complex template.
+    def _lookup_expression(expr: str, context: Mapping[str, Any]) -> tuple[bool, Any]:
+        """Resolve one template expression (the text inside ``${…}``): ``(found, value)``.
 
-        Args:
-            var_expr: The variable expression captured from ${...}
-            context: Resolution context
-
-        Returns:
-            The value stringified for interpolation, or None if unresolvable
-            (the caller then leaves the template text unchanged)
+        A coalesce takes its first operand that resolves; a bare literal is its
+        JSON value (a literal that does not parse is not found — the validator
+        reports it); anything else is one walk.
         """
-        # Handle coalesce expressions
-        if TemplateResolver.is_coalesce_expression(var_expr):
-            value, status = TemplateResolver.resolve_coalesce(var_expr, context)
-            if status != "resolved":
-                return None  # no operand resolved: leave template as-is
-            value_str = TemplateResolver._convert_to_string(value)
-            logger.debug(
-                f"Resolved coalesce template '${{{var_expr}}}' -> '{value_str}'",
-                extra={"var_name": var_expr, "value_type": type(value).__name__},
-            )
-            return value_str
-
-        # Bare literal in an inline template (Optional A): "Hello ${0}".
-        if TemplateResolver.is_literal_operand(var_expr):
-            ok, value = try_parse_json(var_expr)
-            return TemplateResolver._convert_to_string(value) if ok else None
-
-        # Non-coalesce: existing resolution logic
-        var_name = var_expr
-        if "." in var_name or "[" in var_name:
-            # Path traversal - check if we successfully resolved
-            base_var = TemplateResolver._ROOT_SPLIT_PATTERN.split(var_name)[0]
-            resolved = base_var in context and TemplateResolver.variable_exists(var_name, context)
-        else:
-            resolved = var_name in context
-
-        if resolved:
-            resolved_value = TemplateResolver.resolve_value(var_name, context)
-            value_str = TemplateResolver._convert_to_string(resolved_value)
-            logger.debug(
-                f"Resolved template variable '${{{var_name}}}' -> '{value_str}'",
-                extra={"var_name": var_name, "value_type": type(resolved_value).__name__},
-            )
-            return value_str
-
-        # Variable doesn't exist - leave template as-is for debugging
-        if ".response." in var_name:
-            logger.warning(
-                f"Template variable '${{{var_name}}}' could not be resolved. "
-                f"This often indicates the LLM node didn't generate the expected JSON structure. "
-                f"Check that the LLM response contains the field '{var_name.split('.')[-1]}'"
-            )
-        else:
-            logger.debug(f"Template variable '${{{var_name}}}' could not be resolved", extra={"var_name": var_name})
-
-        return None
+        if TemplateResolver.is_coalesce_expression(expr):
+            value, status = TemplateResolver.resolve_coalesce(expr, context)
+            return status == "resolved", value
+        if TemplateResolver.is_literal_operand(expr):
+            return try_parse_json(expr)
+        return TemplateResolver._walk(TemplateResolver._split_raw_path(expr), context)
 
     @staticmethod
-    def resolve_nested(value: Any, context: dict[str, Any]) -> Any:
-        """Recursively resolve template variables in nested structures.
+    def _resolve_string(template: str, context: Mapping[str, Any], auto_parse: bool) -> "Resolution":
+        """``resolve()`` for one string; see ``resolve``."""
+        # Pre-process nested index templates: ${outer[${inner}]} -> ${outer[0]}
+        source = TemplateResolver.resolve_nested_index_templates(template, context)
+
+        # Simple template: the whole string is one expression — preserve its type
+        var_name = TemplateResolver.extract_simple_template_var(source)
+        if var_name is not None:
+            found, value = TemplateResolver._lookup_expression(var_name, context)
+            if not found:
+                logger.debug(f"Template '${{{var_name}}}' could not be resolved", extra={"var_name": var_name})
+                return Resolution(source, unresolved=frozenset({var_name}))
+            # resolve_nested's leaf rule: a simple template's JSON-container string is
+            # parsed (numeric strings stay strings — Discord snowflake IDs). Gated on the
+            # AUTHOR text being simple, so a rewritten dynamic index is not parsed.
+            if auto_parse and isinstance(value, str) and TemplateResolver.is_simple_template(template):
+                success, parsed = try_parse_json(value)
+                if success and isinstance(parsed, (dict, list)):
+                    return Resolution(parsed)
+            return Resolution(value)
+
+        # Complex template: one left-to-right pass — substituted values are never re-scanned
+        unresolved: set[str] = set()
+        issues: set[str] = set()
+        changed = source != template  # the nested-index pre-pass rewrote an index
+
+        def interpolate(match: re.Match[str]) -> str:
+            nonlocal changed
+            if match.group("escape"):
+                changed = True
+                return "${"
+            if match.group("issue"):
+                if not TemplateResolver._DYNAMIC_INDEX_OPEN.match(source, match.start()):
+                    close = source.find("}", match.start())
+                    issues.add(source[match.start() :] if close == -1 else source[match.start() : close + 1])
+                return match.group(0)
+            expr = match.group("expr")
+            found, value = TemplateResolver._lookup_expression(expr, context)
+            if found:
+                changed = True
+                return TemplateResolver._convert_to_string(value)
+            unresolved.add(expr)
+            TemplateResolver._log_unresolved_inline(expr)
+            return match.group(0)
+
+        text = TemplateResolver._INTERPOLATION_PATTERN.sub(interpolate, source)
+        # Interim rule (Task 170 phase 2; the typed parse reports every Issue): an Issue
+        # counts only in a string resolution left untouched — the class the old
+        # "value echoes its template" check caught. Beside a resolved expression or an
+        # escape it rides along silently, as before (`source: prefix ${n.x}`). An
+        # un-rewritten dynamic index is judged by its inner reference alone, as before.
+        return Resolution(text, unresolved=frozenset(unresolved), issues=frozenset() if changed else frozenset(issues))
+
+    @staticmethod
+    def _log_unresolved_inline(var_expr: str) -> None:
+        if ".response." in var_expr:
+            logger.warning(
+                f"Template variable '${{{var_expr}}}' could not be resolved. "
+                f"This often indicates the LLM node didn't generate the expected JSON structure. "
+                f"Check that the LLM response contains the field '{var_expr.split('.')[-1]}'"
+            )
+        else:
+            logger.debug(f"Template variable '${{{var_expr}}}' could not be resolved", extra={"var_name": var_expr})
+
+    @staticmethod
+    def resolve_nested(value: Any, context: Mapping[str, Any]) -> Any:
+        """Recursively resolve template variables in nested structures
+        (``resolve(value, context, auto_parse=True).value``).
 
         Handles dictionaries, lists, and nested combinations while preserving
         the original structure and types. Simple templates (${var}) preserve
@@ -830,7 +716,7 @@ class TemplateResolver:
 
         Args:
             value: The value to resolve (can be string, dict, list, or any type)
-            context: Dictionary containing values to resolve from
+            context: Mapping containing values to resolve from
 
         Returns:
             The value with all template variables resolved, maintaining structure
@@ -846,39 +732,58 @@ class TemplateResolver:
             >>> TemplateResolver.resolve_nested({"data": "${shell.stdout}"}, context)  # JSON auto-parsed
             {'data': {'items': [1, 2, 3]}}
         """
-        if isinstance(value, str):
-            # Resolve string templates (preserves type for simple templates)
-            if "${" in value:
-                resolved = TemplateResolver.resolve_template(value, context)
+        return resolve(value, context, auto_parse=True).value
 
-                # Auto-parse JSON strings from simple templates
-                # This enables: {"data": "${shell.stdout}"} where stdout is JSON
-                # Escape hatch: complex templates like "prefix ${var}" stay as strings
-                #
-                # IMPORTANT: Only use parsed result if it's dict/list (containers).
-                # json.loads("1458059302022549698") returns int, but we want to preserve
-                # numeric strings as strings (e.g., Discord snowflake IDs).
-                #
-                # Tech debt note (see Task 105): Same JSON string may be parsed multiple
-                # times if used in multiple templates. Acceptable for MVP since parsing
-                # is <1ms vs node execution 100-1000ms. Consider caching if profiling
-                # shows this as a bottleneck.
-                if isinstance(resolved, str) and TemplateResolver.is_simple_template(value):
-                    success, parsed = try_parse_json(resolved)
-                    if success and isinstance(parsed, (dict, list)):
-                        logger.debug(
-                            f"Auto-parsed JSON from template '{value}': {type(parsed).__name__}",
-                        )
-                        return parsed
 
-                return resolved
-            return value
-        elif isinstance(value, dict):
-            # Recursively resolve dictionary values
-            return {k: TemplateResolver.resolve_nested(v, context) for k, v in value.items()}
-        elif isinstance(value, list):
-            # Recursively resolve list items
-            return [TemplateResolver.resolve_nested(item, context) for item in value]
-        else:
-            # Return other types unchanged (int, float, bool, None, etc.)
-            return value
+@dataclass(frozen=True, slots=True)
+class Resolution:
+    """A resolved value plus what resolution had to leave literal.
+
+    ``unresolved`` holds the text inside ``${…}`` of every expression that stayed
+    literal (for a dynamic index, the rewritten ``a[0].x``); ``issues`` holds each
+    unescaped ``${`` that opens no template, from the ``${`` to its first ``}`` (for
+    now only in a string resolution left untouched — see ``_resolve_string``).
+    Both span the whole value. Text that came FROM a resolved value is never in
+    either — only the author's template is judged (#630). The channels stay
+    distinct so a surface can tolerate Issues without tolerating misses (#621).
+    """
+
+    value: Any
+    unresolved: frozenset[str] = frozenset()
+    issues: frozenset[str] = frozenset()
+
+    @property
+    def ok(self) -> bool:
+        return not self.unresolved and not self.issues
+
+    @staticmethod
+    def combine(value: Any, parts: Iterable["Resolution"]) -> "Resolution":
+        """``value`` carrying the union of ``parts``' channels (a container's resolution)."""
+        parts = tuple(parts)
+        return Resolution(
+            value,
+            unresolved=frozenset().union(*(p.unresolved for p in parts)),
+            issues=frozenset().union(*(p.issues for p in parts)),
+        )
+
+
+def resolve(value: Any, context: Mapping[str, Any], *, auto_parse: bool = False) -> Resolution:
+    """Resolve every template in ``value`` against ``context``.
+
+    A string resolves exactly as ``resolve_template`` (no top-level JSON auto-parse);
+    dicts and lists recurse, keys untouched. ``auto_parse=True`` adds
+    ``resolve_nested``'s leaf rule at every string leaf, the top-level one included:
+    a simple template's resolved JSON-container string is parsed. Other values pass
+    through unchanged.
+    """
+    if isinstance(value, str):
+        if "${" not in value:
+            return Resolution(value)
+        return TemplateResolver._resolve_string(value, context, auto_parse)
+    if isinstance(value, dict):
+        entries = {key: resolve(item, context, auto_parse=auto_parse) for key, item in value.items()}
+        return Resolution.combine({key: r.value for key, r in entries.items()}, entries.values())
+    if isinstance(value, list):
+        items = [resolve(item, context, auto_parse=auto_parse) for item in value]
+        return Resolution.combine([r.value for r in items], items)
+    return Resolution(value)

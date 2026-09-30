@@ -17,6 +17,7 @@ from pflow.runtime.engine.template_resolution import (
     split_params,
 )
 from pflow.runtime.engine.types import TemplateConfig
+from pflow.runtime.template_resolver import resolve
 
 
 def _resolve(
@@ -304,9 +305,7 @@ class TestDepthLimit:
             current["level"] = {"level": "${var}"}
             current = current["level"]
 
-        # The depth limit is checked via contains_unresolved_template, which returns
-        # False at max depth, so template resolution won't raise ValueError.
-        # In permissive mode, the partially resolved template won't raise.
+        # In permissive mode, the unresolved leaves are recorded, not raised.
         result = _resolve({"data": nested}, {}, resolution_mode="permissive")
 
         # The execution should complete (depth limit returns False = resolved)
@@ -425,83 +424,148 @@ class TestOptionalInputInjection:
     ${...} template string.
     """
 
+    @staticmethod
+    def _inject(template: dict, context: dict, optional: set[str]) -> tuple[dict, frozenset[str]]:
+        """Resolve ``template`` per key as the engine does, then inject."""
+        by_key = {k: resolve(v, context, auto_parse=True) for k, v in template.items()}
+        resolved = {k: r.value for k, r in by_key.items()}
+        return inject_none_for_optional_inputs(resolved, template, context, optional, by_key)
+
     def test_injects_none_when_source_node_absent(self):
         """When source node didn't execute (absent from context), inject None."""
-        resolved_value = {"high": "${branch-high.stdout}", "low": "resolved-value"}
         template = {"high": "${branch-high.stdout}", "low": "${branch-low.stdout}"}
         context = {"branch-low": {"stdout": "resolved-value"}}
 
-        result = inject_none_for_optional_inputs("inputs", resolved_value, template, context, {"high"})
+        result, injected = self._inject(template, context, {"high"})
 
         assert result["high"] is None
         assert result["low"] == "resolved-value"
+        assert injected == {"high"}
 
     def test_no_injection_when_source_node_present(self):
         """When source node executed (present in context), leave unresolved for error detection."""
-        resolved_value = {"high": "${branch-high.stddout}", "low": "resolved-value"}
         template = {"high": "${branch-high.stddout}", "low": "${branch-low.stdout}"}
         context = {"branch-high": {"stdout": "data"}, "branch-low": {"stdout": "resolved-value"}}
 
-        result = inject_none_for_optional_inputs("inputs", resolved_value, template, context, {"high"})
+        result, injected = self._inject(template, context, {"high"})
 
         # Should NOT inject None -- source node exists, this is a typo
         assert result["high"] == "${branch-high.stddout}"
         assert result["low"] == "resolved-value"
+        assert injected == frozenset()
 
     def test_no_injection_for_non_optional_keys(self):
         """Keys not in optional_input_keys should never be injected with None."""
-        resolved_value = {"low": "${branch-low.stdout}"}
         template = {"low": "${branch-low.stdout}"}
-        context = {}
 
-        result = inject_none_for_optional_inputs("inputs", resolved_value, template, context, {"high"})
+        result, injected = self._inject(template, {}, {"high"})
 
         # "low" is not in optional_input_keys, so it stays unchanged
         assert result["low"] == "${branch-low.stdout}"
+        assert injected == frozenset()
 
     def test_no_injection_when_key_not_inputs(self):
-        """Function only acts on key='inputs'; other keys are returned unchanged."""
-        resolved_value = {"x": "${source.value}"}
-        template = {"x": "${source.value}"}
-        context = {}
+        """Only the `inputs` param is injected; an optional key name under another param is not."""
+        config = TemplateConfig(
+            template_params={"prompt": {"x": "${source.value}"}},
+            static_params={},
+            expected_types={},
+            resolution_mode="permissive",
+            optional_input_keys={"x"},
+        )
 
-        result = inject_none_for_optional_inputs("prompt", resolved_value, template, context, {"x"})
+        merged, _, errors = resolve_templates(config, {}, "test-node")
 
-        # key is "prompt", not "inputs" -- no injection
-        assert result["x"] == "${source.value}"
+        # key is "prompt", not "inputs" -- no injection; the miss is recorded
+        assert merged["prompt"]["x"] == "${source.value}"
+        assert [e["unresolved_expressions"] for e in errors] == [("source.value",)]
 
     def test_no_injection_when_no_optional_keys(self):
         """With empty optional_input_keys, function is a no-op."""
-        resolved_value = {"high": "${branch-high.stdout}"}
         template = {"high": "${branch-high.stdout}"}
-        context = {}
 
-        result = inject_none_for_optional_inputs("inputs", resolved_value, template, context, set())
+        result, injected = self._inject(template, {}, set())
 
         # No optional keys configured -- no injection
         assert result["high"] == "${branch-high.stdout}"
+        assert injected == frozenset()
 
     def test_injects_none_for_multiple_optional_keys(self):
         """When multiple optional keys have absent source nodes, all get None."""
-        resolved_value = {"high": "${branch-high.stdout}", "low": "${branch-low.stdout}"}
         template = {"high": "${branch-high.stdout}", "low": "${branch-low.stdout}"}
         context = {}  # Neither source node executed
 
-        result = inject_none_for_optional_inputs("inputs", resolved_value, template, context, {"high", "low"})
+        result, injected = self._inject(template, context, {"high", "low"})
 
         assert result["high"] is None
         assert result["low"] is None
+        assert injected == {"high", "low"}
 
     def test_resolved_value_not_modified(self):
         """Already-resolved values (no ${) should not be touched."""
-        resolved_value = {"high": "already-resolved"}
         template = {"high": "${branch-high.stdout}"}
-        context = {}
+        context = {"branch-high": {"stdout": "already-resolved"}}
 
-        result = inject_none_for_optional_inputs("inputs", resolved_value, template, context, {"high"})
+        result, injected = self._inject(template, context, {"high"})
 
         # Value is already resolved (no ${), so it stays as-is
         assert result["high"] == "already-resolved"
+        assert injected == frozenset()
+
+
+class TestInputsResolvedPerKey:
+    """`resolve_templates` judges `inputs` per key: an injected None drops only its own key's miss."""
+
+    @staticmethod
+    def _config(inputs: dict, optional: set[str], mode: str = "strict") -> TemplateConfig:
+        return TemplateConfig(
+            template_params={"inputs": inputs},
+            static_params={},
+            expected_types={},
+            resolution_mode=mode,
+            optional_input_keys=optional,
+        )
+
+    def test_required_sibling_sharing_the_text_still_fails(self):
+        """`opt` gets None; `req` reads the same absent node and must still raise."""
+        config = self._config({"opt": "${b.stdout}", "req": "prefix ${b.stdout}"}, {"opt"})
+        with pytest.raises(ValueError, match=r"\$\{b\.stdout\}"):
+            resolve_templates(config, {}, "n")
+
+    def test_injected_key_alone_is_clean(self):
+        config = self._config({"opt": "${b.stdout}", "req": "${a.x}"}, {"opt"})
+        merged, _, errors = resolve_templates(config, {"a": {"x": 1}}, "n")
+        assert merged["inputs"] == {"opt": None, "req": 1}
+        assert errors == []
+
+    def test_dynamic_index_from_an_absent_branch_is_injected(self):
+        """Outer and inner both from the skipped branch: the pre-pass cannot rewrite the index,
+        and the optional input still gets None."""
+        config = self._config({"opt": "${g.items[${g.i}].x}", "idx": "${g.items[${__index__}].x}"}, {"opt", "idx"})
+        merged, _, errors = resolve_templates(config, {"__index__": 0}, "n")
+        assert merged["inputs"] == {"opt": None, "idx": None}
+        assert errors == []
+
+    def test_partially_resolved_optional_input_is_not_injected(self):
+        """One present root means the miss is a real error, not a skipped branch."""
+        config = self._config({"opt": "${a.x} ${b.y}"}, {"opt"})
+        with pytest.raises(ValueError, match=r"\$\{b\.y\}"):
+            resolve_templates(config, {"a": {"x": 1}}, "n")
+
+    def test_optional_input_with_a_literal_fallback_is_not_injected(self):
+        """`${b.x ?? "d"}` resolved to "d", so the key did not stay wholly literal."""
+        config = self._config({"opt": '${b.x ?? "d"} ${c.y}'}, {"opt"}, mode="permissive")
+        merged, _, errors = resolve_templates(config, {}, "n")
+        assert merged["inputs"] == {"opt": "d ${c.y}"}
+        assert [e["unresolved_expressions"] for e in errors] == [("c.y",)]
+
+    def test_permissive_entry_carries_both_channels(self):
+        config = self._config({"x": "${src.result.items.0}", "y": "${src.nope}"}, set(), mode="permissive")
+        _, _, errors = resolve_templates(config, {"src": {"result": {"items": [1]}}}, "n")
+        assert len(errors) == 1
+        assert errors[0]["unresolved"] == ["inputs"]
+        assert errors[0]["unresolved_expressions"] == ("src.nope",)
+        assert errors[0]["issues"] == ("${src.result.items.0}",)
 
 
 class TestCoalesceErrorMessages:

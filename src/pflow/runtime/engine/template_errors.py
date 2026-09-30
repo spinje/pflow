@@ -13,11 +13,12 @@ in ``core/diagnostic.py`` render this into the agent-actionable format.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.runtime.node_state import NodeStatus, get_node_failure, get_node_status
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.runtime.template_resolver import Resolution, TemplateResolver, resolve
 
 
 def build_type_error_message(
@@ -123,19 +124,31 @@ def build_json_parse_error_message(
     return "\n".join(error_lines)
 
 
+def _in_source_order(expressions: Iterable[str], template_str: str) -> list[str]:
+    """Order unresolved expressions as the author wrote them; a text absent from
+    the template (a rewritten dynamic index such as ``a[0].x``) sorts last."""
+
+    def position(expr: str) -> tuple[int, str]:
+        at = template_str.find(f"${{{expr}}}")
+        return (at if at >= 0 else len(template_str), expr)
+
+    return sorted(expressions, key=position)
+
+
 def classify_unresolved_references(
-    template_str: str,
+    expressions: Iterable[str],
     context: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Classify every variable reference in a template by execution status.
+    """Classify the references of unresolved expressions by execution status.
 
-    Variables that resolve successfully are not included.
+    ``expressions`` are texts inside ``${…}`` that resolution left literal — a
+    ``Resolution.unresolved`` set, in display order. Operands that resolve are
+    not included.
     """
     references: list[dict[str, Any]] = []
     seen_vars: set[str] = set()
 
-    for match in TemplateResolver.TEMPLATE_PATTERN.finditer(template_str):
-        expr = match.group(1)
+    for expr in expressions:
         operands = TemplateResolver.split_coalesce_operands(expr)
         is_coalesce = len(operands) > 1
 
@@ -326,14 +339,22 @@ def build_template_error_diagnostic(
     param_key: str,
     template: Any,
     context: dict[str, Any],
+    resolution: Resolution | None = None,
     *,
     node_id: str | None = None,
     source_file: str | None = None,
     source_line: int | None = None,
 ) -> Diagnostic:
-    """Build a fully-structured Diagnostic for an unresolved template."""
+    """Build a fully-structured Diagnostic for an unresolved template.
+
+    Classifies exactly ``resolution.unresolved`` — the set the caller's check
+    judged — so check and diagnostic cannot disagree. Without a resolution the
+    template is resolved against ``context`` here.
+    """
     template_str = str(template)
-    references = classify_unresolved_references(template_str, context)
+    if resolution is None:
+        resolution = resolve(template, context)
+    references = classify_unresolved_references(_in_source_order(resolution.unresolved, template_str), context)
 
     available_keys = sorted(key for key in context if _is_visible_context_key(key))
     failures = context.get("__failures__")

@@ -11,7 +11,7 @@ explicitly opted into fallthrough behavior.
 
 from typing import Any
 
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.runtime.template_resolver import Resolution, TemplateResolver, resolve
 
 
 def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> Any | None:
@@ -22,8 +22,8 @@ def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> A
     - $node.output - Dollar prefix format
     - node.output - Plain format
 
-    Uses TemplateResolver.resolve_template() to support the full template syntax
-    including coalesce (??), nested index templates, and type preservation.
+    Supports the full template syntax including coalesce (??), nested index
+    templates, and type preservation.
 
     Args:
         source_expr: Template expression like "${node.output}" or "node.output"
@@ -34,14 +34,8 @@ def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> A
     """
     source_expr = _normalize_source(source_expr)
 
-    # Use resolve_template() which handles coalesce (??), nested indices,
-    # type preservation, and all other template syntax
-    result = TemplateResolver.resolve_template(source_expr, shared_storage)
-
-    # resolve_template returns the original string if unresolved
-    if result == source_expr:
-        return None
-    return result
+    resolution = resolve(source_expr, shared_storage)
+    return resolution.value if resolution.ok else None
 
 
 def _normalize_source(source_expr: str) -> str:
@@ -56,6 +50,7 @@ def _normalize_source(source_expr: str) -> str:
 def _diagnose_unresolved_output(
     source_expr: str,
     normalized: str,
+    resolution: Resolution,
     shared_storage: dict[str, Any],
 ) -> dict[str, Any]:
     """Diagnose why an output source expression could not be resolved.
@@ -67,7 +62,7 @@ def _diagnose_unresolved_output(
     """
     from pflow.runtime.engine.template_errors import classify_unresolved_references
 
-    structured_refs = classify_unresolved_references(normalized, shared_storage)
+    structured_refs = classify_unresolved_references(sorted(resolution.unresolved), shared_storage)
     available_keys = sorted(k for k in shared_storage if not str(k).startswith("_"))
 
     return {
@@ -78,7 +73,7 @@ def _diagnose_unresolved_output(
     }
 
 
-def _is_all_absent_coalesce(normalized: str, shared_storage: dict[str, Any]) -> bool:
+def _is_all_absent_coalesce(normalized: str, resolution: Resolution, shared_storage: dict[str, Any]) -> bool:
     """True if every operand of a coalesce expression is ABSENT.
 
     All-absent coalesce is the legitimate Task 128 branch-convergence fallthrough —
@@ -97,7 +92,7 @@ def _is_all_absent_coalesce(normalized: str, shared_storage: dict[str, Any]) -> 
 
     from pflow.runtime.engine.template_errors import classify_unresolved_references
 
-    refs = classify_unresolved_references(normalized, shared_storage)
+    refs = classify_unresolved_references(sorted(resolution.unresolved), shared_storage)
     return bool(refs) and all(ref.get("status") == "absent" for ref in refs)
 
 
@@ -106,10 +101,11 @@ def _record_output_failure(
     output_config: dict[str, Any],
     source_expr: str,
     normalized: str,
+    resolution: Resolution,
     shared_storage: dict[str, Any],
 ) -> dict[str, Any]:
     """Build an OutputResolutionError failure entry with source-file context."""
-    failure = _diagnose_unresolved_output(source_expr, normalized, shared_storage)
+    failure = _diagnose_unresolved_output(source_expr, normalized, resolution, shared_storage)
     failure["output_name"] = output_name
     if "_source_line" in output_config:
         failure["source_line"] = output_config["_source_line"]
@@ -151,22 +147,22 @@ def populate_declared_outputs(
         source_expr = output_config["source"]
         normalized = _normalize_source(source_expr)
 
-        # Use resolve_template directly to distinguish unresolved from resolved-to-None
-        result = TemplateResolver.resolve_template(normalized, shared_storage)
-
-        if result != normalized:
-            # Resolved successfully (or resolved to None)
-            if result is not None:
-                shared_storage[output_name] = result
+        resolution = resolve(normalized, shared_storage)
+        if resolution.ok:
+            # Resolved (a found None is resolved, but writes nothing)
+            if resolution.value is not None:
+                shared_storage[output_name] = resolution.value
             continue
 
         # Unresolved — silently skip only if this is a legitimate all-absent
         # coalesce (Task 128 branch-convergence). Any FAILED / PATH_ERROR operand
         # falls through to error recording so the agent sees the actual failure.
-        if _is_all_absent_coalesce(normalized, shared_storage):
+        if _is_all_absent_coalesce(normalized, resolution, shared_storage):
             continue
 
-        failures.append(_record_output_failure(output_name, output_config, source_expr, normalized, shared_storage))
+        failures.append(
+            _record_output_failure(output_name, output_config, source_expr, normalized, resolution, shared_storage)
+        )
 
     if failures:
         from pflow.core.user_errors import OutputResolutionError
