@@ -172,3 +172,15 @@
   - Integration note: main gained stdin-isolation commits; merged before the falsifier.
 - Verified clean per lenses: silent-failures, simplicity, agent-ux (no C/W).
 - Next: merge origin/main, re-gate, falsifier.
+
+## [2026-09-30] task-planner (implementing) — merged origin/main (`8222ffc6`), re-gate
+- Did: merged main (#657 stdin isolation, Task 178 docs; no overlap). `make check` green.
+- Deviation: the earlier `monkeypatch.delitem` fix for the UI lazy-import test only swapped the
+  leak — the fresh import still rebinds the `pflow.cli.commands.ui` package attribute, so
+  `TestUiCommand::test_default_path_wires_the_readiness_thread` compared two module objects
+  (1 failure in the merged full run). Replaced with a subprocess check (fresh interpreter, no
+  shared state; explicit `encoding="utf-8"` for PYTHONWARNDEFAULTENCODING). Verified it still
+  detects the regression it guards (appending `import pflow.ui.server` to `ui.py` → red,
+  EXECUTED, reverted).
+- Verified: `make test-all-local` 9430 passed, 2 skipped — twice.
+- Next: falsifier result, then close-out.

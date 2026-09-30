@@ -1190,20 +1190,17 @@ class TestRunScopedBroadcast:
 
 
 class TestLazyImportBoundary:
-    def test_importing_ui_command_does_not_import_server(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_importing_ui_command_does_not_import_server(self) -> None:
         """The eagerly-imported ``ui`` command must not pull in the web stack (H4).
 
         ``cli/commands/ui.py`` is imported at ``main.py`` load. It must import
         starlette/uvicorn/the server only inside the command body, so a base
         install can load the CLI without the [ui] web stack.
         """
-        import importlib
+        import subprocess
 
-        # Observe a fresh import of the command module's effect, independent of
-        # whatever earlier tests loaded. monkeypatch restores the originals, so
-        # later tests in this worker still patch the module their app was built from.
-        monkeypatch.delitem(sys.modules, "pflow.ui.server", raising=False)
-        monkeypatch.delitem(sys.modules, "pflow.cli.commands.ui", raising=False)
-        importlib.import_module("pflow.cli.commands.ui")
-
-        assert "pflow.ui.server" not in sys.modules
+        # A fresh interpreter observes the import in isolation; re-importing in this
+        # process would leave other tests holding a different module object.
+        code = "import sys, pflow.cli.commands.ui; sys.exit('pflow.ui.server' in sys.modules)"
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8")  # noqa: S603
+        assert result.returncode == 0, result.stderr or "importing pflow.cli.commands.ui loaded pflow.ui.server"
