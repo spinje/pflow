@@ -1066,16 +1066,20 @@ def _validate_cache_block(  # noqa: C901
 
 
 def _cache_var_roots(var_expr: str) -> list[str]:
-    """The roots a chunk var reads: each Reference of a one-Reference var, inner
-    dynamic-index references included. Anything else — a ``??`` chain, a literal
-    (``${42}``), an Issue — keeps the whole var's lexical root, the one
-    ``prompt_cache._resolve_chunk_value`` gates the chunk on; the Issue pass reports an Issue.
+    """The roots a chunk var reads: each root of its one Reference, dynamic-index inner
+    references included. An Issue has none (the Issue pass reports it: one diagnostic
+    per mistake). Any other var can never render as a chunk — a literal (``${42}``),
+    or a ``??`` chain from dict IR, which skips the ``## Cache`` parser's coalesce
+    rejection — so the whole var is its (unresolvable) root.
     """
-    expressions = parse("${" + var_expr + "}").expressions
+    template = parse("${" + var_expr + "}")
+    if template.issues:
+        return []
+    expressions = template.expressions
     operands = expressions[0].operands if expressions and expressions[0].raw == var_expr else ()
     if len(operands) == 1 and isinstance(operands[0], Reference):
         return [ref.root for ref in operands[0].references]
-    return [TemplateResolver.extract_root_node_id(var_expr)]
+    return [var_expr]
 
 
 def _make_invalid_on_non_llm_diagnostic(node_id: str, node_type: str, invalid_fields: list[str]) -> Diagnostic:

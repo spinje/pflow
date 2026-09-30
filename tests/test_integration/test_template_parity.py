@@ -1553,18 +1553,9 @@ CACHE_ROWS: tuple[Row, ...] = (
         "cache_var_coalesce_dotless_r5",
         "cache",
         'Base: ${topic ?? "x"}',
-        flips(
-            Error("is not a declared input"),
-            Error("coalesce is not supported"),
-            "4c",
-            "R5: a `??` chunk var is rejected explicitly at parse",
-        ),
-        flips(
-            Raises("CompilationError", "Data flow validation failed"),
-            Raises("MarkdownParseError", "coalesce is not supported"),
-            "4c",
-            "R5",
-        ),
+        # Flipped by R5 (a): a `??` chunk var is rejected explicitly at parse
+        now(Error("coalesce is not supported")),
+        now(Raises("MarkdownParseError", "coalesce is not supported")),
         prompt_cache=('topic ?? "x"',),
         declared_inputs=TOPIC_INPUT,
     ),
@@ -1572,8 +1563,9 @@ CACHE_ROWS: tuple[Row, ...] = (
         "cache_var_coalesce_absent_first_root_r5",
         "cache",
         "Base: ${g.out_str ?? p.out_str}",
-        flips(Ok(), Error("coalesce is not supported"), "4c", "R5: loud beats the silent drop"),
-        flips(Absent(), Raises("MarkdownParseError", "coalesce is not supported"), "4c", "R5"),
+        # Flipped by R5 (a): loud beats the silent drop
+        now(Error("coalesce is not supported")),
+        now(Raises("MarkdownParseError", "coalesce is not supported")),
         prompt_cache=("g.out_str ?? p.out_str",),
         ghost=True,
     ),
@@ -1581,8 +1573,9 @@ CACHE_ROWS: tuple[Row, ...] = (
         "cache_var_coalesce_present_root_r5",
         "cache",
         "Base: ${p.nope ?? p.out_str}",
-        flips(Ok(), Error("coalesce is not supported"), "4c", "R5 also rejects the chain that renders today"),
-        flips(Resolves(("Base: S",)), Raises("MarkdownParseError", "coalesce is not supported"), "4c", "R5"),
+        # Flipped by R5 (a): also rejects the chain that rendered only because its first root ran
+        now(Error("coalesce is not supported")),
+        now(Raises("MarkdownParseError", "coalesce is not supported")),
         prompt_cache=("p.nope ?? p.out_str",),
     ),
     Row(

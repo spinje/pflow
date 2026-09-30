@@ -191,8 +191,8 @@ def _chunks(block: str) -> list[tuple[str, str]]:
         ("${a} then ${b c} then ${d}", [("a", ""), ("d", " then ${b c} then ")]),
         # A dynamic index is one chunk, named by its raw source slice.
         ("Row ${p.rows[${i}].x}", [("p.rows[${i}].x", "Row ")]),
-        # R5 pending: a `??` Expression is a chunk like any other today.
-        ("Base ${a ?? b}", [("a ?? b", "Base ")]),
+        # A `??` in prose is not a chunk var: an escaped one stays prose (R5 rejects only chunk vars).
+        ("Keep $${a ?? b} then ${a.x}", [("a.x", "Keep $${a ?? b} then ")]),
     ],
 )
 def test_chunks_are_the_parsed_expressions(block: str, expected: list[tuple[str, str]]) -> None:
@@ -227,6 +227,20 @@ def test_issue_after_the_last_chunk_is_named(block: str, issue: str, line_offset
 
 def test_escape_after_the_last_chunk_is_still_discarded_prose() -> None:
     assert _chunks("${a} tail $${b c}") == [("a", "")]
+
+
+@pytest.mark.parametrize(
+    ("block", "var", "line_offset"),
+    [("Base ${a ?? b}", "a ?? b", 0), ('${a.x}\nMore ${b.y ?? "d"}', 'b.y ?? "d"', 1)],
+)
+def test_coalesce_chunk_var_is_rejected_at_its_line(block: str, var: str, line_offset: int) -> None:
+    """A chunk renders one value gated on its root having run, so a `??` chain is
+    rejected at parse rather than half-honoured (R5)."""
+    source = _wrap(f"```cache\n{block}\n```")
+    with pytest.raises(MarkdownParseError) as exc_info:
+        parse_markdown(source)
+    assert f"coalesce is not supported in a ## Cache chunk: '${{{var}}}'." in str(exc_info.value)
+    assert exc_info.value.line == source.splitlines().index("```cache") + 2 + line_offset
 
 
 def test_escape_only_block_is_rejected_like_prose() -> None:

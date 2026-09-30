@@ -127,6 +127,15 @@ class TestCacheVarRoots:
         ``"42"`` and silently drops it, so the validator must keep rejecting it."""
         assert any("'42' is not a declared input" in m for m in self._messages("42"))
 
+    def test_coalesce_var_from_dict_ir_is_rejected(self):
+        """Dict IR skips the ## Cache parser's coalesce rejection; a chain whose first root
+        exists must still not validate (the runtime would read only that first root)."""
+        assert any("'p.nope ?? i' is not a declared input" in m for m in self._messages("p.nope ?? i"))
+
+    def test_issue_var_is_left_to_the_issue_pass(self):
+        """One diagnostic per mistake: the template Issue pass reports a malformed var."""
+        assert self._messages("p.stdout.0") == []
+
 
 class TestBuildExecutionOrder:
     """Test the topological sort for execution order."""

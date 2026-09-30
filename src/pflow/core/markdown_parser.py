@@ -1736,10 +1736,15 @@ def _parse_cache_code_block(content: str, base_line: int) -> list[_CacheChunk]:
         start, end = expr.span
         name = content[start + 2 : end - 1]
         assert name == expr.raw  # noqa: S101 — names are sliced from source, never re-rendered
-        # R5 (ruling pending): a `??` Expression is a chunk like any other today, and the
-        # runtime gates it on its whole-var root (`prompt_cache._resolve_chunk_value`).
-        # The ruling lands HERE: reject `len(expr.operands) > 1`, or resolve per operand.
         chunk_line = base_line + content.count("\n", 0, start)
+        # A chunk renders one value, gated on its root node having run: a `??` chain
+        # could only ever read its first root, so it is rejected rather than half-honoured.
+        if len(expr.operands) > 1:
+            raise MarkdownParseError(
+                f"coalesce is not supported in a ## Cache chunk: '${{{name}}}'.",
+                line=chunk_line,
+                suggestion="Reference one value per chunk; compute a fallback in an upstream step and cache its output.",
+            )
         if name in seen_names:
             raise MarkdownParseError(
                 f"Duplicate cache chunk identifier '{name}'.",

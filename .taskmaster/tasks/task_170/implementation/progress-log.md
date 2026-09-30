@@ -1060,3 +1060,47 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
 - Resume point: on the rulings, resume Agent D (holds 4c/5 — a6e2294 lineage) or Agent E (gate-runner) to apply both seams + rows (+ spec edits if (1)); commit; launch a targeted `review-falsifier` on the two seams; E evaluates; `make check` + `make test-all-local`; `capture.py --check`; spec `## Status` → done + `## Completed`; `create-task-review`; `create-pr`; minimal handback with PR #, head SHA, `gh pr checks` snapshot (job executing the change: the `tests*` matrix incl. `tests-windows`), dev servers.
 - Follow-ups for the handback (lane issues): batch memo cache staleness (`instrumentation._compute_memo_cache_key`); prewarm warm-up drops user `system` without `## Cache`; `read-fields` found-`null` → "(not found)"; field-check output sources (#643(c)); `visual-invariants.pflow.md` `out_path` default; Task-159 oracle re-record (7 pre-existing drifts); inline-list `batch.items` unresolved elements + cache-var-typo INFO advisory (spec Out of scope); `prompt_refs.first_per_item_position` nested-index tear (spec); web TS mirrors other than `scan.ts` lacking `$$` (spec).
 - CONTEXT.md proposals: **Issue**, **Dynamic index** (entry [2026-10-01 01:10]).
+
+## [2026-10-01 05:00] Agent E (Opus) — R5 (a) applied
+- Did: applied the main orchestrator's R5 = (a) ruling at `77c0b31f`. Prose-wrap seam and its 2 rows untouched.
+- Changed:
+  - `core/markdown_parser.py::_parse_cache_code_block`: D's "R5 (ruling pending)" comment is replaced by the rule. A multi-operand Expression raises `MarkdownParseError("coalesce is not supported in a ## Cache chunk: '${<var>}'.")` at the chunk's own line (after the line is computed, like the duplicate-name error). Suggestion: "Reference one value per chunk; compute a fallback in an upstream step and cache its output."
+  - `core/workflow/data_flow.py::_cache_var_roots`: C2's lexical whole-var-root fallback is deleted. Now:
+    - one Reference → each root, inner ones included;
+    - an Issue → `[]` (the Issue pass reports it);
+    - anything else → `[var_expr]`, an unresolvable root, so it errors.
+    - The "anything else" case is a literal `${42}` (same message as before) or a dict-IR `??` chain. Dict IR skips the parser, and the old fallback validated `p.nope ?? i` on its first root alone, which is the R5 half-honouring class.
+  - Tests:
+    - `test_cache_block_parser.py`: the sanctioned "R5 pending" row `Base ${a ?? b}` is replaced by the prose partner `Keep $${a ?? b} then ${a.x}`, which chunks `a.x`: an escaped `??` stays prose and a single-operand var still chunks. New `test_coalesce_chunk_var_is_rejected_at_its_line` (2 rows; exact message naming the var + line, incl. a `??` chunk after a valid one).
+    - `test_workflow_data_flow.py::TestCacheVarRoots`: `test_coalesce_var_from_dict_ir_is_rejected` + `test_issue_var_is_left_to_the_issue_pass`.
+    - Corpus: the 3 `cache_var_coalesce_*_r5` rows are flipped to `now(after)` (6 `today` items deleted, their xfail markers gone). Wording matched verbatim, so nothing was re-derived.
+- Verified:
+  - `make check` green.
+  - `make test` **10222 passed / 2 failed / 0 xfailed**, against the 10218 / 2 / 6 baseline. The −6 xfailed are the removed `after` items. The +4 passed are 2 parser-rejection rows and 2 data_flow tests; the prose partner replaces the pending row 1:1. The 2 failures are exactly the prose-wrap rows.
+  - `make test-all-local` **10274 / 2 (same) / 2 skipped / 0 xfailed**.
+  - `capture.py --check`: 29 examples, 0 differing.
+  - Mutations (`scratchpads/task-170/gate/mutate_r5.py`, byte-copy restore), all KILLED:
+    - parser rule off → 8 red (new parser tests + 3 corpus rows × 2 sides);
+    - `_cache_var_roots` back to the lexical first root → the dict-IR `??` test red;
+    - Issue half dropped → the Issue test red.
+  - Executed: under the full `WorkflowValidator`, a dict-IR Issue var gets ONE error (the Issue pass); without the Issue half it got two.
+- Deviations/surprises:
+  - (a) The orchestrator's brief assumed the whole fallback branch dies. Two of its three cases still need a rule:
+    - The literal `${42}` needs rejection (the existing `test_literal_var_is_rejected`).
+    - An Issue needs `[]` to keep one diagnostic per mistake (proved by the new test).
+    - So the branch became "not one Reference ⇒ the whole var is its root", which is simpler than the lexical root and also extends R5 to dict IR, where the parser never runs.
+  - (b) Docs: neither `docs/how-it-works/prompt-caching.mdx` (":46 exactly one `${var}` reference") nor `guide/features/prompt-caching.md` (plain-ref examples only) shows or implies `??` in a chunk var, so no edit.
+  - (c) `prompt_cache._resolve_chunk_value` keeps its lexical `extract_root_node_id` gate. For the only var shape that now reaches it (one Reference), it equals the parsed root, so no change.
+  - (d) The corpus's `flips()` / `Expect.after` / xfail machinery now has **zero users**. It is the corpus's documented divergence discipline (§0.5.1), and the pending prose-wrap ruling may need it, so it is left. After that ruling, the close-out can delete it if still unused (deletion test).
+- Self-checks: fully happy. test-reflect: every new test asserts an exact message/line or an exact list and is mutation-killed; the prose partner guards over-rejection. Nothing shallow.
+- Next: the orchestrator commits. The prose-wrap ruling stays with the user.
+
+## [2026-10-01 07:10] task-orchestrator — R5 (a) + tightenings ruled; PARKED on decision 1 only (full resume state)
+- [RULING] main orchestrator: R5 = (a) (session-08 ledger stands; the partial-works-only-when-the-first-root-ran finding is the silent divergence it prevents; (b) is a later lift). Both validator tightenings (shell dict-typing; `??`-string loop conditions) KEPT ("strict grammar wins"). Decision 1 (prose-wrapped output sources) stays with the user — it changes the Sanctioned-delta set. Directive: do everything decision-independent, park with only the two prose-wrap rows open; the falsifier re-check and `create-task-review` wait for decision 1 so both cover the final state.
+- Did: Agent E applied R5 (a) (entry "R5 (a) applied"); orchestrator verified `make test` 10222 passed / 2 failed (exactly `output_prose_wrap_recorded_drift-today`, `output_escape_only_r3-today`) / 0 xfailed; `make check` green; E reported `make test-all-local` 10274 passed / 2 skipped / same 2 failures and examples 29/29 unchanged. Committed.
+- **Resume point (decision 1):** the main orchestrator sends the ruling (+ spec edits if (1)). Then, in one pass by Agent E (gate-runner lineage, ~333k):
+  - (1): `runtime/output_resolver._normalize_source` = `source if source.startswith("${") or TemplateResolver.has_templates(source) else "${" + source + "}"`; rows `output_prose_wrap_recorded_drift` → `now(Resolves("prefix S"))`, `output_escape_only_r3` runtime → `now(Resolves("${p.out_str}"))`; the spec edits as sent (Behavior freeze prose-wrap line; Out of scope prose-wrap line; sanctioned-delta entry); plan §6 "Output `source:` prose wrap" line and `core/CLAUDE.md`/`output_resolver` docstrings if they state the drift.
+  - (2): row edits → `Raises(OutputResolutionError, "prefix ${p.out_str}")` / `Raises(OutputResolutionError, "$${p.out_str}")`; converse-parity check on whether a validator ERROR for prose sources is now required → hand back if so.
+  - Either way: delete the corpus `flips()`/xfail machinery if unused (E's close-out note); `make check` + `make test-all-local`; `capture.py --check`.
+  - Then: targeted `review-falsifier` (direct, orchestrator-launched) on the final state — both seams (prose-wrap, R5) + a re-run of its W1/S1 repros; E evaluates; spec `## Status` → done + `## Completed`; merge main again if moved (+ gates); `create-task-review`; `create-pr`; handback (PR #, head SHA, `gh pr checks` snapshot naming the `tests*` jobs incl. `tests-windows`, dev servers).
+- Follow-ups + CONTEXT proposals: unchanged from entry [2026-10-01 06:20].
