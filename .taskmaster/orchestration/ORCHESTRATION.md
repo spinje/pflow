@@ -379,9 +379,10 @@ plans — the agents own their own quality:**
   commissioning time (`Agent` in Claude, `spawn_agent` in Codex) and hands the report to the
   gate-runner for evaluation with the rest. (In the GH-issue lane the lane implementer runs its
   own gate and handles direct falsifier launches; same when a planner implements itself.)
-- **Lane completion gate — the LANE IMPLEMENTER's own, proportionate to its diff** (contract in
-  `lane-implementer.md`): lenses self-selected by what the diff touches, with a **floor of one
-  when the diff changes shared tooling, CI, or a security boundary**. A one-line fix may warrant
+- **Lane completion gate — the LANE IMPLEMENTER's own** (contract in `lane-implementer.md`):
+  lenses selected by the `deep-review` rubric, whose floors bind lanes unchanged (sensitive path ⇒
+  Full tier; `review-falsifier` whenever the diff makes a testable user-facing promise), with a
+  **floor of one when the diff changes shared tooling, CI, or a security boundary**. A one-line fix may warrant
   none; the choice is recorded in the PR body either way. Lanes carry no task-review, so the PR
   body is where selection, findings, and dispositions live.
 - **Mid-task phase review** at the task orchestrator's judgment after an especially risky phase

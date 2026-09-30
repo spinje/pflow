@@ -105,12 +105,15 @@ calls you make yourself, stated visibly in the PR body. Always-escalate regardle
   body (importance 3+ escalates).
 - `make check` + `make test` green from the worktree before the PR — table stakes, even for
   docs/CI diffs. Platform-sensitive code must clear the blocking `tests-windows` CI gate.
-- **Completion gate, proportionate to the diff.** When you are FULLY happy, select review lenses
-  by what the diff actually touches and run them per the `deep-review` skill — dispatch via its
+- **Completion gate, selected by the `deep-review` skill's rubric.** When you are FULLY happy,
+  pick lenses by what the diff actually touches — and the skill's floors apply to lanes
+  unchanged: a sensitive path sets Full tier regardless of diff size, and `review-falsifier`
+  (direct launch, LAST) runs whenever the diff makes a testable user-facing promise. Run them
+  per the skill — dispatch via its
   pflow fan-out (`workflows/review/run-review-lenses.pflow.md`), backgrounded to a declared
   output file and waited on IN-TURN per the skill (never by ending your turn). If the fan-out
   cannot run, follow the skill's fallback and its same-family disclosure — never
-  review your own diff. A one-line fix may warrant none. **Floor of one lens — never zero — when
+  review your own diff. A one-line fix outside those floors may warrant none. **Floor of one lens — never zero — when
   the diff changes shared tooling, CI, or a security boundary**, because there your blast radius
   exceeds what self-verification can see. Evaluate and apply the correct fixes yourself and
   record EVERY finding with its disposition (fixed, or skipped with a reason) in the PR body,
