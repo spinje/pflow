@@ -12,7 +12,6 @@ from pflow.core.litellm_runtime import import_litellm
 from pflow.core.llm_providers import (
     CURATED_PROVIDERS,
     PROVIDERS,
-    CuratedProvider,
     detect_provider,
     extract_provider_prefix,
     normalize_model_name,
@@ -269,5 +268,11 @@ def test_providers_without_catalog_models_list_nothing(bundled: _Bundled) -> Non
     assert {name for name, ids in listed.items() if not ids} == {"vllm", "hosted_vllm", "huggingface", "voyage"}
 
 
-def test_catalog_groups_default_to_the_provider_name_only() -> None:
-    assert CuratedProvider("x", (), "single").catalog_groups == ()
+def test_provider_models_matching_is_case_sensitive_on_every_platform() -> None:
+    """fnmatch case-folds on Windows; group and pricing-key patterns must not."""
+    catalog = {
+        "claude-x": _chat("Anthropic"),  # not the anthropic group
+        "claude-y": _chat("anthropic"),
+        "FT:claude-z": _chat("anthropic"),  # not the lowercase ft:* template pattern
+    }
+    assert _models("anthropic", catalog) == ["anthropic/FT:claude-z", "anthropic/claude-y"]

@@ -1166,9 +1166,11 @@ class TestLLMModelsCommand:
     def test_narrow_rung_keeps_the_active_keywords(self, runner: CliRunner) -> None:
         out = self._run(runner, "anthropic", "claude").stdout
         assert "  narrow: pflow settings llm models anthropic claude <keyword>" in out
-        narrowed = self._run(runner, "anthropic", "claude", "sonnet").stdout
-        assert narrowed.count("  anthropic/claude-sonnet-4-") == 6
-        assert "claude-opus" not in narrowed
+        # Each keyword alone matches more than the combination: every one must apply.
+        narrowed = self._run(runner, "anthropic", "sonnet", "4-6").stdout
+        assert [line for line in narrowed.splitlines() if line.startswith("  anthropic/")] == [
+            "  anthropic/claude-sonnet-4-6"
+        ]
 
     def test_no_keys_prints_guidance_to_stderr(self, runner: CliRunner) -> None:
         result = self._run(runner)

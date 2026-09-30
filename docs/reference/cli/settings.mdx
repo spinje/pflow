@@ -7,7 +7,7 @@ icon: "file-cog"
 The `pflow settings` command group manages pflow configuration stored in `~/.pflow/settings.json`. This includes API keys, environment variables, and node filtering.
 
 <Note>
-  **Your commands.** These are setup commands that you run directly - not your agent. API keys and security settings should always be configured by you, never by an AI agent.
+  **Your commands.** These are setup commands that you run directly - not your agent. API keys and security settings should always be configured by you, never by an AI agent. Read-only discovery (`llm show`, `llm providers`, `llm models`) is safe for agents to run.
 </Note>
 
 ## Commands
@@ -392,7 +392,7 @@ pflow settings llm models --output-format json   # For agent parsing
 }
 ```
 
-`source` is `live` or `offline`; `status` is `set`, `-` (no key) or `n/a` (local provider). JSON lists every matched model. With no keys, or no match, `providers` is empty and the guidance goes to stderr.
+`source` is `live` or `offline`; `status` is `set`, `-` (no key) or `n/a` (local provider). JSON lists every matched model. Naming a provider inspects it without its key. With no provider named and no keys configured, or when nothing matches, `providers` is empty and the guidance goes to stderr.
 
 ### pflow settings llm set-default
 

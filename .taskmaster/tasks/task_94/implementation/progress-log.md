@@ -151,3 +151,24 @@
 - Deviations/surprises: the test_ui.py fix is outside the plan — a latent order-dependent leak
   this diff's new tests exposed; test-only, 3 lines, revertible.
 - Next: completion gate (code-mode deep-review).
+
+## [2026-09-30] task-planner (implementing) — completion gate: reading battery
+- Did: pflow fan-out (codex, cross-model), 6 lenses: spec-conformance, agent-ux, silent-failures,
+  test-fidelity, impact-completeness, simplicity. Coverage 6/6; report
+  `scratchpads/task-94/review-report.md` (local).
+- Dispositions:
+  - test-fidelity "C1" (multi-keyword test passed with only the last keyword applied) — FIXED:
+    `anthropic sonnet 4-6` must yield exactly `claude-sonnet-4-6`; mutation (last-keyword-only
+    filter) now fails it (EXECUTED). Severity is a test gap, not a product defect.
+  - spec-conformance W1 (no case-sensitivity regression test) — FIXED: public-API test with a
+    `Anthropic` group and an `FT:` key; discriminates only on Windows, where `fnmatch` folds case
+    (the tests-windows job).
+  - spec-conformance S1 (no successful model-keyword real run recorded) — FIXED: `uv run pflow
+    settings llm models opus` → `anthropic (configured)` with only `anthropic/claude-opus-*` ids,
+    exit 0 (EXECUTED; it had run in Phase 3 but went unrecorded).
+  - test-fidelity S1 (dataclass-default test is shallow) — FIXED: deleted.
+  - agent-ux doc S (JSON empty-case wording) + impact doc S (page intro told agents not to run
+    these) — FIXED in `settings.mdx`.
+  - Integration note: main gained stdin-isolation commits; merged before the falsifier.
+- Verified clean per lenses: silent-failures, simplicity, agent-ux (no C/W).
+- Next: merge origin/main, re-gate, falsifier.
