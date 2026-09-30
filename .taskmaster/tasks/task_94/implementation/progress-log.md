@@ -92,3 +92,35 @@
   D12, D13, D14 as planned; planner-implements ACCEPTED (~356k used). User wording objections, if
   any, arrive later as string changes.
 - Next: Phase 1.
+
+## [2026-09-30] task-planner (implementing) — Phase 1 complete (`7f866921`)
+- Did: `provider_models()` + `_is_llm_callable` + `_version_key` in `core/llm_providers.py`;
+  `CuratedProvider.catalog_groups` on bedrock/vertex_ai/cohere; anyscale row removed; providers
+  oracles → 26 rows; 23 new tests in `tests/test_core/test_llm_providers.py`.
+- Verified: `make check` green; `make test` 9342 passed. Mutation spot checks (EXECUTED, each
+  reverted): dropping the prefix guard, the output-modality clause, `<=` → `<` on deprecation, or
+  the `bedrock/*/*` pattern each turns ≥1 test red.
+- Deviations/surprises: the plan's openai test asserted no id contains "realtime"; older
+  `gpt-4o-*-realtime-preview` entries declare no capabilities (only `mode: chat`) and pass the
+  data-driven rule. Kept the rule (no name-based curation); test now pins the declared
+  realtime-only `gpt-realtime` instead; limitation added to the plan.
+- Self-checks: fully happy; test-reflect: tests are behaviour-per-clause + real-catalog contract;
+  mutation checks above are the reflection — nothing shallow found.
+- Next: Phase 2.
+
+## [2026-09-30] task-planner (implementing) — Phase 2 complete
+- Did: `llm models` command + rendering helpers in `cli/commands/settings.py`; `providers` footer
+  line; settings-group help line; orphaned table comment removed; llm node pointer (D14);
+  `guide/nodes/llm.md` fold; MCP instruction lines; `settings.mdx` rows + section; searcher row
+  (+ `make sync-claude-assets` → `.codex/agents/pflow-codebase-searcher.toml`); `core/CLAUDE.md`
+  row; `litellm_runtime` docstrings; `reset_upstream_attempted` moved to `tests/conftest.py`;
+  24 new CLI/describe tests.
+- Verified: `make check` green; `make test` 9366 passed; `test_lazy_imports.py` 1 passed.
+  Mutation spot checks (EXECUTED, restored from a backup copy): keeping unmatched providers,
+  capping keyword views, guidance to stdout, and an env-only status detector each turn tests red.
+- Deviations/surprises: a mutation loop restored `settings.py` with `git checkout`, which dropped
+  the uncommitted Phase-2 edits; re-applied from the same script and re-verified (96 tests), then
+  ran mutations against a backup copy. No lasting effect.
+- Self-checks: fully happy; test-reflect: the byte-exact overview/no-keys/JSON oracles plus
+  mutation checks cover the contract; no shallow tests found.
+- Next: Phase 3 real-surface runs.

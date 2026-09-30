@@ -2054,6 +2054,7 @@ workflow_describe(name="workflow-name")                                   # Show
 - `pflow settings set-env KEY_NAME "value"` — Store credentials / LLM API keys
 - `pflow settings show` — View settings
 - `pflow settings llm show` — View configured LLM models
+- `pflow settings llm models` — List models the configured keys can use
 
 ### Template Variable Quick Reference
 

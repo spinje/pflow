@@ -227,36 +227,6 @@ def test_import_litellm_exceptions_returns_exceptions_module(monkeypatch: pytest
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def reset_upstream_attempted(monkeypatch: pytest.MonkeyPatch):
-    """Reset the module-level upstream latches between tests.
-
-    The flags latch True after the first fetch attempt per process. Tests
-    that exercise the fetch path must reset them explicitly via monkeypatch
-    so the helper actually runs (instead of short-circuiting on the latch).
-    Layers on top of ``tests/conftest.py::_block_upstream_cost_map_fetch``
-    which pre-sets the flags for all tests — opting back in here means the
-    helpers actually enter their fetch branch.
-
-    A merge also writes process-wide LiteLLM state outside ``model_cost``:
-    the per-provider ``*_models`` routing sets (copied here, so monkeypatch
-    restores the originals) and the ``model_cost`` lookup caches (cleared at
-    teardown, since monkeypatch restores the real catalog without telling
-    LiteLLM).
-    """
-    from pflow.core import litellm_runtime
-
-    monkeypatch.setattr(litellm_runtime, "_upstream_attempted", False)
-    monkeypatch.setattr(litellm_runtime, "_validator_upstream_attempted", False)
-    monkeypatch.setattr(litellm_runtime, "_validator_upstream_fetch_succeeded", False)
-    litellm = import_litellm()
-    for name, value in list(vars(litellm).items()):
-        if name.endswith("_models") and isinstance(value, set):
-            monkeypatch.setattr(litellm, name, set(value))
-    yield litellm_runtime
-    litellm.utils._invalidate_model_cost_lowercase_map()
-
-
 def _stub_httpx_get(monkeypatch: pytest.MonkeyPatch, upstream_map: dict, delay: float = 0.0) -> list[str]:
     """Stub ``httpx.get`` to return ``upstream_map`` as JSON after ``delay`` seconds.
 

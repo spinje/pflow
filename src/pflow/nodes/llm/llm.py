@@ -1023,7 +1023,7 @@ class LLMNode(Node):
         - cache_chunks_skipped: list  # Trace 2.1.0 — chunk names skipped during cache rendering due to ABSENT upstream branches (default empty list).
         - cache_skipped_reason: str|None  # Trace 2.3.0 — "below_min" when runtime stripped cache markers before dispatch.
         - prewarm_disabled_reason: str|None  # Trace 2.3.0 — "below_min" when pre-flight disabled batch prewarm for this node.
-    - Params: model: str  # Model to use (optional - always use smart default unless user requests specific model)
+    - Params: model: str  # Model to use (optional - always use smart default unless user requests specific model). List usable models: pflow settings llm models · API key env vars: pflow settings llm providers
     - Params: temperature: float  # Sampling temperature (default: 1.0)
     - Params: max_tokens: int  # Response-length ceiling (optional). On reasoning models this is the combined thinking+answer budget and only caps thinking depth — it never increases it. Set it explicitly when you need a long visible answer from a reasoning model (otherwise the provider may cap visible output low).
     - Params: timeout: int  # Execution timeout in seconds for LLM API call (default: 120)

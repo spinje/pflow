@@ -878,6 +878,7 @@ vllm          (no key needed)                                         n/a
 Showing 26 curated provider(s).
 Convention for unlisted providers: <PROVIDER>_API_KEY (matches slash-prefix).
 Set a key:  pflow settings set-env <ENV_VAR> "<value>"
+Models per provider: pflow settings llm models <provider>
 Full LiteLLM list: https://docs.litellm.ai/docs/providers
 """
 
@@ -1000,6 +1001,339 @@ class TestLLMProvidersCommand:
 
         assert status["anthropic"] == "set"
         assert status["groq"] == "-"
+
+
+# A small catalog in LiteLLM's shape: 12 anthropic models (over the overview cap of 10),
+# entries the listing must drop, and ids from other providers that contain "anthropic".
+_MODELS_CATALOG: dict[str, dict[str, object]] = {
+    **{
+        f"claude-{family}-4-{n}": {"litellm_provider": "anthropic", "mode": "chat"}
+        for family in ("opus", "sonnet")
+        for n in range(1, 7)
+    },
+    "gpt-x": {"litellm_provider": "openai", "mode": "chat"},
+    "gpt-y": {"litellm_provider": "openai", "mode": "responses"},
+    "ft:gpt-x": {"litellm_provider": "openai", "mode": "chat"},
+    "text-embedding-z": {"litellm_provider": "openai", "mode": "embedding"},
+    "groq/llama-a": {"litellm_provider": "groq", "mode": "chat"},
+    "command-r": {"litellm_provider": "cohere_chat", "mode": "chat"},
+    "anthropic.claude-opus-9": {"litellm_provider": "bedrock_converse", "mode": "chat"},
+    "openrouter/anthropic/claude-opus-9": {"litellm_provider": "openrouter", "mode": "chat"},
+    "ollama/llama3": {"litellm_provider": "ollama", "mode": "chat"},
+}
+
+_MODELS_NEXT_STEPS = """\
+Next steps:
+  pflow settings llm models <provider>       a provider's full list, even without its key
+  pflow settings llm models <keyword>        filter your providers' models by name (e.g. opus)
+  pflow settings llm providers               every provider and the env var it needs
+  pflow settings llm show                    the default model pflow resolves
+Not listed? Any LiteLLM model works as <provider>/<model> (validation may warn it is not in the catalog).
+"""
+
+_MODELS_OVERVIEW = (
+    """\
+Source: live LiteLLM catalog
+Up to 10 per provider, ordered by name (higher versions first) — not a ranking.
+
+anthropic (configured)
+  anthropic/claude-sonnet-4-6
+  anthropic/claude-sonnet-4-5
+  anthropic/claude-sonnet-4-4
+  anthropic/claude-sonnet-4-3
+  anthropic/claude-sonnet-4-2
+  anthropic/claude-sonnet-4-1
+  anthropic/claude-opus-4-6
+  anthropic/claude-opus-4-5
+  anthropic/claude-opus-4-4
+  anthropic/claude-opus-4-3
+  see all 12: pflow settings llm models anthropic
+
+openai (configured)
+  openai/gpt-y
+  openai/gpt-x
+
+"""
+    + _MODELS_NEXT_STEPS
+)
+
+_NO_KEYS_GUIDANCE = """\
+No LLM provider keys configured.
+Set one:             pflow settings set-env ANTHROPIC_API_KEY "<key>"   (every provider: pflow settings llm providers)
+Browse without one:  pflow settings llm models <provider>   (e.g. anthropic, or ollama for local models)
+"""
+
+
+class TestLLMModelsCommand:
+    """pflow settings llm models — what it lists, how it labels, where each message goes."""
+
+    @pytest.fixture(autouse=True)
+    def _catalog_without_keys(self, monkeypatch: pytest.MonkeyPatch, isolated_settings: Path) -> None:
+        from pflow.core import litellm_runtime
+        from pflow.core.llm_providers import CURATED_PROVIDERS
+
+        for var in {v for p in CURATED_PROVIDERS for v in p.env_vars}:
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr(litellm_runtime.import_litellm(), "model_cost", _MODELS_CATALOG)
+        monkeypatch.setattr(litellm_runtime, "try_load_upstream_catalog", lambda: True)
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        # click 8.1 mixes stderr into result.output unless told not to; stream routing is under test here.
+        return CliRunner(mix_stderr=False)
+
+    def _run(self, runner: CliRunner, *args: str):
+        result = runner.invoke(settings, ["llm", "models", *args])
+        assert result.exit_code == 0, result.stderr
+        return result
+
+    def test_overview_samples_configured_providers(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-a")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-o")
+        result = self._run(runner)
+        assert result.stdout == _MODELS_OVERVIEW
+        assert result.stderr == ""
+
+    def test_see_all_rung_leads_to_the_complete_list(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-a")
+        out = self._run(runner, "anthropic").stdout
+        assert out.count("  anthropic/claude-") == 12
+        assert "see all" not in out
+        assert "  narrow: pflow settings llm models anthropic <keyword>" in out
+        assert "not a ranking" not in out  # the ordering disclaimer belongs to the capped sample only
+
+    def test_provider_name_selects_exactly_that_provider(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-r")
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "a")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "b")
+        out = self._run(runner, "anthropic").stdout
+        assert "anthropic (no key — set ANTHROPIC_API_KEY)" in out
+        assert "openrouter" not in out
+        assert "bedrock" not in out
+        # ...while those providers do list anthropic-named models when asked for by keyword.
+        keyword_out = self._run(runner, "claude-opus-9").stdout
+        assert "  openrouter/anthropic/claude-opus-9" in keyword_out
+        assert "  bedrock/anthropic.claude-opus-9" in keyword_out
+
+    @pytest.mark.parametrize(
+        ("provider", "expected"),
+        [
+            ("groq", "groq (no key — set GROQ_API_KEY)\n  groq/llama-a\n"),
+            ("gemini", "gemini (no key — set GEMINI_API_KEY or GOOGLE_API_KEY)\n"),
+            (
+                "bedrock",
+                "bedrock (no key — set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY)\n"
+                "  (Or use AWS IAM role / ~/.aws/credentials)\n  bedrock/anthropic.claude-opus-9\n",
+            ),
+            ("cohere", "cohere (no key — set COHERE_API_KEY)\n  cohere/command-r\n"),
+            (
+                "ollama",
+                "ollama (local — no key needed)\n"
+                "  (catalog ids — your server runs only the models it has pulled)\n  ollama/llama3\n",
+            ),
+            (
+                "vllm",
+                "vllm (local — no key needed)\n  No usable models in LiteLLM's catalog — pass the id your provider"
+                " serves as vllm/<model> (setup: https://docs.litellm.ai/docs/providers)\n",
+            ),
+        ],
+    )
+    def test_provider_block_labels(self, runner: CliRunner, provider: str, expected: str) -> None:
+        out = self._run(runner, provider).stdout
+        assert expected in out
+        missing_key_rung = 'pflow settings set-env <ENV_VAR> "<key>"'
+        assert (missing_key_rung in out) == ("(no key —" in expected)
+
+    def test_key_stored_in_settings_counts_as_configured(self, runner: CliRunner, isolated_settings: Path) -> None:
+        SettingsManager(settings_path=isolated_settings).set_env("ANTHROPIC_API_KEY", "sk-stored")
+        out = self._run(runner).stdout
+        assert "anthropic (configured)" in out
+        assert "openai" not in out
+
+    def test_model_keyword_filters_configured_providers(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-a")
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-o")
+        out = self._run(runner, "OPUS").stdout
+        assert "anthropic (configured)" in out
+        assert out.count("  anthropic/claude-opus-4-") == 6
+        assert "sonnet" not in out
+        assert "openai" not in out  # no match there, so the block is dropped
+
+    def test_narrow_rung_keeps_the_active_keywords(self, runner: CliRunner) -> None:
+        out = self._run(runner, "anthropic", "claude").stdout
+        assert "  narrow: pflow settings llm models anthropic claude <keyword>" in out
+        narrowed = self._run(runner, "anthropic", "claude", "sonnet").stdout
+        assert narrowed.count("  anthropic/claude-sonnet-4-") == 6
+        assert "claude-opus" not in narrowed
+
+    def test_no_keys_prints_guidance_to_stderr(self, runner: CliRunner) -> None:
+        result = self._run(runner)
+        assert result.stdout == ""
+        assert result.stderr == _NO_KEYS_GUIDANCE
+        with_keyword = self._run(runner, "opus")
+        assert "Browse without one:  pflow settings llm models <provider> opus   (" in with_keyword.stderr
+
+    def test_no_keys_json_keeps_its_shape(self, runner: CliRunner) -> None:
+        result = self._run(runner, "--output-format", "json")
+        assert result.stdout == json.dumps({"source": "live", "providers": []}, indent=2) + "\n"
+        assert result.stderr == _NO_KEYS_GUIDANCE
+
+    def test_empty_result_says_what_was_searched(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-a")
+        result = self._run(runner, "xyzzy")
+        assert result.stdout == ""
+        assert 'No models match "xyzzy" in your configured providers (anthropic).' in result.stderr
+        assert "Search a provider without its key:  pflow settings llm models <provider> xyzzy" in result.stderr
+        json_result = self._run(runner, "xyzzy", "--output-format", "json")
+        assert json.loads(json_result.stdout) == {"source": "live", "providers": []}
+
+    def test_near_miss_provider_name_suggests_the_real_one(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-a")
+        stderr = self._run(runner, "vertex").stderr
+        assert '"vertex" is not a provider name — did you mean: pflow settings llm models vertex_ai' in stderr
+
+    def test_named_no_match_points_at_a_runnable_full_list(self, runner: CliRunner) -> None:
+        stderr = self._run(runner, "anthropic", "openai", "xyzzy").stderr
+        assert 'No models match "xyzzy" in anthropic, openai.' in stderr
+        rung = "Full list:  pflow settings llm models anthropic openai"
+        assert rung in stderr
+        out = self._run(runner, *rung.split("models ", 1)[1].split()).stdout
+        assert "anthropic (" in out
+        assert "openai (" in out
+
+    def test_json_lists_every_model_with_auth_fields(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-a")
+        overview = json.loads(self._run(runner, "--output-format", "json").stdout)
+        assert len(overview["providers"][0]["models"]) == 12  # never capped
+        result = self._run(runner, "gemini", "cohere", "--output-format", "json")
+        expected = {
+            "source": "live",
+            "providers": [
+                {
+                    "name": "cohere",
+                    "env_vars": ["COHERE_API_KEY"],
+                    "semantics": "single",
+                    "status": "-",
+                    "note": None,
+                    "models": ["cohere/command-r"],
+                },
+                {
+                    "name": "gemini",
+                    "env_vars": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+                    "semantics": "or",
+                    "status": "-",
+                    "note": None,
+                    "models": [],
+                },
+            ],
+        }
+        assert result.stdout == json.dumps(expected, indent=2) + "\n"
+        assert result.stderr == ""
+
+    def test_offline_label_names_the_bundled_version(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+        from importlib.metadata import version
+
+        from pflow.core import litellm_runtime
+
+        monkeypatch.setattr(litellm_runtime, "try_load_upstream_catalog", lambda: False)
+        out = self._run(runner, "groq").stdout
+        assert out.startswith(f"Source: offline snapshot (LiteLLM {version('litellm')}; live catalog unreachable)")
+        assert json.loads(self._run(runner, "groq", "--output-format", "json").stdout)["source"] == "offline"
+
+
+class TestLLMModelsCatalogSource:
+    """The live/offline label against the real upstream-merge code, with the network stubbed."""
+
+    @pytest.fixture(autouse=True)
+    def _real_catalog_copy(self, monkeypatch: pytest.MonkeyPatch, reset_upstream_attempted) -> None:
+        import copy
+
+        litellm = reset_upstream_attempted.import_litellm()
+        monkeypatch.setattr(litellm, "model_cost", copy.deepcopy(litellm.model_cost))
+
+    def test_live_fetch_adds_upstream_only_models(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import copy
+        from unittest.mock import MagicMock
+
+        import httpx
+
+        from pflow.core.litellm_runtime import import_litellm
+
+        catalog = import_litellm().model_cost
+        bundled_key = "claude-sonnet-4-5"
+        bundled_before = copy.deepcopy(catalog[bundled_key])
+        upstream = {
+            "claude-pflow-upstream-only": {"litellm_provider": "anthropic", "mode": "chat"},
+            bundled_key: {"litellm_provider": "anthropic", "mode": "chat", "max_tokens": 1},
+        }
+        monkeypatch.setattr(
+            httpx, "get", lambda *a, **k: MagicMock(raise_for_status=lambda: None, json=lambda: upstream)
+        )
+
+        result = CliRunner(mix_stderr=False).invoke(settings, ["llm", "models", "anthropic"])
+
+        assert result.exit_code == 0
+        assert result.stdout.startswith("Source: live LiteLLM catalog\n")
+        assert "  anthropic/claude-pflow-upstream-only\n" in result.stdout
+        assert "  anthropic/claude-sonnet-4-5\n" in result.stdout
+        assert catalog[bundled_key] == bundled_before
+
+    def test_failed_fetch_falls_back_to_the_bundled_catalog(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import httpx
+
+        def unreachable(*args: object, **kwargs: object) -> None:
+            raise httpx.ConnectError("offline")
+
+        monkeypatch.setattr(httpx, "get", unreachable)
+
+        result = CliRunner(mix_stderr=False).invoke(settings, ["llm", "models", "anthropic"])
+
+        assert result.exit_code == 0
+        assert result.stdout.startswith("Source: offline snapshot (LiteLLM ")
+        assert "  anthropic/claude-sonnet-4-5\n" in result.stdout
+        assert result.stderr == ""
+
+
+class TestLLMNodeModelsHint:
+    """The llm node's `model` help points at the listing on every describe surface, with no network."""
+
+    _POINTER = "List usable models: pflow settings llm models · API key env vars: pflow settings llm providers"
+
+    @pytest.fixture(autouse=True)
+    def _no_catalog_fetch(self, monkeypatch: pytest.MonkeyPatch):
+        from unittest.mock import Mock
+
+        from pflow.core import litellm_runtime
+
+        fetch = Mock(return_value=True)
+        monkeypatch.setattr(litellm_runtime, "try_load_upstream_catalog", fetch)
+        yield
+        fetch.assert_not_called()
+
+    def test_mcp_describe(self) -> None:
+        from pflow.cli.commands.mcp import mcp
+
+        result = CliRunner().invoke(mcp, ["describe", "llm"])
+        assert result.exit_code == 0
+        assert self._POINTER in result.output
+
+    def test_guide_renders_the_pointer_once(self) -> None:
+        from pflow.guide import compose_guide
+
+        guide = compose_guide(["llm"])
+        assert self._POINTER in guide
+        assert guide.count("pflow settings llm providers") == 1
+
+    def test_mcp_server_registry_describe(self) -> None:
+        from pflow.mcp_server.services.registry_service import RegistryService
+
+        assert self._POINTER in RegistryService.describe_nodes(["llm"])
 
 
 class TestRegistryOutputModeCommand:
