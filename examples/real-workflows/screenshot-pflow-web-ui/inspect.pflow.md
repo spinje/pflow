@@ -30,6 +30,15 @@ screenshot tool: `workflow` required, `direction=LR|TD`, `density=beautiful|adva
 - type: string
 - required: true
 
+### allow_empty
+
+Capture a page whose canvas never frames — the full-screen error page — instead of
+failing (forwarded to the shared settle core, which then waits its full 8 s).
+
+- type: boolean
+- required: false
+- default: false
+
 ## Outputs
 
 ### geometry
@@ -43,9 +52,10 @@ reference in the skill.
 
 ### viewport
 
-The settled viewport transform (proof the fit applied), from the shared sub-workflow.
+The settle report from the shared core: `{settled, transform, nodes, waited_ms}`.
+`settled` is `false` only under `allow_empty`.
 
-- source: ${prepare.transform}
+- source: ${prepare.report}
 
 ## Steps
 
@@ -60,6 +70,7 @@ persists across the sub-workflow boundary in the shared MCP browser).
 - workflow: ./shared/open-and-settle.pflow.md
 - inputs:
     url: ${url}
+    allow_empty: ${allow_empty}
 
 ### measure
 

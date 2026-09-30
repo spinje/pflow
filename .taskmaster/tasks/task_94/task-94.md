@@ -28,7 +28,11 @@ the `llm` node runs.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-09-30
 
 ## Priority
 
@@ -123,7 +127,8 @@ Locked with the user during the session-06 design discussion:
   env var name appears only where you'd act on it (key missing). Rejected `(ANTHROPIC_API_KEY: set)`
   (cramped) and `key set` (reads as an imperative).
 - **Cost column: out of v1.** It's data, not curation, and genuinely aids choosing — but deferred to
-  keep v1 minimal. A possible v2 addition.
+  keep v1 minimal. A possible v2 addition; it would turn the JSON `models` items from strings into
+  objects — a planned clean cutover of the JSON oracles and docs, not a reason to ship objects now.
 
 ## Decision ledger (session-09 rulings)
 
@@ -145,6 +150,10 @@ optimized for AI agents to understand and add features to."*
   `model`"). `chat` counts. VERIFY AT START: probe one `mode == "responses"` model (e.g.
   `gpt-5-pro`) through pflow's adapter; include `responses` iff it runs, else leave it out and say
   so in the escape-hatch line.
+  **RESOLVED 2026-09-30 (planner, applying this rule):** `chat` and `responses` count — a
+  `responses` model runs through pflow's adapter. `completion` does not: no completion-mode model
+  reachable through the adapter still runs (the providers retired them), so it cannot be shown to be
+  callable.
 
 - **DECIDED 2026-09-30 (user, option A of the SPEC battery's convergent finding) — the provider
   universe is the curated provider table** (the ONE table #606 consolidates). The catalog has three
@@ -166,15 +175,16 @@ optimized for AI agents to understand and add features to."*
 
 - **Task 80** (API key management via `pflow settings set-env`/`list-env`): DONE — the env-key
   store this reads is in place (`settings.py`, `llm_config.inject_settings_env_vars`).
-- **PR #421** (`pflow settings llm providers` + the `_LLM_PROVIDERS` table): MERGED — the sibling to
-  mirror and the provider→env-var/status source to reuse.
+- **PR #421** (`pflow settings llm providers`): MERGED — the sibling to mirror (its table is now
+  `CURATED_PROVIDERS`, see #606).
 - **PR #424** (`ensure_model_priced` upstream-fetch pattern): MERGED — the reference for the
   network fetch (see Implementation Notes).
 
 - **#606** (dual provider tables → one): MERGED 2026-09-30 (PR #661) — the table is now
   `CURATED_PROVIDERS` (frozen `CuratedProvider` rows) in `core/llm_providers.py`, registry rows
   derived from `PROVIDERS`; status follows the runtime resolver; byte-exact `providers` snapshot
-  tests exist. This task adds its catalog-group and routing-prefix fields to `CuratedProvider`.
+  tests exist. This task adds a `catalog_groups` field to `CuratedProvider`; the routing prefix is
+  `<name>/` for every row, so it is derived, not a field.
 - **#654** (upstream catalog merge re-keyed entries): MERGED 2026-09-30 (PR #662) — both upstream
   paths now go through `_merge_upstream_catalog` (`core/litellm_runtime.py`): exact-key writes into
   `model_cost`, LiteLLM's lookup caches invalidated, `add_known_models` for routing; bundled entries
@@ -193,8 +203,9 @@ Buildable once both merge and the planner's verify-at-start probes are done.
   model ids, applied within the selected provider or, when none is named, within configured
   providers.
 - With no keyword, output is scoped to providers whose keys are configured (per the same detection
-  `settings llm providers` uses). Whether local (`n/a`) providers appear in this view is RESOLVE AT
-  START (an always-shown static ollama list vs an ollama-only user seeing the no-keys guidance).
+  `settings llm providers` uses). Local (`n/a`) providers are not in this view — there is no key to
+  detect, and a catalog list says nothing about which models a local server has pulled; they are
+  listed by name (`models ollama`), and the no-keys guidance points there.
 - Naming a provider shows its complete list **even if its key is not configured**, marked with the
   missing-key label.
 - When zero providers are configured and no keyword is given, output is the no-keys guidance (how to
@@ -209,17 +220,24 @@ Buildable once both merge and the planner's verify-at-start probes are done.
   `gpt-5.6-luna` lands in `model_cost` but not `models_by_provider["openai"]`).
 - Each entry is assigned to a curated provider through that provider's declared catalog groups
   (Decision ledger); entries in no declared group are not listed.
-- Filtered by mode (Decision ledger); callable-string exclusions (`ft:*` templates, pricing-tier
-  pseudo-entries) are applied by one named rule, tested on openai and together_ai.
+- One named rule decides whether a catalog entry is a string the `llm` node can call: its mode
+  counts (Decision ledger); its declared capabilities, where it declares them, include a
+  chat/responses endpoint and text output (drops realtime-only and audio-only entries); it is not
+  past its `deprecation_date`; and its key is not a pricing-only key (`ft:*` fine-tune templates,
+  `*/container` sessions, together's `together-ai-*` size tiers, Azure data-zone `azure/*/*` and
+  Bedrock region/commitment `bedrock/*/*` pricing). Tested on openai and together_ai.
 - Displayed ids use ONE rule: an id that already contains `/` is shown as-is; otherwise it gets its
-  provider's routing prefix. Then dedupe. (Bundled 1.86.1 keys anthropic/openai bare, groq/fireworks
-  prefixed, and the bare `gemini-2.0-flash` belongs to `vertex_ai-language-models` — so grouping,
-  not the key's shape, decides the prefix.) Consistent with the settings CLI's normalization warning
-  (`settings.py:615-633`) and with the validator's forward catalog lookup (`validator.py:1290`,
-  `_catalog_form_known_for_provider`): every listed id passes that lookup — one test, both
-  directions.
-- Order within a provider is stated by the planner (no curation; alphabetical puts `ft:*` and legacy
-  models first — e.g. drop entries past their `deprecation_date`, newest-first).
+  provider's routing prefix (`<name>/` for every curated row). An id that does not then start with
+  its provider's prefix is dropped (a catalog typo such as `replicateopenai/…`). Then dedupe.
+  (Bundled 1.86.1 keys anthropic/openai bare, groq/fireworks prefixed, and the bare
+  `gemini-2.0-flash` belongs to `vertex_ai-language-models` — so grouping, not the key's shape,
+  decides the prefix.) Consistent with the settings CLI's normalization warning
+  (`settings.py` `_normalize_and_warn_model`) and with the validator's forward catalog lookup
+  (`validator.py` `_catalog_form_known_for_provider`): every listed id passes that lookup — one
+  test, both directions.
+- Order within a provider: version-aware name order, higher versions first (`…-4-10` before
+  `…-4-9`). No curation — a mechanical stand-in for newest-first, since the catalog carries no
+  release date.
 
 ### Network + fallback
 - Default behavior fetches current LiteLLM model data over the network within a bounded timeout.
@@ -231,41 +249,44 @@ Buildable once both merge and the planner's verify-at-start probes are done.
   path.
 
 ### Capping & guidance (self-guiding output)
-- Only the no-keyword overview caps: each configured provider's list is capped at a fixed N (the
-  planner states N and the order); a capped provider shows the true total and points to its
-  complete list: `see all <N>: pflow settings llm models <provider>`.
-- Every keyword view is complete; a long one guides narrowing: `narrow: pflow settings llm models
-  <provider> <keyword>`.
-- Every view offers the next steps: inspect a not-yet-configured provider (`models <name>`), see
-  providers+keys (`pflow settings llm providers`), see the default pflow resolves (`pflow settings
-  llm show`), and the escape hatch that any LiteLLM model works via `provider/model` even if
-  unlisted.
+- Only the no-keyword overview caps: each configured provider's list is capped at 10; a capped
+  provider shows the true total and points to its complete list: `see all <N>: pflow settings llm
+  models <provider>`.
+- Every keyword view is complete; a provider showing more than 10 guides narrowing: `narrow: pflow
+  settings llm models <provider> <keyword>`.
+- Every result view offers the next steps: inspect a not-yet-configured provider (`models
+  <name>`), see providers+keys (`pflow settings llm providers`), see the default pflow resolves
+  (`pflow settings llm show`), store a missing key (`pflow settings set-env`, when a shown provider
+  lacks one), and the escape hatch that any LiteLLM model works via `provider/model` even if
+  unlisted. The no-keys and empty-result messages carry the rungs that apply there (set a key,
+  search a provider, did-you-mean for a near-miss provider name, the escape hatch).
 - Missing-key labels generalize beyond one env var: reuse `_format_env_vars` (gemini is OR,
-  bedrock/azure/vertex are AND) and show the table's note where one exists (credential-file / IAM
-  setups); the local-provider (`n/a`) label is defined by the planner. Curated providers with zero
-  callable catalog entries (`vllm`, `hosted_vllm`, `huggingface`, `voyage`) get guidance text,
-  never an empty list.
+  bedrock/azure/vertex are AND) and show the table's note under a missing-key label where one
+  exists (credential-file / IAM setups); local (`n/a`) providers read `(local — no key needed)`.
+  Curated providers with zero callable catalog entries (`vllm`, `hosted_vllm`, `huggingface`,
+  `voyage`) get guidance text, never an empty list.
 
 ### JSON output
 - `--output-format json` emits an object `{source, providers}` (not `providers`' bare array — it
-  must carry `source`): `source` is `"live"`/`"offline"`; each provider entry carries `name`,
-  `env_vars`, `status` (`"set"`/`"-"`/`"n/a"`, per `_provider_status`), and `models` (the complete
-  matched ids). No `model_count` (it would equal `len(models)`). Capping is text-only. The
+  must carry `source`): `source` is `"live"`/`"offline"`; each provider entry carries the
+  `providers` row fields — `name`, `env_vars`, `semantics`, `status` (`"set"`/`"-"`/`"n/a"`, per
+  `_provider_status`), `note` — plus `models` (the complete matched ids). No `model_count` (it would equal `len(models)`). Capping is text-only. The
   no-keys and no-match cases emit the same shape with `providers: []`.
 
 ### Altered: `llm` node description
 - The `llm` node's agent-facing interface text (the `LLMNode` docstring — rendered by all three
   describe surfaces) APPENDS one static, network-free pointer to the existing `model` help —
   the "always use smart default unless user requests specific model" instruction stays — e.g.
-  `… List usable models: pflow settings llm models · no key? pflow settings llm providers`
-  (Decision ledger). `guide/nodes/llm.md:25` already points at `providers`: fold it into the
+  `… List usable models: pflow settings llm models · API key env vars: pflow settings llm
+  providers` (Decision ledger). `guide/nodes/llm.md:25` already points at `providers`: fold it into the
   same pointer, never two authored copies.
 
 ### Unchanged (must not regress)
-- `settings set-env` / `unset-env` / `list-env`, `settings llm show`, `settings llm providers`, the
-  `llm` node's runtime model resolution, and smart-default selection are untouched.
-- Optional: a single `see models: pflow settings llm models` cross-reference line may be added to
-  the `providers` footer (nice-to-have, not required).
+- `settings set-env` / `unset-env` / `list-env`, `settings llm show`, the `llm` node's runtime
+  model resolution, and smart-default selection are untouched.
+- `settings llm providers` is unchanged except: (a) the `anyscale` row is removed — LiteLLM 1.86.1
+  no longer routes `anyscale/…`, so the table advertised a provider pflow cannot call and this
+  command would list its ids as usable; (b) one footer line points at `models`.
 
 ## Implementation Notes
 
@@ -285,11 +306,10 @@ Buildable once both merge and the planner's verify-at-start probes are done.
   rows read `os.environ` after injection); do not build a second detector.
 - **Network fetch LANDMINE (from `research/model-discovery-cross-reference-from-pr-424.md`):** pflow
   forces `LITELLM_LOCAL_MODEL_COST_MAP=True`, so `litellm.register_model(URL)` short-circuits to the
-  bundled backup and does nothing. The working pattern (shipped in
-  `src/pflow/core/litellm_runtime.py::ensure_model_priced`, PR #424) is: `httpx.get(
-  litellm.model_cost_map_url)` → parse/validate → set `litellm.suppress_debug_info = True` →
-  `litellm.register_model(dict)`. The BULK form already exists: `try_load_upstream_catalog`
-  (`litellm_runtime.py:355`) returns a success bool (→ the `live`/`offline` label) and carries the
+  bundled backup and does nothing. The working pattern is `_merge_upstream_catalog`
+  (`src/pflow/core/litellm_runtime.py`): `httpx.get(litellm.model_cost_map_url)` → shape-filter →
+  exact-key insert of the keys bundled lacks. The BULK entry point already exists: `try_load_upstream_catalog`
+  (`litellm_runtime.py`) returns a success bool (→ the `live`/`offline` label) and carries the
   shape filter (`_filter_well_formed_upstream_entries`) and the never-overwrite-bundled rule — reuse
   it (after #654's fix) rather than re-deriving the recipe; update its "Validator-side" docstring
   once the CLI also calls it. Semantics to preserve and label honestly: "live" = bundled +
@@ -297,10 +317,8 @@ Buildable once both merge and the planner's verify-at-start probes are done.
   On failure, use the already-loaded bundled data. Stderr hygiene: import via `import_litellm()`
   (a bare `import litellm` prints botocore warnings; precedent #359).
 - **Mode:** each catalog entry carries its own `mode` — no bare-name fallback lookup (it could read
-  a different provider's entry). VERIFY AT START: probe one `responses` model (e.g. `gpt-5-pro`)
-  and one `completion` model (e.g. `ollama/…` or `gpt-3.5-turbo-instruct`) through pflow's adapter;
-  static prior: pflow calls `litellm.completion` (`llm_client.py:388`) and LiteLLM bridges
-  `mode == "responses"` automatically (`main.py:1663-1694`), so the prior is "include".
+  a different provider's entry). pflow calls `litellm.completion`, which bridges
+  `mode == "responses"` models; `chat` + `responses` count (Decision ledger).
 - **Test harness traps:** `tests/conftest.py:52-54` presets the upstream latch to
   attempted+succeeded for every test — a test that does not reset both flags AND patch `httpx.get`
   gets `source: "live"` with no fetch. The autouse `_inject_fake_llm_api_keys` sets fake
@@ -336,8 +354,13 @@ Buildable once both merge and the planner's verify-at-start probes are done.
 - **Catalog groups:** `models bedrock` includes `bedrock_converse` models; `models cohere` lists
   cohere's chat models (catalog group `cohere_chat`); `models vertex_ai` includes the `vertex_ai-*`
   groups.
-- **Every listed id runs:** a test asserts every id listed for every curated provider routes to
-  that provider (`litellm.get_llm_provider`) and passes the validator's catalog lookup.
+- **Every listed id runs:** a test asserts every id listed for every curated provider is routable
+  (`litellm.get_llm_provider` resolves it) and starts with its provider's `<name>/` prefix, and
+  that every anthropic/openai/gemini id passes the validator's catalog lookup. (The provider LiteLLM
+  resolves may legitimately differ from the curated name — `cohere/…` → `cohere_chat`, `ai21/…` →
+  `ai21_chat`, `azure/command-r-plus` → its OpenAI-compatible route — so the prefix, not the
+  resolved name, pins the provider.) A second test asserts every curated provider name is itself a
+  LiteLLM routing prefix.
 - **Unconfigured inspect:** `models openai` with no OpenAI key shows its models with the
   missing-key label; `models gemini` shows the OR form; `models vllm` shows guidance, not an empty
   list.

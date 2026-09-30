@@ -72,7 +72,7 @@ def test_posix_runner_kills_process_group_on_timeout(monkeypatch):
         "shell": True,
         "stdout": subprocess.PIPE,
         "stderr": subprocess.PIPE,
-        "stdin": None,
+        "stdin": subprocess.DEVNULL,
         "cwd": None,
         "env": {"PATH": "x"},
         "start_new_session": True,

@@ -91,6 +91,7 @@ Project docs are loaded as CLAUDE.md context — read them first instead of rest
 | Recorded decision (ADR) | `glob "context/adr/*.md"` |
 | Task by topic | `grep -l "keyword" .taskmaster/tasks/*/task-*.md .taskmaster/tasks/*/task-review.md` |
 | Config/settings | `read src/pflow/core/settings.py` |
+| LLM providers / model listing | `read src/pflow/core/llm_providers.py` (`CURATED_PROVIDERS`, `provider_models`); command `llm_models` in `src/pflow/cli/commands/settings.py` |
 | Node interface format | `grep "Interface:" src/pflow/nodes/` |
 
 ## Multi-Step Recipes

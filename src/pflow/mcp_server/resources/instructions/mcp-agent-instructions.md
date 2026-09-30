@@ -2070,6 +2070,7 @@ workflow_describe(name="workflow-name")                                   # Show
 pflow settings set-env KEY_NAME "value"             # Store credential / API key
 pflow settings show                                 # View settings
 pflow settings llm show                             # View configured LLM models
+pflow settings llm models                           # Models your keys can use (keywords filter)
 
 # Trace Debugging
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.'   # Inspect trace — JSONL: one JSON object per line (meta / blob / event / run.complete)

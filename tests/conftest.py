@@ -37,8 +37,8 @@ def _block_upstream_cost_map_fetch(monkeypatch):
     first-line latch short-circuits before any network code runs. Tests
     that explicitly exercise the merge path (e.g. the 5 tests in
     ``test_litellm_runtime.py::test_ensure_model_priced_*``) opt back in
-    via the local ``reset_upstream_attempted`` fixture, which monkeypatches
-    the flag back to ``False`` for that test only.
+    via the ``reset_upstream_attempted`` fixture below, which monkeypatches
+    the flags back to ``False`` for that test only.
 
     The two validator-side flags (``_validator_upstream_attempted`` /
     ``_validator_upstream_fetch_succeeded``) are independent from the
@@ -52,6 +52,36 @@ def _block_upstream_cost_map_fetch(monkeypatch):
     monkeypatch.setattr(litellm_runtime, "_upstream_attempted", True)
     monkeypatch.setattr(litellm_runtime, "_validator_upstream_attempted", True)
     monkeypatch.setattr(litellm_runtime, "_validator_upstream_fetch_succeeded", True)
+
+
+@pytest.fixture
+def reset_upstream_attempted(monkeypatch: pytest.MonkeyPatch):
+    """Reset the module-level upstream latches between tests.
+
+    The flags latch True after the first fetch attempt per process. Tests
+    that exercise the fetch path must reset them explicitly via monkeypatch
+    so the helper actually runs (instead of short-circuiting on the latch).
+    Layers on top of the autouse ``_block_upstream_cost_map_fetch`` above,
+    which pre-sets the flags for all tests — opting back in here means the
+    helpers actually enter their fetch branch.
+
+    A merge also writes process-wide LiteLLM state outside ``model_cost``:
+    the per-provider ``*_models`` routing sets (copied here, so monkeypatch
+    restores the originals) and the ``model_cost`` lookup caches (cleared at
+    teardown, since monkeypatch restores the real catalog without telling
+    LiteLLM).
+    """
+    from pflow.core import litellm_runtime
+
+    monkeypatch.setattr(litellm_runtime, "_upstream_attempted", False)
+    monkeypatch.setattr(litellm_runtime, "_validator_upstream_attempted", False)
+    monkeypatch.setattr(litellm_runtime, "_validator_upstream_fetch_succeeded", False)
+    litellm = litellm_runtime.import_litellm()
+    for name, value in list(vars(litellm).items()):
+        if name.endswith("_models") and isinstance(value, set):
+            monkeypatch.setattr(litellm, name, set(value))
+    yield litellm_runtime
+    litellm.utils._invalidate_model_cost_lowercase_map()
 
 
 _FAKE_LLM_KEY_VARS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")

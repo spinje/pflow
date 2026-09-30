@@ -311,6 +311,7 @@ def _terminate_windows_process_tree(pid: int) -> None:
     try:
         completed = subprocess.run(  # noqa: S603 - resolved system utility, argv list, never a shell
             [taskkill_path, "/PID", str(pid), "/T", "/F"],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,

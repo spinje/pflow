@@ -43,6 +43,7 @@ def settings() -> None:
       export GEMINI_API_KEY=AI...
       pflow settings set-env OPENAI_API_KEY "sk-..."
       pflow settings llm providers                 # Full list of LLM providers and their env vars
+      pflow settings llm models                    # Models you can use with your keys
     \b
     Stored credentials are available as fallbacks for declared workflow inputs.
     Precedence: CLI params > shell env > settings env > workflow defaults.
@@ -464,10 +465,6 @@ def llm_show() -> None:
     click.echo("  pflow settings llm set-tts-voice <voice>")
 
 
-# Curated registry of LLM providers and their LiteLLM-recognized env vars.
-# Source: https://docs.litellm.ai/docs/providers (verified against
-# litellm.validate_environment for the canonical short-list).
-#
 def _provider_status(provider: CuratedProvider) -> str:
     """Return display status: "set" | "-" | "n/a"."""
     if provider.semantics == "local":
@@ -569,7 +566,198 @@ def llm_providers(keyword: str | None, output_format: str) -> None:
     click.echo(f"\nShowing {len(rows)} curated provider(s).")
     click.echo("Convention for unlisted providers: <PROVIDER>_API_KEY (matches slash-prefix).")
     click.echo('Set a key:  pflow settings set-env <ENV_VAR> "<value>"')
+    click.echo("Models per provider: pflow settings llm models <provider>")
     click.echo("Full LiteLLM list: https://docs.litellm.ai/docs/providers")
+
+
+_MODELS_OVERVIEW_CAP = 10
+_MODELS_ESCAPE_HATCH = (
+    "Not listed? Any LiteLLM model works as <provider>/<model> (validation may warn it is not in the catalog)."
+)
+
+
+@llm.command(name="models")
+@click.argument("keywords", nargs=-1)
+@click.option(
+    "--output-format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help="Output format (text list or JSON for agent parsing).",
+)
+def llm_models(keywords: tuple[str, ...], output_format: str) -> None:
+    """List the models you can pass to an llm node's `model`, per provider.
+
+    With no keyword: up to 10 models for each provider you have a key for.
+    A keyword that names a provider shows its complete list, even without a
+    key; any other keyword filters model ids (all keywords must match).
+    Reads LiteLLM's live model catalog, or the bundled snapshot when offline.
+
+    \b
+    Examples:
+      pflow settings llm models                         # Your providers, 10 each
+      pflow settings llm models anthropic               # One provider, complete
+      pflow settings llm models opus                    # Filter your providers' models
+      pflow settings llm models --output-format json    # For agent parsing
+    """
+    from datetime import date
+
+    from pflow.core.litellm_runtime import import_litellm, try_load_upstream_catalog
+    from pflow.core.llm_config import inject_settings_env_vars
+    from pflow.core.llm_providers import provider_models
+
+    inject_settings_env_vars()
+    litellm = import_litellm()
+    live = try_load_upstream_catalog()
+
+    words = [k.lower() for k in keywords]
+    named = {w for w in words if w in {p.name for p in CURATED_PROVIDERS}}
+    filters = [w for w in words if w not in named]
+    rows = sorted(CURATED_PROVIDERS, key=lambda p: (p.semantics == "local", p.name))
+    candidates = [p for p in rows if p.name in named] if named else rows
+    status = {p.name: _provider_status(p) for p in candidates}
+    scope = candidates if named else [p for p in candidates if status[p.name] == "set"]
+
+    today = date.today()
+    listings: list[tuple[CuratedProvider, list[str]]] = []
+    for provider in scope:
+        models = provider_models(provider, litellm.model_cost, today=today)
+        matched = [m for m in models if all(f in m.lower() for f in filters)]
+        # A model keyword drops the providers it matches nothing in.
+        if matched or not filters:
+            listings.append((provider, matched))
+
+    if output_format == "json":
+        payload = [
+            {
+                "name": p.name,
+                "env_vars": list(p.env_vars),
+                "semantics": p.semantics,
+                "status": status[p.name],
+                "note": p.note,
+                "models": models,
+            }
+            for p, models in listings
+        ]
+        click.echo(json.dumps({"source": "live" if live else "offline", "providers": payload}, indent=2))
+    if not scope:
+        _echo_no_provider_keys(filters)
+    elif not listings:
+        _echo_no_matching_models(scope, named=bool(named), filters=filters, live=live)
+    elif output_format == "text":
+        _echo_model_listings(listings, status, filters=filters, overview=not words, live=live)
+
+
+def _catalog_source_line(live: bool) -> str:
+    if live:
+        return "Source: live LiteLLM catalog"
+    from importlib.metadata import version
+
+    return (
+        f"Source: offline snapshot (LiteLLM {version('litellm')}; live catalog unreachable)"
+        " — may omit models released after it"
+    )
+
+
+def _model_status_label(provider: CuratedProvider, status: str) -> str:
+    if status == "set":
+        return "configured"
+    if status == "n/a":
+        return "local — no key needed"
+    return f"no key — set {_format_env_vars(provider)}"
+
+
+def _echo_model_listings(
+    listings: list[tuple[CuratedProvider, list[str]]],
+    status: dict[str, str],
+    *,
+    filters: list[str],
+    overview: bool,
+    live: bool,
+) -> None:
+    click.echo(_catalog_source_line(live))
+    if overview:
+        click.echo(
+            f"Up to {_MODELS_OVERVIEW_CAP} per provider, ordered by name (higher versions first) — not a ranking."
+        )
+    click.echo()
+    for provider, models in listings:
+        _echo_model_block(provider, status[provider.name], models, filters=filters, overview=overview)
+    _echo_models_next_steps(missing_key=any(status[p.name] == "-" for p, _ in listings))
+
+
+def _echo_model_block(
+    provider: CuratedProvider, status: str, models: list[str], *, filters: list[str], overview: bool
+) -> None:
+    click.echo(f"{provider.name} ({_model_status_label(provider, status)})")
+    if status == "-" and provider.note:
+        click.echo(f"  ({provider.note})")
+    if status == "n/a" and models:
+        click.echo("  (catalog ids — your server runs only the models it has pulled)")
+    if not models:
+        click.echo(
+            "  No usable models in LiteLLM's catalog — pass the id your provider serves as"
+            f" {provider.name}/<model> (setup: https://docs.litellm.ai/docs/providers)"
+        )
+    for model in models[:_MODELS_OVERVIEW_CAP] if overview else models:
+        click.echo(f"  {model}")
+    if len(models) > _MODELS_OVERVIEW_CAP:
+        if overview:
+            click.echo(f"  see all {len(models)}: pflow settings llm models {provider.name}")
+        else:
+            keywords = "".join(f" {f}" for f in filters)
+            click.echo(f"  narrow: pflow settings llm models {provider.name}{keywords} <keyword>")
+    click.echo()
+
+
+def _echo_models_next_steps(*, missing_key: bool) -> None:
+    rungs = [
+        ("pflow settings llm models <provider>", "a provider's full list, even without its key"),
+        ("pflow settings llm models <keyword>", "filter your providers' models by name (e.g. opus)"),
+        ("pflow settings llm providers", "every provider and the env var it needs"),
+        ("pflow settings llm show", "the default model pflow resolves"),
+    ]
+    if missing_key:
+        rungs.insert(0, ('pflow settings set-env <ENV_VAR> "<key>"', "store a missing key"))
+    click.echo("Next steps:")
+    for command, purpose in rungs:
+        click.echo(f"  {command:<41}  {purpose}")
+    click.echo(_MODELS_ESCAPE_HATCH)
+
+
+def _echo_no_provider_keys(filters: list[str]) -> None:
+    keyword_suffix = "".join(f" {f}" for f in filters)
+    click.echo("No LLM provider keys configured.", err=True)
+    click.echo(
+        'Set one:             pflow settings set-env ANTHROPIC_API_KEY "<key>"'
+        "   (every provider: pflow settings llm providers)",
+        err=True,
+    )
+    click.echo(
+        f"Browse without one:  pflow settings llm models <provider>{keyword_suffix}"
+        "   (e.g. anthropic, or ollama for local models)",
+        err=True,
+    )
+
+
+def _echo_no_matching_models(scope: list[CuratedProvider], *, named: bool, filters: list[str], live: bool) -> None:
+    from pflow.core.suggestion_utils import find_similar_items
+
+    keywords = " ".join(filters)
+    names = [p.name for p in scope]
+    where = ", ".join(names) if named else f"your configured providers ({', '.join(names)})"
+    lines = [_catalog_source_line(live), "", f'No models match "{keywords}" in {where}.']
+    curated_names = sorted(p.name for p in CURATED_PROVIDERS)
+    for keyword in filters:
+        similar = find_similar_items(keyword, curated_names, max_results=1)
+        if similar:
+            lines.append(f'"{keyword}" is not a provider name — did you mean: pflow settings llm models {similar[0]}')
+    if named:
+        lines.append(f"Full list:  pflow settings llm models {' '.join(names)}")
+    else:
+        lines.append(f"Search a provider without its key:  pflow settings llm models <provider> {keywords}")
+    lines.append(_MODELS_ESCAPE_HATCH)
+    for line in lines:
+        click.echo(line, err=True)
 
 
 def _normalize_and_warn_model(model: str) -> str:
