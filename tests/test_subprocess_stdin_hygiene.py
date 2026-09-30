@@ -1,13 +1,22 @@
-"""Guard: every child process pflow spawns gets an explicit stdin (issue #657).
+"""Ratchet: child processes pflow spawns state their stdin (issue #657).
 
-A child started without ``stdin=`` inherits pflow's own fd 0. Under
-``pflow mcp serve`` that is the JSON-RPC input stream, so a child that reads
-stdin eats protocol bytes and blocks the server; the shell node did exactly
-that. Each spawn must pass a ``stdin=`` or ``input=`` that can never be
-``None`` (the child's data pipe, or ``subprocess.DEVNULL``) — the shell node's
-bug was ``stdin=PIPE if data is not None else None``, so a ``None`` result in
-a conditional counts as inheriting. The test scans the AST, so
-docstrings and comments naming ``subprocess.run`` don't trip it.
+A child started without ``stdin=`` inherits pflow's own fd 0: at a terminal it
+reads the keyboard, with ``pflow wf < file`` it reads the file. pflow's own
+spawns give the child its data or EOF instead. (Under ``pflow mcp serve`` fd 0
+is already the null device — ``core/stdio_reservation.py:reserve_stdin`` — so
+the JSON-RPC stream is safe whatever a child does.)
+
+Catches, in ``src/pflow/**.py``: a ``subprocess.run/Popen/call/check_call/
+check_output`` call with no ``stdin=``/``input=``, or whose value is the literal
+``None`` or a conditional with a ``None`` branch (the shell node's original
+``stdin=PIPE if data is not None else None``); and ``from subprocess import`` /
+``import subprocess as``, which would hide calls from the scan.
+
+Does not catch — this is a ratchet, not a proof: a variable that may hold
+``None`` (``input=data``), an explicit inherit (``stdin=sys.stdin``,
+``stdin=0``), ``**kwargs``, a module alias by assignment, or any other spawn API
+(``asyncio.create_subprocess_*``, ``os.system``/``os.popen``/``os.spawn*``,
+``anyio``). The scan reads the AST, so docstrings and comments don't trip it.
 """
 
 from __future__ import annotations
@@ -78,10 +87,10 @@ def test_every_spawn_passes_explicit_stdin() -> None:
         violations.extend(_subprocess_bypass_imports(tree, rel))
 
     assert not violations, (
-        "Child processes must not inherit pflow's stdin (under `pflow mcp serve` it is the "
-        "JSON-RPC stream). Pass a `stdin=` or `input=` that is never None (the child's data "
-        "pipe/bytes or subprocess.DEVNULL), "
-        "and use plain `import subprocess` so this guard can see the call.\n\n" + "\n".join(violations)
+        "Child processes pflow spawns must not inherit its stdin (the terminal, a redirected "
+        "file). Pass a `stdin=` or `input=` that is never None (the child's data pipe/bytes "
+        "or subprocess.DEVNULL), and use plain `import subprocess` so this guard can see "
+        "the call.\n\n" + "\n".join(violations)
     )
 
 
