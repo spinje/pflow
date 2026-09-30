@@ -1190,7 +1190,7 @@ class TestRunScopedBroadcast:
 
 
 class TestLazyImportBoundary:
-    def test_importing_ui_command_does_not_import_server(self) -> None:
+    def test_importing_ui_command_does_not_import_server(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """The eagerly-imported ``ui`` command must not pull in the web stack (H4).
 
         ``cli/commands/ui.py`` is imported at ``main.py`` load. It must import
@@ -1200,9 +1200,10 @@ class TestLazyImportBoundary:
         import importlib
 
         # Observe a fresh import of the command module's effect, independent of
-        # whatever earlier tests loaded.
-        sys.modules.pop("pflow.ui.server", None)
-        sys.modules.pop("pflow.cli.commands.ui", None)
+        # whatever earlier tests loaded. monkeypatch restores the originals, so
+        # later tests in this worker still patch the module their app was built from.
+        monkeypatch.delitem(sys.modules, "pflow.ui.server", raising=False)
+        monkeypatch.delitem(sys.modules, "pflow.cli.commands.ui", raising=False)
         importlib.import_module("pflow.cli.commands.ui")
 
         assert "pflow.ui.server" not in sys.modules

@@ -124,3 +124,30 @@
 - Self-checks: fully happy; test-reflect: the byte-exact overview/no-keys/JSON oracles plus
   mutation checks cover the contract; no shallow tests found.
 - Next: Phase 3 real-surface runs.
+
+## [2026-09-30] task-planner (implementing) — Phase 3 real surface + completion tests
+- Verified (EXECUTED, real CLI, this machine's keys — anthropic/openai stored via set-env,
+  GEMINI exported):
+  - `settings llm models` → M1 layout, live, anthropic 24 / gemini 31 / openai 112 (JSON parses,
+    same counts); `anthropic` complete 24 + narrow; `bedrock` 5 `bedrock/amazon.nova*` (Converse
+    group) + IAM note; `vertex_ai` 63 `vertex_ai/gemini-|claude-` ids; `cohere` lists
+    `cohere/command-r*`; `openai` has no dall-e/embedding/ft:/whisper/tts ids; `vllm` guidance;
+    `vertex` → did-you-mean `vertex_ai` on stderr, exit 0; `xyzzy` → stderr, exit 0.
+  - Offline: `LITELLM_MODEL_COST_MAP_URL=http://127.0.0.1:9/none … models anthropic` → offline
+    label with LiteLLM 1.86.1, 15 bundled ids, empty stderr, exit 0.
+  - Isolated HOME, provider env vars unset → M7 guidance on stderr, stdout empty; after
+    `set-env GROQ_API_KEY` in that HOME → `groq (configured)` in the overview (stored-key path).
+  - `mcp describe llm` and `guide llm` show the pointer once; `providers` → 26 rows, no anyscale,
+    new footer line.
+  - Listed ids run: `probe llm` with `anthropic/claude-haiku-4-5`, `openai/gpt-4o-mini`,
+    `gemini/gemini-flash-lite-latest` → all success, "pong".
+  - `make test-all-local`: first two runs 5 failures in `tests/test_cli/test_ui.py` (not on base).
+    Cause: `TestLazyImportBoundary` pops `pflow.ui.server` from `sys.modules` without restoring;
+    when xdist schedules it before the endpoint tests on the same worker, their
+    `patch("pflow.ui.server.…")` hits a fresh module the app never uses. The new tests shifted
+    worksteal scheduling. Reproduced on base code by ordering the two classes (2 failed); fixed
+    with `monkeypatch.delitem` (restores at teardown) → 16 passed in that order; full
+    `make test-all-local` 9416 passed, 2 skipped.
+- Deviations/surprises: the test_ui.py fix is outside the plan — a latent order-dependent leak
+  this diff's new tests exposed; test-only, 3 lines, revertible.
+- Next: completion gate (code-mode deep-review).
