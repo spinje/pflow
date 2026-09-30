@@ -77,6 +77,7 @@ Dispatch a synthetic click on the target, then report panel + rects.
 
 - type: mcp-chrome-devtools-evaluate_script
 - pageId: ${prepare.page_id}
+- result_format: json_block
 - function: |
     async () => {
       const sel = '${selector}';
@@ -89,11 +90,11 @@ Dispatch a synthetic click on the target, then report panel + rects.
       const candidates = [...document.querySelectorAll(sel)];
       const target = text ? candidates.find((c) => (c.textContent || "").trim() === text) : candidates[0];
       if (!target) {
-        return {
-          ok: false,
-          reason: "target not found",
-          matches: candidates.map((c) => (c.textContent || "").trim()).slice(0, 20),
-        };
+        const texts = candidates.map((c) => (c.textContent || "").trim()).slice(0, 20);
+        throw new Error(
+          "click target not found: " + candidates.length + " elements match selector " + JSON.stringify(sel) +
+            (text ? ", none with text " + JSON.stringify(text) + " (texts: " + JSON.stringify(texts) + ")" : ""),
+        );
       }
       const before = measureId ? nodeRect(measureId) : null;
       target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -105,7 +106,6 @@ Dispatch a synthetic click on the target, then report panel + rects.
       const panel = document.querySelector(".read-panel h2");
       const vp = document.querySelector(".react-flow__viewport");
       return {
-        ok: true,
         before,
         after,
         visible: measureId ? visible : null,
@@ -130,7 +130,7 @@ Capture the post-click state.
 
 ### facts
 
-The click result: ok + open panel title + measured node rect before/after +
+The click result: open panel title + measured node rect before/after +
 visibility verdict + viewport transform.
 
 - source: ${click.result}

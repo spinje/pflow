@@ -154,10 +154,17 @@ by re-derived counts.
         }
       }
 
+      // Presence floor for invariant 1: every io row carries one bordered dot, so io rows
+      // with zero dots checked means the dots went missing or unmeasurable — not "no violations".
+      const ioRows = document.querySelectorAll(".io-row").length;
+      const reason =
+        ioRows > 0 && dotsChecked === 0
+          ? ioRows + " io rows are rendered but none of their border dots could be measured (missing, opacity 0, zero-size, or not a .port-handle)"
+          : undefined;
       const passed =
-        violations.dots.length === 0 && violations.edges.length === 0 && violations.overlaps.length === 0;
+        !reason && violations.dots.length === 0 && violations.edges.length === 0 && violations.overlaps.length === 0;
       violations.dots = violations.dots.slice(0, 20);
-      return { passed, scale: +scale.toFixed(3), dotsChecked, leaves: leaves.length, edges, violations };
+      return { passed, reason, scale: +scale.toFixed(3), dotsChecked, leaves: leaves.length, edges, violations };
     }
 
 ### shot
@@ -175,7 +182,11 @@ Capture the checked state (context for any violation).
 ### verdict
 
 The invariant verdict: `passed` + `dotsChecked`/`leaves` counts, the edge-coverage
-report (or its skip reason), and up to 20 violations per invariant.
+report (or its skip reason), and up to 20 violations per invariant. `passed` covers only
+what the counts say was examined: `dotsChecked: 0` with `passed: true` means the view
+renders no io rows at all (e.g. a flat workflow in `beautiful` density), just as
+`edges.skipped` marks an edge check the view does not qualify for. io rows with no
+measurable border dot fail the verdict with a `reason`.
 
 - source: ${check.result}
 - stdout: true
