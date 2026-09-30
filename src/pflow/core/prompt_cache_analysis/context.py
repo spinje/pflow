@@ -23,9 +23,8 @@ scattered across helpers:
   and mutating ``stale_memo_skipped`` / ``stale_memo_uncheckable``
   accumulators when staleness or skip is detected.
 
-Layer policy: this module imports from :mod:`pflow.runtime.template_resolver`
-lazily (inside the resolver method) to keep import cost low — the analyzer
-package is import-cheap on purpose.
+Layer policy: the template language comes from :mod:`pflow.core.templates`,
+which loads only ``pflow.core`` modules — the analyzer package stays import-cheap.
 """
 
 from __future__ import annotations
@@ -36,24 +35,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
+from pflow.core.templates import TemplateResolver
 from pflow.core.trace_tree import TraceTree
 
 logger = logging.getLogger(__name__)
 
 _PREDICTION_SKIPPED: Final[str] = "__PREDICTION_SKIPPED__"
 """Cache-key prediction was attempted but intentionally skipped for this node."""
-
-
-def template_resolver() -> Any:
-    """Lazy-imported ``TemplateResolver`` class for ``${var}`` resolution.
-
-    Do not hoist this import. ``pflow.runtime.template_resolver`` transitively
-    loads the runtime stack, so importing it at module load would make the
-    analyzer package pay that cost on cheap dry-run and inspection paths.
-    """
-    from pflow.runtime.template_resolver import TemplateResolver
-
-    return TemplateResolver
 
 
 @dataclass(frozen=True)
@@ -266,7 +254,6 @@ class AnalysisContext:
         Tier-4 unavailable to avoid false ~0-token projections.
         """
         # Lazy-import keeps this module layer-clean.
-        from pflow.runtime.template_resolver import TemplateResolver
 
         root = TemplateResolver.extract_root_node_id(ref)
         if not root:
@@ -304,8 +291,7 @@ class AnalysisContext:
         the targeted workflow, matching :meth:`resolve_ref_value`'s
         workflow-input-vs-node-id branching.
         """
-        template_resolver_cls = template_resolver()
-        root = template_resolver_cls.extract_root_node_id(ref)
+        root = TemplateResolver.extract_root_node_id(ref)
         if not root:
             return None
 
@@ -335,8 +321,6 @@ class AnalysisContext:
         value = self.resolve_ref_value(ref)
         if value is not None:
             return value
-
-        from pflow.runtime.template_resolver import TemplateResolver
 
         root = TemplateResolver.extract_root_node_id(ref)
         if not root:
@@ -380,8 +364,7 @@ class AnalysisContext:
         if value is not None:
             return value
 
-        template_resolver_cls = template_resolver()
-        root = template_resolver_cls.extract_root_node_id(ref)
+        root = TemplateResolver.extract_root_node_id(ref)
         if not root:
             return None
 
@@ -389,7 +372,7 @@ class AnalysisContext:
         if output is None:
             return None
         try:
-            resolved = template_resolver_cls.resolve_template(f"${{{ref}}}", {root: output})
+            resolved = TemplateResolver.resolve_template(f"${{{ref}}}", {root: output})
         except Exception:
             logger.debug("trace-output resolve failed for %s in %s", ref, workflow_path, exc_info=True)
             return None
@@ -401,7 +384,6 @@ class AnalysisContext:
         """Resolve ``ref`` against ``self.parameters`` for a workflow-input root."""
         if root not in self.parameters:
             return None
-        from pflow.runtime.template_resolver import TemplateResolver
 
         # Wrap the input value so TemplateResolver can navigate dotted paths.
         # ``parameters[root]`` is the resolved value (post-coercion); for a
@@ -435,9 +417,8 @@ class AnalysisContext:
             params = self.parameters
         if root not in params:
             return None
-        template_resolver_cls = template_resolver()
         try:
-            resolved = template_resolver_cls.resolve_template(f"${{{ref}}}", {root: params[root]})
+            resolved = TemplateResolver.resolve_template(f"${{{ref}}}", {root: params[root]})
         except Exception:
             logger.debug("parameters resolve failed for %s in %s", ref, workflow_path, exc_info=True)
             return None
@@ -449,7 +430,6 @@ class AnalysisContext:
         """Resolve ``ref`` against memo cache for a node-output root."""
         if self.memo_cache is None:
             return None
-        from pflow.runtime.template_resolver import TemplateResolver
 
         try:
             latest = self.latest_memo_for_node(root, workflow_path=self.workflow_path)
@@ -478,7 +458,6 @@ class AnalysisContext:
         """Resolve ``ref`` against memo cache scoped to ``workflow_path``."""
         if self.memo_cache is None:
             return None
-        template_resolver_cls = template_resolver()
         try:
             latest = self.latest_memo_for_node(root, workflow_path=workflow_path)
         except Exception:
@@ -488,7 +467,7 @@ class AnalysisContext:
             return None
         output, _created_at = latest
         try:
-            resolved = template_resolver_cls.resolve_template(f"${{{ref}}}", {root: output})
+            resolved = TemplateResolver.resolve_template(f"${{{ref}}}", {root: output})
         except Exception:
             logger.debug("memo resolve failed for %s in %s", ref, workflow_path, exc_info=True)
             return None
@@ -536,4 +515,4 @@ def _normalize_empty(value: Any) -> Any | None:
     return value
 
 
-__all__ = ["_PREDICTION_SKIPPED", "AnalysisContext", "template_resolver"]
+__all__ = ["_PREDICTION_SKIPPED", "AnalysisContext"]

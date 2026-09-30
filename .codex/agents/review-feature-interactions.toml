@@ -71,7 +71,7 @@ Every cell a finding rests on carries its evidence — a real incident or a veri
 | `runtime/workflow_executor.py` | Nested workflows (sub-workflow execution) |
 | `core/markdown_parser.py` (edge/branch logic) | Conditional branching |
 | `runtime/cache.py`, `runtime/engine/instrumentation.py` (cache hit/miss) | Caching / memoization |
-| `runtime/template_resolver.py`, `runtime/engine/template_resolution.py` | Template system |
+| `core/templates.py`, `runtime/engine/template_resolution.py` | Template system |
 | `core/workflow/validator.py`, `runtime/template_validation/` | Validation |
 | `mcp_server/`, `mcp/` | MCP entry point |
 | `execution/`, `execution/formatters/`, `cli/workflow_output.py`, `cli/error_output.py` | Output/display |

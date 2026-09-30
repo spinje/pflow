@@ -11,7 +11,7 @@ explicitly opted into fallthrough behavior.
 
 from typing import Any
 
-from pflow.runtime.template_resolver import Resolution, TemplateResolver, resolve
+from pflow.core.templates import Resolution, TemplateResolver, resolve
 
 
 def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> Any | None:

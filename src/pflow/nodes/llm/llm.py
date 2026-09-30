@@ -42,6 +42,7 @@ from pflow.core.prompt_cache_analysis.below_min_tokens_detector import (
 )
 from pflow.core.prompt_cache_analysis.warning_catalog import make_diagnostic
 from pflow.core.prompt_refs import first_per_item_position
+from pflow.core.templates import TemplateResolver
 from pflow.nodes.llm.schema_validation import prepare_output_schema_validator
 
 logger = logging.getLogger(__name__)
@@ -618,8 +619,6 @@ def _resolve_dynamic_suffix(
     """
     if resolved_prompt.startswith(static_prefix):
         return resolved_prompt[len(static_prefix) :]
-    from pflow.runtime.template_resolver import TemplateResolver
-
     standard_static = TemplateResolver.resolve_template(unresolved[:cut], shared)
     if isinstance(standard_static, str) and resolved_prompt.startswith(standard_static):
         return resolved_prompt[len(standard_static) :]

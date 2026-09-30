@@ -11,8 +11,8 @@ import click
 
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.diagnostic_render import format_diagnostic
+from pflow.core.templates import TemplateResolver
 from pflow.execution.formatters.output_utils import OutputMode, select_output_mode
-from pflow.runtime.template_resolver import TemplateResolver
 
 
 def safe_output(value: Any) -> bool:

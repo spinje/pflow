@@ -12,8 +12,9 @@ from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.llm_config import get_default_workflow_model
 from pflow.core.prompt_cache import deterministic_serialize
 from pflow.core.prompt_refs import classify_prompt_refs
+from pflow.core.templates import TemplateResolver
 
-from ..context import AnalysisContext, _normalize_empty, template_resolver
+from ..context import AnalysisContext, _normalize_empty
 from ..rendering.cross_workflow_edits import format_grouped_body_block
 from ..token_estimation import estimate_tokens
 from ..trace_loading import _edge_child_paths
@@ -390,9 +391,9 @@ def _resolve_child_suffix_in_value(value: Any, child_input_name: str, child_cach
     if not suffix:
         return value
     synthetic_ref = f"__value{suffix}"
-    if not template_resolver().variable_exists(synthetic_ref, {"__value": value}):
+    if not TemplateResolver.variable_exists(synthetic_ref, {"__value": value}):
         return None
-    return template_resolver().resolve_value(synthetic_ref, {"__value": value})
+    return TemplateResolver.resolve_value(synthetic_ref, {"__value": value})
 
 
 def _estimate_parent_value_tokens(

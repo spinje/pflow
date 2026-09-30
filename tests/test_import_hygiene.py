@@ -29,6 +29,12 @@
    catches a violation: it imports fine under the test env's full deps and
    breaks only a minimal install, which no other test simulates.
 
+4. ``core/`` never imports the template-language shim ``pflow.runtime.template_resolver``
+   (any scope). The language lives in ``pflow.core.templates``; a ``core → runtime``
+   edge through the shim re-inverts the layering Task 170 fixed (the old module dragged
+   ~29 runtime modules into every core importer). Vacuous once phase 5 deletes the
+   shim; the durable guarantee is ``test_core/test_templates_module.py``'s subprocess pin.
+
 Same pattern as ``test_core/test_litellm_runtime.py::
 test_no_direct_litellm_imports_in_production_code``: text prefilter, then
 AST scan so comments/strings/docstrings (e.g. a path like ``src/pflow``)
@@ -157,6 +163,44 @@ def test_runtime_does_not_import_ui() -> None:
 
 def _is_ui_module(name: str) -> bool:
     return name == "pflow.ui" or name.startswith("pflow.ui.")
+
+
+# ---------------------------------------------------------------------------
+# core/ must not import the runtime template shim (layering)
+# ---------------------------------------------------------------------------
+
+_TEMPLATE_SHIM = "pflow.runtime.template_resolver"
+
+
+def test_core_does_not_import_the_template_shim() -> None:
+    """``src/pflow/core/`` imports the template language from ``pflow.core.templates`` —
+    never through ``pflow.runtime.template_resolver``, at ANY scope (lazy imports too)."""
+    repo_root = _find_repo_root()
+    core_root = repo_root / "src" / "pflow" / "core"
+    assert core_root.is_dir(), f"expected src/pflow/core/ at {core_root}"
+
+    violations = [
+        f"  {rel_path}:{lineno}: {statement}"
+        for py_file in sorted(core_root.rglob("*.py"))
+        if "template_resolver" in (source := py_file.read_text(encoding="utf-8"))  # prefilter; AST decides
+        for rel_path in [py_file.relative_to(repo_root).as_posix()]
+        for lineno, statement in _template_shim_imports(ast.parse(source, filename=str(py_file)))
+    ]
+    assert not violations, (
+        "core/ imports the runtime template shim — import pflow.core.templates instead:\n" + "\n".join(violations)
+    )
+
+
+def _template_shim_imports(tree: ast.Module) -> Iterator[tuple[int, str]]:
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == _TEMPLATE_SHIM or alias.name.startswith(f"{_TEMPLATE_SHIM}."):
+                    yield node.lineno, f"import {alias.name}"
+        elif isinstance(node, ast.ImportFrom) and node.module is not None:
+            imported = {f"{node.module}.{alias.name}" for alias in node.names} | {node.module}
+            if _TEMPLATE_SHIM in imported:
+                yield node.lineno, f"from {node.module} import {', '.join(a.name for a in node.names)}"
 
 
 # ---------------------------------------------------------------------------

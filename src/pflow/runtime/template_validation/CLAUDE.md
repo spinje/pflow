@@ -84,13 +84,18 @@ flatten rich template diagnostics into canned message/suggestion strings.
 
 ## Regex, path, and type boundaries
 
-Three patterns have different jobs; do not unify them just because they all find
-`${...}` syntax:
+These patterns have different jobs; do not unify them just because they all find
+`${...}` syntax (Task 170 folds them into views over one parse — until then this
+table is the map). `TemplateResolver` patterns live in `core/templates.py`:
 
 | Pattern | Owner/purpose | Important distinction |
 |---|---|---|
 | `_PERMISSIVE_PATTERN` | `validator.py`, validation discovery | Sees nested bracket templates; skips `$${` escapes like `TEMPLATE_PATTERN` |
+| `_TEMPLATE_OPEN` | `validator.py`, malformed-template count | Every unescaped `${`; compared against valid-template count |
 | `TEMPLATE_PATTERN` | `TemplateResolver`, runtime resolution | Strict operand grammar and dollar-escape guard |
+| `SIMPLE_TEMPLATE_PATTERN` | `TemplateResolver`, simple-template test | Whole string is one expression → type preserved |
+| `_INTERPOLATION_PATTERN` | `TemplateResolver`, complex resolution | One pass: escape, expression, or Issue (unmatched `${`) |
+| `_BRACKET_INDEX_PATTERN` | `TemplateResolver`, nested-index pre-pass | Rewrites `[${i}]` to `[N]` before resolution |
 | `TEMPLATE_EXTRACT_PATTERN` | `TemplateResolver`, diagnostic/data-flow discovery | Broad extraction; downstream checks decide validity |
 
 Path checks use the permissive field-checkable set. Type/shell passes use

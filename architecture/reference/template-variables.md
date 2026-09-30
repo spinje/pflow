@@ -155,7 +155,7 @@ inputs = {"user_id": {"default": "default_value"}}
 
 ### Core Resolution Logic
 
-Located: `src/pflow/runtime/template_resolver.py`
+Located: `src/pflow/core/templates.py`
 
 ```python
 class TemplateResolver:

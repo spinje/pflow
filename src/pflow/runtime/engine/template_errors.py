@@ -17,8 +17,8 @@ from collections.abc import Iterable
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.templates import Resolution, TemplateResolver, resolve
 from pflow.runtime.node_state import NodeStatus, get_node_failure, get_node_status
-from pflow.runtime.template_resolver import Resolution, TemplateResolver, resolve
 
 
 def build_type_error_message(

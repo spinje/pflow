@@ -179,3 +179,50 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
 - Did: verified Agent B's review dispositions (report `scratchpads/task-170/phase2/review/report.md`: both lenses on codex, full scope, 1 Critical fixed with a failing-first test, no W/S); committed the fix `fa551740`; merged `origin/main` `08e1eb68` (#617, #618, #615, root-CLAUDE.md lens edit) as `8113641b` — clean, no conflicts.
 - Verified (merged result): `make test` 9738 passed / 70 xfailed (+28 from main's tests); `make check` green; `capture.py --check` → 29 examples, 0 differing (phase 2 + main change no example output; baseline NOT re-captured — still valid).
 - Next: resume Agent B on phase 3 (relocation to `core/templates.py`), which re-reads the merged `cli/commands/run.py|resume.py`.
+
+## [2026-09-30 03:00] Agent B (Opus) — phase 3: relocate to `core/templates.py` (mechanical)
+- Did: moved the template module with `git mv src/pflow/runtime/template_resolver.py src/pflow/core/templates.py`. Put a shim at the old path (re-exports `Resolution`, `TemplateResolver`, `resolve`; docstring says phase 5 deletes it). Re-pointed every `src/` importer, deleted the `template_resolver()` accessor, landed rule 4, the identity assertion and the subprocess pin, and updated the instruction files. My phase-2 interim private patterns moved with the module, untouched.
+- Importer inventory, re-grepped on `a144bbb1` (not the plan's counts): 28 `src/` files. Every hit was a module-level or lazy `from pflow.runtime.template_resolver import …`, plus one relative `from ..template_resolver` (`engine/error_context.py`). Main's #615/#618 files (`cli/commands/run.py`, `resume.py`, `nodes/python/output_capture.py`) import nothing from it, so they are untouched. Tests import only `TemplateResolver` / `resolve` / `Resolution` (23 sites), all covered by the shim. No string-path patch targets, importlib paths or logger-name assertions on the old module exist.
+- Changed:
+  - `core/` (15 files): every lazy import hoisted to one module-level `from pflow.core.templates import …`. That covers `prompt_cache.py`, `trace_report.py`, `trace_loading.py`, `token_estimation.py` ×6, `context.py` ×4, `sub_workflow_walker.py` ×3, `graph/scope.py`, plus the three module-level importers.
+  - `prompt_cache_analysis/context.py`: accessor and its `__all__` entry deleted. Its "do not hoist — drags the runtime stack" layer-policy note is rewritten (no longer true). The four stage consumers (`row_builder`, `discrepancy/predict`, `cross_workflow`, `warnings`) plus context's own four uses now call `TemplateResolver` directly.
+  - `runtime/` (11 files), `execution/` (3), `cli/` (2), `mcp_server/services/field_service.py`: import re-pointed.
+  - `nodes/llm/llm.py`: its lazy import hoisted to module level. The laziness existed only because the old module was heavy.
+  - Comments: `data_flow.py:1429`, `type_checker.py:32`.
+  - New tests: `tests/test_import_hygiene.py` rule 4 (`test_core_does_not_import_the_template_shim`: any scope, matches `import pflow.runtime.template_resolver` and `from pflow.runtime import template_resolver`; docstring item 4). New `tests/test_core/test_templates_module.py` with the identity assertion (`TemplateResolver`/`Resolution`/`resolve` are the same objects through the shim) and the e2e subprocess pin (importing `pflow.core.templates` loads no `pflow.runtime*` and no `litellm*`).
+  - Instruction/doc files:
+    - `.claude/agents/{pflow-codebase-searcher,review-architecture-fit,review-silent-failures,review-plan,review-feature-interactions,review-validation-consistency}.md`, then `make sync-claude-assets` (6 `.codex` twins).
+    - `src/pflow/core/CLAUDE.md`: :156, plus a new navigation row for `templates.py` and its leaf rule.
+    - `src/pflow/runtime/CLAUDE.md`: owner row, plus the "Template resolution" section now says the language lives in core and that `resolve()` → `Resolution` channels are the only judge of unresolved-ness (phase-2 dev 9).
+    - `template_validation/CLAUDE.md`: the regex table gains `_TEMPLATE_OPEN`, `SIMPLE_TEMPLATE_PATTERN`, `_INTERPOLATION_PATTERN`, `_BRACKET_INDEX_PATTERN`; the "three views" rewrite waits for 4b.
+    - `architecture/architecture.md:526`; `architecture/reference/template-variables.md:158` (:922 names the still-existing test file, so kept).
+    - `architecture/core-concepts/data-type-coercion.md:73/:90`: stale line numbers dropped; :90 now points at the `auto_parse` rule.
+    - Module docstring of `core/templates.py`.
+- Verified:
+  - `make check` green, including asset sync.
+  - `make test` 9740 passed / 70 xfailed: +2 over the merged 9738, the two new non-e2e tests.
+  - `make test-e2e` 47 passed / 2 skipped: +1, the pin.
+  - Zero edits to existing tests (the diff under `tests/` is additions only).
+  - Freeze harness 818; corpus 419 / 70 xfailed.
+  - Clean-interpreter cycle check `import pflow.core.workflow.validator, pflow.core.workflow.graph.scope, pflow.core.prompt_cache_analysis` → OK. Each hoisted module also imports alone.
+  - `grep template_resolver src/` hits only the shim.
+  - Examples baseline `capture.py --check`: 29 examples, 0 differing.
+  - Planted violations, each seen red and then removed:
+    - lazy `from pflow.runtime.template_resolver import …` in `core/prompt_refs.py` → rule 4 red;
+    - `from pflow.runtime import template_resolver` → rule 4 red;
+    - `import litellm` in `core/templates.py` → pin red (litellm leaked);
+    - an import-time `import pflow.runtime.node_state` at the end of `core/templates.py` → pin red (`pflow.runtime` leaked);
+    - a subclass copy of `TemplateResolver` in the shim → identity test red.
+  - Every file was restored from a byte copy, and all 6 pins passed again.
+  - Assumed: none.
+- Deviations/surprises:
+  1. `nodes/llm/llm.py`'s lazy import is hoisted rather than just re-pointed. The plan listed it only as "(lazy)", and the reason for the laziness is gone.
+  2. The subprocess pin lives in a new `tests/test_core/test_templates_module.py`, beside the identity test, not literally beside `test_litellm_runtime.py:882`. That file is litellm's; one home for the two template-module pins is simpler. Same mechanics (`uv_exe`, `prepared_subprocess_env`, e2e marker).
+  3. A planted `import pflow.runtime.X` at the TOP of `core/templates.py` fails as a circular ImportError at collection, before the pin can speak. So the direct regression is already loud, and the pin covers the late or indirect leak.
+  4. Nothing else — the shim re-exports exactly the three names; no caller needed any other name.
+- Self-checks: fully happy? Yes. Loose ends named on purpose:
+  - Tests keep the old import path until phase 5, per plan.
+  - `template_validation/CLAUDE.md`'s "never `str.split('.')`" line is still false for three validator files (spec: 4b/5).
+  - Hoisting ~15 lazy imports makes `core/` import `core.templates` eagerly. The pin proves it is a `pflow.core`-only leaf, and the CLI lazy-import tests (`test_cli/test_lazy_imports.py`, part of `make test`) stay green.
+  - test-reflect: n/a beyond the planted-violation checks above (mechanical relocation).
+- Next: the orchestrator commits phase 3; phase 4a (Agent C).

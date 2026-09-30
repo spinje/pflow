@@ -48,6 +48,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
+from pflow.core.templates import TemplateResolver
+
 if TYPE_CHECKING:
     from .context import AnalysisContext
 
@@ -244,7 +246,6 @@ def _classify_resolution_source(chunks: list[str], ctx: AnalysisContext | None) 
     if not isinstance(declared_inputs, dict):
         return "memo"
     # Lazy-import (matches existing pattern in this module).
-    from pflow.runtime.template_resolver import TemplateResolver
 
     all_from_params = True
     for ref in chunks:
@@ -396,7 +397,6 @@ def _tokenize_prompt_region_with_resolver(
         return estimate_tokens(model, region)[0]
 
     from pflow.core.prompt_cache import deterministic_serialize
-    from pflow.runtime.template_resolver import TemplateResolver
 
     refs = extract_unique_refs(region)
     if not refs:
@@ -429,7 +429,6 @@ def _tokenize_prompt_region_lower_bound_with_resolver(
         return estimate_tokens(model, region)[0], ()
 
     from pflow.core.prompt_cache import deterministic_serialize
-    from pflow.runtime.template_resolver import TemplateResolver
 
     refs = extract_unique_refs(region)
     if not refs:
@@ -455,7 +454,6 @@ def _tokenize_prompt_region_lower_bound_with_resolver(
 
 def extract_unique_refs(prompt: str) -> list[str]:
     """Walk ``prompt`` for unique template refs, deduped in encounter order."""
-    from pflow.runtime.template_resolver import TemplateResolver
 
     refs: list[str] = []
     for match in TemplateResolver.TEMPLATE_PATTERN.finditer(prompt):
@@ -475,7 +473,6 @@ def build_shared_store_for_refs(
     use_projection_resolver: bool = False,
 ) -> dict[str, Any]:
     """Build a synthetic shared store keyed by root node ids for ``refs``."""
-    from pflow.runtime.template_resolver import TemplateResolver
 
     shared: dict[str, Any] = {}
     for ref in refs:
@@ -675,7 +672,6 @@ def _latest_value_for_ref(
     if memo_cache is None:
         return None
     # Lazy-import keeps token_estimation.py layer-clean (mirrors litellm pattern).
-    from pflow.runtime.template_resolver import TemplateResolver
 
     root = TemplateResolver.extract_root_node_id(ref)
     # ctx=None branch: no freshness check possible without ctx.

@@ -38,7 +38,7 @@ Both CLI (via `cli/commands/run.py`) and MCP route through `WorkflowRunner`, whi
 
 ### Runtime Layer (execution-time)
 
-- `runtime/template_resolver.py` — actual template resolution
+- `core/templates.py` — actual template resolution
 - `runtime/engine/template_resolution.py` — engine integration point for template handling
 - `runtime/engine/batch_executor.py` — batch processing (module-level `execute_batch()`; there is no `BatchExecutor` class)
 - `runtime/output_resolver.py` — output source resolution
@@ -75,8 +75,8 @@ For every runtime behavior change in the diff/plan, check:
 
 | If this changed | Check these |
 |---|---|
-| `runtime/template_resolver.py` | `runtime/template_validation/validator.py`, `path_validation.py`, `type_validation.py`, `core/workflow/data_flow.py` |
-| `runtime/engine/template_resolution.py` | `runtime/template_validation/validator.py`, `runtime/template_resolver.py` |
+| `core/templates.py` | `runtime/template_validation/validator.py`, `path_validation.py`, `type_validation.py`, `core/workflow/data_flow.py` |
+| `runtime/engine/template_resolution.py` | `runtime/template_validation/validator.py`, `core/templates.py` |
 | `runtime/engine/batch_executor.py` | `core/workflow/data_flow.py` (batch-variable scope/reference validation), `runtime/template_validation/validator.py` + `batch_item_validation.py` (batch output shapes) |
 | `runtime/output_resolver.py` | `core/workflow/validator.py` (output source validation step) |
 | `runtime/workflow_executor.py` | `runtime/compilation/compiler.py`, `core/workflow/validator.py` (sub-workflow validation step) |

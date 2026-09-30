@@ -2,6 +2,8 @@
 
 import re
 
+from pflow.core.templates import TemplateResolver
+
 # Extract refs from INSIDE ``${...}`` blocks only, so literal text (validator-rejected
 # but defensively handled) never produces false positives.  Two-stage scan: find each
 # ``${...}`` block, then within each block capture every ``root`` plus its full dotted
@@ -38,7 +40,6 @@ def refs_with_path_in(value: str) -> list[tuple[str, str | None, tuple[str, ...]
     ``${a}`` yields ``("a", None, ())``. One shared walk implements all three
     extractors so they cannot drift.
     """
-    from pflow.runtime.template_resolver import TemplateResolver
 
     refs: list[tuple[str, str | None, tuple[str, ...]]] = []
     for block in _BRACE_BLOCK_RE.finditer(value):

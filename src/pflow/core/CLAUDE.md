@@ -8,6 +8,7 @@ Shared parsing, diagnostics, configuration, and execution utilities.
 |---|---|
 | Change markdown parsing or source attribution | `markdown_parser.py`; author-content YAML in `yaml_utils.py` |
 | Change external content inlining or file provenance | `file_resolver.py::resolve_file_references` mutates IR in place and records `_source_files`; `FILE_RESOLVABLE_PARAMS` allowlists content params |
+| Change `${…}` template syntax, resolution, or the unresolved/issues channels | `templates.py` (`TemplateResolver`, `resolve` → `Resolution`); it imports only `pflow.core` — keep it a leaf (`tests/test_core/test_templates_module.py`) |
 | Change IR shape or declared types | `ir_schema.py::FLOW_IR_SCHEMA`, `validate_ir`; `types.py::TypeSpec` |
 | Add an error or change diagnostic rendering | `exceptions.py`, `diagnostic.py`, `diagnostic_render.py` — see below |
 | Change node lifecycle/retry primitives | `node.py`; node patterns in `../nodes/CLAUDE.md` |
@@ -153,7 +154,7 @@ compatibility checks. See `architecture/core-concepts/data-type-coercion.md`.
 raising on failed coercion. Do not interchange these pipeline stages.
 
 `is_valid_parameter_name()` checks names, including reserved `__*__` keys;
-template-reference grammar lives in `runtime/template_resolver.py`. Neither check
+template-reference grammar lives in `core/templates.py`. Neither check
 escapes values or guarantees shell safety. External MCP schema names follow a
 separate discovery/argument path; incoming MCP execution-name validation does not
 establish universal coverage.

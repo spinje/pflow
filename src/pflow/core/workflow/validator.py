@@ -12,8 +12,8 @@ from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity, deduplicate_diagnostics, format_child_provenance
 from pflow.core.exceptions import SchemaValidationError, WorkflowValidationError
+from pflow.core.templates import TemplateResolver
 from pflow.registry import Registry
-from pflow.runtime.template_resolver import TemplateResolver
 
 logger = logging.getLogger(__name__)
 

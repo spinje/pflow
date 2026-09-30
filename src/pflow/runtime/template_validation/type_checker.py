@@ -29,7 +29,7 @@ from pflow.registry.registry import Registry
 #
 #   Direction 2: dict/list → str (auto-serialize feature)
 #     Allows: ${node.results} (type: list) → command (type: str) parameter
-#     Runtime behavior (see template_resolver.py:_convert_to_string):
+#     Runtime behavior (see core/templates.py::_convert_to_string):
 #     - Complex templates ("echo ${var}") serialize dict/list to JSON
 #     - Simple templates (${var} alone) preserve type (runtime check blocks)
 #     - Enables embedding arrays/objects in shell commands, prompts, etc.

@@ -8,7 +8,7 @@ import logging
 from typing import Any
 
 from pflow.core.execution_cache import ExecutionCache
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver
 
 from .base_service import BaseService, ensure_stateless
 

@@ -8,7 +8,7 @@ that referenced fields actually exist on each item.
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver
 from pflow.runtime.template_validation.path_validation import validate_nested_path
 from pflow.runtime.template_validation.utils import (
     find_similar_paths,

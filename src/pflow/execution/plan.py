@@ -39,6 +39,7 @@ from typing import Any, Literal
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import CompilationError, LoopConditionError, ResumeNotResumableError
+from pflow.core.templates import TemplateResolver
 from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
 from pflow.execution.result import Plan, PlanEntry, PlanSummary, ResumePlanInfo
 from pflow.registry import Registry
@@ -62,7 +63,6 @@ from pflow.runtime.engine.loop_control import loop_runtime_scope, resolve_loop_c
 from pflow.runtime.engine.plan_node import NodePlan, plan_node
 from pflow.runtime.engine.template_resolution import resolve_templates
 from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, NodeConfig
-from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.workflow_executor import WorkflowExecutor
 from pflow.runtime.workflow_trace import load_snapshot_or_raise
 

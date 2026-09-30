@@ -32,6 +32,7 @@ from pflow.core.exceptions import (
 from pflow.core.gate import GATE_KIND_APPROVAL
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_cache import CacheRenderContext
+from pflow.core.templates import TemplateResolver, resolve
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 from pflow.runtime.node_state import (
     FAILURE_CATEGORY_EXCEPTION,
@@ -45,7 +46,6 @@ from pflow.runtime.node_state import (
     get_node_failure,
     mark_node_failed,
 )
-from pflow.runtime.template_resolver import TemplateResolver, resolve
 
 from .api_warning_detector import detect_api_warning
 from .batch_executor import _collect_batch_trace, execute_batch

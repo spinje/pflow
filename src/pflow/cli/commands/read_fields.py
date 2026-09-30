@@ -6,7 +6,7 @@ from typing import Any
 import click
 
 from pflow.core.execution_cache import ExecutionCache
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver
 
 
 @click.command(name="read-fields")

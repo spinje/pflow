@@ -23,8 +23,8 @@ from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.suggestion_utils import find_similar_items
+from pflow.core.templates import TemplateResolver
 from pflow.registry import Registry
-from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation.batch_item_validation import validate_batch_item_fields
 from pflow.runtime.template_validation.path_validation import validate_template_paths
 from pflow.runtime.template_validation.type_validation import (

@@ -26,7 +26,7 @@ from pflow.core.node_type_display import is_model_node_type
 if TYPE_CHECKING:
     from pflow.core.prompt_cache import CacheRenderContext
 
-from pflow.runtime.template_resolver import TemplateResolver, resolve
+from pflow.core.templates import TemplateResolver, resolve
 
 from .batch_item_summary import summarize_batch_item
 from .types import BatchConfig, NodeConfig

@@ -19,6 +19,7 @@ from typing import Any, Final
 
 from pflow.core.cache_ttl import parse_cache_ttl
 from pflow.core.llm_capabilities import get_breakpoint_budget
+from pflow.core.templates import TemplateResolver, resolve
 
 
 @dataclass(frozen=True)
@@ -159,7 +160,6 @@ def _resolve_chunk_value(chunk: CacheChunkIR, shared: dict[str, Any]) -> ChunkRe
     left-literal case).
     """
     from pflow.runtime.node_state import NodeStatus, get_node_status
-    from pflow.runtime.template_resolver import TemplateResolver, resolve
 
     upstream_node = TemplateResolver.extract_root_node_id(chunk.var_expr)
     if get_node_status(shared, upstream_node) == NodeStatus.ABSENT:
@@ -236,8 +236,6 @@ def _resolve_static_prefix_for_cache(template_str: str, shared: dict[str, Any]) 
     ``cache.discrepancy``.
     """
     import re
-
-    from pflow.runtime.template_resolver import TemplateResolver
 
     def _replace_one(match: re.Match[str]) -> str:
         full_match = match.group(0)  # e.g. "${concept}" or "${a ?? b}"

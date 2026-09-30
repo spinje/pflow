@@ -12,6 +12,7 @@ from typing import Any
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_config import get_default_workflow_model
 from pflow.core.llm_providers import normalize_model_name
+from pflow.core.templates import TemplateResolver
 from pflow.core.trace_io import load_trace_file
 from pflow.core.trace_tree import normalize_workflow_path_key
 
@@ -554,8 +555,6 @@ def _resolve_ir_static_model_for_node(
         return None
     explicit = node.get("params", {}).get("model") or node.get("model")
     if isinstance(explicit, str) and "${" in explicit:
-        from pflow.runtime.template_resolver import TemplateResolver
-
         batch_alias = _batch_alias_for_node(node)
         for match in TemplateResolver.TEMPLATE_PATTERN.finditer(explicit):
             for operand in TemplateResolver.split_coalesce_operands(match.group(1)):

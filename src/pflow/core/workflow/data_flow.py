@@ -20,10 +20,10 @@ from pflow.core.diagnostic import (
     Severity,
 )
 from pflow.core.suggestion_utils import find_similar_items
+from pflow.core.templates import TemplateResolver
 from pflow.core.types import is_template_reserved_internal_key
 from pflow.core.workflow.gate_validation import check_approval_allowed
 from pflow.core.workflow.loop_validation import check_loop_polarity
-from pflow.runtime.template_resolver import TemplateResolver
 
 logger = logging.getLogger(__name__)
 
@@ -1426,7 +1426,7 @@ def _emit_prompt_body_overlap_diagnostics(
     works around ``Diagnostic.__hash__`` collapsing same-id diagnostics
     on the same node into a single entry that loses per-pair detail.
     """
-    # Lazy import: cache_overlap → template_resolver is the same dependency
+    # Lazy import: cache_overlap → core.templates is the same dependency
     # already loaded at module top, but the lazy form keeps this module's
     # import surface unchanged for callers that don't exercise the cache
     # validation path.

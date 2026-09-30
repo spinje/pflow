@@ -19,7 +19,7 @@ from dataclasses import replace
 from typing import Any
 
 from pflow.core.exceptions import LoopCarryError, LoopConditionError
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver
 
 from . import instrumentation
 from .types import LoopConfig, NodeConfig, TemplateConfig

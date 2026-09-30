@@ -9,10 +9,11 @@ from pathlib import Path
 from typing import Any, Final
 
 from pflow.core.exceptions import CompilationError, MarkdownParseError, SchemaValidationError, WorkflowValidationError
+from pflow.core.templates import TemplateResolver
 from pflow.core.trace_tree import normalize_workflow_path_key
 from pflow.core.validation_utils import generate_dummy_parameters
 
-from ...context import _PREDICTION_SKIPPED, AnalysisContext, template_resolver
+from ...context import _PREDICTION_SKIPPED, AnalysisContext
 from ...sub_workflow_walker import DynamicBatchInfo
 from ...trace_loading import _is_llm_node
 
@@ -370,12 +371,12 @@ def _node_templates_touch(node: Mapping[str, Any], dummied_keys: frozenset[str])
     if not dummied_keys:
         return False
     for text in _walk_strings(node):
-        for match in template_resolver().TEMPLATE_PATTERN.finditer(text):
-            for operand in template_resolver().split_coalesce_operands(match.group(1)):
+        for match in TemplateResolver.TEMPLATE_PATTERN.finditer(text):
+            for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
                 # Literal operands (Optional A) reference no dummied key.
-                if template_resolver().is_literal_operand(operand):
+                if TemplateResolver.is_literal_operand(operand):
                     continue
-                root = template_resolver().extract_root_node_id(operand)
+                root = TemplateResolver.extract_root_node_id(operand)
                 if root and root in dummied_keys:
                     return True
     return False
@@ -413,7 +414,7 @@ def _dummied_cache_chunks(
         var = item.get("var")
         if not isinstance(var, str):
             continue
-        root = template_resolver().extract_root_node_id(var)
+        root = TemplateResolver.extract_root_node_id(var)
         if root and root in dummied_keys:
             name = item.get("name")
             if isinstance(name, str):

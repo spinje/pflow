@@ -14,8 +14,8 @@ from typing import Any
 
 from pflow.core.json_utils import try_parse_json
 from pflow.core.param_coercion import coerce_param_for_node
+from pflow.core.templates import Resolution, TemplateResolver, resolve
 from pflow.core.types import outer_base_type
-from pflow.runtime.template_resolver import Resolution, TemplateResolver, resolve
 
 from .template_errors import (
     build_json_parse_error_message,

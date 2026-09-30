@@ -23,8 +23,8 @@ Usage:
 import json
 from typing import Any
 
+from pflow.core.templates import TemplateResolver
 from pflow.registry import Registry
-from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation import flatten_output_structure
 
 # Constants

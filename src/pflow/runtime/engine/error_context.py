@@ -10,7 +10,7 @@ node type that writes stderr to the shared store.
 
 from typing import Any
 
-from ..template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver
 
 
 def extract_node_ids_from_template(template: str) -> set[str]:

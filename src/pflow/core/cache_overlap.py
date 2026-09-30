@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver
 
 # Filter for valid pflow variable refs. Bash syntax (${var:-default},
 # ${var%pattern}, ${#count}) and truncated nested templates fail this match

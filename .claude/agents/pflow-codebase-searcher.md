@@ -121,7 +121,7 @@ Project docs are loaded as CLAUDE.md context — read them first instead of rest
 4. Check `context/adr/` → recorded architectural rationale
 
 **Trace template variable resolution:**
-1. Read `src/pflow/runtime/template_resolver.py` → runtime resolution
+1. Read `src/pflow/core/templates.py` → runtime resolution
 2. Read `src/pflow/runtime/template_validation/validator.py` → pre-run validation
 3. Read `src/pflow/runtime/engine/template_resolution.py` → engine integration point
 4. `grep "resolve\|template" tests/test_runtime/` → test coverage

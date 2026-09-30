@@ -9,9 +9,9 @@ import re
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.templates import TemplateResolver
 from pflow.core.types import outer_base_type
 from pflow.registry import Registry
-from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation.type_checker import (
     get_parameter_type,
     infer_template_type,
