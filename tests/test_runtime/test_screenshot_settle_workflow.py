@@ -25,10 +25,16 @@ ERROR_PAGE_REPORT = {"settled": False, "transform": "", "nodes": 0, "waited_ms":
 UNFRAMED_REPORT = {"settled": False, "transform": "translate(0px, 0px) scale(1)", "nodes": 7, "waited_ms": 8036}
 
 
-def run_settled_step(report: dict[str, Any], *, allow_empty: bool) -> tuple[str, dict[str, Any]]:
-    """Run the workflow's ``settled`` step on a settle report; return (action, shared)."""
-    nodes = parse_markdown(SETTLE_WORKFLOW.read_text(encoding="utf-8")).ir["nodes"]
-    step = next(n for n in nodes if n["id"] == "settled")
+def run_settled_step(report: dict[str, Any], *, allow_empty: bool | None = None) -> tuple[str, dict[str, Any]]:
+    """Run the workflow's ``settled`` step on a settle report; return (action, shared).
+
+    ``allow_empty=None`` uses the workflow's declared default — what every caller that
+    doesn't opt in gets.
+    """
+    ir = parse_markdown(SETTLE_WORKFLOW.read_text(encoding="utf-8")).ir
+    if allow_empty is None:
+        allow_empty = ir["inputs"]["allow_empty"]["default"]
+    step = next(n for n in ir["nodes"] if n["id"] == "settled")
     assert step["params"]["inputs"] == {"report": "${settle.result}", "allow_empty": "${allow_empty}"}
     node = PythonCodeNode()
     node.set_params({"code": step["params"]["code"], "inputs": {"report": report, "allow_empty": allow_empty}})
@@ -37,7 +43,7 @@ def run_settled_step(report: dict[str, Any], *, allow_empty: bool) -> tuple[str,
 
 
 def test_settled_report_passes_through() -> None:
-    action, shared = run_settled_step(SETTLED_REPORT, allow_empty=False)
+    action, shared = run_settled_step(SETTLED_REPORT)
 
     assert action == "default"
     assert shared["result"] == SETTLED_REPORT
@@ -50,8 +56,8 @@ def test_settled_report_passes_through() -> None:
         (UNFRAMED_REPORT, "7 nodes rendered, viewport transform 'translate(0px, 0px) scale(1)'"),
     ],
 )
-def test_timeout_fails_the_run_naming_what_the_page_showed(report: dict[str, Any], seen: str) -> None:
-    action, shared = run_settled_step(report, allow_empty=False)
+def test_timeout_fails_the_run_by_default_naming_what_the_page_showed(report: dict[str, Any], seen: str) -> None:
+    action, shared = run_settled_step(report)
 
     assert action == "error"
     assert "result" not in shared

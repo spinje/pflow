@@ -135,9 +135,10 @@ passes it as `pageId` (the pinned server requires it — see "Pinned server vers
 
 A verification tool that passes on nothing is worse than none, so none of these do:
 
-- **Exit 1 = nothing was examined.** Every workflow fails when settle times out — no
-  framed canvas with at least one node within 8 s; the error names what the page showed —
-  and `click`/`hover` fail when their target is not found. A non-zero run has no result.
+- **Exit 1 = the run did not complete and has no result**; the error names the failing
+  step. Every workflow fails when settle times out (no framed canvas with at least one
+  node within 8 s; the error names what the page showed), and `click`/`hover` fail when
+  their target is not found. Both stop before the check or interaction runs.
 - **Exit 0 = the page was examined; now read the result.** `visual-invariants` and
   `live-reload` report `passed` in their JSON, and `passed: false` still exits 0. A
   `visual-invariants` pass covers exactly what its counts say it examined: `leaves` (always

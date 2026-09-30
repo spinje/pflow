@@ -57,7 +57,11 @@ Dispatch a synthetic mouseover on the named row, then count marks/halos.
       const rows = [...document.querySelectorAll(".io-row, .param-row")];
       const el = rows.find((r) => (r.textContent || "").startsWith(name));
       if (!el) {
-        throw new Error("hover row not found: none of " + rows.length + " .io-row/.param-row rows starts with " + JSON.stringify(name));
+        const texts = rows.map((r) => (r.textContent || "").trim().slice(0, 30)).slice(0, 20);
+        throw new Error(
+          "hover row not found: none of " + rows.length + " .io-row/.param-row rows starts with " +
+            JSON.stringify(name) + " — fix row_name (row texts: " + JSON.stringify(texts) + ")",
+        );
       }
       el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
       await new Promise((r) => setTimeout(r, 400));
