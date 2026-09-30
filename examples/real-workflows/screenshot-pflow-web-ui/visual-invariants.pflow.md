@@ -78,8 +78,10 @@ by re-derived counts.
       const ON_RIGHT = ".io-col-output .react-flow__handle-right, .io-card .io-col-input .react-flow__handle-right";
       const TOL = 2 * scale; // 2 CSS px in screen px
       let dotsChecked = 0;
+      let dotsRendered = 0; // every handle the selectors match, before any skip
       const checkDots = (sel, side) => {
         for (const h of document.querySelectorAll(sel)) {
+          dotsRendered++;
           if (!h.classList.contains("port-handle")) continue;
           if (Number(getComputedStyle(h).opacity) === 0) continue; // quiet side
           const owner = h.closest(".node, .group"); // card OR expanded region
@@ -154,10 +156,16 @@ by re-derived counts.
         }
       }
 
+      // Presence floor: bordered dots exist but none could be examined — a regression that
+      // hides, zero-sizes, or un-classes every dot must not read as "no violations".
+      const reason =
+        dotsRendered > 0 && dotsChecked === 0
+          ? dotsRendered + " bordered io dots are rendered but none is visible and measurable (hidden, zero-size, or not a .port-handle)"
+          : undefined;
       const passed =
-        violations.dots.length === 0 && violations.edges.length === 0 && violations.overlaps.length === 0;
+        !reason && violations.dots.length === 0 && violations.edges.length === 0 && violations.overlaps.length === 0;
       violations.dots = violations.dots.slice(0, 20);
-      return { passed, scale: +scale.toFixed(3), dotsChecked, leaves: leaves.length, edges, violations };
+      return { passed, reason, scale: +scale.toFixed(3), dotsChecked, leaves: leaves.length, edges, violations };
     }
 
 ### shot
@@ -176,9 +184,10 @@ Capture the checked state (context for any violation).
 
 The invariant verdict: `passed` + `dotsChecked`/`leaves` counts, the edge-coverage
 report (or its skip reason), and up to 20 violations per invariant. `passed` covers only
-what the counts say was examined: `dotsChecked: 0` means the view has no bordered io
-dots (`beautiful` density, or a workflow with no inputs/outputs), just as `edges.skipped`
-marks an edge check the view does not qualify for.
+what the counts say was examined: `dotsChecked: 0` with `passed: true` means the view
+renders no bordered io dots at all (e.g. a flat workflow in `beautiful` density), just as
+`edges.skipped` marks an edge check the view does not qualify for. Dots that are rendered
+but none of them measurable fail the verdict with a `reason`.
 
 - source: ${check.result}
 - stdout: true

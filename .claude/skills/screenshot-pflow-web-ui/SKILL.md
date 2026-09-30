@@ -138,13 +138,15 @@ A verification tool that passes on nothing is worse than none, so none of these 
 - **Exit 1 = the run did not complete and has no result**; the error names the failing
   step. Every workflow fails when settle times out (no framed canvas with at least one
   node within 8 s; the error names what the page showed), and `click`/`hover` fail when
-  their target is not found. Both stop before the check or interaction runs.
+  their target is not found. Both stop before the check or interaction runs. When piping
+  to `jq`, run with `set -o pipefail` (or read `${PIPESTATUS[0]}`); otherwise the pipeline
+  reports jq's status.
 - **Exit 0 = the page was examined; now read the result.** `visual-invariants` and
   `live-reload` report `passed` in their JSON, and `passed: false` still exits 0. A
   `visual-invariants` pass covers exactly what its counts say it examined: `leaves` (always
-  ≥ 1), `dotsChecked` (`0` when the view has no bordered io dots — `beautiful` density, or a
-  workflow with no inputs/outputs), and `edges` (a `skipped` reason when the view does not
-  qualify).
+  ≥ 1), `dotsChecked` (`0` only when the view renders no bordered io dots at all, e.g. a
+  flat workflow in `beautiful` density; dots rendered but none measurable fail with a
+  `reason`), and `edges` (a `skipped` reason when the view does not qualify).
 - **Capturing an unframed page on purpose** (the full-screen error page): pass
   `allow_empty=true` to `screenshot` or `inspect`. Settle then waits its full 8 s instead of
   failing, the `viewport` output reports `settled: false`, and `inspect` may return
