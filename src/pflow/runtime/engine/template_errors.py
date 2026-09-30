@@ -205,10 +205,13 @@ def _classify_one_reference(
     if status == NodeStatus.SUCCEEDED:
         if lookup(reference, context)[0]:
             return None
+        completed = (context.get("__execution__") or {}).get("completed_nodes")
         path_error = {
             "var": var,
             "root": root,
             "status": "path_error",
+            # An input or a batch item is present in the context too, but is not a node.
+            "root_is_node": completed is None or root in completed,
             "in_coalesce": in_coalesce,
             "coalesce_expr": coalesce_expr,
             "available_fields": _get_available_fields(root, context),

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from pflow.execution.plan import _aggregate_batch_child_plans, build_plan
 from pflow.execution.result import Plan, PlanEntry, PlanSummary, RunnerConfig
 from pflow.execution.runner import WorkflowRunner
@@ -595,3 +597,61 @@ def test_plan_batch_sub_workflow_unresolved_per_item_inputs_emits_warning(tmp_pa
     assert warnings == [
         "Batch item 1: 'inputs:' left ${item.v} unresolved (strict mode). Runtime will reject this item."
     ]
+
+
+def _write_first_item_bad_batch(tmp_path, batch: dict):
+    child_path = tmp_path / "child.pflow.md"
+    parent_path = tmp_path / "parent.pflow.md"
+    write_workflow_file(
+        {
+            "inputs": {"value": {"type": "string"}},
+            "nodes": [{"id": "echo", "type": "shell", "params": {"command": "printf ${value}"}}],
+            "edges": [],
+        },
+        child_path,
+    )
+    write_workflow_file(
+        {
+            "inputs": {"items": {"type": "array"}},
+            "nodes": [
+                {
+                    "id": "fanout",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path), "inputs": {"value": "${item.v}"}},
+                    "batch": {"items": "${items}", **batch},
+                }
+            ],
+            "edges": [],
+        },
+        parent_path,
+    )
+    return parent_path
+
+
+@pytest.mark.parametrize("parallel", [True, False])
+def test_first_item_template_miss_under_continue_is_a_per_item_warning(tmp_path, parallel) -> None:
+    """Runtime fails only item 0 under `continue` (its compile pre-warm is skipped), so the
+    plan warns about item 0 like any other item instead of failing the node."""
+    parent_path = _write_first_item_bad_batch(tmp_path, {"parallel": parallel, "error_handling": "continue"})
+    items = {"items": [{"w": "no-v"}, {"v": "ok"}]}
+
+    plan = _plan_workflow_file(parent_path, items)
+
+    entry = plan.entries[0]
+    assert entry.status == "sub_workflow"
+    assert [d.message for d in entry.sub_plan.diagnostics if d.severity.name in ("WARNING", "ERROR")] == [
+        "Batch item 0: 'inputs:' left ${item.v} unresolved (strict mode). Runtime will reject this item."
+    ]
+    assert _run_workflow_file(parent_path, items).success
+
+
+def test_first_item_template_miss_under_fail_fast_still_fails_the_plan(tmp_path) -> None:
+    parent_path = _write_first_item_bad_batch(tmp_path, {})
+    items = {"items": [{"w": "no-v"}, {"v": "ok"}]}
+
+    entry = _plan_workflow_file(parent_path, items).entries[0]
+
+    assert entry.status != "sub_workflow"
+    assert entry.diagnostic.severity.name == "ERROR"
+    assert "${item.v}" in entry.diagnostic.message
+    assert not _run_workflow_file(parent_path, items).success

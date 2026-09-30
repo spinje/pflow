@@ -560,10 +560,13 @@ def _format_failed_reference_fixes(ref: dict[str, Any], root: str, var: str) -> 
 def _format_path_error_reference(header: str, ref: dict[str, Any], root: str, var: str) -> list[str]:
     available = ref.get("available_fields") or []
     suggestion = ref.get("did_you_mean")
-    lines = [
-        header,
-        f"      → Node '{root}' executed but does not produce field '{_extract_field_path(var)}'",
-    ]
+    path = _extract_field_path(var)
+    if path == var:  # no field after the root: show what follows it (`labels[5]` → `[5]`)
+        path = var[len(root) :]
+    subject = (
+        f"Node '{root}' executed but does not produce field" if ref.get("root_is_node", True) else f"'{root}' has no"
+    )
+    lines = [header, f"      → {subject} '{path}'"]
     lines.extend(
         f"        Index ${{{source}}} is {_truncate_error_text(repr(value), 80)}"
         for source, value in ref.get("index_values", {}).items()

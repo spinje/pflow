@@ -272,7 +272,10 @@ def _write_child(tmp_path: Path) -> Path:
         "edges": [],
         "outputs": {"got": {"source": "${c.result}", "description": "the echoed input"}},
     }
-    path = tmp_path / "child.pflow.md"
+    # A directory with a space: `${child}` rows then carry a spaced (on Windows, also
+    # backslashed) path through resolution as data, never re-parsed as a template.
+    (child_dir := tmp_path / "child dir").mkdir(exist_ok=True)
+    path = child_dir / "child.pflow.md"
     write_workflow_file(child, path, title="Corpus Child", description="Echo the input.")
     return path
 

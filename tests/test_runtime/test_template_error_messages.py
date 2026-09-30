@@ -486,6 +486,25 @@ class TestDynamicIndexDiagnostics:
             in (format_diagnostic(diag))
         )
 
+    @pytest.mark.parametrize(
+        ("template", "line"),
+        [
+            ("${labels[5]}", "      → 'labels' has no '[5]'\n"),
+            ("${labels[${i}]}", "      → 'labels' has no '[${i}]'\n        Index ${i} is 5\n"),
+        ],
+    )
+    def test_input_root_is_not_called_a_node_and_the_root_is_not_repeated(self, template, line):
+        shared = {"labels": ["a"], "i": 5, "__execution__": {"completed_nodes": []}}
+        diag = _diagnose("p", template, shared)
+        assert diag.context["unresolved_references"][0]["root_is_node"] is False
+        assert line in format_diagnostic(diag)
+
+    def test_node_root_keeps_the_node_wording(self):
+        shared = {"items": {"result": [{"x": 1}]}, "__execution__": {"completed_nodes": ["items"]}}
+        diag = _diagnose("p", "${items.result[0].y}", shared)
+        assert diag.context["unresolved_references"][0]["root_is_node"] is True
+        assert "      → Node 'items' executed but does not produce field 'result[0].y'\n" in format_diagnostic(diag)
+
     def test_static_path_error_has_no_index_values(self):
         shared = {"items": {"result": [{"x": 1}]}, "__execution__": {"completed_nodes": ["items"]}}
         [ref] = _diagnose("p", "${items.result[0].y}", shared).context["unresolved_references"]

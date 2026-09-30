@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import math
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum, auto
 from pathlib import Path
 from time import time
@@ -906,8 +906,6 @@ def _annotate_entry(entry: PlanEntry, config: NodeConfig, shared: dict[str, Any]
       cost/duration (and any sub_plan rollup) by this factor and flips the plan
       to ``upper_bound`` cost basis: the honest worst case for a cost gate.
     """
-    from dataclasses import replace
-
     if config.approval and entry.status != "cached":
         entry = replace(entry, approval=True)
     if config.loop_config is None:
@@ -1487,13 +1485,19 @@ def _prepare_batch_sub_workflow_params(
     batch_config: BatchConfig,
 ) -> _PreparedBatchSubWorkflowParams | PlanEntry:
     """Resolve item[0]-scoped params for a batch sub-workflow."""
+    template_config = config.template_config
+    if template_config and batch_config.error_handling == "continue":
+        # A bad item[0] fails only that item at runtime (the engine skips its compile
+        # pre-warm): take item[0]'s shape permissively, and let the per-item loop warn
+        # about it like any other item.
+        template_config = replace(template_config, resolution_mode="permissive")
     try:
         shared[batch_config.item_alias] = items[0]
         shared["__index__"] = 0
-        if config.template_config:
-            resolved_params, _, _ = resolve_templates(config.template_config, shared, config.node_id)
+        if template_config:
+            resolved_params, _, _ = resolve_templates(template_config, shared, config.node_id)
             merged = dict(getattr(curr, "params", {}) or {})
-            merged.update(config.template_config.static_params or {})
+            merged.update(template_config.static_params or {})
             merged.update(resolved_params)
         else:
             merged = dict(getattr(curr, "params", {}) or {})
