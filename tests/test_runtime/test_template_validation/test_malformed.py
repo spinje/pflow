@@ -433,3 +433,15 @@ class TestIssuePassCoversEverySurface:
         errors, _warnings = split_template_diagnostics(workflow_ir, {}, create_mock_registry(_SHELL))
         assert len(errors) == 1
         assert errors[0].message.startswith("Malformed literal operand in '${x ?? [1,2]}'")
+
+    def test_malformed_template_suggestion_names_the_issue_and_the_fixes(self):
+        """A digit segment is the strict-grammar shape an agent most often writes; the
+        suggestion names the offending text and the bracket-index repair."""
+        workflow_ir = {"nodes": [{"id": "a", "type": "shell", "params": {"command": "echo ${c.stdout.0}"}}]}
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, create_mock_registry(_SHELL))
+        assert [e.suggestions for e in errors] == [
+            [
+                "'${c.stdout.0}' is not a valid template. A reference is ${node.field}: index a list as "
+                "items[0] (not items.0), close every '${' with '}', and write '$${' for a literal '${'."
+            ]
+        ]

@@ -201,8 +201,9 @@ def render_cache_chunks(cache_ctx: CacheRenderContext, shared: dict[str, Any]) -
     for name in cache_ctx.subset:
         chunk = chunks_by_name.get(name)
         if chunk is None:
-            # The validator rejects undeclared subset entries (B2.3); this only fires
-            # when it was bypassed (direct compile_workflow), so make it observable.
+            # Unreachable through a compiled workflow: validation AND compile-time data
+            # flow reject undeclared subset entries (B2.3). Only a hand-built
+            # CacheRenderContext gets here, so the skip is logged, not silent.
             logger.warning(
                 "cache rendering skipped undeclared chunk '%s' — the ## Cache block has no such item; "
                 "the validator should have rejected it (B2.3).",

@@ -97,6 +97,8 @@ def _by_symbol_patterns(tree: ast.Module) -> list[tuple[int, str]]:
         if not is_re_call or pattern is None:
             continue
         used = sorted({n.id for n in ast.walk(pattern) if isinstance(n, ast.Name) and n.id in grammar_names})
+        if _TEMPLATES_MODULE in ast.unparse(pattern):  # the unaliased `pflow.core.templates.X` chain
+            used.append(_TEMPLATES_MODULE)
         if used:
             hits.append((node.lineno, f"re.* pattern built from {', '.join(used)}"))
     return hits
@@ -138,6 +140,10 @@ _PLANTED = {
     "imported-name": "import re\nfrom pflow.core.templates import _PATH as P\nM = re.fullmatch(P, 's')\n",
     "re-function-import": "from re import compile as c\nfrom pflow.core.templates import _PATH\nP = c(_PATH)\n",
     "re-module-alias": "import re as regex\nfrom pflow.core.templates import _PATH\nP = regex.compile(pattern=_PATH)\n",
+    "qualified-module": (
+        "import re\nimport pflow.core.templates\n"
+        "P = re.compile(pflow.core.templates.TemplateResolver.TEMPLATE_PATTERN.pattern)\n"
+    ),
 }
 
 

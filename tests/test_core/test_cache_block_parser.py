@@ -207,6 +207,28 @@ def test_block_whose_only_template_is_an_issue_names_it(block: str) -> None:
         parse_markdown(_wrap(f"```cache\n{block}\n```"))
 
 
+@pytest.mark.parametrize(
+    ("block", "issue", "line_offset"),
+    [
+        ("Context: ${topic}\nMore: ${typo..field}", "${typo..field}", 1),
+        ("Base: ${p.out_str}\nInvalid: ${p.out.items.0}", "${p.out.items.0}", 1),
+        ("${a} ${b c}", "${b c}", 0),
+    ],
+)
+def test_issue_after_the_last_chunk_is_named(block: str, issue: str, line_offset: int) -> None:
+    """Trailing prose is discarded, so an Issue there would never reach the validator's
+    Issue pass: the parser names it, at its own line."""
+    source = _wrap(f"```cache\n{block}\n```")
+    with pytest.raises(MarkdownParseError) as exc_info:
+        parse_markdown(source)
+    assert f"'{issue}' is not a valid '${{var}}' reference" in str(exc_info.value)
+    assert exc_info.value.line == source.splitlines().index("```cache") + 2 + line_offset
+
+
+def test_escape_after_the_last_chunk_is_still_discarded_prose() -> None:
+    assert _chunks("${a} tail $${b c}") == [("a", "")]
+
+
 def test_escape_only_block_is_rejected_like_prose() -> None:
     with pytest.raises(MarkdownParseError, match=r"must contain at least one"):
         parse_markdown(_wrap("```cache\nJust $${literal} text.\n```"))

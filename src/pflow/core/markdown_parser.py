@@ -1725,7 +1725,8 @@ def _parse_cache_code_block(content: str, base_line: int) -> list[_CacheChunk]:
 
     Raises:
         MarkdownParseError: if the block has no ``${var}`` references at all
-            (empty / prose-only block) or if any chunk identifier is duplicated.
+            (empty / prose-only block), if an Issue sits in the discarded tail, or
+            if any chunk identifier is duplicated.
     """
     template = parse(content)
     chunks: list[_CacheChunk] = []
@@ -1754,14 +1755,18 @@ def _parse_cache_code_block(content: str, base_line: int) -> list[_CacheChunk]:
         )
         last_end = end
 
-    if not chunks:
-        # An Issue is prose, so a block whose only `${` is malformed has no chunk:
-        # name the Issue rather than claim the block has no reference at all.
-        issue = next(iter(template.issues), None)
+    # An Issue is prose; one after the last chunk sits in the discarded tail, where the
+    # validator's Issue pass can never see it — so report it here (a block whose only
+    # `${` is malformed is the no-chunk case of the same rule).
+    if tail_issue := next((i for i in template.issues if i.span[0] >= last_end), None):
         raise MarkdownParseError(
-            f"Malformed template syntax in '## Cache': '{issue.raw}' is not a valid '${{var}}' reference."
-            if issue
-            else "'## Cache' block must contain at least one '${var}' reference.",
+            f"Malformed template syntax in '## Cache': '{tail_issue.raw}' is not a valid '${{var}}' reference.",
+            line=base_line + content.count("\n", 0, tail_issue.span[0]),
+            suggestion=_SECTION_SYNTAX_HINTS[_SectionType.CACHE],
+        )
+    if not chunks:
+        raise MarkdownParseError(
+            "'## Cache' block must contain at least one '${var}' reference.",
             line=base_line,
             suggestion=_SECTION_SYNTAX_HINTS[_SectionType.CACHE],
         )

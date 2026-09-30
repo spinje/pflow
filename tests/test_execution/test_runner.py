@@ -898,6 +898,7 @@ def test_extract_runtime_warnings_preserves_structured_diagnostic():
     undefined references.
     """
     from pflow.core.diagnostic import Severity
+    from pflow.core.templates import resolve
     from pflow.runtime.engine.template_errors import build_template_error_diagnostic
 
     # Build the structured Diagnostic the same way template_resolution.py does
@@ -916,6 +917,7 @@ def test_extract_runtime_warnings_preserves_structured_diagnostic():
         "command",
         "${missing_upstream.value}",
         shared_store_for_diag,
+        resolve("${missing_upstream.value}", shared_store_for_diag),
         node_id="consumer",
     )
 

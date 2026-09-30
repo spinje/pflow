@@ -25,7 +25,6 @@ from pflow.core.templates import (
     TemplateResolver,
     lookup,
     parse,
-    resolve,
 )
 from pflow.runtime.node_state import NodeStatus, get_node_failure, get_node_status
 
@@ -206,7 +205,7 @@ def _classify_one_reference(
     if status == NodeStatus.SUCCEEDED:
         if lookup(reference, context)[0]:
             return None
-        return {
+        path_error = {
             "var": var,
             "root": root,
             "status": "path_error",
@@ -216,6 +215,11 @@ def _classify_one_reference(
             "did_you_mean": _suggest_field_correction(reference, context),
             "peer_suggestions": _find_peer_nodes_with_field(root, var, context),
         }
+        # A dynamic index whose source resolved: its value is the likely cause (out of
+        # range, not an int), which the field text alone cannot show.
+        if index_values := {source.raw: lookup(source, context)[1] for source in reference.index_sources}:
+            path_error["index_values"] = index_values
+        return path_error
 
     if status == NodeStatus.FAILED:
         failure = get_node_failure(context, root) or {}
@@ -358,7 +362,7 @@ def build_template_error_diagnostic(
     param_key: str,
     template: Any,
     context: dict[str, Any],
-    resolution: Resolution | None = None,
+    resolution: Resolution,
     *,
     node_id: str | None = None,
     source_file: str | None = None,
@@ -367,12 +371,9 @@ def build_template_error_diagnostic(
     """Build a fully-structured Diagnostic for an unresolved template.
 
     Classifies exactly ``resolution.unresolved`` — the set the caller's check
-    judged — so check and diagnostic cannot disagree. Without a resolution the
-    template is resolved against ``context`` here.
+    judged — so check and diagnostic cannot disagree.
     """
     template_str = str(template)
-    if resolution is None:
-        resolution = resolve(template, context)
     references = classify_unresolved_references(_in_source_order(resolution.unresolved, template_str), context)
 
     available_keys = sorted(key for key in context if _is_visible_context_key(key))

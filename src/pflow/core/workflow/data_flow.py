@@ -19,7 +19,7 @@ from pflow.core.diagnostic import (
     Severity,
 )
 from pflow.core.suggestion_utils import find_similar_items
-from pflow.core.templates import Reference, TemplateResolver, parse
+from pflow.core.templates import Reference, Template, TemplateResolver, parse
 from pflow.core.types import is_template_reserved_internal_key
 from pflow.core.workflow.gate_validation import check_approval_allowed
 from pflow.core.workflow.loop_validation import check_loop_polarity
@@ -773,8 +773,9 @@ def _validate_node_params(
     errors: list[Diagnostic],
 ) -> None:
     """Validate every reference in a node's params, ``batch.items`` and loop fields
-    (a dynamic index's inner references included; carry values have their own
-    self-reference check). ``loop:`` is a top-level node field, so a
+    (a dynamic index's inner references included; a carry value's own outer
+    reference has its self-reference check, its inner ones are checked here).
+    ``loop:`` is a top-level node field, so a
     ``while: ${typo.x}`` or a forward reference to a different downstream node is
     caught here too; ``_check_forward_reference`` allows ``while: ${this_node.output}``.
     """
@@ -786,12 +787,10 @@ def _validate_node_params(
         node_refs = valid_simple_refs | set(inputs_param.keys())
 
     for surface in iter_node_surfaces(node):
-        if surface.kind == "carry":
-            continue
         # ``location`` names the value in diagnostics: ``headers.Authorization``,
         # ``commands[1]``, ``batch.items``, ``loop.while``
         for location, template in surface.templates():
-            for ref in template.references:
+            for ref in _checked_references(surface.kind, template):
                 error = _validate_template_reference(
                     ref.raw,
                     node_id,
@@ -806,6 +805,21 @@ def _validate_node_params(
                 )
                 if error:
                     errors.append(error)
+
+
+def _checked_references(kind: str, template: Template) -> tuple[Reference, ...]:
+    """The references this pass checks. A carry value's own reference has the carry
+    self-reference check (one diagnostic per mistake); its dynamic-index sources are
+    ordinary reads, so they are checked here."""
+    if kind != "carry":
+        return template.references
+    return tuple(
+        source
+        for expression in template.expressions
+        for operand in expression.operands
+        if isinstance(operand, Reference)
+        for source in operand.index_sources
+    )
 
 
 # ------------------------------------------------------------------------------

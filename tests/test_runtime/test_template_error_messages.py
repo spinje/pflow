@@ -2,9 +2,16 @@
 
 import pytest
 
+from pflow.core.diagnostic import Diagnostic
 from pflow.core.diagnostic_render import format_diagnostic
+from pflow.core.templates import resolve
 from pflow.runtime.engine.template_errors import build_template_error_diagnostic
 from pflow.runtime.node_state import FAILURE_CATEGORY_SHELL, mark_node_failed
+
+
+def _diagnose(param_key, template, shared, **kwargs) -> Diagnostic:
+    """The diagnostic for what resolving ``template`` against ``shared`` left unresolved."""
+    return build_template_error_diagnostic(param_key, template, shared, resolve(template, shared), **kwargs)
 
 
 def _shared_with_failed_primary():
@@ -37,7 +44,7 @@ def _shared_with_failed_primary():
 class TestCase1NonCoalesceFailedRef:
     def test_diagnostic_has_failed_status_reference(self):
         shared = _shared_with_failed_primary()
-        diag = build_template_error_diagnostic(
+        diag = _diagnose(
             "content",
             "${primary.stdout}",
             shared,
@@ -51,7 +58,7 @@ class TestCase1NonCoalesceFailedRef:
 
     def test_rendered_includes_failed_label(self):
         shared = _shared_with_failed_primary()
-        diag = build_template_error_diagnostic("content", "${primary.stdout}", shared)
+        diag = _diagnose("content", "${primary.stdout}", shared)
         rendered = format_diagnostic(diag)
         assert "FAILED" in rendered
         assert "primary" in rendered
@@ -75,7 +82,7 @@ class TestCase2AllCoalesceOperandsFailed:
             category=FAILURE_CATEGORY_SHELL,
             error="curl: (6) Could not resolve host",
         )
-        diag = build_template_error_diagnostic(
+        diag = _diagnose(
             "content",
             "${primary.stdout ?? fallback.stdout}",
             shared,
@@ -87,7 +94,7 @@ class TestCase2AllCoalesceOperandsFailed:
     def test_rendered_shows_both_failures(self):
         shared = _shared_with_failed_primary()
         mark_node_failed(shared, "fallback", category=FAILURE_CATEGORY_SHELL, error="boom")
-        diag = build_template_error_diagnostic(
+        diag = _diagnose(
             "content",
             "${primary.stdout ?? fallback.stdout}",
             shared,
@@ -100,7 +107,7 @@ class TestCase2AllCoalesceOperandsFailed:
 class TestCase3TypoOnFailedNode:
     def test_status_is_failed_with_secondary_typo_hint(self):
         shared = _shared_with_failed_primary()
-        diag = build_template_error_diagnostic(
+        diag = _diagnose(
             "content",
             "${primary.stddout}",
             shared,
@@ -111,7 +118,7 @@ class TestCase3TypoOnFailedNode:
 
     def test_rendered_shows_both_failure_and_typo_hint(self):
         shared = _shared_with_failed_primary()
-        diag = build_template_error_diagnostic(
+        diag = _diagnose(
             "content",
             "${primary.stddout}",
             shared,
@@ -128,7 +135,7 @@ class TestCase3TypoOnFailedNode:
         real peer node name.
         """
         shared = _shared_with_failed_primary()
-        diag = build_template_error_diagnostic(
+        diag = _diagnose(
             "content",
             "${primary.stddout}",
             shared,
@@ -160,7 +167,7 @@ class TestCase4SucceededNodeFieldTypo:
                 "node_visit_counts": {},
             },
         }
-        diag = build_template_error_diagnostic(
+        diag = _diagnose(
             "content",
             "${node.stddout}",
             shared,
@@ -180,7 +187,7 @@ class TestCase4SucceededNodeFieldTypo:
                 "node_visit_counts": {},
             },
         }
-        diag = build_template_error_diagnostic(
+        diag = _diagnose(
             "content",
             "${node.stddout}",
             shared,
@@ -201,7 +208,7 @@ class TestCase5AbsentNode:
                 "node_visit_counts": {},
             },
         }
-        diag = build_template_error_diagnostic(
+        diag = _diagnose(
             "content",
             "${missing.field}",
             shared,
@@ -219,28 +226,28 @@ class TestCase5AbsentNode:
                 "node_visit_counts": {},
             },
         }
-        diag = build_template_error_diagnostic("content", "${missing.field}", shared)
+        diag = _diagnose("content", "${missing.field}", shared)
         rendered = format_diagnostic(diag)
         assert "did not execute" in rendered
 
 
 def test_diagnostic_message_is_specific_per_param():
     shared = _shared_with_failed_primary()
-    d1 = build_template_error_diagnostic("command", "${primary.stdout}", shared)
-    d2 = build_template_error_diagnostic("script", "${primary.stdout}", shared)
+    d1 = _diagnose("command", "${primary.stdout}", shared)
+    d2 = _diagnose("script", "${primary.stdout}", shared)
     assert d1 != d2
 
 
 class TestWarning7PeerSuggestions:
     def test_failed_ref_includes_peer_with_same_field(self):
         shared = _shared_with_failed_primary()
-        diag = build_template_error_diagnostic("content", "${primary.stdout}", shared)
+        diag = _diagnose("content", "${primary.stdout}", shared)
         refs = diag.context["unresolved_references"]
         assert "fallback" in refs[0]["peer_suggestions"]
 
     def test_rendered_substitutes_actual_peer_in_fix(self):
         shared = _shared_with_failed_primary()
-        diag = build_template_error_diagnostic("content", "${primary.stdout}", shared)
+        diag = _diagnose("content", "${primary.stdout}", shared)
         rendered = format_diagnostic(diag)
         assert "<fallback>" not in rendered
         assert "${primary.stdout ?? fallback.stdout}" in rendered
@@ -271,7 +278,7 @@ class TestWarning9CategoryAwareFailureRendering:
             category=FAILURE_CATEGORY_API_WARNING,
             error="503 Service Unavailable",
         )
-        diag = build_template_error_diagnostic("content", "${api.body}", shared)
+        diag = _diagnose("content", "${api.body}", shared)
         rendered = format_diagnostic(diag)
         assert "503" in rendered
         assert "https://api.example.com/data" in rendered
@@ -287,7 +294,7 @@ class TestWarning6Case2AllCoalesceFailed:
             category=FAILURE_CATEGORY_SHELL,
             error="curl: (6) Could not resolve host",
         )
-        diag = build_template_error_diagnostic(
+        diag = _diagnose(
             "content",
             "${primary.stdout ?? fallback.stdout}",
             shared,
@@ -304,7 +311,7 @@ class TestWarning6Case2AllCoalesceFailed:
         """
         # primary failed via _shared_with_failed_primary helper; never_run is absent
         shared = _shared_with_failed_primary()
-        diag = build_template_error_diagnostic(
+        diag = _diagnose(
             "content",
             "${never_run.stdout ?? primary.stdout}",
             shared,
@@ -333,7 +340,7 @@ class TestWarning6Case2AllCoalesceFailed:
                 "node_visit_counts": {},
             },
         }
-        diag = build_template_error_diagnostic(
+        diag = _diagnose(
             "content",
             "${branch_a.stdout ?? branch_b.stdout}",
             shared,
@@ -403,7 +410,7 @@ class TestPermissiveModeWarningRendering:
         from pflow.core.diagnostic import Severity
 
         shared = _shared_with_failed_primary()
-        error_diag = build_template_error_diagnostic(
+        error_diag = _diagnose(
             "command",
             "${primary.stdout}",
             shared,
@@ -453,14 +460,14 @@ class TestDiagnosticClassifiesTheResolutionSet:
     def test_names_only_unresolved_expressions_in_source_order(self):
         # `${a ?? b}` resolved (b ran), so its absent `a` operand is not an unresolved reference.
         shared = {"b": {"v": 1}, "mid": {"x": 2}}
-        diag = build_template_error_diagnostic("p", "${zeta.v} ${a ?? b} ${mid.x} ${alpha.v}", shared)
+        diag = _diagnose("p", "${zeta.v} ${a ?? b} ${mid.x} ${alpha.v}", shared)
         assert diag.message == "Unresolved variables in parameter 'p': ${zeta.v}, ${alpha.v}"
         assert [ref["var"] for ref in diag.context["unresolved_references"]] == ["zeta.v", "alpha.v"]
 
     def test_dynamic_index_miss_is_named_as_a_path_error(self):
         """The outer root ran, so the author's reference is a field miss on it — not an absent inner node."""
         shared = {"items": [{"x": 1}], "i": 0}
-        diag = build_template_error_diagnostic("p", "${items[${i}].nope}", shared)
+        diag = _diagnose("p", "${items[${i}].nope}", shared)
         refs = diag.context["unresolved_references"]
         assert [(ref["var"], ref["status"]) for ref in refs] == [("items[${i}].nope", "path_error")]
 
@@ -468,9 +475,25 @@ class TestDiagnosticClassifiesTheResolutionSet:
 class TestDynamicIndexDiagnostics:
     """A dynamic index is one Reference: the diagnostic names it whole (Task 170 delta 3)."""
 
+    def test_out_of_range_index_shows_the_index_value(self):
+        """The field text alone (`items[${i}].x`) cannot show that the index is the cause."""
+        shared = {"items": {"result": [{"x": 1}]}, "i": 5, "__execution__": {"completed_nodes": ["items"]}}
+        diag = _diagnose("p", "${items.result[${i}].x}", shared)
+        [ref] = diag.context["unresolved_references"]
+        assert (ref["status"], ref["index_values"]) == ("path_error", {"i": 5})
+        assert (
+            "      → Node 'items' executed but does not produce field 'result[${i}].x'\n        Index ${i} is 5\n"
+            in (format_diagnostic(diag))
+        )
+
+    def test_static_path_error_has_no_index_values(self):
+        shared = {"items": {"result": [{"x": 1}]}, "__execution__": {"completed_nodes": ["items"]}}
+        [ref] = _diagnose("p", "${items.result[0].y}", shared).context["unresolved_references"]
+        assert ref["status"] == "path_error" and "index_values" not in ref
+
     def test_unresolved_inner_is_the_cause_and_is_named(self):
         shared = {"items": [{"x": 1}]}
-        diag = build_template_error_diagnostic("p", "${items[${ghost.i}].x}", shared)
+        diag = _diagnose("p", "${items[${ghost.i}].x}", shared)
         refs = diag.context["unresolved_references"]
         assert [(ref["var"], ref["status"]) for ref in refs] == [("ghost.i", "absent")]
 
@@ -479,7 +502,7 @@ class TestDynamicIndexDiagnostics:
         """A reserved `__*__` key is never a node, so its status is ABSENT; an inner that
         RESOLVED must not be blamed — the outer path miss is the cause."""
         shared = {"items": [{"x": 1}], key: 0}
-        diag = build_template_error_diagnostic("p", f"${{items[${{{key}}}].nope}}", shared)
+        diag = _diagnose("p", f"${{items[${{{key}}}].nope}}", shared)
         refs = diag.context["unresolved_references"]
         assert [(ref["var"], ref["status"]) for ref in refs] == [(f"items[${{{key}}}].nope", "path_error")]
 
@@ -488,7 +511,7 @@ class TestDynamicIndexDiagnostics:
         from the node state, never from the walk (failed-node invariant)."""
         shared = _shared_with_failed_primary()
         shared["i"] = 0
-        diag = build_template_error_diagnostic("p", "${primary.lines[${i}]}", shared)
+        diag = _diagnose("p", "${primary.lines[${i}]}", shared)
         refs = diag.context["unresolved_references"]
         assert [(ref["var"], ref["status"]) for ref in refs] == [("primary.lines[${i}]", "failed")]
 
@@ -496,7 +519,7 @@ class TestDynamicIndexDiagnostics:
         """The first field after the root is corrected; the inner `${item.i}` is untouched
         (a lexical split used to tear it into `i}]`)."""
         shared = {"res": {"data": [{"x": 1}]}, "item": {"i": 0}}
-        diag = build_template_error_diagnostic("p", "${res.dta[${item.i}].x}", shared)
+        diag = _diagnose("p", "${res.dta[${item.i}].x}", shared)
         [ref] = diag.context["unresolved_references"]
         assert ref["did_you_mean"] == "res.data[${item.i}].x"
         assert "'i}]'" not in format_diagnostic(diag)
@@ -506,15 +529,15 @@ class TestDynamicIndexDiagnostics:
         built from them (`cfg[${i}].name`) could never resolve. Partner: the same typo
         directly on the root is corrected."""
         shared = {"cfg": {"name": "n"}, "i": 0}
-        [indexed] = build_template_error_diagnostic("p", "${cfg[${i}].nme}", shared).context["unresolved_references"]
-        [direct] = build_template_error_diagnostic("p", "${cfg.nme}", shared).context["unresolved_references"]
+        [indexed] = _diagnose("p", "${cfg[${i}].nme}", shared).context["unresolved_references"]
+        [direct] = _diagnose("p", "${cfg.nme}", shared).context["unresolved_references"]
         assert (indexed["status"], indexed["did_you_mean"]) == ("path_error", None)
         assert direct["did_you_mean"] == "cfg.name"
 
     def test_coalesce_fix_line_skips_a_dotted_root_index(self):
         """The paste-able fix names the peer's field, not a torn `j}].stdout`."""
         shared = {**_shared_with_failed_primary(), "i": {"j": 0}}
-        diag = build_template_error_diagnostic("p", "${primary[${i.j}].stdout}", shared)
+        diag = _diagnose("p", "${primary[${i.j}].stdout}", shared)
         rendered = format_diagnostic(diag)
         assert "${primary[${i.j}].stdout ?? fallback.stdout}" in rendered
         assert "j}]" not in rendered.replace("${i.j}]", "")

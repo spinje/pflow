@@ -564,6 +564,10 @@ def _format_path_error_reference(header: str, ref: dict[str, Any], root: str, va
         header,
         f"      → Node '{root}' executed but does not produce field '{_extract_field_path(var)}'",
     ]
+    lines.extend(
+        f"        Index ${{{source}}} is {_truncate_error_text(repr(value), 80)}"
+        for source, value in ref.get("index_values", {}).items()
+    )
     if available:
         display = available[:8]
         field_list = ", ".join(display)

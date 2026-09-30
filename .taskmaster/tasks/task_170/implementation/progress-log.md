@@ -934,3 +934,78 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
 - **Completion gate commissioned now, with the two user rulings still pending** (prose-wrap seam: `output_resolver._normalize_source` + 2 rows; R5: the chunker comment site + `_resolve_chunk_value` + `data_flow._cache_var_roots` + 3 rows). Reason: every other line is final; both rulings land as pre-specified edits at named sites; `review-falsifier` runs LAST, after the reading battery's fixes AND the rulings, so the shipped state is attacked by execution.
 - Lens selection (Major tier: >500 lines, >50 files; engine diff ⇒ ≥ Full): **ran** `review-spec-conformance`, `review-simplicity`, `review-validation-consistency`, `review-silent-failures`, `review-impact-completeness`, `review-feature-interactions`, `review-agent-ux` (diagnostic wording changed across engine/validator/cache), `review-test-fidelity` (the corpus is the task's core deliverable) — 8 = the cap; + `review-falsifier` direct, last. **Skipped** `review-concurrency-safety` (no new threads/executors; the one shared-state hazard — cached AST across batch threads — is pinned by the frozen/tuple/fresh-`Literal.value` tests, and R10 only adds an `except`); `review-plan` / `review-architecture-fit` (plan mode only).
 - Gate-runner: a **fresh** Opus review-evaluator (Agent E), packeted with spec + plan + this log — no single builder holds the whole diff (A–D each built a slice; D, the latest, is at ~440k).
+
+## [2026-09-30 03:45] Agent E (Opus) — completion gate — reading battery
+- Coverage:
+  - Deep-review code mode via the pflow fan-out (`workflows/review/run-review-lenses.pflow.md`), provider **codex** (cross-model against the Claude builders A–D).
+  - Scope: `git diff abcaa50f..0d5ce06c` (merge base with origin/main), minus `uv.lock` and the examples-baseline JSON. 130 files.
+  - Lenses (8, the cap): spec-conformance, simplicity, validation-consistency, silent-failures, impact-completeness, feature-interactions, agent-ux, test-fidelity. **All 8 reported; none failed.** Each noted partial file reading, as expected on 130 files.
+  - Target text: `scratchpads/task-170/gate/review_target.txt` (rulings, pending rows and named asks briefed). Report: `scratchpads/task-170/gate/report.md`, read in full.
+  - No lens executed anything. I verified every Critical and Warning by execution: probes in `scratchpads/task-170/gate/{probe1.py,probe_cache_warn.py,surface/}`, with the merge-base tree at `scratchpads/task-170/gate/base` via `PYTHONPATH`.
+- Findings and dispositions (lens, severity, finding, then disposition):
+  1. **validation-consistency Critical, spec-conformance W1, feature-interactions W2 (convergent) — numeric literals with non-ASCII digits (`${1٢ ?? 7}`) crash `resolve` with `JSONDecodeError`.** CONFIRMED (the base guarded this through `try_parse_json`). FIXED:
+     - the grammar's digits are ASCII `[0-9]`, never `\d` (JSON's digits, and what `scan.ts`'s JS `\d` means; `scan.ts` strings mirrored);
+     - `_expression_at` admits a `Literal` only if `try_parse_json` decodes it, which makes "every literal-grammar match round-trips `try_parse_json`" true by construction.
+     - Tests: `test_templates.py::test_numbers_json_cannot_decode_are_issues` (8 ids) + partner `test_a_large_number_within_the_limit_is_a_literal`.
+  2. **test-fidelity Critical 1 — the literal and totality corpora miss those numbers.** FIXED by the same tests.
+  3. **spec-conformance W2, validation-consistency W3 — a 5000-digit `[N]` makes `parse` / `has_templates` raise `ValueError`** (int-string limit). CONFIRMED. FIXED: `parse_path` returns `None` on the failed conversion, so the template is an Issue. The oversized literal is covered by item 1's decode gate. Test: the `big-index` / `big-literal` / `big-fallback` ids.
+  4. **silent-failures W1, impact-completeness W, feature-interactions W1 (convergent) — an Issue after the last `## Cache` chunk vanished** (trailing prose is discarded), so validation passed. CONFIRMED as a regression: the base rejected `${typo..field}` via the cache root check; the branch said "✓ Workflow is valid".
+     - FIXED with one rule in `_parse_cache_code_block`: an Issue in the discarded tail raises the malformed parse error at its own line. The old no-chunk Issue branch is the no-chunk case of the same rule, so the code got shorter.
+     - Tests: `test_cache_block_parser.py::test_issue_after_the_last_chunk_is_named` (3 rows, line asserted) + partner `test_escape_after_the_last_chunk_is_still_discarded_prose`.
+  5. **validation-consistency Critical — `while: ${"false"}` validates, then fails with `LoopConditionError` after the node ran.** CONFIRMED (base: treated as absent, silently ran once). Real severity is Warning: loud, not silent.
+     - FIXED: the loop-condition gate types a string `Literal` operand as `str`, the same rule as a `str`-typed reference (the runtime belt raises on both).
+     - Test: `test_loop_validation.py::test_string_literal_condition_is_a_known_string`, 4 conditions × while/until, exact message, with bool/number partners.
+     - Consequence: `${c.exit_code ?? "done"}` is now rejected too. It is correct, since the runtime raises whenever that fallback fires.
+  6. **impact-completeness Critical — carry values skip their dynamic-index sources.** CONFIRMED:
+     - `${s.result.lst[${typo}] ?? s.result.lst[0]}` validated clean, so every round silently took the fallback;
+     - an input used only in `${s.result.lst[${i}]}` was flagged "never used" (the corpus row masked it with `extra_params`).
+     - FIXED: new `Reference.index_sources` (`references` = self + index_sources). `data_flow._checked_references` checks a carry's index sources, and `operands.iter_template_operands` yields them for accounting. The outer self-reference keeps its own carry check. Executed: an invalid carry `${ghost.result}` still gets exactly ONE diagnostic, as on the base; dropping the skip wholesale would have given two.
+     - Tests: parity rows `dyn_loop_carry_index_source_counts_as_input_use` and `dyn_loop_carry_index_source_root_typo`.
+     - `template_validation/CLAUDE.md` carry bullet updated.
+  7. **test-fidelity Critical 2 — no test proves the diagnostic classifies the channel the check judged** (all callers used the self-resolving default). CONFIRMED. FIXED: `test_node_wrapper_template_validation.py::TestInputsResolvedPerKey::test_diagnostic_names_only_the_kept_misses` (optional `${skipped.stdout}` injected, required `${broken.stdout}` named alone).
+  8. **simplicity Suggestion (named ask) — `build_template_error_diagnostic(..., resolution=None)` self-resolving default.** FIXED: `resolution` is required; the fallback branch and the `resolve` import are gone. 29 calls in `test_template_error_messages.py` go through one local `_diagnose` helper (resolve, then diagnose); `test_runner.py` and `test_failed_node_invariant.py` pass `resolve(...)` explicitly.
+  9. **agent-ux W1 — an out-of-range / non-int dynamic index reads as "does not produce field 'result[${idx}].name'"** beside "Available fields: result". CONFIRMED by a real run.
+     - FIXED: a path_error on a reference whose index sources resolved carries `index_values` (`{"idx": 5}`). The renderer prints `Index ${idx} is 5` under the field line (value truncated at 80 via `_truncate_error_text`).
+     - Executed: the trace carries no diagnostic context (0 hits for `unresolved_references` / `index_values`), so **no trace field**. The CLI JSON error gains the key only for dynamic-index path errors.
+     - Tests: `TestDynamicIndexDiagnostics::test_out_of_range_index_shows_the_index_value` + partner `test_static_path_error_has_no_index_values`.
+     - SKIPPED part: the lens's "suggest index 0 or add `??`" repair line. The value line makes the cause visible, and a canned repair would guess.
+  10. **simplicity handoff (no severity) — `Reference.first_field` offset wrong for `a[01].x`** (re-rendered `[1]`), so `_extract_field_path` sliced `].x`. CONFIRMED. FIXED: the offset is the first `.` outside brackets in `raw`, which is simpler than the re-render loop. Test: row `a[01].x → (5, "x")`.
+  11. **agent-ux W2 plus five lenses' handoffs (named ask) — `render_cache_chunks`' undeclared-chunk warning repeats per render without a node id.** Verified by execution: `compile_workflow` raises `CompilationError` on an undeclared `prompt_cache` name (data-flow B2.3), so the branch is unreachable for any compiled workflow. Only a hand-built `CacheRenderContext` reaches it, and there is **no duplicate warning in any real run**. The comment's "direct compile_workflow" claim was false: CORRECTED. SKIPPED the node-scoped redesign: it would add a parameter for an unreachable path, which fails the deletion test.
+  12. **test-fidelity W1 — grammar-seam Rule B misses an unaliased `pflow.core.templates.X` chain.** CONFIRMED. FIXED: a pattern whose unparsed source names the module is flagged. Planted case `qualified-module` added.
+  13. **simplicity Suggestion — `resolve_template_parameter`** had one caller, an unused `key` and a redundant tuple. FIXED: inlined, 3 lines at the caller.
+  14. **agent-ux Suggestion — the Issue pass's hint ("Check for missing '}'…") is irrelevant to `${producer.items.0}`.** FIXED: the suggestion names the Issue (truncated at 60) and the fixes: bracket index, close `${`, `$${` escape. The count message is unchanged. Test: `test_malformed.py::test_malformed_template_suggestion_names_the_issue_and_the_fixes`.
+  15. **spec-conformance S1, impact S, agent-ux S — `data-type-coercion.md:73/:90` name deleted `TemplateResolver` methods.** FIXED: they point at `_json_container` / `_walk` / `_resolve_string`. Left: `:104`'s `runtime/wrappers/template_wrapper.py` path, which is dead from before this task.
+  16. **All 8 lenses, Suggestion (named ask) — incident refs in `core/templates.py` docstrings.** FIXED: `#630` ×2, `#460`, `#441` replaced by the constraint text. `#621` is kept only as the forward pointer "the deferred #621 tolerance ruling".
+  17. **Named ask to simplicity — Passes 6/7/9's own param walks.** The lens verified KEEP: shell checks need quote spans, code checks need bindings/annotations, and dependency refs must not be typed as values, so folding them adds filtering without removing logic. No change.
+  18. **spec-conformance coverage note — plan §4's final manual checklist (P:962) and the blocking `tests-windows` gate (P:971) are not established.** HANDED BACK: `review-falsifier` / the orchestrator's final pass and CI own them. Windows is not exercised locally.
+- Changed:
+  - src: `core/templates.py`, `core/markdown_parser.py`, `core/prompt_cache.py` (comment), `core/diagnostic_render.py`, `core/workflow/data_flow.py`, `runtime/engine/template_errors.py`, `runtime/engine/template_resolution.py`, `runtime/template_validation/{validator,operands}.py`, `runtime/template_validation/CLAUDE.md`.
+  - web: `src/graph/scan.ts` (4 regex strings, `\d` → `[0-9]`; equivalent in JS).
+  - docs: `architecture/core-concepts/data-type-coercion.md`.
+  - tests: `test_templates.py`, `test_cache_block_parser.py`, `test_loop_validation.py`, `test_template_grammar_seam.py`, `test_template_parity.py` (+2 rows), `test_node_wrapper_template_validation.py`, `test_template_error_messages.py`, `test_malformed.py`, `test_runner.py`, `test_failed_node_invariant.py`.
+- Verified:
+  - `make check` green.
+  - `make test` **10146 passed / 2 failed / 6 xfailed** against my captured baseline 10115 / 2 / 6. +31 = my new test items. The 2 failures are exactly `output_prose_wrap_recorded_drift-today` / `output_escape_only_r3-today`.
+  - `make test-all-local` **10197 / 2 (same rows) / 2 skipped / 6 xfailed** (baseline 10166).
+  - `capture.py --check`: 29 examples, 0 differing.
+  - `web`: `npx vitest run src/graph/scan.test.ts` 17 passed, `tsc --noEmit` clean.
+  - No benchmark flake occurred.
+  - Mutation ledger `scratchpads/task-170/gate/mutate.py` (byte-copy restore): 11/11 fixes, each revert KILLED by its new test (M1–M11). M1 (back to `\d`) kills only the index row: the decode gate alone already turns non-ASCII literal digits into Issues, so ASCII digits are load-bearing for indices (Python `int('١')` resolves where `scan.ts` cannot match).
+  - Real surface: the `scratchpads/task-170/gate/surface/*.pflow.md` probes were each run before and after.
+- Deviations/surprises:
+  - (a) Grammar tightening outside the Sanctioned deltas, importance 1: `${a[١]}` (a non-ASCII digit index) is now an Issue, so a validator ERROR. It resolved at runtime before and never matched the TS mirror.
+  - (b) A no-chunk cache block whose Issue sits on a later line now reports that Issue's line instead of the block's first line.
+  - (c) The CLI JSON error gains `index_values` on dynamic-index path errors. It is additive, not in the trace.
+  - (d) `test_template_error_messages.py` now routes through `_diagnose`. It is the honest "diagnose what resolve left" helper; the channel-filtering contract is pinned at the `resolve_templates` level (item 7).
+  - Nothing at importance ≥3 was applied. Nothing contradicts the ledger, ADR-0006/0015 or a logged ruling: #503's `ValueError`, `_gate_pausable` and the other lanes' files are untouched.
+- Self-checks:
+  - Fully happy? Yes with the fixes. Residual doubts:
+    - Item 5's widening to `??` string fallbacks is a real (correct) new rejection that an existing workflow could hit. No example or test did.
+    - Item 11 keeps an unreachable warning rather than deleting it: a judgment call, and cheap to reverse.
+  - test-reflect: every new test asserts exact values/messages/lines and was revert-red. The `_diagnose` helper is kept deliberately (without item 7's test it would hide the contract; with it, it doesn't). Nothing deleted.
+- Next: the orchestrator reviews + commits. Pending user rulings (prose-wrap seam, R5) are unchanged. Then `review-falsifier` directly, LAST. Hand it the spec path + spec-conformance's inventory (report §"Verified clean → review-spec-conformance"). I stay available to evaluate its report.
+
+## [2026-10-01 04:10] task-orchestrator — reading battery closed; falsifier launched
+- Verified: `make test` 10146 passed / 2 failed (prose-wrap ruling rows) / 6 xfailed (R5); `make check` green. Read Agent E's 18 dispositions (report `scratchpads/task-170/gate/report.md`).
+- Orchestrator dispositions on E's residuals: item 5's widening (`while: ${c.exit_code ?? "done"}` now rejected) → accepted, importance 2: it types a string-literal operand exactly as the existing rule types a `str`-typed reference operand (policy consistency), and the fallback fails at runtime every time it fires — **surfaced in the completion handback** as a user-visible validator tightening alongside the shell-typing one; item 11 (unreachable warning kept, comment corrected) → accepted; deviations (a)–(d) accepted ((c) `index_values` is CLI-JSON only — trace untouched, E executed the check).
+- Committed the gate fixes. **`review-falsifier` launched directly now** (reading-battery fixes landed): scope = everything EXCEPT the two user-pending seams (prose-wrap `_normalize_source` + its 2 rows; R5's three sites + 3 rows) — a targeted falsifier re-check covers those after the rulings land. Packet: spec path + the spec-conformance section of the gate report (`## Verified clean → review-spec-conformance` + its findings) as the Requirement Inventory + plan §4's manual end-to-end list.

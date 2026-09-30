@@ -1830,6 +1830,23 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         extra_params={"iu": "${i}"},
     ),
     Row(
+        "dyn_loop_carry_index_source_counts_as_input_use",
+        "loop_carry",
+        "${s.result.lst[${i}]}",
+        # A carry's dynamic-index source is an ordinary read: `i` used only here is used
+        now(Ok()),
+        now(Resolves("c1")),
+        declared_inputs=I_INPUT,
+    ),
+    Row(
+        "dyn_loop_carry_index_source_root_typo",
+        "loop_carry",
+        "${s.result.lst[${typo}] ?? s.result.lst[0]}",
+        # The typo'd index source is root-checked; unflagged, every round would take the fallback
+        now(Error("typo")),
+        now(Resolves("c0")),
+    ),
+    Row(
         "dyn_type_pass_code_annotation_delta6",
         "param",
         "${p.out_arr[${idx}]}",

@@ -169,27 +169,6 @@ def validate_resolved_type(
     return None
 
 
-def resolve_template_parameter(key: str, template: Any, context: dict[str, Any]) -> tuple[Any, bool, Resolution]:
-    """Resolve a single template parameter.
-
-    Args:
-        key: Parameter name
-        template: Template value to resolve
-        context: Resolution context
-
-    Returns:
-        Tuple of (resolved_value, is_simple_template, resolution)
-    """
-    # Nested structures (dict or list): resolve_nested's leaf auto-parse applies
-    if isinstance(template, (dict, list)):
-        resolution = resolve(template, context, auto_parse=True)
-        return resolution.value, False, resolution
-
-    resolution = resolve(template, context)
-    is_simple = isinstance(template, str) and parse(template).is_simple
-    return resolution.value, is_simple, resolution
-
-
 def _left_to_absent_nodes(template: Any, resolution: Resolution, context: dict[str, Any]) -> bool:
     """True if ``template`` stayed wholly literal because every node it reads is absent.
 
@@ -284,7 +263,10 @@ def resolve_templates(  # noqa: C901
             resolved_value: Any = {k: r.value for k, r in inputs_by_key.items()}
             is_simple_template = False
         else:
-            resolved_value, is_simple_template, resolution = resolve_template_parameter(key, template, context)
+            # A nested dict/list auto-parses JSON-string leaves; a simple string keeps its value's type.
+            resolution = resolve(template, context, auto_parse=isinstance(template, (dict, list)))
+            resolved_value = resolution.value
+            is_simple_template = isinstance(template, str) and parse(template).is_simple
 
         # Auto-parse JSON strings for structured parameters (only simple templates)
         if is_simple_template and isinstance(resolved_value, str):

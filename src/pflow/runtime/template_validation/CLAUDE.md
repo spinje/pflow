@@ -38,12 +38,13 @@ useful unknown-type error with a validator exception.
   only (a `??` operand may miss its field at runtime and fall through); Pass 8 also
   filters by node id, since batch nodes may share an alias. `ROOT_ONLY` roots
   are checked by `core/workflow/data_flow.py`, over the same surfaces.
-- Carry values, output sources and cache vars have their own passes (one
-  diagnostic per mistake). Output sources and cache vars also join unused-input
-  accounting (`_extract_output_templates_for_unused_check`,
-  `_extract_cache_templates_for_unused_check`); carry values do not — they may
-  only reference the loop node itself. Feeding cache vars to path validation
-  produces two diagnostics for one mistake.
+- A carry value's own reference, output sources and cache vars have their own
+  passes (one diagnostic per mistake). Output sources and cache vars also join
+  unused-input accounting (`_extract_output_templates_for_unused_check`,
+  `_extract_cache_templates_for_unused_check`). A carry may only reference the loop
+  node itself, but its dynamic-index sources (`${s.lst[${i}]}`) are ordinary reads:
+  `iter_template_operands` and data_flow check them (`Reference.index_sources`).
+  Feeding cache vars to path validation produces two diagnostics for one mistake.
 - Literal operands are not references. `TemplateResolver.is_literal_operand`
   is a coarse first-character check for already-parsed operands, not a
   literal validator.

@@ -40,16 +40,18 @@ def iter_template_operands(workflow_ir: dict[str, Any]) -> Iterator[TemplateOper
     """Every reference in node params, ``batch.items`` and loop fields — a dynamic
     index's inner references included, tagged with their enclosing operand's policy.
 
-    Carry values, output sources and cache vars have their own passes (one
-    diagnostic per mistake); Issues belong to the Issue pass and hold no references.
+    A carry value's own reference, output sources and cache vars have their own
+    passes (one diagnostic per mistake), but a carry's dynamic-index sources are
+    ordinary reads; Issues belong to the Issue pass and hold no references.
     """
     for surface in iter_template_surfaces(workflow_ir):
-        if surface.kind not in ("param", "batch_items", "loop"):
+        if surface.kind not in ("param", "batch_items", "loop", "carry"):
             continue
         for _, template in surface.templates():
             for expression in template.expressions:
                 policy = classify_operand(in_coalesce=len(expression.operands) > 1)
                 for operand in expression.operands:
                     if isinstance(operand, Reference):
-                        for ref in operand.references:
+                        refs = operand.index_sources if surface.kind == "carry" else operand.references
+                        for ref in refs:
                             yield TemplateOperand(surface.node_id, ref, policy)

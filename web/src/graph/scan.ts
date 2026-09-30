@@ -55,14 +55,14 @@ export function producedTypeOf(
 // quoted fallback like `${cfg.text ?? "ask gen.result owner"}` is not a read of `gen`
 // (review-caught 2026-06-11).
 const IDENT = String.raw`[a-zA-Z_][\w-]*`;
-const STATIC_PATH = String.raw`${IDENT}(?:(?:\[\d+\])?(?:\.${IDENT}(?:\[\d+\])?)*)?`;
-const SEGMENT = String.raw`${IDENT}(?:\[(?:\d+|\$\{${STATIC_PATH}\})\])?`;
+const STATIC_PATH = String.raw`${IDENT}(?:(?:\[[0-9]+\])?(?:\.${IDENT}(?:\[[0-9]+\])?)*)?`;
+const SEGMENT = String.raw`${IDENT}(?:\[(?:[0-9]+|\$\{${STATIC_PATH}\})\])?`;
 const PATH = String.raw`${SEGMENT}(?:\.${SEGMENT})*`;
-const LITERAL = String.raw`(?:"(?:[^"\\?\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4}|\?(?!\?))*"|\btrue\b|\bfalse\b|\bnull\b|-?(?:0|[1-9]\d*)(?:\.\d+)?|\[\]|\{\})`;
+const LITERAL = String.raw`(?:"(?:[^"\\?\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4}|\?(?!\?))*"|\btrue\b|\bfalse\b|\bnull\b|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?|\[\]|\{\})`;
 const OPERAND = `(?:${LITERAL}|${PATH})`;
 const EXPRESSION_AT = String.raw`\$\{(${OPERAND}(?:\s*\?\?\s*${OPERAND})*)\}`;
 const SCAN = String.raw`(\$\$\{(?:[^{}]|\{[^{}]*\})*\}|\$\$\{)|(?<!\$)\$\{`;
-const SEGMENT_AT = String.raw`(${IDENT})(?:\[(?:\d+|\$\{(${STATIC_PATH})\})\])?`;
+const SEGMENT_AT = String.raw`(${IDENT})(?:\[(?:[0-9]+|\$\{(${STATIC_PATH})\})\])?`;
 const LITERAL_FULL_RE = new RegExp(`^${LITERAL}$`);
 const COALESCE_SPLIT_RE = /\s*\?\?\s*/;
 

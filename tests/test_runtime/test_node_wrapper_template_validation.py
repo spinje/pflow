@@ -532,6 +532,17 @@ class TestInputsResolvedPerKey:
         with pytest.raises(ValueError, match=r"\$\{b\.stdout\}"):
             resolve_templates(config, {}, "n")
 
+    def test_diagnostic_names_only_the_kept_misses(self):
+        """The diagnostic classifies the channel the check judged: the injected `opt`'s miss
+        was dropped, so only the required `req`'s miss is named (a diagnostic that re-resolved
+        the whole `inputs` dict would name both)."""
+        config = self._config({"opt": "${skipped.stdout}", "req": "${broken.stdout}"}, {"opt"})
+        with pytest.raises(ValueError) as exc_info:
+            resolve_templates(config, {}, "n")
+        diagnostic = exc_info.value._pflow_template_diagnostic  # type: ignore[attr-defined]
+        assert diagnostic.message == "Unresolved variables in parameter 'inputs': ${broken.stdout}"
+        assert [ref["var"] for ref in diagnostic.context["unresolved_references"]] == ["broken.stdout"]
+
     def test_injected_key_alone_is_clean(self):
         config = self._config({"opt": "${b.stdout}", "req": "${a.x}"}, {"opt"})
         merged, _, errors = resolve_templates(config, {"a": {"x": 1}}, "n")

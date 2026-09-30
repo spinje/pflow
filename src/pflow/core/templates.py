@@ -9,7 +9,7 @@ judge of "unresolved" for every runtime consumer.
 ``parse`` is cached, so it runs on AUTHOR TEXT only. ``has_templates`` /
 ``has_references`` are uncached scans, the only helpers that may run on resolved
 runtime values. Never decide unresolved-ness by re-scanning resolved text; read
-the ``Resolution`` channels (#630).
+the ``Resolution`` channels: resolved values may legitimately contain ``${`` text.
 
 Lives in ``core/`` so the validator and the runtime share one module; it imports
 only ``pflow.core`` (pinned by ``tests/test_core/test_templates_module.py``).
@@ -136,7 +136,7 @@ def is_type_compatible(source_type: str, target_type: str) -> bool:
     # but registry param types keep generics verbatim (list[str]); without this an
     # array source could never satisfy a list[str] param. Element types are not
     # compared — consistent with code-node outputs, which also collapse to the
-    # bare collection type. (issue #460)
+    # bare collection type.
     source_base = outer_base_type(source_type)
     target_base = outer_base_type(target_type)
     # Identity short-circuit: covers unknown-but-equal bracketed types (e.g. a
@@ -150,11 +150,13 @@ def is_type_compatible(source_type: str, target_type: str) -> bool:
 # ── Grammar (regex strings; the tokenizer and the public patterns share them) ──
 
 _IDENT = r"[a-zA-Z_][\w-]*"
+# Digits are ASCII `[0-9]`, never `\d`: Python's `\d` also matches other scripts'
+# digits, which `json.loads` rejects (and `web/src/graph/scan.ts`'s JS `\d` does not match).
 # A static reference path: `a`, `a.b`, `a[0].b[1]` — one index per segment. It is
 # also the grammar of a dynamic index's inner reference (one level, no `??`).
-_VAR_NAME_PATTERN = rf"{_IDENT}(?:(?:\[\d+\])?(?:\.{_IDENT}(?:\[\d+\])?)*)?"
+_VAR_NAME_PATTERN = rf"{_IDENT}(?:(?:\[[0-9]+\])?(?:\.{_IDENT}(?:\[[0-9]+\])?)*)?"
 # One path segment: a name with at most one index, `[N]` or `[${static ref}]`.
-_SEGMENT = rf"{_IDENT}(?:\[(?:\d+|\$\{{{_VAR_NAME_PATTERN}\}})\])?"
+_SEGMENT = rf"{_IDENT}(?:\[(?:[0-9]+|\$\{{{_VAR_NAME_PATTERN}\}})\])?"
 _PATH = rf"{_SEGMENT}(?:\.{_SEGMENT})*"
 
 # Literal operand grammar: JSON values that `json.loads` accepts and the `??`
@@ -164,7 +166,7 @@ _PATH = rf"{_SEGMENT}(?:\.{_SEGMENT})*"
 # complex defaults belong in a code node.
 _LITERAL_PATTERN = (
     r'(?:"(?:[^"\\?\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4}|\?(?!\?))*"'
-    r"|\btrue\b|\bfalse\b|\bnull\b|-?(?:0|[1-9]\d*)(?:\.\d+)?|\[\]|\{\})"
+    r"|\btrue\b|\bfalse\b|\bnull\b|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?|\[\]|\{\})"
 )
 # Literal first: keyword literals win over same-spelled identifiers.
 _OPERAND = rf"(?:{_LITERAL_PATTERN}|{_PATH})"
@@ -173,7 +175,7 @@ _EXPRESSION = rf"{_OPERAND}(?:\s*\?\?\s*{_OPERAND})*"
 _EXPRESSION_AT = re.compile(rf"\$\{{({_EXPRESSION})\}}")
 _LITERAL_FULL = re.compile(_LITERAL_PATTERN)
 _PATH_FULL = re.compile(_PATH)
-_SEGMENT_AT = re.compile(rf"({_IDENT})(?:\[(?:(\d+)|\$\{{({_VAR_NAME_PATTERN})\}})\])?")
+_SEGMENT_AT = re.compile(rf"({_IDENT})(?:\[(?:([0-9]+)|\$\{{({_VAR_NAME_PATTERN})\}})\])?")
 _COALESCE_SPLIT = re.compile(r"\s*\?\?\s*")
 # One left-to-right scan: an escape `$${…}` (brace-balanced body, one nesting
 # level; without a balanced close only `$${` is consumed) or an unescaped `${`.
@@ -215,16 +217,24 @@ class Reference:
     @property
     def references(self) -> tuple[Reference, ...]:
         """This reference, then its dynamic-index inner references."""
-        return (self, *(seg.ref for seg in self.path if isinstance(seg, DynamicIndex)))
+        return (self, *self.index_sources)
+
+    @property
+    def index_sources(self) -> tuple[Reference, ...]:
+        """The inner references of this reference's dynamic indices (``i`` in ``a[${i}].x``)."""
+        return tuple(seg.ref for seg in self.path if isinstance(seg, DynamicIndex))
 
     def first_field(self) -> tuple[int, str] | None:
         """``(offset in raw of the "." before it, name)`` of the first field after the
-        root — past a root index (``a[${i.j}].x`` → ``(9, "x")``); ``None`` if none."""
-        offset = len(self.root)
-        for seg in self.path:
-            if isinstance(seg, Field):
-                return offset, seg.name
-            offset += len(f"[{seg.value}]" if isinstance(seg, Index) else f"[${{{seg.ref.raw}}}]")
+        root — past a root index (``a[${i.j}].x`` → ``(9, "x")``); ``None`` if none.
+
+        By the path grammar that field follows the first ``.`` outside brackets."""
+        name = next((seg.name for seg in self.path if isinstance(seg, Field)), None)
+        depth = 0
+        for offset, char in enumerate(self.raw):
+            depth += (char == "[") - (char == "]")
+            if char == "." and depth == 0 and name is not None:
+                return offset, name
         return None
 
 
@@ -322,7 +332,10 @@ def parse_path(path: str) -> Reference | None:
         name, index, inner = match.groups()
         segments.append(Field(name))
         if index is not None:
-            segments.append(Index(int(index)))
+            try:
+                segments.append(Index(int(index)))
+            except ValueError:  # past Python's int-string conversion limit
+                return None
         elif inner is not None:
             inner_ref = parse_path(inner)
             if inner_ref is None:  # pragma: no cover — the inner grammar is a subset
@@ -365,11 +378,13 @@ def _expression_at(source: str, start: int) -> Expression | None:
         return None
     operands: list[Operand] = []
     for operand in _COALESCE_SPLIT.split(match.group(1)):
-        if _LITERAL_FULL.fullmatch(operand):
+        # The decode check rejects the one grammar match `json.loads` cannot take:
+        # an integer past Python's int-string limit (`Literal.value` never raises).
+        if _LITERAL_FULL.fullmatch(operand) and try_parse_json(operand)[0]:
             operands.append(Literal(operand))
         elif (ref := parse_path(operand)) is not None:
             operands.append(ref)
-        else:  # pragma: no cover — the expression grammar admits only these two
+        else:  # an oversized number or index: an Issue, like any other bad expression
             return None
     return Expression(tuple(operands), match.group(1), match.span())
 
@@ -475,7 +490,7 @@ def _evaluate(expression: Expression, context: Mapping[str, Any]) -> tuple[bool,
     """The first operand that resolves: a Literal always does; a Reference iff found.
 
     ``??`` falls through whenever the left side "isn't there" — the node did not
-    run OR the field is missing (#441, like ``??`` in JS/C#). A found ``None`` ends
+    run OR the field is missing (like ``??`` in JS/C#). A found ``None`` ends
     the chain. (Declared outputs use a stricter all-absent rule in
     ``output_resolver._is_all_absent_coalesce``.)
     """
@@ -520,8 +535,9 @@ class Resolution:
     ``unresolved`` holds ``Expression.raw`` of every expression left literal;
     ``issues`` holds ``Issue.raw`` of every Issue routed through resolution (kept
     verbatim). Both span the whole value. Text that came FROM a resolved value is
-    never in either — only the author's template is judged (#630). The channels
-    stay distinct so a surface can tolerate Issues without tolerating misses (#621).
+    never in either — only the author's template is judged. The channels
+    stay distinct so a surface can tolerate Issues without tolerating misses (the
+    deferred #621 tolerance ruling).
     """
 
     value: Any

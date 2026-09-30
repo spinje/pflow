@@ -204,6 +204,45 @@ def test_parse_and_resolve_never_raise(source: str) -> None:
     assert TemplateResolver.has_references(source) is bool(template.expressions)
 
 
+_OVERSIZED = "9" * 5000  # past Python's default int-string conversion limit (4300 digits)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "${1\u0662}",  # Arabic-Indic digits: Python's `\\d` matches them, `json.loads` does not
+        "${1\u0662 ?? 7}",
+        "${x.missing ?? 1\u0661 ?? 0}",
+        "${1.\u0662}",
+        "${a[\u0661]}",
+        "${a[" + _OVERSIZED + "]}",
+        "${" + _OVERSIZED + "}",
+        "${x.missing ?? " + _OVERSIZED + "}",
+    ],
+    ids=[
+        "digit",
+        "digit-coalesce",
+        "digit-after-miss",
+        "digit-fraction",
+        "digit-index",
+        "big-index",
+        "big-literal",
+        "big-fallback",
+    ],
+)
+def test_numbers_json_cannot_decode_are_issues(source: str) -> None:
+    """The grammar admits only what the walk can convert, so parse and resolve stay total."""
+    assert [type(s) for s in parse(source).segments] == [Issue]
+    resolution = resolve(source, {"x": {}})
+    assert (resolution.value, resolution.issues) == (source, frozenset({source}))
+
+
+def test_a_large_number_within_the_limit_is_a_literal() -> None:
+    big = "9" * 100
+    assert resolve("${x.missing ?? " + big + "}", {"x": {}}).value == int(big)
+    assert resolve("${a[" + big + "]}", {"a": [1]}).unresolved == frozenset({"a[" + big + "]"})
+
+
 # ---------------------------------------------------------------------------
 # The path grammar (the eight ``TestSplitTemplatePath`` expectations, re-homed)
 # ---------------------------------------------------------------------------
@@ -323,7 +362,14 @@ def test_extract_variables_is_the_value_view() -> None:
 
 @pytest.mark.parametrize(
     ("path", "expected"),
-    [("a.x", (1, "x")), ("a[0].x.y", (4, "x")), ("a[${i.j}].x", (9, "x")), ("a", None), ("a[${i}]", None)],
+    [
+        ("a.x", (1, "x")),
+        ("a[0].x.y", (4, "x")),
+        ("a[01].x", (5, "x")),  # the offset is read from the source, not a re-rendered `[1]`
+        ("a[${i.j}].x", (9, "x")),
+        ("a", None),
+        ("a[${i}]", None),
+    ],
 )
 def test_first_field_offset_skips_the_root_index(path: str, expected: tuple[int, str] | None) -> None:
     reference = ref(path)

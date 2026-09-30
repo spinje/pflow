@@ -233,9 +233,9 @@ def _loop_condition_diagnostic(
     - **Typed-output gate (belt half 1)**: reject a `while:` whose source has a
       *known string* type (e.g. `${shell.stdout}`). `any`/un-inferable types are
       allowed so the motivating sub-workflow example isn't false-rejected. A
-      coalesce (`${a ?? b}`) is checked per non-literal operand — the runtime belt
-      raises on a string result too, so checking here keeps the validation half of
-      the belt-and-suspenders honest.
+      coalesce (`${a ?? b}`) is checked per operand, a string literal (`"false"`)
+      being a known string — the runtime belt raises on a string result too, so
+      checking here keeps the validation half of the belt-and-suspenders honest.
     """
     from pflow.runtime.template_validation.type_checker import infer_template_type
 
@@ -255,9 +255,10 @@ def _loop_condition_diagnostic(
     # via the CLI: such a workflow fails validation (exit 1), it does NOT silently loop
     # to the cap. Adding a third loop-specific error would only be noise.
     for operand in template.expressions[0].operands:
-        if not isinstance(operand, Reference):
-            continue
-        inferred = infer_template_type(operand.raw, workflow_ir, node_outputs)
+        if isinstance(operand, Literal):
+            inferred = "str" if isinstance(operand.value, str) else None
+        else:
+            inferred = infer_template_type(operand.raw, workflow_ir, node_outputs)
         if inferred in _KNOWN_STRING_TYPES:
             return _make_loop_string_type_diagnostic(
                 node_id, field_name, condition_template, operand.raw, str(inferred)
@@ -653,7 +654,11 @@ def _issue_diagnostic(node_id: str | None, path: str, template: Template) -> Dia
         message = (
             f"Malformed template syntax: found {opens} '${{' but only {len(template.expressions)} valid template(s)."
         )
-        suggestions = ["Check for missing '}' or empty templates like '${}'."]
+        shown = first.raw if len(first.raw) <= 60 else first.raw[:57] + "..."
+        suggestions = [
+            f"'{shown}' is not a valid template. A reference is ${{node.field}}: index a list as "
+            "items[0] (not items.0), close every '${' with '}', and write '$${' for a literal '${'."
+        ]
     return Diagnostic(
         severity=Severity.ERROR,
         source="validator",

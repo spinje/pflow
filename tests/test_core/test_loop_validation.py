@@ -84,6 +84,25 @@ def test_coalesce_while_with_string_operand_rejected(registry) -> None:
     assert any("string" in d.message.lower() for d in errs)
 
 
+@pytest.mark.parametrize("field", ["while", "until"])
+@pytest.mark.parametrize(
+    ("condition", "rejected"),
+    [('${"false"}', True), ('${c.exit_code ?? "done"}', True), ("${false}", False), ("${c.exit_code ?? 0}", False)],
+)
+def test_string_literal_condition_is_a_known_string(registry, field, condition, rejected) -> None:
+    """A string literal operand is statically a string: the runtime belt would raise on it
+    after the node ran, so the validator rejects it up front (boolean/number literals pass)."""
+    ir = _ir([
+        {"id": "c", "type": "shell", "params": {"command": "echo hi"}, "loop": {field: condition, "max_iterations": 3}}
+    ])
+    messages = [d.message for d in _errors(ir, registry)]
+    expected = [
+        f"Node 'c' `loop: {field}:` references '{condition}', whose type is 'str' (a string). String truthiness "
+        "is a foot-gun — a non-empty string like '0\\n' or 'false' is truthy, so the loop would never stop on those values."
+    ]
+    assert messages == (expected if rejected else [])
+
+
 def test_coalesce_while_with_typed_operand_passes(registry) -> None:
     # ${c.exit_code ?? 0} — both operands non-string (int / literal) → allowed.
     assert _errors(_shell_loop("${c.exit_code ?? 0}"), registry) == []
