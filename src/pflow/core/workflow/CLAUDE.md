@@ -8,6 +8,7 @@
 | Validate and save content, bundle dependencies | `save_service.py::save_workflow_with_options` |
 | Change pre-execution validation | `validator.py::WorkflowValidator.validate` |
 | Change dependencies or cache declaration rules | `data_flow.py::validate_data_flow`, `_validate_cache_block` |
+| Add a template-bearing IR location (every template check sees it) | `template_surfaces.py::iter_template_surfaces` |
 | Shared loop/gate validation rules | `loop_validation.py::check_loop_polarity`, `gate_validation.py::check_approval_allowed` (also used by the compiler) |
 | Resolve child workflows and external files | `sub_workflow_resolver.py`, `dependency_discovery.py` |
 | Change static graph construction or rendering | `graph/CLAUDE.md`; compatibility entry point in `mermaid/CLAUDE.md` |
@@ -56,10 +57,11 @@ structure and prompt-body overlap checks belong in `_validate_cache_block`;
 `analyze-cache` consumes that producer through `WorkflowValidator`, rather than
 maintaining another validator.
 
-**Pflow vs bash syntax:** `_PFLOW_VAR_RE` uses the runtime variable grammar to
-recognize pflow references. Bash expansions such as `${var:-default}` are not
-pflow dependencies. Keep positive grammar matching rather than rejecting every
-`${...}` shape.
+**References, not text:** dependencies are the `parse()` References of every
+node surface (`template_surfaces.iter_node_surfaces`: params, `batch.items`, loop
+fields), a dynamic index's inner references included. Bash expansions such as
+`${var:-default}` open no Expression — they are Issues, reported by the
+template validator's Issue pass, never dependencies here.
 
 `check_inputs=True` checks undeclared workflow inputs. The compiler passes False
 because its `initial_params` can contain values unavailable to this validator;

@@ -54,6 +54,16 @@ def test_templated_schemas_defer_to_runtime(output_schema):
     assert _schema_errors(output_schema) == []
 
 
+def test_escape_only_schema_is_checked_as_the_node_receives_it():
+    """R6 (Task 170): ``$${t}`` holds no reference — the node receives ``{"type": "${t}"}``,
+    so the static check runs on that (the partner ``${schema.type}`` above defers)."""
+    errors = _schema_errors({"type": "$${t}"})
+
+    assert len(errors) == 1
+    assert errors[0].context["schema_path"] == "$.type"
+    assert "'${t}' is not valid" in errors[0].message
+
+
 @pytest.mark.parametrize(
     ("output_schema", "schema_path"),
     [

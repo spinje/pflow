@@ -8,12 +8,14 @@ run these passes.
 
 | Symptom or change | Owner |
 |---|---|
-| Malformed template, unused input, loop condition | `validator.py` |
+| Malformed template (the one Issue pass), unused input, loop condition | `validator.py` |
+| Which references a pass checks, and how (the operand classifier) | `operands.py` |
+| Where templates live in the IR (params, `batch.items`, loop, carry, outputs, cache) | `core/workflow/template_surfaces.py` |
 | Missing node output/path, diagnostic field suggestions | `path_validation.py` |
 | Parameter type, shell JSON coercion, code-input annotation | `type_validation.py` |
 | `${item.field}` against inferred item structure | `batch_item_validation.py` |
 | Type compatibility/inference | `type_checker.py` |
-| Nesting-aware path split or safe diagnostic display | `utils.py::split_template_path`, `sanitize_for_display` |
+| Index into declared structure, dotted display, safe display | `utils.py::descend_index`, `dotted_parts`, `sanitize_for_display` |
 | Output metadata or child workflow output discovery | `validator.py::extract_node_outputs`, `_resolve_child_workflow_outputs` |
 | Paths shown by node-output formatters | `utils.py::flatten_output_structure` |
 
@@ -22,24 +24,32 @@ types are deliberately skipped by `_register_node_outputs_from_registry`:
 the outer workflow validator owns their diagnostic. Raising here replaces a
 useful unknown-type error with a validator exception.
 
-## Keep extraction purposes separate
+## One enumeration, one Issue pass, one classifier
 
-- `_extract_all_templates` counts non-literal references, including coalesce
-  operands, for unused-input detection.
-- `_field_checkable_templates` excludes multi-operand `??` chains: missing fields
-  are legitimate fallthrough at runtime. `core/workflow/data_flow.py` still checks
-  their roots. A bare `${node.field}` remains fully field-checked for typos.
-- `_extract_cache_templates_for_unused_check` joins only unused-input accounting.
-  Cache-var resolution belongs to `core/workflow/data_flow.py::_validate_cache_block`; feeding
-  those vars to path validation produces two diagnostics for one mistake.
-- Literal operands are not references. `_LITERAL_PATTERN` and
-  `TemplateResolver.is_literal_operand` must stay aligned with runtime JSON
-  parsing and coalesce splitting; otherwise validation can accept a value that
-  runtime leaves unresolved.
+- Every template check walks `iter_template_surfaces`; a new template-bearing
+  location is added there, never as another walk.
+- `_validate_malformed_templates` is the ONE Issue pass: an Issue (an unescaped
+  `${` that opens no Expression) is an ERROR on every surface, cache prose
+  included. Which Issues are errors where — the deferred #621 tolerance — is
+  decided there only; `parse()` has no mode.
+- `operands.iter_template_operands` yields every Reference in params,
+  `batch.items` and loop fields, a dynamic index's inner refs included, tagged
+  `FIELD_CHECK` or `ROOT_ONLY`. Pass 5 and Pass 8 field-check `FIELD_CHECK`
+  only (a `??` operand may miss its field at runtime, #441); Pass 8 also
+  filters by node id, since batch nodes may share an alias. `ROOT_ONLY` roots
+  are checked by `core/workflow/data_flow.py`, over the same surfaces.
+- Carry values, output sources and cache vars have their own passes (one
+  diagnostic per mistake) and join only unused-input accounting
+  (`_extract_cache_templates_for_unused_check`,
+  `_extract_output_templates_for_unused_check`). Feeding cache vars to path
+  validation produces two diagnostics for one mistake.
+- Literal operands are not references. `TemplateResolver.is_literal_operand`
+  is a coarse first-character check for already-parsed operands, not a
+  literal validator.
 
-Type, shell, batch-item, and code-annotation passes read the IR independently;
-they do not consume these extracted sets. When adding a template-bearing location,
-inspect those passes as well as the shared extractors.
+Type, shell, and code-annotation passes (6, 7, 9) read params independently
+through `TemplateResolver.extract_variables`; they do not consume the operand
+iterator. When adding a template-bearing location, inspect those passes too.
 
 ## Output metadata and limits
 
@@ -82,27 +92,21 @@ Ordinary WARNING/INFO output is compact, but context is **not universally ignore
 Check that dispatch before relying on a context field to appear in text; do not
 flatten rich template diagnostics into canned message/suggestion strings.
 
-## Regex, path, and type boundaries
+## Views over one parse, paths, and type boundaries
 
-These patterns have different jobs; do not unify them just because they all find
-`${...}` syntax (Task 170 folds them into views over one parse — until then this
-table is the map). `TemplateResolver` patterns live in `core/templates.py`:
+`core/templates.py::parse()` is the one tokenizer; everything here is a view
+over it. `Expression.references` is the DEPENDENCY view (roots, unused inputs,
+inner dynamic-index refs); `TemplateResolver.extract_variables` is the VALUE
+view: `${a[${i}].x}` yields the whole outer reference `a[${i}].x`, never the
+index key `i` — type passes use it. `TEMPLATE_PATTERN` / `SIMPLE_TEMPLATE_PATTERN`
+are static-discovery regexes that cannot see escape consumption; over text that
+may hold `$${`, use `parse()`.
 
-| Pattern | Owner/purpose | Important distinction |
-|---|---|---|
-| `_PERMISSIVE_PATTERN` | `validator.py`, validation discovery | Sees nested bracket templates; skips `$${` escapes like `TEMPLATE_PATTERN` |
-| `_TEMPLATE_OPEN` | `validator.py`, malformed-template count | Every unescaped `${`; compared against valid-template count |
-| `parse()` | `core/templates.py`, the one tokenizer | Text / Expression / Issue segments; resolution runs on it |
-| `TEMPLATE_PATTERN` | `TemplateResolver`, static discovery view | Built from `parse()`'s grammar (dynamic index included); cannot see escape consumption — use `parse()` over text that may hold `$${` |
-| `SIMPLE_TEMPLATE_PATTERN` | `TemplateResolver`, static discovery view | Whole string is one expression; `is_simple_template` reads `parse()` |
-| `TEMPLATE_EXTRACT_PATTERN` | `TemplateResolver`, diagnostic/data-flow discovery | Broad extraction; downstream checks decide validity |
-
-Path checks use the permissive field-checkable set. Type/shell passes use
-`TemplateResolver.extract_variables`, the VALUE view: `${a[${i}].x}` yields the
-whole outer reference `a[${i}].x`, never the index key `i` (dependencies —
-roots, unused inputs — need `parse(t).references`, which includes inner refs).
-Use `split_template_path`, never `str.split('.')`, which splits dots inside
-nested expressions.
+Paths are walked as `parse_path` segments, never `str.split('.')` (dots inside
+a dynamic index are not separators). An index — `[N]` or `[${…}]` — descends
+by `utils.descend_index` in both Pass 5 and `infer_template_type`: batch
+`items` or a list field's `structure` is the element; `any` indexes to an
+unknown element; a string indexes only as a JSON array at runtime (WARNING).
 
 Shell validation rejects dict/list interpolation in `command` unless the
 quoted-template opt-in (`'${var}'`) is present. This is JSON-coercion/type-check

@@ -96,6 +96,33 @@ def test_dynamic_cache_ttl_rejected_for_batch_prewarm_without_prompt_cache() -> 
     assert "cache.unsupported-provider-ttl" in {diag.id for diag in diagnostics}
 
 
+class TestCacheVarRoots:
+    """Task 170 (delta 6): a chunk var's dynamic-index inner reference is a root too.
+    Dict IR — the ## Cache chunker cannot form such a var from markdown yet."""
+
+    @staticmethod
+    def _messages(var: str) -> list[str]:
+        ir = {
+            "inputs": {"i": {"type": "number"}},
+            "cache": {"items": [{"name": var, "var": var, "prose_before": "Base: "}]},
+            "nodes": [
+                {"id": "p", "type": "shell", "params": {"command": "echo ${i}"}},
+                {"id": "b", "type": "shell", "params": {"command": "echo ${item}"}, "batch": {"items": [1, 2]}},
+            ],
+            "edges": [{"from": "p", "to": "b"}],
+        }
+        return [d.message for d in validate_data_flow(ir) if d.severity.value == "error"]
+
+    def test_inner_root_must_exist(self):
+        assert any("'nope'" in m for m in self._messages("p.stdout[${nope}]"))
+
+    def test_inner_batch_alias_is_batch_scoped(self):
+        assert any("batch-scoped" in m for m in self._messages("p.stdout[${item.i}]"))
+
+    def test_declared_inner_root_is_clean(self):
+        assert self._messages("p.stdout[${i}]") == []
+
+
 class TestBuildExecutionOrder:
     """Test the topological sort for execution order."""
 

@@ -5,11 +5,11 @@ Pass 7: Blocks structured data (dict/list) in shell command parameters.
 Pass 9: Validates code-node input annotations against template source types.
 """
 
-import re
+from collections.abc import Sequence
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
-from pflow.core.templates import TemplateResolver
+from pflow.core.templates import Field, Reference, Segment, TemplateResolver, parse, parse_path
 from pflow.core.types import outer_base_type
 from pflow.registry import Registry
 from pflow.runtime.template_validation.type_checker import (
@@ -17,16 +17,6 @@ from pflow.runtime.template_validation.type_checker import (
     infer_template_type,
     is_type_compatible,
 )
-
-# Pattern to detect templates exactly wrapped in single quotes: '${var}'
-# This is an escape hatch for structured types in shell commands.
-#
-# Matches:   '${var}', '${node.field}', '${data.items[0].name}'
-# Does NOT match: '${a} ${b}', 'prefix ${var}', '$${var}' (escaped)
-#
-# Note: Array indices use [] not {}, so [^}]+ correctly captures paths
-# like 'data.items[0].value' without stopping at brackets.
-_QUOTED_TEMPLATE_PATTERN = re.compile(r"'\$\{([^}]+)\}'")
 
 # Types that are safe in shell commands (string-like or unknown type)
 # When a union contains one of these, runtime coercion to string is acceptable.
@@ -174,18 +164,21 @@ def _check_string_template_types(
 
 
 def _build_quoted_templates(command: str) -> set[str]:
-    """Extract templates wrapped in single quotes as escape hatch.
+    """The references of every expression exactly wrapped in single quotes
+    (``'${var}'``) — the shell escape hatch for structured types.
 
-    Splits coalesce operands so '${a ?? b}' exempts both 'a' and 'b'.
+    ``'${a} ${b}'``, ``'prefix ${var}'`` and an escaped ``'$${var}'`` are not
+    wrapped. Every operand counts, so ``'${a ?? b}'`` exempts both ``a`` and ``b``;
+    literal operands need no type-coercion exemption.
     """
-    result: set[str] = set()
-    for match in _QUOTED_TEMPLATE_PATTERN.finditer(command):
-        for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
-            # Literal operands (Optional A) need no type-coercion exemption.
-            if TemplateResolver.is_literal_operand(operand):
-                continue
-            result.add(operand)
-    return result
+    return {
+        operand.raw
+        for expression in parse(command).expressions
+        if command[expression.span[0] - 1 : expression.span[0]] == "'"
+        and command[expression.span[1] : expression.span[1] + 1] == "'"
+        for operand in expression.operands
+        if isinstance(operand, Reference)
+    }
 
 
 def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict[str, Any]) -> list[Diagnostic]:
@@ -341,20 +334,14 @@ def _generate_type_fix_suggestions(
     # For nested templates like node.output.field, we need to traverse to find structure
     # Find the structure for this template by traversing
     structure = None
-    for key in node_outputs:
-        if template.startswith(key + ".") or template == key:
-            output_info = node_outputs[key]
-            remaining_path = template[len(key) :].lstrip(".")
-
-            if not remaining_path:
-                # This IS the base output
-                structure = output_info.get("structure", {})
-                break
-            else:
-                # Need to traverse nested structure
-                structure = _traverse_to_structure(output_info.get("structure", {}), remaining_path)
-                if structure:
-                    break
+    ref = parse_path(template)
+    if ref is not None:
+        # The output the reference reads: namespaced ``node.output``, else a bare root
+        first = ref.path[0] if ref.path else None
+        namespaced = node_outputs.get(f"{ref.root}.{first.name}") if isinstance(first, Field) else None
+        output_info, remaining = (namespaced, ref.path[1:]) if namespaced else (node_outputs.get(ref.root), ref.path)
+        if output_info is not None:
+            structure = _traverse_to_structure(output_info.get("structure", {}), remaining)
 
     if not structure:
         return ([f"Access a specific field, for example ${{{template}.field}}.", "Serialize the value to JSON."], [])
@@ -406,7 +393,7 @@ def _infer_missing_annotation_type(
     templates = TemplateResolver.extract_variables(value)
     if not templates:
         return None
-    for template in templates:
+    for template in sorted(templates):
         inferred = infer_template_type(template, workflow_ir, node_outputs)
         if inferred and inferred != "any":
             return s1_type_to_python_display(inferred)
@@ -579,7 +566,7 @@ def _build_simple_template_mismatch_diagnostic(
     # Tailor the "change the source" wording to the template's origin.
     # Workflow inputs aren't "returned" by anything — telling the agent
     # to change a non-existent upstream node wastes cycles.
-    root = TemplateResolver.extract_root_node_id(template) or template.split(".")[0]
+    root = TemplateResolver.extract_root_node_id(template)
     if root in workflow_inputs:
         source_fix = (
             f"Or change the workflow input declaration for '{root}' "
@@ -939,32 +926,24 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
     return diagnostics
 
 
-def _traverse_to_structure(structure: dict[str, Any], path: str) -> dict[str, Any] | None:
-    """Traverse nested structure to find the structure at a given path.
+def _traverse_to_structure(structure: dict[str, Any], segments: Sequence[Segment]) -> dict[str, Any] | None:
+    """The structure dict at ``segments`` below ``structure``, or None if not found.
 
-    Args:
-        structure: The structure dict to traverse
-        path: Dot-separated path like "author.login"
-
-    Returns:
-        The structure dict at that path, or None if not found
+    Only fields move: a list field's structure is already its element structure,
+    so an index stays put.
     """
-    if not path or not structure:
+    if not segments or not structure:
         return structure
 
-    path_parts = path.split(".")
     current = structure
-
-    for part in path_parts:
-        if part in current:
-            field_info = current[part]
-            if isinstance(field_info, dict):
-                current = field_info.get("structure", {})
-                if not current:
-                    return None
-            else:
-                return None
-        else:
+    for segment in segments:
+        if not isinstance(segment, Field):
+            continue
+        field_info = current.get(segment.name)
+        if not isinstance(field_info, dict):
+            return None
+        current = field_info.get("structure", {})
+        if not current:
             return None
 
     return current

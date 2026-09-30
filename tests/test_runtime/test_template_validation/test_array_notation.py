@@ -276,6 +276,32 @@ class TestBatchResultsIndexAccessGate:
             # results contract (issue #311).
             assert gate_errors[0].see_also == ["batch"]
 
+    def test_dynamic_index_access_blocked_with_continue(self):
+        """A dynamic index is positional too: ``${batch.results[${__index__}].stdout}`` is blocked."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "batch",
+                    "type": "shell",
+                    "params": {"command": "echo ${item}"},
+                    "batch": {"items": ["a", "b"], "error_handling": "continue"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "llm",
+                    "params": {"prompt": "Mine: ${batch.results[${__index__}].stdout}"},
+                    "batch": {"items": ["x", "y"]},
+                },
+            ],
+            "edges": [{"from": "batch", "to": "consumer"}],
+        }
+
+        with self._make_registry() as registry:
+            errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
+            gate_errors = [e for e in errors if "Index-based access" in e.message]
+            assert len(gate_errors) == 1
+            assert gate_errors[0].context["template"] == "${batch.results[${__index__}].stdout}"
+
     def test_index_access_allowed_with_fail_fast(self):
         """${batch.results[0].stdout} passes when batch uses fail_fast (default)."""
         workflow_ir = {

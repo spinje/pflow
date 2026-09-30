@@ -449,6 +449,25 @@ Uses external prompt.
         error_text = "\n".join(format_diagnostic(d) for d in errors)
         assert "Loaded from file: ./prompts/bad.md" in error_text
 
+    def test_batch_item_template_error_includes_source_file(self) -> None:
+        """A bad reference in a batch item loaded from a file names that file."""
+        from pflow.runtime.template_validation import validate_workflow_templates
+
+        ir = {
+            "nodes": [
+                {
+                    "id": "step",
+                    "type": "llm",
+                    "params": {"prompt": "${item.prompt}"},
+                    "batch": {"items": [{"prompt": "ok"}, {"prompt": "Hello ${nonexistent_node.output}"}]},
+                    "_source_files": {"batch.items[1].prompt": "./prompts/second.md"},
+                }
+            ],
+            "edges": [],
+        }
+        errors = [d for d in validate_workflow_templates(ir, {}, Registry()) if "nonexistent_node" in d.message]
+        assert [(d.context or {}).get("source_file") for d in errors] == ["./prompts/second.md"]
+
     def test_template_error_without_file_ref_has_no_hint(self, tmp_path: Path) -> None:
         """Inline template errors don't include file hint."""
         workflow_md = """\

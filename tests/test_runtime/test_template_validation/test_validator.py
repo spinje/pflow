@@ -296,7 +296,8 @@ class TestWorkflowValidation:
         assert len(errors) == 0  # No errors - transcript_data is from shared store
 
     def test_invalid_syntax_in_shared_vars(self):
-        """Test validation catches invalid syntax in shared store variables."""
+        """Invalid syntax is reported as malformed — not as a missing source (Task 170:
+        the runtime never resolves `${data..field}`; it is not a reference at all)."""
         workflow_ir = {
             "nodes": [
                 {"id": "n1", "type": "t1", "params": {"a": "${data..field}"}}  # Invalid syntax
@@ -308,7 +309,16 @@ class TestWorkflowValidation:
         registry = create_mock_registry()
         errors, _warnings = split_template_diagnostics(workflow_ir, params, registry)
         assert len(errors) == 1
-        assert "Template variable ${data..field} has no valid source" in errors[0].message
+        assert "Malformed template syntax: found 1 '${' but only 0 valid template(s)." in errors[0].message
+        assert errors[0].context["path"] == "nodes[id=n1].params.a"
+
+    def test_valid_syntax_missing_source_is_not_malformed(self):
+        """Positive control for the test above: the same path, well-formed, is a missing source."""
+        workflow_ir = {"nodes": [{"id": "n1", "type": "t1", "params": {"a": "${data.field}"}}], "edges": []}
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, create_mock_registry())
+        assert len(errors) == 1
+        assert "Template variable ${data.field} has no valid source" in errors[0].message
 
     def test_partial_parameter_match(self):
         """Test base variable matching for CLI params."""

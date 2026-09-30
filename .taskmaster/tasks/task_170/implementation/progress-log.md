@@ -452,3 +452,120 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
   - `origin/main` → `abcaa50f`: #606 (`core/llm_providers.py`), #654 (`core/litellm_runtime.py`), #652 (`core/stdout_reservation.py`, `run.py`, `_probe_impl.py`, `mcp_server/server.py`), **#643 (PR #664)**: `core/validation_utils.validate_with_placeholder_inputs(workflow_ir, *, workflow_file)` is now the single validation-params construction (`runner.validate`, `save_service`, `analyze-cache`). Consequences for 4b: the corpus docstring's #643 asymmetry note is stale (fix it); `core/workflow/validator.py:1606-1614` child recursion builds both channels by hand — switch to the helper only if 4b already edits that region, else leave and say so; PR #664 "Sibling gaps" executed `source: ${sub.reslt}` (typo'd child output) → `--validate-only` OK, run fails `Unresolved variables in output 'out'` — loud, so an under-check, not a converse violation. 4b: if the validator already checks child output names for `${sub.x}` in params, the output-source gap is a surface-parity miss → fix; else a named corpus row (validator Ok / runtime Unresolved) per spec Parity "under-checks are visible".
 - Rotation: Agent C at ~507k → **4b goes to a fresh C2** (plan §2 4b). The prose-wrap seam (one-line `_normalize_source` for (1), or two row edits for (2)) is handed to C2 when the ruling lands; C2 also owns 4b's output-source validation, which the ruling may shape (under (2) a validator ERROR for prose sources is a candidate; under (1) the raw-source check stays OK).
 - Next: merge `origin/main`, gate the merge, launch C2 on 4b.
+
+## [2026-09-30 17:30] Agent C2 (Opus) — phase 4b: validator consumers on the AST (enumerator, one Issue pass, operand classifier; deltas 2 and 6, #262, R3/R6/R9, Pass-8 policy)
+- Did: built §0.3.
+  - NEW `core/workflow/template_surfaces.py`: `iter_template_surfaces` / `iter_node_surfaces`, one `TemplateSurface(kind, node_id, key, value)` per location: params, `batch.items`, loop fields, carry, output `source:`, cache var, cache prose. `TemplateSurface.templates()` yields `(location, parse)` per string. `path(location)` gives the diagnostic path.
+  - One Issue pass (`_validate_malformed_templates`) runs over it on every surface.
+  - NEW `template_validation/operands.py`: `OperandPolicy`, `classify_operand`, `iter_template_operands` (dynamic-index inner refs included). It feeds Pass 5 (`FIELD_CHECK`), unused inputs (all) and Pass 8 (`FIELD_CHECK`, own node).
+  - `data_flow` checks `parse().references` on the node's param/batch/loop surfaces, so `batch.items` is now walked. `_PFLOW_VAR_RE` is deleted.
+  - Pass 5 and `infer_template_type` walk `parse_path` segments through one index rule, `utils.descend_index` (R9).
+  - Output sources are parsed raw: R3, root checks inner refs included, and they count toward unused inputs.
+  - R6 at all 7 deferral sites.
+  - The 4a stop-gaps are replaced: `type_checker._strip_index`/`split_template_path` → segments; Pass 8's `_collect_templates_from_value` → the iterator.
+- Changed:
+  - src: `core/workflow/{template_surfaces.py (new), data_flow.py, validator.py, sub_workflow_resolver.py, graph/build.py (docstring pointer), CLAUDE.md}`, `core/templates.py` (+`TRAVERSABLE_TYPES`/`TRUSTED_TRAVERSABLE_TYPES`, facade comment), `runtime/template_validation/{operands.py (new), validator.py, path_validation.py, batch_item_validation.py, type_checker.py, type_validation.py, utils.py, CLAUDE.md}`.
+  - Deleted now, not in phase 5 (no callers remained): `_PERM_VAR`, `_PERM_OPERAND`, `_PERMISSIVE_PATTERN`, `_TEMPLATE_OPEN`, `_malformed_literal_operand_hint`, `_node_template_value_sources`, `_operands_in_string`, `_field_checkable_templates`, `_QUOTED_TEMPLATE_PATTERN`, `_check_param_value`, `_PFLOW_VAR_RE` (data_flow), `_strip_index`, `_validate_array_access`.
+  - src LOC: tracked files +613/−1003, plus 161 new-file lines ≈ −229 net.
+  - tests:
+    - The sanctioned `test_validator.py:298-311`: asserts the malformed message and path, plus a positive-control test.
+    - Additions only elsewhere: `test_malformed.py::TestIssuePassCoversEverySurface` ×4, `test_batch_item_validation.py` ×1 (alias shared by two nodes), `test_array_notation.py` ×1 (continue-mode gate on `[${__index__}]`), `test_file_resolver_integration.py` ×1 (batch-item source file), `test_workflow_validator_llm_output_schema.py` ×1 (R6 escape-only schema), `test_workflow_data_flow.py::TestCacheVarRoots` ×3.
+    - Corpus:
+      - 22 rows flipped (`today` item and marker deleted);
+      - `TestDeferralSitesEscapeOnly` today test deleted and its after unmarked;
+      - `output_only_input_use_flagged_unused` → `now(Ok())`, plus partner `output_only_input_use_partner`;
+      - `cache_prose_empty_braces_r2` validator flipped early (see Deviations 3);
+      - `test_643_child_output_typo_in_output_source_is_an_under_check` added;
+      - the stale #643 docstring note rewritten;
+      - the now-unused `_xfail` helper deleted.
+- Verified:
+  - Baseline (my capture) was 10069 passed / 2 failed / 37 xfailed. `make test` is now **10084 passed / 2 failed / 13 xfailed**; the 2 failures are exactly `output_prose_wrap_recorded_drift-today` / `output_escape_only_r3-today`, untouched.
+    - Delta: 24 `today` items deleted (22 rows + cache prose + R6); their 24 `after` items now pass unmarked; +15 new tests.
+  - `make check` green. `make test-e2e` 51 passed / 2 skipped (unchanged). Freeze harness 829 = 822 + 7 additions; the only edit to an existing test is the sanctioned one.
+  - Corpus: the 13 remaining xfails are all `4c` and strict; no XPASS. Every 4b XPASS was explained by this diff and flipped.
+  - Handoff grep → only `cache_overlap.py:_PFLOW_VAR_RE` and `utils.split_template_path` + its `__init__` export (both phase 5).
+  - `capture.py --check`: 29 examples, 0 differing.
+  - Real surface (`scratchpads/task-170/phase4b/surface/`; base = `git archive HEAD` copy run via `PYTHONPATH`):
+    - `silent.pflow.md` (`echo "got ${c.stdout.0}"`): base "✓ Workflow is valid", and the run hands the literal to sh ("bad substitution"). 4b: "Malformed template syntax: found 1 '${' but only 0 valid template(s)", `nodes[id=use].params.command`.
+    - `root-typo-dyn.pflow.md` (`${lsit[${__index__}].x ?? "default"}`): base valid, and the run returns `"default"` for every item. 4b: "Node 'each' references non-existent node 'lsit' in parameter 'inputs.v'".
+    - `list-input-262.pflow.md` (`${items[0]}`): base "Template variable ${items[0]} has no valid source". 4b valid; the run outputs `first`.
+    - `delta6-type.pflow.md` (`row: ${make.result[${__index__}]}` into `row: dict`): valid on both trees (it flipped early in 4a); the 4b run gives results 1, 2.
+    - `out-escape.pflow.md` (`source: $${n.stdout}`): "Output 'o' is invalid: output source has no template expression ('$${n.stdout}' resolves to literal text)."
+    - `out-prose.pflow.md` (`prefix ${n.stdout}`): still "✓ Workflow is valid".
+    - #643(c) probe: a `${sub.reslt}` param → "Node 'sub' (type: workflow) does not output 'reslt'". As an output source → "✓ Workflow is valid".
+  - Mutation ledger (`scratchpads/task-170/phase4b/mutate.py`; each applied, the targeted tests run, the file restored from a byte copy; kill = a counted failure). 20 mutations, all killed:
+    - drop `batch.items` surface (53);
+    - drop inner refs from operands (3);
+    - Pass 8 without the node filter (2);
+    - classifier always FIELD_CHECK (8);
+    - `list` not indexable (6);
+    - list structure ignored (2);
+    - `initial_params` keyed by raw text (4);
+    - outputs out of unused accounting (3);
+    - continue gate static index only (2);
+    - provenance skips batch items (1);
+    - R6 schema not unescaped (1);
+    - data_flow skips `batch.items` (1);
+    - no cache-prose Expression check (1);
+    - opens = segment count (1);
+    - element type always `any` (1);
+    - no loop-operator guidance (1);
+    - R3 dropped (1);
+    - cache var roots outer-only (2);
+    - prose check fires on escapes (1);
+    - Issues counted on escape-only text (18).
+    - The first ledger run had a baseline-red filter that also swallowed the `output_escape_only_r3` VALIDATOR item, which made R3 look unkilled. Fixed to exact ids and re-run.
+  - Assumed: Windows is not exercised (no new shell-dependent test).
+- Deviations/surprises (the signal):
+  1. **#643(c): not fixed; pinned as a named under-check, and needs a ruling.** Executed: the validator DOES check child output names for `${sub.x}` in params (Pass 5), while output sources are root-checked only, for EVERY node. The `now(Ok())` row `output_missing_field` (`${p.nope}`) and plan §0.3 ("output-source … validation root-check References only") pin that. Field-checking output sources would flip a `now` row and widen 4b beyond the plan, so I added `TestHistoricalFixtures::test_643_child_output_typo_in_output_source_is_an_under_check`: validator Ok, run fails naming `${s.gto}`, and a partner asserts the param form errors. **Options:**
+     - (a) Keep the pin; the fix is a lane issue "field-check output sources through Pass 5".
+     - (b) Do it now: Pass 5 over `output_source` surfaces (`FIELD_CHECK`), flipping `output_missing_field` and the pin.
+     - I recommend (a) for this task (scope and a spec-level change of the output-source contract); importance 3, reversible.
+  2. **The shared index rule now types a trailing index, so a new ERROR appears (importance 2–3, needs your call).** `descend_index` gives the element type (`list[X]` → X; batch `results` → its `items` type), where the old inference returned `None` for `${b.results[0]}`.
+     - Executed `trailing-index.pflow.md`, `echo ${b.results[0]}` in shell. Base: "✓ Workflow is valid", and the run prints the JSON with its quotes eaten (`{stdout: x, stdout_is_binary: false, …}`). 4b: Pass 7's "cannot use ${b.results[0]} (type: dict) in command parameter".
+     - This is the existing dict-in-shell policy, correctly applied now that the element is known. The corpus partner `dyn_type_pass_mismatch_partner` needs element typing (`list[dict]` → dict). No other test or example changed.
+     - Reversal: one line (element type `any` unless `list[X]`).
+  3. **Early flip, wording re-derived:** `cache_prose_empty_braces_r2` validator side (row said 4c). §0.3 puts cache prose in the 4b Issue pass, so its `today` Ok went red. Per the Dev-7 ruling (an Issue in prose gets the standard malformed message) its `after` became `Error(MALFORMED)`; it XPASSed, explained, and flipped. **For 4c:** `cache_prose_unclosed_r2`'s `after` still says `CACHE_PROSE_ISSUE`, which is wrong under the same ruling. Editing it to MALFORMED will XPASS at once through the cache-var Issue path. I left it, because my diff does not force it.
+  4. **R5 not landed (per launch: 4c).** The plan's 4b table assumes a single-operand var ("after R5"). To keep the 4c rows' `today` green, `data_flow._cache_var_roots` checks every Reference root (inner included) only for a single-operand var. A `??` chain or an Issue keeps the whole-var lexical root, which is what `_resolve_chunk_value` gates on. 4c deletes that branch.
+  5. **Issue message count:** "found N '${'" uses N = unescaped `${` openings, not the plan's "expressions+issues": `${first ${second` is one Issue with two openings, and `test_malformed.py:329` asserts 2. With that, all five count phrases stay green with zero edits, as the plan intends.
+  6. **Loop condition Issue:** `while: ${c.exit_code > 0}` is an Issue, so the Issue pass would return early before the loop pass's targeted operator message (`test_loop_validation.py::test_operator_while_rejected` went red). The Issue pass, the one home of Issue policy, now emits `_make_loop_operator_diagnostic` for a `loop.while`/`loop.until` Issue containing an operator character.
+  7. **Shape vs plan §0.3:**
+     - `TemplateSurface` carries `key` + `templates()` + `path(location)` instead of a `path` field, because data_flow needs the short name ("in parameter 'inputs.v'") and the Issue pass needs the full path.
+     - `iter_node_surfaces` is public, because data_flow walks per node.
+     - The classifier and iterator live in a new `operands.py` (Pass 8 in `batch_item_validation.py` cannot import `validator.py`: circular). They yield a `TemplateOperand(node_id, ref, policy)` dataclass with no `path` (no consumer).
+     - `validate_batch_item_fields` gains an `operands` argument; the orchestrator computes them once.
+  8. **R6 in `sub_workflow_resolver`:** the plan puts the unescape inside the shared resolver, which the executor and dry-run also call with RESOLVED values. `has_references` is safe there, but `resolve(v, {})` parses a resolved value when it contains `$${`, which bends "parse() runs on author text only" and would double-unescape a runtime path containing a literal `$${`. Unreachable in practice; the alternative (unescape at the validator call sites) cannot work, because the resolver would re-read the unescaped `${x}` as a reference.
+  9. **Smaller behavior notes:**
+     - `_find_template_source_file` matches parsed references instead of a `${template}` substring (coalesce operands now found too).
+     - data_flow names batch items "in parameter 'batch.items'", with path `nodes[id=X].params.batch.items`, which mirrors the existing `loop.while` quirk.
+     - Pass 8 nested diagnostics check deeper fields only when the ref has more than one Field (today's `len(parts) > 1`).
+     - `_carry_value_unknown_output` and the carry self-ref check read parsed operands (same outcomes).
+     - The carry-prompt usage check now counts a carry key read inside a dynamic index (`${x[${state}]}`) as referenced (delta 6 spirit; before it warned).
+  10. **#643(b):** `core/workflow/validator.py`'s child-recursion region (`_validate_one_child_call` dummy params) is untouched by 4b, so it is left on its hand-built params, as instructed.
+  11. **Stale text left for phase 5:**
+      - `.claude/agents/review-validation-consistency.md:158/:219` still describe data_flow's `_PFLOW_VAR_RE` positive match. **The 4b review lens reads this file**, so the review target should say data_flow now checks `parse().references` over `iter_node_surfaces`, and bash `${VAR:-x}` is an Issue reported by the Issue pass.
+      - Test docstrings in freeze-harness files name deleted helpers (`test_workflow_data_flow.py:328/:839` `_check_param_value`, `test_type_checker.py:361` `_validate_array_access`), as does the corpus mutation string on `batch_items_coalesce_root_typo`. Left under the zero-edit rule.
+- Self-checks:
+  - Fully happy? Not fully: deviations 1 and 2 need your ruling, and 8 is a known wrinkle. Raised and fixed during the phase:
+    - the loop-operator regression (6);
+    - a missing test for cache-var inner roots, found by the ledger (M18 survived) and added;
+    - my own ledger filter bug (R3 looked unkilled).
+    - Type passes 6/7/9 still walk params themselves (plan §6, simplicity-lens follow-up).
+  - test-reflect (directed):
+    - Every added test has a counted kill.
+    - The absence test `test_well_formed_surfaces_are_clean` was kept only after M19 proved it the sole catcher. It is paired with the presence test `test_every_surface_reports_at_its_path` through the same helper.
+    - Added `TestCacheVarRoots` after M18 survived.
+    - Nothing deleted: no added test was shallow, and each asserts exact messages or paths, not truthiness.
+- Next: the mid-task review (`review-validation-consistency`, `review-impact-completeness`) on this diff; rulings on 1 and 2 (and the pending prose-wrap ruling, still one line or two row edits). Not committed.
+
+## [2026-09-30 19:30] task-orchestrator — 4b verified; rulings on C2's deviations; WIP commit
+- Verified (orchestrator re-run): `make test` 10084 passed / 2 failed (the escalated prose-wrap rows only) / 13 xfailed (all 4c); `make check` green.
+- Rulings:
+  - Dev 1 (#643(c) output sources root-checked only, all nodes) → **(a), importance 2**: keep the named under-check pin (`test_643_child_output_typo_in_output_source_is_an_under_check`) — spec Parity requires deliberate under-checks be visible, and a named row satisfies it; field-checking output sources changes the output-source validation contract beyond the plan (§0.3) → a lane-B follow-up issue in the completion handback.
+  - Dev 2 (trailing static index now typed → `echo ${b.results[0]}` in shell hits the existing dict-in-shell policy) → **accepted provisionally, importance 2**: consistent application of an existing policy once R9's shared index rule knows the element type; the run it blocks prints quote-mangled JSON. User-visible (a workflow that validates today stops validating) → surfaced to the main orchestrator for overrule; reversal is one line (element type `any` unless `list[X]`).
+  - Dev 3 → 4c edits `cache_prose_unclosed_r2`'s `after` to the standard malformed message (Dev-7 ruling); expect an explained XPASS.
+  - Dev 4 → 4c deletes the `??`/Issue whole-var-root branch in `data_flow._cache_var_roots` with R5 (pending ruling).
+  - Dev 8 (`sub_workflow_resolver` `resolve(v, {})` may see resolved values containing `$${`) → accepted as a known wrinkle; named for the review lenses.
+  - Dev 11 → `.claude/agents/review-validation-consistency.md:158/:219` is corrected BEFORE the 4b review dispatch (the lens reads it); the test-docstring staleness waits for phase 5.
+- Committed 4b as WIP (the two ruling rows red).
+- Next: C2 runs the 4b mid-task review (`review-validation-consistency` + `review-impact-completeness`).

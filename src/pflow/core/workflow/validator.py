@@ -12,7 +12,7 @@ from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity, deduplicate_diagnostics, format_child_provenance
 from pflow.core.exceptions import SchemaValidationError, WorkflowValidationError
-from pflow.core.templates import TemplateResolver, parse
+from pflow.core.templates import TemplateResolver, parse, resolve
 from pflow.registry import Registry
 
 logger = logging.getLogger(__name__)
@@ -585,11 +585,12 @@ class WorkflowValidator:
 
     @staticmethod
     def _validate_template_in_source(output_name: str, source: str, valid_sources: set[str]) -> list[Diagnostic]:
-        """Validate template variable references in output source.
+        """Validate the references of a templated output source (parsed as written).
 
-        Validates that ${root.key} templates reference valid source roots
-        (node IDs or declared workflow input names).
-        Provides "Did you mean?" suggestions for typos.
+        Each Reference root — a dynamic index's inner references included — must be
+        a node ID or a declared workflow input; "Did you mean?" suggestions for typos.
+        A malformed ``${`` is the Issue pass's to report. A source with no expression
+        at all (``$${a.x}``, prose) would resolve to literal text: an ERROR (R3).
 
         Args:
             output_name: Name of output being validated
@@ -599,19 +600,19 @@ class WorkflowValidator:
         Returns:
             Validation diagnostics (empty if valid)
         """
-        diagnostics: list[Diagnostic] = []
-
-        # Extract template variables: ${...}
-        matches = TemplateResolver.TEMPLATE_EXTRACT_PATTERN.findall(source)
-
-        if not matches:
-            # Has ${ but malformed
-            diagnostics.append(
+        template = parse(source)
+        if not template.expressions:
+            if template.issues:
+                return []
+            return [
                 Diagnostic(
                     severity=Severity.ERROR,
                     source="validator",
                     title="Template Error",
-                    message=f"Output '{output_name}' has malformed template: '{source}'.",
+                    message=(
+                        f"Output '{output_name}' is invalid: output source has no template expression "
+                        f"('{source}' resolves to literal text)."
+                    ),
                     suggestions=["Use format: ${variable} or ${node.output_key}."],
                     context={
                         "category": "template_error",
@@ -619,32 +620,19 @@ class WorkflowValidator:
                         "template": source,
                     },
                 )
-            )
-            return diagnostics
+            ]
 
-        # Validate each template
-        for template_var in matches:
-            # Split coalesce operands and validate each one
-            operands = TemplateResolver.split_coalesce_operands(template_var)
-            for operand in operands:
-                # Literal operands (Optional A) are values, not node/input refs.
-                if TemplateResolver.is_literal_operand(operand):
-                    continue
-                # Parse root identifier via the canonical extractor so operands
-                # like `${data[0].x}` yield node_id="data" (not "data[0]").
+        diagnostics: list[Diagnostic] = []
+        for ref in template.references:
+            if ref.root not in valid_sources:
                 # Strip a leading dot only so bracket forms like `[0].x` are
                 # preserved in the rendered output_key for error messages.
-                node_id = TemplateResolver.extract_root_node_id(operand)
-                output_key = operand[len(node_id) :].lstrip(".")
-
-                # Validate source root exists (node ID or declared input)
-                if node_id not in valid_sources:
-                    diagnostics.append(
-                        WorkflowValidator._build_template_node_diagnostic(
-                            output_name, source, node_id, output_key, valid_sources
-                        )
+                output_key = ref.raw[len(ref.root) :].lstrip(".")
+                diagnostics.append(
+                    WorkflowValidator._build_template_node_diagnostic(
+                        output_name, source, ref.root, output_key, valid_sources
                     )
-
+                )
         return diagnostics
 
     @staticmethod
@@ -1001,10 +989,11 @@ class WorkflowValidator:
 
         diagnostics: list[Diagnostic] = []
         for name, validate in checks:
-            if name not in params or TemplateResolver.has_templates(params[name]):
+            if name not in params or TemplateResolver.has_references(params[name]):
                 continue
             try:
-                validate(params[name])
+                # An escape-only value is checked as the node receives it (unescaped)
+                validate(resolve(params[name], {}).value)
             except AgentValidationError as exc:
                 diagnostics.append(
                     WorkflowValidator._agent_param_error(
@@ -1040,9 +1029,10 @@ class WorkflowValidator:
         # a schema dict (for example ``type: ${schema.type}``). Static shape
         # checks must defer the whole schema rather than reject the unresolved
         # placeholder as a literal JSON Schema value.
-        if TemplateResolver.has_templates(output_schema):
+        if TemplateResolver.has_references(output_schema):
             diagnostics.extend(WorkflowValidator._validate_agent_max_turns(node_id, params, valid_backend))
             return diagnostics
+        output_schema = resolve(output_schema, {}).value  # an escape-only schema, as the node receives it
 
         if not isinstance(output_schema, dict):
             diagnostics.append(
@@ -1148,8 +1138,9 @@ class WorkflowValidator:
         if "output_schema" not in params or params["output_schema"] is None:
             return []
         output_schema = params["output_schema"]
-        if TemplateResolver.has_templates(output_schema):
+        if TemplateResolver.has_references(output_schema):
             return []
+        output_schema = resolve(output_schema, {}).value  # an escape-only schema, as the node receives it
 
         try:
             prepare_output_schema_validator(output_schema)
@@ -1255,8 +1246,9 @@ class WorkflowValidator:
             )
             return [diag], None, None, None
 
-        if TemplateResolver.has_templates(model):
+        if TemplateResolver.has_references(model):
             return [], None, None, None  # defer to runtime
+        model = resolve(model, {}).value  # an escape-only id is checked as the node receives it
 
         provider = detect_provider(model)
         if provider is None:

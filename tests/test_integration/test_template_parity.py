@@ -2,9 +2,10 @@
 
 Each ``Row`` states, for ONE template on ONE surface, what the validator says and
 what the runtime does. The validator side is ``WorkflowRunner().validate(...)``
-called directly — the same entry point ``pflow --validate-only`` and ``run()``
-use (``execution/runner.py::validate``); the save path builds its params
-differently (#643 records that asymmetry), so a row speaks for validate/run only.
+called directly (``execution/runner.py::validate``). It validates through
+``core/validation_utils.validate_with_placeholder_inputs``, the one call
+``pflow --validate-only``, ``pflow save`` and ``analyze-cache`` share (#643), so a
+row speaks for every validation entry point.
 
 The runtime side has a DIRECT driver per surface, because a runner run cannot
 reach a template the validator rejects: ``param`` → ``compile_workflow`` +
@@ -777,7 +778,8 @@ def flips(today: Outcome, after: Outcome, phase: str, why: str) -> Expect:
 
 
 MALFORMED = "Malformed template"  # the ONE Issue pass keeps today's message shape (plan §0.3)
-CACHE_PROSE_ISSUE = "cache prose may not contain template references"  # plan §0.3 wording
+# An Expression in cache prose (dict IR only); an Issue there is MALFORMED (Dev-7 ruling)
+CACHE_PROSE_ISSUE = "cache prose may not contain template references"
 
 
 # ---------------------------------------------------------------------------
@@ -982,7 +984,8 @@ PARAM_ROWS: tuple[Row, ...] = (
         "silent_digit_field",
         "param",
         "${p.out_str.0}",
-        flips(Ok(), Error(MALFORMED), "4b", "delta 2: strict grammar wins — an Issue is a validator ERROR"),
+        # Flipped in 4b — delta 2: strict grammar wins — an Issue is a validator ERROR
+        now(Error(MALFORMED)),
         now(StaticLiteral()),
         consumer="sink_str",
         mutation="drop a shape from the Issue pass",
@@ -991,7 +994,8 @@ PARAM_ROWS: tuple[Row, ...] = (
         "silent_trailing_dot",
         "param",
         "${p.out.}",
-        flips(Ok(), Error(MALFORMED), "4b", "delta 2: strict grammar wins"),
+        # Flipped in 4b — delta 2: strict grammar wins
+        now(Error(MALFORMED)),
         now(StaticLiteral()),
         consumer="sink_str",
     ),
@@ -999,7 +1003,8 @@ PARAM_ROWS: tuple[Row, ...] = (
         "silent_empty_segment",
         "param",
         "${p..out}",
-        flips(Ok(), Error(MALFORMED), "4b", "delta 2: strict grammar wins"),
+        # Flipped in 4b — delta 2: strict grammar wins
+        now(Error(MALFORMED)),
         now(StaticLiteral()),
         consumer="sink_str",
     ),
@@ -1007,14 +1012,16 @@ PARAM_ROWS: tuple[Row, ...] = (
         "empty_segment_with_field_errors_for_wrong_reason",
         "param",
         "${p..out.x}",
-        flips(Error("does not output 'out'"), Error(MALFORMED), "4b", "delta 2: the Issue pass names the real cause"),
+        # Flipped in 4b — delta 2: the Issue pass names the real cause
+        now(Error(MALFORMED)),
         now(StaticLiteral()),
     ),
     Row(
         "silent_coalesce_inner_index",
         "param",
         "${p.out_arr[${idx ?? 0}]}",
-        flips(Ok(), Error(MALFORMED), "4b", "delta 2: a `??` inner index is an Issue"),
+        # Flipped in 4b — delta 2: a `??` inner index is an Issue
+        now(Error(MALFORMED)),
         # Flipped in 4a — an Issue-only value is static; the rewrite pre-pass died
         now(StaticLiteral()),
         declared_inputs=IDX,
@@ -1025,7 +1032,8 @@ PARAM_ROWS: tuple[Row, ...] = (
         "silent_root_typo_under_dynamic_index",
         "param",
         '${lsit[${idx}].x ?? "default"}',
-        flips(Ok(), Error("lsit"), "4b", "delta 2/6: the outer root of a dynamic index is root-checked"),
+        # Flipped in 4b — delta 2/6: the outer root of a dynamic index is root-checked
+        now(Error("lsit")),
         now(Resolves("default")),
         declared_inputs=IDX,
         extra_params=USE_IDX,
@@ -1036,7 +1044,8 @@ PARAM_ROWS: tuple[Row, ...] = (
         "loud_issue_dict_sibling",
         "param",
         {"x": "${p.out.items.0}", "y": "${p.out.text}"},
-        flips(Error("does not output 'out'"), Error(MALFORMED), "4b", "the Issue pass names the real cause"),
+        # Flipped in 4b — the Issue pass names the real cause
+        now(Error(MALFORMED)),
         now(Unresolved(("${p.out.items.0}",))),
     ),
     # -- validator-only divergences -------------------------------------------
@@ -1044,7 +1053,8 @@ PARAM_ROWS: tuple[Row, ...] = (
         "coalesce_literal_containing_template_text",
         "param",
         '${g.out ?? "${b}"}',
-        flips(Error("Malformed literal operand"), Ok(), "4b", "`${b}` inside a literal is literal text"),
+        # Flipped in 4b — `${b}` inside a literal is literal text
+        now(Ok()),
         now(Resolves("${b}")),
         ghost=True,
     ),
@@ -1052,7 +1062,8 @@ PARAM_ROWS: tuple[Row, ...] = (
         "list_input_index_262",
         "param",
         "${arr[0]}",
-        flips(Error("${arr[0]} has no valid source"), Ok(), "4b", "#262: Pass 5 consumes parse_path segments"),
+        # Flipped in 4b — #262: Pass 5 consumes parse_path segments
+        now(Ok()),
         now(Resolves({"x": "a0"})),
         declared_inputs=ARR_INPUT,
     ),
@@ -1069,7 +1080,8 @@ PARAM_ROWS: tuple[Row, ...] = (
         "nested_list_index_over_rejection_r9",
         "param",
         "${p.out.items[0].x}",
-        flips(Error("does not output 'out'"), Ok(), "4b", "R9: a list field's structure is its element structure"),
+        # Flipped in 4b — R9: a list field's structure is its element structure
+        now(Ok()),
         now(Resolves("X0")),
         mutation="Pass 5 looks up the literal key `items[0]`",
     ),
@@ -1084,7 +1096,8 @@ PARAM_ROWS: tuple[Row, ...] = (
         "list_typed_output_index_over_rejection_r9",
         "param",
         "${p.out_list[0]}",
-        flips(Error("does not output 'out_list[0]'"), Ok(), "4b", "R9: `list` indexes like `array`"),
+        # Flipped in 4b — R9: `list` indexes like `array`
+        now(Ok()),
         now(Resolves("L0")),
     ),
     Row(
@@ -1099,12 +1112,8 @@ PARAM_ROWS: tuple[Row, ...] = (
         "escape_hides_input_use_delta4",
         "param",
         "$${FOO:-${bar}}",
-        flips(
-            Ok(),
-            Error("never used as template variable: bar"),
-            "4b",
-            "delta 4: an input used only inside an escape is unused — the escape is literal",
-        ),
+        # Flipped in 4b — delta 4: an input used only inside an escape is unused — the escape is literal
+        now(Error("never used as template variable: bar")),
         now(Resolves("${FOO:-${bar}}")),  # flipped in 4a — delta 4: the escape consumes through `}`
         declared_inputs=BAR_INPUT,
     ),
@@ -1155,7 +1164,8 @@ BATCH_ROWS: tuple[Row, ...] = (
         "batch_items_coalesce_root_typo",
         "batch_items",
         "${typo.x ?? p.out_list}",
-        flips(Ok(), Error("typo"), "4b", "coalesce roots in `batch.items` are root-checked (surface parity)"),
+        # Flipped in 4b — coalesce roots in `batch.items` are root-checked (surface parity)
+        now(Error("typo")),
         now(Resolves(["L0", "L1"])),
         mutation="drop `batch.items` from _node_template_value_sources",
     ),
@@ -1172,7 +1182,8 @@ BATCH_ROWS: tuple[Row, ...] = (
         "batch_items_inline_malformed_element_520",
         "batch_items",
         ["${data.result[0]", "lit"],
-        flips(Ok(), Error(MALFORMED), "4b", "#520 first half: the Issue pass covers `batch.items`"),
+        # Flipped in 4b — #520 first half: the Issue pass covers `batch.items`
+        now(Error(MALFORMED)),
         now(Resolves(["${data.result[0]", "lit"])),
     ),
     Row("batch_item_alias", "batch_param", "${item}", now(Ok()), now(Resolves([{"x": "A0"}, {"x": "A1"}]))),
@@ -1198,7 +1209,8 @@ BATCH_ROWS: tuple[Row, ...] = (
         "batch_item_coalesce_pass8_over_rejection",
         "batch_param",
         '${item.nope ?? "none"}',
-        flips(Error("not available on batch items"), Ok(), "4b", "Pass 8 stops field-checking `??` operands"),
+        # Flipped in 4b — Pass 8 stops field-checking `??` operands
+        now(Ok()),
         now(Resolves(["none", "none"])),
         upstream_batch=True,
         batch_items="${b.results}",
@@ -1305,12 +1317,8 @@ LOOP_ROWS: tuple[Row, ...] = (
         "loop_carry_issue_shape",
         "loop_carry",
         "${s.result.0}",
-        flips(
-            Error("carry values must reference this loop node's own latest output"),
-            Error(MALFORMED),
-            "4b",
-            "the Issue pass covers carry values",
-        ),
+        # Flipped in 4b — the Issue pass covers carry values
+        now(Error(MALFORMED)),
         now(Raises("CompilationError", "Data flow validation failed")),
     ),
     Row(
@@ -1354,19 +1362,16 @@ OUTPUT_ROWS: tuple[Row, ...] = (
         "output_escape_only_r3",
         "output_source",
         "$${p.out_str}",
-        flips(
-            Error("has malformed template"),
-            Error("output source has no template expression"),
-            "4b",
-            "R3: truthful message for a source with no Expression",
-        ),
+        # Flipped in 4b — R3: truthful message for a source with no Expression
+        now(Error("output source has no template expression")),
         now(Resolves("${S}")),
     ),
     Row(
         "output_issue_shape_loud",
         "output_source",
         "${p.out.items.0}",
-        flips(Ok(), Error(MALFORMED), "4b", "the Issue pass covers output sources"),
+        # Flipped in 4b — the Issue pass covers output sources
+        now(Error(MALFORMED)),
         now(Raises("OutputResolutionError", "Unresolved template in output 'o'")),
     ),
     Row(
@@ -1400,15 +1405,26 @@ OUTPUT_ROWS: tuple[Row, ...] = (
         ghost=True,
     ),
     Row("output_json_string_not_parsed", "output_source", "${p.out.json_str}", now(Ok()), now(Resolves('{"a": 1}'))),
-    # Pinned over-rejection, no phase flips it: output sources are not counted as
-    # input uses (the operand iterator leaves outputs to the output pass, plan §0.3).
     Row(
         "output_only_input_use_flagged_unused",
         "output_source",
         "${idx}",
-        now(Error("never used as template variable: idx")),
+        # Flipped in 4b — an input returned only through an output source is used (the runtime resolves it)
+        now(Ok()),
         now(Resolves(0)),
         declared_inputs=IDX,
+        mutation="leave output sources out of unused-input accounting",
+    ),
+    Row(
+        "output_only_input_use_partner",
+        "output_source",
+        "${idx}",
+        now(Error("never used as template variable: other")),
+        now(Resolves(0)),
+        declared_inputs=MappingProxyType({
+            **IDX,
+            "other": {"type": "string", "required": False, "default": "o", "description": "Unused."},
+        }),
     ),
 )
 
@@ -1435,7 +1451,8 @@ SUB_WORKFLOW_ROWS: tuple[Row, ...] = (
         "sub_workflow_escape_only_r6",
         "sub_workflow",
         "$${x}",
-        flips(Ok(), Error("${x}"), "4b", "R6: an escape-only child ref is checked on its unescaped text"),
+        # Flipped in 4b — R6: an escape-only child ref is checked on its unescaped text
+        now(Error("${x}")),
         now(Resolves("${x}")),
         end_to_end=Raises("run-failed", "unresolved template reference: '${x}'"),
     ),
@@ -1524,7 +1541,8 @@ CACHE_ROWS: tuple[Row, ...] = (
         "cache_var_issue_shape",
         "cache",
         "Base: ${p.out.items.0}",
-        flips(Ok(), Error(MALFORMED), "4b", "the Issue pass covers cache vars"),
+        # Flipped in 4b — the Issue pass covers cache vars
+        now(Error(MALFORMED)),
         now(Absent()),
         prompt_cache=("p.out.items.0",),
     ),
@@ -1595,7 +1613,9 @@ CACHE_ROWS: tuple[Row, ...] = (
         "cache_prose_empty_braces_r2",
         "cache",
         "Empty ${} then ${p.out_str}",
-        flips(Ok(), Error(CACHE_PROSE_ISSUE), "4c", "R2: an Issue in cache prose is a validator ERROR"),
+        # Flipped early in 4b (row said 4c) — R2: the Issue pass covers cache prose; an Issue there
+        # carries the standard malformed message (orchestrator Dev-7 ruling)
+        now(Error(MALFORMED)),
         now(Resolves(("Empty ${} then S",))),
         prompt_cache=("p.out_str",),
     ),
@@ -1714,7 +1734,8 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         "dyn_inner_undeclared_input",
         "param",
         "${p.out_arr[${nope}].x}",
-        flips(Ok(), Error("nope"), "4b", "delta 6: inner references are root-checked"),
+        # Flipped in 4b — delta 6: inner references are root-checked
+        now(Error("nope")),
         now(Unresolved(("nope",))),
         declared_inputs=IDX,
         extra_params=USE_IDX,
@@ -1848,12 +1869,8 @@ DYNAMIC_ROWS: tuple[Row, ...] = (
         "dyn_unused_input_only_inside_index",
         "param",
         "${p.out_arr[${idx}].x}",
-        flips(
-            Error("never used as template variable: idx"),
-            Ok(),
-            "4b",
-            "delta 6: inner references count for unused-input accounting",
-        ),
+        # Flipped in 4b — delta 6: inner references count for unused-input accounting
+        now(Ok()),
         now(Resolves("A0")),
         declared_inputs=IDX,
         mutation="drop inner refs from unused-input accounting",
@@ -1949,10 +1966,6 @@ def test_row_ids_are_unique() -> None:
     assert len(ids) == len(set(ids)), sorted(i for i in ids if ids.count(i) > 1)
 
 
-def _xfail(phase: str, why: str) -> pytest.MarkDecorator:
-    return pytest.mark.xfail(strict=True, raises=AssertionError, reason=f"{phase}: {why}")
-
-
 def _run(ir: dict[str, Any], params: Mapping[str, Any] | None = None) -> Any:
     return WorkflowRunner().run(ir, dict(params or {}), RunnerConfig())
 
@@ -2031,12 +2044,8 @@ class TestDeferralSitesEscapeOnly:
         warnings = self._model_warnings(tmp_path, "anthropic/claude-nope-9")
         assert any("'anthropic/claude-nope-9' is not in the LiteLLM catalog" in w for w in warnings), warnings
 
-    def test_escape_only_model_is_not_checked_today(self, tmp_path: Path) -> None:
-        warnings = self._model_warnings(tmp_path, "anthropic/claude-nope-$${x}")
-        assert not any("LiteLLM catalog" in w for w in warnings), warnings
-
-    @_xfail("4b", "R6: an escape-only value is statically checked on its unescaped text")
-    def test_escape_only_model_is_checked_after(self, tmp_path: Path) -> None:
+    def test_escape_only_model_is_checked_on_its_unescaped_text(self, tmp_path: Path) -> None:
+        """Flipped in 4b — R6: an escape-only value is statically checked on its unescaped text."""
         warnings = self._model_warnings(tmp_path, "anthropic/claude-nope-$${x}")
         assert any("'anthropic/claude-nope-${x}' is not in the LiteLLM catalog" in w for w in warnings), warnings
 
@@ -2086,6 +2095,24 @@ class TestHistoricalFixtures:
         result = _run(ir)
         assert result.success, [d.message for d in result.errors]
         assert result.shared_after["t"]["result"] == "A0"
+
+    def test_643_child_output_typo_in_output_source_is_an_under_check(self, tmp_path: Path) -> None:
+        """#643 / PR #664 sibling gap, pinned: output sources are root-checked only, so a
+        typo'd child output passes validation and fails loudly at run. (Params ARE
+        field-checked against the child's outputs — the partner assertion.)"""
+        row = Row("643", "sub_inputs", "${p.out_str}", now(Ok()), now(Ok()))
+        ir = build_ir(row, tmp_path)
+        ir["outputs"] = {"out": {"source": "${s.gto}", "description": "a typo'd child output"}}
+        assert validator_errors(ir, {}) == []
+        result = _run(ir)
+        assert not result.success
+        assert any("Unresolved" in d.message and "${s.gto}" in d.message for d in result.errors), [
+            d.message for d in result.errors
+        ]
+
+        ir["nodes"].append(_code_node("t", "${s.gto}"))
+        ir["edges"].append({"from": "s", "to": "t"})
+        assert any("does not output 'gto'" in e for e in validator_errors(ir, {}))
 
     def _issue_630_ir(self, tmp_path: Path, value: str, payload_out_str: str) -> dict[str, Any]:
         row = Row(

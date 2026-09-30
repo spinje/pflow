@@ -352,3 +352,84 @@ class TestMalformedTemplateEdgeCases:
 
         # Should NOT flag as malformed — it's a valid coalesce with nested indices
         assert not any("Malformed template syntax" in err.message for err in errors)
+
+
+_SHELL = {"shell": {"interface": {"inputs": [], "outputs": [{"key": "stdout", "type": "str"}], "params": []}}}
+
+
+class TestIssuePassCoversEverySurface:
+    """Task 170: the ONE Issue pass reports an Issue on every template-bearing surface,
+    one diagnostic per value, at the value's authoring path."""
+
+    def _malformed_paths(self, workflow_ir):
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, create_mock_registry(_SHELL))
+        return sorted(e.context["path"] for e in errors if "Malformed template syntax" in e.message)
+
+    def test_every_surface_reports_at_its_path(self):
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "a",
+                    "type": "shell",
+                    "params": {"command": "echo ${a.b.0}", "env": {"X": ["${}"]}},
+                    "batch": {"items": ["${unclosed", "ok"]},
+                },
+                {
+                    "id": "loop",
+                    "type": "shell",
+                    "params": {"command": "echo hi"},
+                    "loop": {"while": "${loop.stdout.0}", "max_iterations": "${x..y}", "carry": {"c": "${loop.s.0}"}},
+                },
+            ],
+            "edges": [{"from": "a", "to": "loop"}],
+            "outputs": {"o": {"source": "${a.stdout.}"}},
+            "cache": {"items": [{"name": "p.x.0", "var": "p.x.0", "prose_before": "Empty ${} here"}]},
+        }
+        assert self._malformed_paths(workflow_ir) == sorted([
+            "nodes[id=a].params.command",
+            "nodes[id=a].params.env.X[0]",
+            "nodes[id=a].batch.items[0]",
+            "nodes[id=loop].loop.while",
+            "nodes[id=loop].loop.max_iterations",
+            "nodes[id=loop].loop.carry.c",
+            "outputs.o.source",
+            "cache.items[name=p.x.0].var",
+            "cache.items[name=p.x.0].prose_before",
+        ])
+
+    def test_well_formed_surfaces_are_clean(self):
+        """Partner: the same surfaces holding valid text, an escape, or a literal-only
+        expression report nothing."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "a",
+                    "type": "shell",
+                    "params": {"command": "echo $${HOME} ${a.stdout}", "env": {"X": ['${"v"}']}},
+                    "batch": {"items": ["${a.stdout}", "ok"]},
+                },
+            ],
+            "edges": [],
+            "outputs": {"o": {"source": "${a.stdout}"}},
+            "cache": {"items": [{"name": "a.stdout", "var": "a.stdout", "prose_before": "Cost $${x}: "}]},
+        }
+        assert self._malformed_paths(workflow_ir) == []
+
+    def test_a_reference_in_cache_prose_is_an_error(self):
+        """Dict IR only (the ## Cache chunker turns every markdown reference into a
+        chunk): the prose is sent verbatim, so its reference would reach the model."""
+        workflow_ir = {
+            "nodes": [{"id": "a", "type": "shell", "params": {"command": "echo hi"}}],
+            "edges": [],
+            "cache": {"items": [{"name": "a.stdout", "var": "a.stdout", "prose_before": "Base ${a.stdout}: "}]},
+        }
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, create_mock_registry(_SHELL))
+        assert len(errors) == 1
+        assert "cache prose may not contain template references (found ${a.stdout})" in errors[0].message
+        assert errors[0].context["path"] == "cache.items[name=a.stdout].prose_before"
+
+    def test_malformed_literal_operand_gets_targeted_guidance(self):
+        workflow_ir = {"nodes": [{"id": "a", "type": "shell", "params": {"command": "echo ${x ?? [1,2]}"}}]}
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, create_mock_registry(_SHELL))
+        assert len(errors) == 1
+        assert errors[0].message.startswith("Malformed literal operand in '${x ?? [1,2]}'")

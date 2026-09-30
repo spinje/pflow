@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 
 CONTAINER_TYPES = frozenset({"dict", "object", "list", "array"})  # JSON auto-parse targets
 LIST_TYPES = frozenset({"list", "array"})  # index access targets
+TRAVERSABLE_TYPES = frozenset({"dict", "object", "any", "str", "string"})  # a path may walk into (str: JSON)
+TRUSTED_TRAVERSABLE_TYPES = frozenset({"dict", "object", "any"})  # ...without a JSON-at-runtime warning
 
 
 # ── Grammar (regex strings; the tokenizer and the public patterns share them) ──
@@ -550,8 +552,8 @@ def _strings(value: Any) -> Iterator[str]:
 class TemplateResolver:
     """String-in/string-out helpers over ``parse`` / ``resolve`` / the walk."""
 
-    # Kept by name: composed by symbol in `template_validation/validator.py`,
-    # `data_flow.py`, `cache_overlap.py`, `graph/scope.py` until they consume `parse()`.
+    # Kept by name: composed by symbol in `cache_overlap.py` and `graph/scope.py`
+    # until they consume `parse()`.
     _VAR_NAME_PATTERN = _VAR_NAME_PATTERN
     _LITERAL_PATTERN = _LITERAL_PATTERN
 
