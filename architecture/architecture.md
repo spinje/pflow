@@ -523,7 +523,7 @@ Users simply specify `type: "workflow"` — they don't need to know about Workfl
 | **Compiler** | `runtime/compilation/` | Transforms workflow IR → CompiledWorkflow |
 | **WorkflowExecutor** | `runtime/workflow_executor.py` | Handles nested workflow execution |
 | **Engine** | `runtime/engine/` | Orchestration, instrumentation, namespacing, templates |
-| **TemplateResolver** | `runtime/template_resolver.py` | Resolves `${var}` syntax |
+| **TemplateResolver** | `core/templates.py` | Resolves `${var}` syntax |
 
 ### When to Create What?
 

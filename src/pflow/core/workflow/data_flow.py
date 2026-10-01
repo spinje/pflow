@@ -5,7 +5,6 @@ all data dependencies are satisfied before nodes execute.
 """
 
 import logging
-import re
 from typing import Any
 
 from pflow.core.cache_ttl import (
@@ -20,18 +19,13 @@ from pflow.core.diagnostic import (
     Severity,
 )
 from pflow.core.suggestion_utils import find_similar_items
+from pflow.core.templates import Reference, Template, TemplateResolver, parse
 from pflow.core.types import is_template_reserved_internal_key
 from pflow.core.workflow.gate_validation import check_approval_allowed
 from pflow.core.workflow.loop_validation import check_loop_polarity
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.workflow.template_surfaces import iter_node_surfaces
 
 logger = logging.getLogger(__name__)
-
-# Positive match for pflow variable paths (e.g., "node", "node.field", "node[0].field").
-# Uses TemplateResolver._VAR_NAME_PATTERN as the canonical definition of valid pflow
-# variable names. This is a private attribute — if the pattern changes there, it must
-# change here too.
-_PFLOW_VAR_RE = re.compile(rf"^{TemplateResolver._VAR_NAME_PATTERN}$")
 
 
 class CycleError(Exception):
@@ -252,7 +246,7 @@ def _reserved_internal_key_diagnostic(
     return None
 
 
-def _validate_template_reference(  # noqa: C901
+def _validate_template_reference(
     ref: str,
     node_id: str,
     param_name: str,
@@ -267,7 +261,9 @@ def _validate_template_reference(  # noqa: C901
     """Validate a single template reference.
 
     Args:
-        ref: The template reference (e.g., "node1.output" or "input_param")
+        ref: A parsed Reference's source text (e.g., "node1.output", "input_param",
+            "a[${i}].x") — never an Issue: bash syntax (``${var:-default}``) opens no
+            Expression and is the Issue pass's to report
         node_id: ID of the node containing the reference
         param_name: Parameter name containing the reference
         node_position: Position of the current node in execution order
@@ -281,12 +277,6 @@ def _validate_template_reference(  # noqa: C901
     Returns:
         Error diagnostic if invalid, None if valid
     """
-    # Only validate refs that match pflow variable syntax. Non-matching refs
-    # are bash syntax (${#count}, ${var:-default}, ${array[@]}), or truncated
-    # nested templates (${results[${__index__}) — skip them.
-    if not _PFLOW_VAR_RE.match(ref):
-        return None
-
     # Extract root identifier (before first . or [)
     root = TemplateResolver.extract_root_node_id(ref)
     has_path = root != ref
@@ -620,9 +610,10 @@ def _validate_loop_carry_shape(node: dict[str, Any], loop_data: dict[str, Any]) 
 
 
 def _validate_loop_carry_value_self_ref(node_id: str | None, key: Any, value: str) -> list[Diagnostic]:
-    var = TemplateResolver.extract_simple_template_var(value)
-    root = TemplateResolver.extract_root_node_id(var) if var is not None else None
-    if root == node_id:
+    """A carry value is one reference whose (first operand's) root is the loop node itself."""
+    template = parse(value)
+    first = template.expressions[0].operands[0] if template.is_simple else None
+    if isinstance(first, Reference) and first.root == node_id:
         return []
     return [_make_loop_carry_self_ref_diagnostic(node_id, key, value)]
 
@@ -769,81 +760,6 @@ def _make_loop_cap_diagnostic(node_id: str | None, cap: int, max_visits: int) ->
     )
 
 
-def _check_param_value(
-    param_name: str,
-    value: Any,
-    node_id: str,
-    node_position: int,
-    nodes_by_id: dict[str, Any],
-    node_positions: dict[str, int],
-    valid_simple_refs: set[str],
-    loop_forward_limits: dict[str, int],
-    loop_node_ids: set[str],
-    check_inputs: bool,
-    errors: list[Diagnostic],
-) -> None:
-    """Recursively validate template references in a parameter value."""
-    if isinstance(value, str) and "${" in value:
-        for match in TemplateResolver.TEMPLATE_EXTRACT_PATTERN.finditer(value):
-            for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
-                # Literal operands (Optional A) are values, not node/input refs.
-                # Filter BEFORE _validate_template_reference — keyword literals
-                # (null/true/false) match _PFLOW_VAR_RE and would otherwise
-                # produce false "undefined input" errors.
-                if TemplateResolver.is_literal_operand(operand):
-                    continue
-                error = _validate_template_reference(
-                    operand,
-                    node_id,
-                    param_name,
-                    node_position,
-                    nodes_by_id,
-                    node_positions,
-                    valid_simple_refs,
-                    loop_forward_limits,
-                    loop_node_ids,
-                    check_inputs,
-                )
-                if error:
-                    errors.append(error)
-    elif isinstance(value, dict):
-        # Thread the dict key into param_name so diagnostics for nested values
-        # report the deepest path (e.g. ``headers.Authorization`` instead of
-        # just ``headers``).
-        for key, val in value.items():
-            _check_param_value(
-                f"{param_name}.{key}",
-                val,
-                node_id,
-                node_position,
-                nodes_by_id,
-                node_positions,
-                valid_simple_refs,
-                loop_forward_limits,
-                loop_node_ids,
-                check_inputs,
-                errors,
-            )
-    elif isinstance(value, list):
-        # Thread the list index into param_name so diagnostics for list items
-        # report the deepest path (e.g. ``commands[1]`` instead of just
-        # ``commands``).
-        for index, item in enumerate(value):
-            _check_param_value(
-                f"{param_name}[{index}]",
-                item,
-                node_id,
-                node_position,
-                nodes_by_id,
-                node_positions,
-                valid_simple_refs,
-                loop_forward_limits,
-                loop_node_ids,
-                check_inputs,
-                errors,
-            )
-
-
 def _validate_node_params(
     node: dict[str, Any],
     node_id: str,
@@ -856,7 +772,13 @@ def _validate_node_params(
     check_inputs: bool,
     errors: list[Diagnostic],
 ) -> None:
-    """Validate template references in a single node's parameters."""
+    """Validate every reference in a node's params, ``batch.items`` and loop fields
+    (a dynamic index's inner references included; a carry value's own outer
+    reference has its self-reference check, its inner ones are checked here).
+    ``loop:`` is a top-level node field, so a
+    ``while: ${typo.x}`` or a forward reference to a different downstream node is
+    caught here too; ``_check_forward_reference`` allows ``while: ${this_node.output}``.
+    """
     # If node has 'inputs' mapping, its keys are valid template references
     # for other params in the same node (inputs-as-context pattern)
     node_refs = valid_simple_refs
@@ -864,73 +786,40 @@ def _validate_node_params(
     if isinstance(inputs_param, dict):
         node_refs = valid_simple_refs | set(inputs_param.keys())
 
-    for param_name, param_value in node.get("params", {}).items():
-        _check_param_value(
-            param_name,
-            param_value,
-            node_id,
-            node_position,
-            nodes_by_id,
-            node_positions,
-            node_refs,
-            loop_forward_limits,
-            loop_node_ids,
-            check_inputs,
-            errors,
-        )
+    for surface in iter_node_surfaces(node):
+        # ``location`` names the value in diagnostics: ``headers.Authorization``,
+        # ``commands[1]``, ``batch.items``, ``loop.while``
+        for location, template in surface.templates():
+            for ref in _checked_references(surface.kind, template):
+                error = _validate_template_reference(
+                    ref.raw,
+                    node_id,
+                    location,
+                    node_position,
+                    nodes_by_id,
+                    node_positions,
+                    node_refs,
+                    loop_forward_limits,
+                    loop_node_ids,
+                    check_inputs,
+                )
+                if error:
+                    errors.append(error)
 
-    # Validate the loop condition source (issue #445). `loop:` is a top-level
-    # node field, so it bypasses the params walk above — thread it in explicitly
-    # so a `while: ${typo.x}` (non-existent node) or a forward reference to a
-    # different downstream node is still caught. The self-reference carve-out in
-    # `_check_forward_reference` allows `while: ${this_node.output}`.
-    loop_block = node.get("loop")
-    if isinstance(loop_block, dict):
-        while_template = loop_block.get("while")
-        if isinstance(while_template, str):
-            _check_param_value(
-                "loop.while",
-                while_template,
-                node_id,
-                node_position,
-                nodes_by_id,
-                node_positions,
-                node_refs,
-                loop_forward_limits,
-                loop_node_ids,
-                check_inputs,
-                errors,
-            )
-        until_template = loop_block.get("until")
-        if isinstance(until_template, str):
-            _check_param_value(
-                "loop.until",
-                until_template,
-                node_id,
-                node_position,
-                nodes_by_id,
-                node_positions,
-                node_refs,
-                loop_forward_limits,
-                loop_node_ids,
-                check_inputs,
-                errors,
-            )
-        max_it = loop_block.get("max_iterations")
-        if isinstance(max_it, str) and "${" in max_it:
-            _check_param_value(
-                "loop.max_iterations",
-                max_it,
-                node_id,
-                node_position,
-                nodes_by_id,
-                node_positions,
-                node_refs,
-                loop_forward_limits,
-                loop_node_ids,
-                check_inputs,
-                errors,
-            )
+
+def _checked_references(kind: str, template: Template) -> tuple[Reference, ...]:
+    """The references this pass checks. A carry value's own reference has the carry
+    self-reference check (one diagnostic per mistake); its dynamic-index sources are
+    ordinary reads, so they are checked here."""
+    if kind != "carry":
+        return template.references
+    return tuple(
+        source
+        for expression in template.expressions
+        for operand in expression.operands
+        if isinstance(operand, Reference)
+        for source in operand.index_sources
+    )
 
 
 # ------------------------------------------------------------------------------
@@ -1145,18 +1034,26 @@ def _validate_cache_block(  # noqa: C901
                 continue
             chunk_name = item.get("name", "")
             chunk_line = item.get("_source_line")
-            root = TemplateResolver.extract_root_node_id(var_expr)
+            # Dict IR skips the ## Cache parser, so its coalesce rule is restated here.
+            if _is_coalesce_var(var_expr):
+                diagnostics.append(_make_chunk_coalesce_diagnostic(chunk_name, var_expr, chunk_line))
+                continue
+            roots = _cache_var_roots(var_expr)
             # Batch-scoped rejection: chunks that vary across calls referencing
             # the same chunk are invalid. ``${item.X}`` and any descendants of
-            # batch aliases fail this check.
-            if root in batch_item_aliases:
+            # batch aliases (a dynamic index's inner reference included) fail this check.
+            if any(root in batch_item_aliases for root in roots):
                 diagnostics.append(_make_batch_scoped_rejection_diagnostic(chunk_name, var_expr, chunk_line))
                 continue
-            # Resolution check: root must be a declared input or an existing node id.
-            if root not in declared_inputs and root not in nodes_by_id:
-                candidates = sorted(set(nodes_by_id.keys()) | declared_inputs)
-                similar = find_similar_items(root, candidates, max_results=3, method="fuzzy")
-                diagnostics.append(_make_chunk_resolution_diagnostic(chunk_name, var_expr, root, similar, chunk_line))
+            # Resolution check: every root must be a declared input or an existing node id.
+            for root in roots:
+                if root not in declared_inputs and root not in nodes_by_id:
+                    candidates = sorted(set(nodes_by_id.keys()) | declared_inputs)
+                    similar = find_similar_items(root, candidates, max_results=3, method="fuzzy")
+                    diagnostics.append(
+                        _make_chunk_resolution_diagnostic(chunk_name, var_expr, root, similar, chunk_line)
+                    )
+                    break
 
         # Unused-chunk warning: declared but not referenced by any node's
         # prompt_cache. Excludes chunks belonging to nodes that were rejected
@@ -1170,6 +1067,22 @@ def _validate_cache_block(  # noqa: C901
                 continue
             chunk_line = item.get("_source_line")
             diagnostics.append(_make_unused_chunk_diagnostic(chunk_name, chunk_line))
+
+
+def _cache_var_roots(var_expr: str) -> list[str]:
+    """The roots a chunk var reads: each root of its one Reference, dynamic-index inner
+    references included. An Issue has none (the Issue pass reports it: one diagnostic
+    per mistake). Any other var — a literal (``${42}``) — can never render as a chunk,
+    so the whole var is its (unresolvable) root.
+    """
+    template = parse("${" + var_expr + "}")
+    if template.issues:
+        return []
+    expressions = template.expressions
+    operands = expressions[0].operands if expressions and expressions[0].raw == var_expr else ()
+    if len(operands) == 1 and isinstance(operands[0], Reference):
+        return [ref.root for ref in operands[0].references]
+    return [var_expr]
 
 
 def _make_invalid_on_non_llm_diagnostic(node_id: str, node_type: str, invalid_fields: list[str]) -> Diagnostic:
@@ -1375,6 +1288,26 @@ def _make_chunk_resolution_diagnostic(
     )
 
 
+def _is_coalesce_var(var_expr: str) -> bool:
+    expressions = parse("${" + var_expr + "}").expressions
+    return bool(expressions) and len(expressions[0].operands) > 1
+
+
+def _make_chunk_coalesce_diagnostic(chunk_name: str, var_expr: str, chunk_line: int | None) -> Diagnostic:
+    """The ``## Cache`` parser's coalesce rule, for dict IR (which skips the parser)."""
+    context: dict[str, Any] = {"category": "validation", "path": f"cache.items[name={chunk_name}].var"}
+    if chunk_line is not None:
+        context["line"] = chunk_line
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        message=f"coalesce is not supported in a ## Cache chunk: '${{{var_expr}}}'.",
+        suggestions=["Reference one value per chunk; compute a fallback in an upstream step and cache its output."],
+        context=context,
+    )
+
+
 def _make_batch_scoped_rejection_diagnostic(chunk_name: str, var_expr: str, chunk_line: int | None) -> Diagnostic:
     """Cache chunks must reference values that are stable across calls — batch-scoped
     references (``${item.X}`` and any descendants of a batch alias) vary per call
@@ -1426,7 +1359,7 @@ def _emit_prompt_body_overlap_diagnostics(
     works around ``Diagnostic.__hash__`` collapsing same-id diagnostics
     on the same node into a single entry that loses per-pair detail.
     """
-    # Lazy import: cache_overlap → template_resolver is the same dependency
+    # Lazy import: cache_overlap → core.templates is the same dependency
     # already loaded at module top, but the lazy form keeps this module's
     # import surface unchanged for callers that don't exercise the cache
     # validation path.

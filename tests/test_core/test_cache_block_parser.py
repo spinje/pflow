@@ -168,6 +168,86 @@ def test_cache_block_with_no_template_var_rejected() -> None:
         parse_markdown(_wrap(body))
 
 
+# ------------------------------------------------------------------------------
+# Chunks are the template parse's Expressions (Task 170, ADR-0015, R2)
+# ------------------------------------------------------------------------------
+
+
+def _chunks(block: str) -> list[tuple[str, str]]:
+    items = parse_markdown(_wrap(f"```cache\n{block}\n```")).ir["cache"]["items"]
+    return [(item["name"], item["prose_before"]) for item in items]
+
+
+@pytest.mark.parametrize(
+    ("block", "expected"),
+    [
+        # An escape is prose, kept ESCAPED in the IR (graph build re-emits it as template text).
+        ("Home $${HOME} then ${a}", [("a", "Home $${HOME} then ")]),
+        ("$${x} ${a} $${y} ${b}", [("a", "$${x} "), ("b", " $${y} ")]),
+        # A trailing escape is discarded like any trailing prose.
+        ("${a} tail $${x}", [("a", "")]),
+        # An Issue is prose (R2) — the validator's Issue pass reports it.
+        ("Empty ${} then ${a}", [("a", "Empty ${} then ")]),
+        ("${a} then ${b c} then ${d}", [("a", ""), ("d", " then ${b c} then ")]),
+        # A dynamic index is one chunk, named by its raw source slice.
+        ("Row ${p.rows[${i}].x}", [("p.rows[${i}].x", "Row ")]),
+        # A `??` in prose is not a chunk var: an escaped one stays prose (R5 rejects only chunk vars).
+        ("Keep $${a ?? b} then ${a.x}", [("a.x", "Keep $${a ?? b} then ")]),
+    ],
+)
+def test_chunks_are_the_parsed_expressions(block: str, expected: list[tuple[str, str]]) -> None:
+    assert _chunks(block) == expected
+
+
+@pytest.mark.parametrize("block", ["Only ${x y} here", "Unclosed ${a then ${b}"])
+def test_block_whose_only_template_is_an_issue_names_it(block: str) -> None:
+    """An Issue is prose, so the block has no chunk — the error names the Issue
+    (an unclosed ``${a`` runs to its first ``}`` and swallows ``${b}``)."""
+    with pytest.raises(MarkdownParseError, match=r"Malformed template syntax in '## Cache': '\$\{"):
+        parse_markdown(_wrap(f"```cache\n{block}\n```"))
+
+
+@pytest.mark.parametrize(
+    ("block", "issue", "line_offset"),
+    [
+        ("Context: ${topic}\nMore: ${typo..field}", "${typo..field}", 1),
+        ("Base: ${p.out_str}\nInvalid: ${p.out.items.0}", "${p.out.items.0}", 1),
+        ("${a} ${b c}", "${b c}", 0),
+    ],
+)
+def test_issue_after_the_last_chunk_is_named(block: str, issue: str, line_offset: int) -> None:
+    """Trailing prose is discarded, so an Issue there would never reach the validator's
+    Issue pass: the parser names it, at its own line."""
+    source = _wrap(f"```cache\n{block}\n```")
+    with pytest.raises(MarkdownParseError) as exc_info:
+        parse_markdown(source)
+    assert f"'{issue}' is not a valid '${{var}}' reference" in str(exc_info.value)
+    assert exc_info.value.line == source.splitlines().index("```cache") + 2 + line_offset
+
+
+def test_escape_after_the_last_chunk_is_still_discarded_prose() -> None:
+    assert _chunks("${a} tail $${b c}") == [("a", "")]
+
+
+@pytest.mark.parametrize(
+    ("block", "var", "line_offset"),
+    [("Base ${a ?? b}", "a ?? b", 0), ('${a.x}\nMore ${b.y ?? "d"}', 'b.y ?? "d"', 1)],
+)
+def test_coalesce_chunk_var_is_rejected_at_its_line(block: str, var: str, line_offset: int) -> None:
+    """A chunk renders one value gated on its root having run, so a `??` chain is
+    rejected at parse rather than half-honoured (R5)."""
+    source = _wrap(f"```cache\n{block}\n```")
+    with pytest.raises(MarkdownParseError) as exc_info:
+        parse_markdown(source)
+    assert f"coalesce is not supported in a ## Cache chunk: '${{{var}}}'." in str(exc_info.value)
+    assert exc_info.value.line == source.splitlines().index("```cache") + 2 + line_offset
+
+
+def test_escape_only_block_is_rejected_like_prose() -> None:
+    with pytest.raises(MarkdownParseError, match=r"must contain at least one"):
+        parse_markdown(_wrap("```cache\nJust $${literal} text.\n```"))
+
+
 def test_cache_section_without_code_block_rejected() -> None:
     """`## Cache` with only a ``- ttl:`` and no code block must error."""
     body = "- ttl: 5m"

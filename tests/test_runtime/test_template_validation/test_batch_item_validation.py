@@ -119,6 +119,34 @@ class TestBatchItemFieldValidation:
         assert errors[0].context is not None
         assert any("response" in field for field in errors[0].context.get("available_fields", []))
 
+    def test_nodes_sharing_an_alias_are_checked_separately(self):
+        """Pass 8 checks a node's OWN references: ``process``'s ``${item.custom}`` reads
+        its input items, not ``analyze``'s upstream results, though both alias ``item``."""
+        workflow_ir = {
+            "inputs": {"data": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "batch": {"items": "${data}"},
+                    "params": {"prompt": "Process: ${item.custom}"},
+                },
+                {
+                    "id": "analyze",
+                    "type": "llm",
+                    "batch": {"items": "${process.results}"},
+                    "params": {"prompt": "Analyze: ${item.response} vs ${item.nope}"},
+                },
+            ],
+            "edges": [{"from": "process", "to": "analyze"}],
+        }
+
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, create_mock_registry())
+        assert [e.message for e in errors] == [
+            "Node 'analyze': ${item.nope} references field 'nope' which is not available on batch items "
+            "(items come from: ${process.results})."
+        ]
+
     def test_did_you_mean_suggestion(self):
         """${item.resp} should suggest ${item.response}."""
         workflow_ir = {

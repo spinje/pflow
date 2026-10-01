@@ -2,12 +2,9 @@
 
 import pytest
 
+from pflow.core.templates import is_type_compatible
 from pflow.registry.registry import Registry
-from pflow.runtime.template_validation.type_checker import (
-    get_parameter_type,
-    infer_template_type,
-    is_type_compatible,
-)
+from pflow.runtime.template_validation.type_checker import get_parameter_type, infer_template_type
 
 
 class TestTypeCompatibility:
@@ -353,12 +350,20 @@ class TestParameterTypeLookup:
         assert param_type == "any"
 
 
+def test_index_into_a_union_of_lists_is_an_unknown_element():
+    """An element type comes only from a single ``list[X]``; a union never yields a torn type string."""
+    workflow_ir = {"enable_namespacing": True, "nodes": [{"id": "p"}]}
+    node_outputs = {"p.values": {"type": "list[str]|list[int]"}, "p.names": {"type": "list[str]"}}
+    assert infer_template_type("p.values[0]", workflow_ir, node_outputs) == "any"
+    assert infer_template_type("p.names[0]", workflow_ir, node_outputs) == "str"
+
+
 class TestInferTemplateTypeBatchIndexedAccess:
     """Verify infer_template_type descends into batch item structure on indexed paths.
 
     Pre-fix behavior: ``${node.results[0].field}`` returned ``None`` — Pass 6/9
-    silently skipped type checking through batch outputs. Post-fix: traversal
-    mirrors path_validation.py::_validate_array_access, using
+    silently skipped type checking through batch outputs. Post-fix: an index
+    descends through ``utils.descend_index`` (the rule Pass 5 validates with), using
     ``output_info["items"]`` as the structure source for indexed base parts.
     """
 
@@ -386,6 +391,14 @@ class TestInferTemplateTypeBatchIndexedAccess:
         workflow_ir = {"nodes": [{"id": "batch_node", "type": "code"}], "enable_namespacing": True}
         assert infer_template_type("batch_node.results[0].result", workflow_ir, batch_node_outputs) == "array"
         assert infer_template_type("batch_node.results[0].stdout", workflow_ir, batch_node_outputs) == "str"
+
+    def test_dynamic_index_types_like_a_static_one(self, batch_node_outputs):
+        """Task 170 4a: type passes see the whole dynamic-index Reference (not its index key),
+        so inference must read ``[${…}]`` as an index — dots inside it are not separators."""
+        workflow_ir = {"nodes": [{"id": "batch_node", "type": "code"}], "enable_namespacing": True}
+        for index in ("0", "${i}", "${item.pos.n}"):
+            path = f"batch_node.results[{index}].stdout"
+            assert infer_template_type(path, workflow_ir, batch_node_outputs) == "str", path
 
     def test_indexed_access_unknown_field_returns_none(self, batch_node_outputs):
         workflow_ir = {"nodes": [{"id": "batch_node", "type": "code"}], "enable_namespacing": True}

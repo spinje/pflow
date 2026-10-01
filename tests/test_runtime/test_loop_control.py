@@ -34,6 +34,18 @@ def test_nonempty_list_is_truthy() -> None:
     assert evaluate_loop_condition("${n.x}", {"n": {"x": [1]}}, "n") is True
 
 
+def test_dynamic_index_condition_resolves_through_the_template_walk() -> None:
+    """Task 170 R1: a dynamic-index condition is one Reference. Read with the raw
+    user-path reader it walked to ``None``, so ``until:`` never stopped (it ran to the
+    cap) and ``while:`` never ran twice."""
+    shared = {"n": {"done": [False, True]}, "idx": 1}
+    assert evaluate_loop_condition("${n.done[${idx}]}", shared, "n", until=True) is False  # stop
+    assert evaluate_loop_condition("${n.done[${idx}]}", shared, "n") is True
+    # A failed inner index is an absent value: `until` continues, `while` stops (as for any miss).
+    assert evaluate_loop_condition("${n.done[${nope}]}", shared, "n", until=True) is True
+    assert evaluate_loop_condition("${n.done[${nope}]}", shared, "n") is False
+
+
 def test_zero_is_falsy_positive_is_truthy() -> None:
     assert evaluate_loop_condition("${n.x}", {"n": {"x": 0}}, "n") is False
     assert evaluate_loop_condition("${n.x}", {"n": {"x": 3}}, "n") is True

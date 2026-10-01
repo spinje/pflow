@@ -1,0 +1,105 @@
+{
+  "advisories": [],
+  "diagnostics": [
+    {
+      "context": {
+        "category": "node_action_error",
+        "type": "on_error_recovery"
+      },
+      "message": "Node 'read-source' failed \u2014 on-error \u2192 'log-error'",
+      "node_id": "read-source",
+      "severity": "warning",
+      "source": "runtime"
+    }
+  ],
+  "duration_ms": 0,
+  "execution": {
+    "duration_ms": 0,
+    "nodes_executed": 2,
+    "nodes_total": 5,
+    "steps": [
+      {
+        "cached": false,
+        "duration_ms": 0,
+        "node_id": "read-source",
+        "status": "failed"
+      },
+      {
+        "cached": false,
+        "duration_ms": 0,
+        "node_id": "process-file",
+        "status": "not_executed"
+      },
+      {
+        "cached": false,
+        "duration_ms": 0,
+        "node_id": "save-result",
+        "status": "not_executed"
+      },
+      {
+        "cached": false,
+        "duration_ms": 0,
+        "has_stderr": true,
+        "node_id": "log-error",
+        "status": "completed",
+        "stderr": "Error occurred, creating fallback"
+      },
+      {
+        "cached": false,
+        "duration_ms": 0,
+        "node_id": "create-fallback",
+        "status": "completed"
+      }
+    ]
+  },
+  "metrics": {
+    "total": {
+      "cost_usd": 0.0,
+      "tokens_input": 0,
+      "tokens_output": 0,
+      "tokens_total": 0,
+      "total_calls": 0
+    },
+    "workflow": {
+      "cost_usd": 0.0,
+      "duration_ms": 0,
+      "models_used": [],
+      "node_timings": {
+        "create-fallback": 0,
+        "log-error": 0,
+        "read-source": 0
+      },
+      "nodes_executed": 3,
+      "tokens_input": 0,
+      "tokens_output": 0,
+      "tokens_total": 0
+    }
+  },
+  "nodes_executed": 3,
+  "result": {
+    "create-fallback": {
+      "written": "Successfully wrote to '<CWD>/output/fallback.txt'"
+    }
+  },
+  "status": "degraded",
+  "success": true,
+  "total_cost_usd": 0.0,
+  "warnings": [
+    {
+      "category": "node_action_error",
+      "context": {
+        "category": "node_action_error",
+        "type": "on_error_recovery"
+      },
+      "message": "Node 'read-source' failed \u2014 on-error \u2192 'log-error'",
+      "node_id": "read-source",
+      "severity": "warning",
+      "source": "runtime",
+      "type": "on_error_recovery"
+    }
+  ],
+  "workflow": {
+    "action": "unsaved",
+    "name": "<REPO>/examples/core/error-handling.pflow.md"
+  }
+}

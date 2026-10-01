@@ -19,7 +19,7 @@ from dataclasses import replace
 from typing import Any
 
 from pflow.core.exceptions import LoopCarryError, LoopConditionError
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver, parse, resolve
 
 from . import instrumentation
 from .types import LoopConfig, NodeConfig, TemplateConfig
@@ -128,9 +128,7 @@ def evaluate_loop_condition(
     ``LoopConditionError`` rather than being ``bool()``-ed (a non-empty string like
     ``"0\\n"`` or ``"false"`` is truthy — exactly the foot-gun this guards).
     """
-    context = dict(shared)
-    var = TemplateResolver.extract_simple_template_var(condition_template)
-    if var is None:
+    if not parse(condition_template).is_simple:
         # Not a single ${...} reference. The validator rejects this shape at parse time
         # (_make_loop_shape_diagnostic), so this is the backstop for a programmatic IR that
         # bypassed validation — stop rather than loop on garbage.
@@ -142,15 +140,8 @@ def evaluate_loop_condition(
         # malformed `until:` would stop on pass 1 (the "runs once and exits" bug).
         return False
 
-    if TemplateResolver.is_coalesce_expression(var):
-        value, status = TemplateResolver.resolve_coalesce(var, context)
-        if status != "resolved":
-            value = None
-    else:
-        if not TemplateResolver.variable_exists(var, context):
-            value = None
-        else:
-            value = TemplateResolver.resolve_value(var, context)
+    resolution = resolve(condition_template, dict(shared))
+    value = resolution.value if resolution.ok else None
 
     if isinstance(value, str):
         preview = value if len(value) <= 60 else value[:57] + "..."

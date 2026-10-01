@@ -14,8 +14,8 @@ from typing import Any
 
 from pflow.core.json_utils import try_parse_json
 from pflow.core.param_coercion import coerce_param_for_node
+from pflow.core.templates import CONTAINER_TYPES, LIST_TYPES, Reference, Resolution, TemplateResolver, parse, resolve
 from pflow.core.types import outer_base_type
-from pflow.runtime.template_resolver import TemplateResolver
 
 from .template_errors import (
     build_json_parse_error_message,
@@ -35,7 +35,7 @@ def _runtime_base_type(type_str: str) -> str:
     ``object``/``array``/``str``. Strip a parameterized generic to its outer base so
     ``list[str]`` is recognized as ``list``. Without this, a code/shell value wired
     into a ``list[str]`` param would pass validation (the validator already strips
-    generics — see ``type_checker.is_type_compatible``) but silently fail to
+    generics — see ``core.templates.is_type_compatible``) but silently fail to
     JSON-auto-parse at runtime (issue #460 / PR #461).
 
     Unions are left intact — they are never auto-parsed, and collapsing
@@ -154,14 +154,14 @@ def validate_resolved_type(
         actual_type = type(resolved_value).__name__
         return build_type_error_message(param_key, resolved_value, template_str, expected_type, actual_type)
 
-    # Correct type matches
-    if expected_type in ("dict", "object") and isinstance(resolved_value, dict):
+    if expected_type not in CONTAINER_TYPES:
         return None
-    if expected_type in ("list", "array") and isinstance(resolved_value, list):
+    # Correct type matches
+    if isinstance(resolved_value, list if expected_type in LIST_TYPES else dict):
         return None
 
     # dict/list parameters receiving strings — likely failed JSON parse
-    if expected_type in ("dict", "list", "object", "array") and isinstance(resolved_value, str):
+    if isinstance(resolved_value, str):
         trimmed = resolved_value.strip()
         if trimmed and trimmed[0] in ("{", "["):
             return build_json_parse_error_message(param_key, resolved_value, template_str, expected_type, trimmed)
@@ -169,138 +169,47 @@ def validate_resolved_type(
     return None
 
 
-def resolve_template_parameter(key: str, template: Any, context: dict[str, Any]) -> tuple[Any, bool]:
-    """Resolve a single template parameter.
+def _left_to_absent_nodes(template: Any, resolution: Resolution, context: dict[str, Any]) -> bool:
+    """True if ``template`` stayed wholly literal because every node it reads is absent.
 
-    Args:
-        key: Parameter name
-        template: Template value to resolve
-        context: Resolution context
-
-    Returns:
-        Tuple of (resolved_value, is_simple_template)
+    Every operand must be a reference whose root is absent from context (absent
+    covers "did not execute" and "executed and failed" — failed nodes leave the
+    main namespace), so no expression could have resolved; and nothing may be an
+    Issue. Only OUTER roots count: a present ``${__index__}`` inside ``[…]`` does
+    not make ``${a[${__index__}].x}`` from an absent ``a`` resolvable.
     """
-    # Handle nested structures (dict or list)
-    if isinstance(template, (dict, list)):
-        resolved_value = TemplateResolver.resolve_nested(template, context)
-        return resolved_value, False
-
-    # Handle string templates
-    if isinstance(template, str) and "${" in template:
-        is_simple = TemplateResolver.is_simple_template(template)
-        resolved_value = TemplateResolver.resolve_template(template, context)
-        return resolved_value, is_simple
-
-    # No template variables present, preserve original type
-    return template, False
-
-
-def contains_unresolved_template(resolved_value: Any, original_template: Any, _depth: int = 0) -> bool:
-    """Check if a resolved value contains unresolved templates.
-
-    Handles strings, lists, dicts. Avoids false positives from resolved MCP
-    data containing ${...} by comparing against original template.
-
-    Args:
-        resolved_value: The value after template resolution
-        original_template: The original template before resolution
-        _depth: Current recursion depth
-
-    Returns:
-        True if contains unresolved templates, False otherwise
-    """
-    MAX_DEPTH = 100
-    if _depth > MAX_DEPTH:
+    if not isinstance(template, str) or not resolution.unresolved or resolution.issues:
         return False
-
-    if isinstance(resolved_value, str) and isinstance(original_template, str):
-        return _check_string_unresolved(resolved_value, original_template)
-
-    if isinstance(resolved_value, list) and isinstance(original_template, list):
-        if len(resolved_value) != len(original_template):
-            return False
-        return any(
-            contains_unresolved_template(r, t, _depth + 1)
-            for r, t in zip(resolved_value, original_template, strict=True)
-        )
-
-    if isinstance(resolved_value, dict) and isinstance(original_template, dict):
-        if set(resolved_value.keys()) != set(original_template.keys()):
-            return False
-        return any(
-            contains_unresolved_template(resolved_value[k], original_template[k], _depth + 1) for k in resolved_value
-        )
-
-    return False
-
-
-def _check_string_unresolved(resolved_value: str, original_template: str) -> bool:
-    """Check if a string contains unresolved templates."""
-    # Completely unresolved
-    if resolved_value == original_template:
-        return "${" in resolved_value
-
-    # Partially resolved — check if original variables remain
-    if "${" in resolved_value:
-        original_vars = TemplateResolver.extract_variables(original_template)
-        remaining_vars = TemplateResolver.extract_variables(resolved_value)
-        if original_vars & remaining_vars:
-            return True
-
-    return False
-
-
-def all_variables_from_absent_nodes(template_str: str, context: dict[str, Any]) -> bool:
-    """Check if ALL template variables reference nodes that are absent or failed.
-
-    Uses all() not any() — critical for coalesce correctness. After the
-    failed-node invariant fix, "absent from context" naturally covers
-    both "did not execute" and "executed and failed" because failed
-    nodes are moved out of the main namespace.
-    """
-    from pflow.runtime.template_resolver import TemplateResolver
-
-    variables = TemplateResolver.extract_variables(template_str)
-    if not variables:
-        return False
-    return all(TemplateResolver.extract_root_node_id(var) not in context for var in variables)
+    operands = [op for expr in parse(template).expressions for op in expr.operands]
+    return all(isinstance(op, Reference) and op.root not in context for op in operands)
 
 
 def inject_none_for_optional_inputs(
-    key: str,
-    resolved_value: Any,
-    template: Any,
+    resolved_inputs: dict[str, Any],
+    template_inputs: dict[str, Any],
     context: dict[str, Any],
     optional_input_keys: set[str],
-) -> Any:
-    """Replace unresolved optional input templates with None.
+    resolutions_by_key: dict[str, Resolution],
+) -> tuple[dict[str, Any], frozenset[str]]:
+    """Replace optional inputs left unresolved by a non-executed branch with None.
 
     For code nodes with optional input annotations, when the source node
     didn't execute, inject None instead of leaving unresolved ${...}.
+
+    Returns the inputs and the keys that received None — their resolutions no
+    longer count as unresolved. Every other key keeps its own channel, even one
+    sharing the injected key's expression text.
     """
-    if key != "inputs" or not optional_input_keys:
-        return resolved_value
-
-    if not isinstance(resolved_value, dict) or not isinstance(template, dict):
-        return resolved_value
-
-    modified = dict(resolved_value)
-    for input_key in optional_input_keys:
-        if input_key not in modified or input_key not in template:
-            continue
-
-        input_value = modified[input_key]
-        input_template = template[input_key]
-
-        if not isinstance(input_value, str) or "${" not in input_value:
-            continue
-        if not isinstance(input_template, str) or input_value != input_template:
-            continue
-
-        if all_variables_from_absent_nodes(input_template, context):
-            modified[input_key] = None
-
-    return modified
+    injected = frozenset(
+        key
+        for key in optional_input_keys
+        if key in resolved_inputs
+        and key in resolutions_by_key
+        and _left_to_absent_nodes(template_inputs.get(key), resolutions_by_key[key], context)
+    )
+    if not injected:
+        return resolved_inputs, injected
+    return {**resolved_inputs, **dict.fromkeys(injected)}, injected
 
 
 def resolve_templates(  # noqa: C901
@@ -346,17 +255,25 @@ def resolve_templates(  # noqa: C901
 
     for key in param_keys:
         template = template_config.template_params[key]
-        resolved_value, is_simple_template = resolve_template_parameter(key, template, context)
+        # `inputs` resolves per key, so an optional key injected with None below
+        # drops its own channel without hiding a sibling that shares its text.
+        inputs_by_key: dict[str, Resolution] | None = None
+        if key == "inputs" and isinstance(template, dict):
+            inputs_by_key = {k: resolve(v, context, auto_parse=True) for k, v in template.items()}
+            resolved_value: Any = {k: r.value for k, r in inputs_by_key.items()}
+            is_simple_template = False
+        else:
+            # A nested dict/list auto-parses JSON-string leaves; a simple string keeps its value's type.
+            resolution = resolve(template, context, auto_parse=isinstance(template, (dict, list)))
+            resolved_value = resolution.value
+            is_simple_template = isinstance(template, str) and parse(template).is_simple
 
         # Auto-parse JSON strings for structured parameters (only simple templates)
         if is_simple_template and isinstance(resolved_value, str):
             expected_type = template_config.expected_types.get(key)
-            if expected_type in ("dict", "list", "object", "array"):
+            if expected_type in CONTAINER_TYPES:
                 success, parsed = try_parse_json(resolved_value)
-                type_matches = (expected_type in ("dict", "object") and isinstance(parsed, dict)) or (
-                    expected_type in ("list", "array") and isinstance(parsed, list)
-                )
-                if success and type_matches:
+                if success and isinstance(parsed, list if expected_type in LIST_TYPES else dict):
                     resolved_value = parsed
 
         # Reverse: serialize dict/list -> str when expected type is str
@@ -417,22 +334,24 @@ def resolve_templates(  # noqa: C901
                         "diagnostic": type_diagnostic,
                     })
 
-        # Inject None for optional inputs from non-executed branches
-        if key == "inputs" and template_config.optional_input_keys:
-            resolved_value = inject_none_for_optional_inputs(
-                key, resolved_value, template, context, template_config.optional_input_keys
-            )
+        if inputs_by_key is not None:
+            # Inject None for optional inputs from non-executed branches
+            injected: frozenset[str] = frozenset()
+            if template_config.optional_input_keys and isinstance(resolved_value, dict):
+                resolved_value, injected = inject_none_for_optional_inputs(
+                    resolved_value, template, context, template_config.optional_input_keys, inputs_by_key
+                )
+            kept = (r for k, r in inputs_by_key.items() if k not in injected)
+            resolution = Resolution.combine(resolved_value, kept)
 
         resolved_params[key] = resolved_value
 
-        # Check if template was fully resolved
-        is_unresolved = contains_unresolved_template(resolved_value, template)
-
-        if is_unresolved:
+        if not resolution.ok:
             diagnostic = build_template_error_diagnostic(
                 key,
                 template,
                 context,
+                resolution,
                 node_id=node_id,
                 source_file=_extract_source_file(shared),
                 source_line=_extract_source_line(template_config, key),
@@ -454,6 +373,8 @@ def resolve_templates(  # noqa: C901
                 template_errors.append({
                     "message": diagnostic.message,
                     "unresolved": [key],
+                    "unresolved_expressions": tuple(sorted(resolution.unresolved)),
+                    "issues": tuple(sorted(resolution.issues)),
                     "template": template,
                     "diagnostic": diagnostic,
                 })

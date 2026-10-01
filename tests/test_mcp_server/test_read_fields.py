@@ -190,8 +190,8 @@ class TestCLIMCPParity:
         exec_id = cache_with_test_data
 
         # Execute CLI version (use formatter directly, simulating CLI logic)
+        from pflow.core.templates import TemplateResolver
         from pflow.execution.formatters.field_output_formatter import format_field_output
-        from pflow.runtime.template_resolver import TemplateResolver
 
         # Get cache data
         cache = ExecutionCache()

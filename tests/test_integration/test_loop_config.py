@@ -1099,6 +1099,19 @@ def test_diagnose_carry_ref_full_path_and_safe_deferral() -> None:
     assert dx("${n.missing}", "n", {"a": 1, "loop_stopped": "x", "_hidden": 2}) == ("missing", ["a"], "")
 
 
+def test_diagnose_carry_ref_walks_parsed_segments() -> None:
+    """Task 170 4a: the carry path is read from the parse, not split on dots/brackets.
+    A field miss before an index is still diagnosed; an index (static or dynamic) defers —
+    it may still resolve — and a dotted inner reference no longer tears the path.
+    """
+    from pflow.runtime.engine.engine import _diagnose_carry_ref as dx
+
+    assert dx("${n.missing[${i.j}].x}", "n", {"a": 1}) == ("missing", ["a"], "")
+    assert dx("${n.a[${i.j}].x}", "n", {"a": [{"x": 1}]}) is None
+    assert dx("${n.a[0].nope}", "n", {"a": [{"x": 1}]}) is None
+    assert dx("${other.a}", "n", {"a": 1}) is None  # not a self reference
+
+
 def test_shell_carry_threads_into_command_text_across_rounds(tmp_path) -> None:
     """End-to-end parity: for a SHELL body the carried value reaches the body ONLY via the
     command text (`${state}`), not `inputs:`. Assert the carried stdout accumulates across

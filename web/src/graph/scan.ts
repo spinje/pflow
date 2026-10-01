@@ -43,38 +43,68 @@ export function producedTypeOf(
   return null;
 }
 
-// Template-ref extraction for the param-read scan — mirrors scope.py's walk
-// (refs_with_path_in): find each ${...} block, split it on the coalesce operator
-// into operands, SKIP literal operands, then capture root + dotted tail per
-// non-literal operand. The operand split is load-bearing, not hygiene: a quoted
-// fallback like `${cfg.text ?? "ask gen.result owner"}` contains spaces, and a
-// space INSIDE the literal satisfies the root prefix class — without the skip,
-// `gen`'s `result` row would read as ACTIVE with zero real readers (the inverse
-// of the lie quiet rows exist to prevent; review-caught 2026-06-11).
-// The (?<!\$) lookbehind skips escaped templates ($${x} resolves to literal ${x}).
-const REF_BLOCK_RE = /(?<!\$)\$\{([^}]*)\}/g;
-const REF_IN_BLOCK_RE = /(?:^|[\s?])([a-zA-Z0-9_-]+)((?:\.[a-zA-Z0-9_-]+)*)/g;
+// Template-ref extraction for the param-read scan — mirrors scope.py's
+// refs_with_path_in, i.e. `parse(text).references` in src/pflow/core/templates.py.
+// The regex strings below are copies of that module's grammar (`_IDENT`,
+// `_VAR_NAME_PATTERN`, `_SEGMENT`, `_LITERAL_PATTERN`, `_EXPRESSION`, `_SCAN`): keep
+// them in step, so a read here is exactly a Reference the runtime would resolve.
+// One left-to-right scan: an escape `$${…}` (brace-balanced body) is literal text; an
+// unescaped `${` either opens an Expression (its non-literal operands are references,
+// a dynamic index `a[${i}]` contributing its index source too) or is an Issue that
+// runs to the next `}` and reads nothing. Literal operands are skipped because a
+// quoted fallback like `${cfg.text ?? "ask gen.result owner"}` is not a read of `gen`
+// (review-caught 2026-06-11).
+const IDENT = String.raw`[a-zA-Z_][\w-]*`;
+const STATIC_PATH = String.raw`${IDENT}(?:(?:\[[0-9]+\])?(?:\.${IDENT}(?:\[[0-9]+\])?)*)?`;
+const SEGMENT = String.raw`${IDENT}(?:\[(?:[0-9]+|\$\{${STATIC_PATH}\})\])?`;
+const PATH = String.raw`${SEGMENT}(?:\.${SEGMENT})*`;
+const LITERAL = String.raw`(?:"(?:[^"\\?\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4}|\?(?!\?))*"|\btrue\b|\bfalse\b|\bnull\b|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?|\[\]|\{\})`;
+const OPERAND = `(?:${LITERAL}|${PATH})`;
+const EXPRESSION_AT = String.raw`\$\{(${OPERAND}(?:\s*\?\?\s*${OPERAND})*)\}`;
+const SCAN = String.raw`(\$\$\{(?:[^{}]|\{[^{}]*\})*\}|\$\$\{)|(?<!\$)\$\{`;
+const SEGMENT_AT = String.raw`(${IDENT})(?:\[(?:[0-9]+|\$\{(${STATIC_PATH})\})\])?`;
+const LITERAL_FULL_RE = new RegExp(`^${LITERAL}$`);
 const COALESCE_SPLIT_RE = /\s*\?\?\s*/;
-// Fullmatch of TemplateResolver._VAR_NAME_PATTERN — the grammar gate scope.py
-// applies: only operands the runtime can actually resolve count as reads.
-const VAR_NAME_RE = /^[a-zA-Z_][\w-]*(?:(?:\[\d+\])?(?:\.[a-zA-Z_][\w-]*(?:\[\d+\])?)*)?$/;
 
-/** Mirrors TemplateResolver.split_coalesce_operands: no `??` → the single
- *  operand UNtrimmed (so the grammar gate rejects `${ a.x }`, which the runtime
- *  never resolves); with `??` → operands arrive stripped, like the runtime's. */
-function splitCoalesceOperands(expr: string): string[] {
-  if (!expr.includes("??")) return [expr];
-  return expr.split(COALESCE_SPLIT_RE).map((op) => op.trim());
+// One Reference: its root and the field names after it (indices are not fields —
+// `${data[0].x}` → data, ["x"]).
+type TemplateRef = { root: string; fields: string[] };
+
+/** `pathRefs("a[${i.j}].x")` → a/["x"], then the index source i/["j"] (outer first). */
+function pathRefs(path: string): TemplateRef[] {
+  const segment = new RegExp(SEGMENT_AT, "y");
+  const names: string[] = [];
+  const inner: TemplateRef[] = [];
+  for (let pos = 0; pos < path.length; pos = segment.lastIndex + 1) {
+    segment.lastIndex = pos;
+    const m = segment.exec(path);
+    if (m == null) break; // unreachable: the expression grammar already matched
+    names.push(m[1]!);
+    if (m[2] != null) inner.push(...pathRefs(m[2]));
+  }
+  return [{ root: names[0]!, fields: names.slice(1) }, ...inner];
 }
 
-/** Mirrors TemplateResolver.is_literal_operand (the skip scope.py applies before
- *  extracting refs): literals start with one of `{ [ " -` or a digit, or are
- *  exactly the keywords true/false/null; identifiers start with a letter/underscore. */
-function isLiteralOperand(operand: string): boolean {
-  const first = operand[0];
-  if (first == null) return false;
-  if ('{["-0123456789'.includes(first)) return true;
-  return operand === "true" || operand === "false" || operand === "null";
+/** Every Reference in author text, dynamic-index sources included (scope.py's walk). */
+function templateRefs(text: string): TemplateRef[] {
+  const scan = new RegExp(SCAN, "g");
+  const expression = new RegExp(EXPRESSION_AT, "y");
+  const refs: TemplateRef[] = [];
+  for (let m = scan.exec(text); m != null; m = scan.exec(text)) {
+    if (m[1] != null) continue; // an escape: literal text
+    expression.lastIndex = m.index;
+    const expr = expression.exec(text);
+    if (expr == null) {
+      const close = text.indexOf("}", m.index); // an Issue: through its first `}`
+      scan.lastIndex = close === -1 ? text.length : close + 1;
+      continue;
+    }
+    for (const operand of expr[1]!.split(COALESCE_SPLIT_RE)) {
+      if (!LITERAL_FULL_RE.test(operand)) refs.push(...pathRefs(operand));
+    }
+    scan.lastIndex = expression.lastIndex;
+  }
+  return refs;
 }
 
 function stringLeaves(value: unknown): string[] {
@@ -106,23 +136,12 @@ function paramTextReads(graph: RFGraph): ParamRead[] {
     const alias = reader.batch?.as_name;
     for (const param of reader.params) {
       for (const leaf of stringLeaves(param.value)) {
-        for (const block of leaf.matchAll(REF_BLOCK_RE)) {
-          for (const operand of splitCoalesceOperands(block[1] ?? "")) {
-            if (isLiteralOperand(operand.trim())) continue;
-            // Grammar gate (mirrors scope.py): gate the UNtrimmed operand —
-            // trimming first would admit `${ a.x }`, which never resolves.
-            if (!VAR_NAME_RE.test(operand)) continue;
-            for (const m of operand.matchAll(REF_IN_BLOCK_RE)) {
-              const root = m[1];
-              const tail = m[2] ?? "";
-              if (root == null || root === alias) continue; // the per-item batch alias, never a sibling
-              const producer = byScopeName.get(`${reader.parent ?? ""}|${root}`);
-              if (!producer || producer.id === reader.id) continue;
-              const segments = tail ? tail.slice(1).split(".") : [];
-              if (segments.length === 0) continue; // a bare `${gen}` names no field
-              found.push({ producer, segments });
-            }
-          }
+        for (const { root, fields } of templateRefs(leaf)) {
+          if (root === alias) continue; // the per-item batch alias, never a sibling
+          const producer = byScopeName.get(`${reader.parent ?? ""}|${root}`);
+          if (!producer || producer.id === reader.id) continue;
+          if (fields.length === 0) continue; // a bare `${gen}` names no field
+          found.push({ producer, segments: fields });
         }
       }
     }

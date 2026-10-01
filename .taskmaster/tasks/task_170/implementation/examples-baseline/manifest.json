@@ -1,0 +1,188 @@
+[
+  {
+    "example": "examples/bundling/command-ref.pflow.md",
+    "params": {},
+    "exit_code": 0,
+    "output": "bundling__command-ref.json"
+  },
+  {
+    "example": "examples/bundling/parent-with-sub.pflow.md",
+    "params": {
+      "input": "hello"
+    },
+    "exit_code": 0,
+    "output": "bundling__parent-with-sub.json"
+  },
+  {
+    "example": "examples/bundling/simple.pflow.md",
+    "params": {},
+    "exit_code": 0,
+    "output": "bundling__simple.json"
+  },
+  {
+    "example": "examples/bundling/sub-echo.pflow.md",
+    "params": {
+      "text": "hello"
+    },
+    "exit_code": 0,
+    "output": "bundling__sub-echo.json"
+  },
+  {
+    "example": "examples/core/conditional-branching.pflow.md",
+    "params": {},
+    "exit_code": 0,
+    "output": "core__conditional-branching.json"
+  },
+  {
+    "example": "examples/core/error-handling.pflow.md",
+    "params": {},
+    "exit_code": 0,
+    "output": "core__error-handling.json"
+  },
+  {
+    "example": "examples/core/minimal.pflow.md",
+    "params": {},
+    "exit_code": 0,
+    "output": "core__minimal.json"
+  },
+  {
+    "example": "examples/core/proxy-mappings.pflow.md",
+    "params": {},
+    "exit_code": 1,
+    "output": "core__proxy-mappings.json"
+  },
+  {
+    "example": "examples/core/simple-pipeline.pflow.md",
+    "params": {},
+    "exit_code": 1,
+    "output": "core__simple-pipeline.json"
+  },
+  {
+    "example": "examples/core/stateful-loop-judge-round.pflow.md",
+    "params": {
+      "contenders": "[\"a\", \"b\", \"c\", \"d\"]"
+    },
+    "exit_code": 0,
+    "output": "core__stateful-loop-judge-round.json"
+  },
+  {
+    "example": "examples/core/stateful-loop-tournament.pflow.md",
+    "params": {},
+    "exit_code": 0,
+    "output": "core__stateful-loop-tournament.json"
+  },
+  {
+    "example": "examples/core/stdin-echo.pflow.md",
+    "params": {
+      "data": "hello"
+    },
+    "exit_code": 0,
+    "output": "core__stdin-echo.json"
+  },
+  {
+    "example": "examples/core/stdout-result.pflow.md",
+    "params": {},
+    "exit_code": 0,
+    "output": "core__stdout-result.json"
+  },
+  {
+    "example": "examples/error-handling/coalesce-mixed-absent-failed.pflow.md",
+    "params": {},
+    "exit_code": 1,
+    "output": "error-handling__coalesce-mixed-absent-failed.json"
+  },
+  {
+    "example": "examples/error-handling/failed-node-direct-reference.pflow.md",
+    "params": {},
+    "exit_code": 1,
+    "output": "error-handling__failed-node-direct-reference.json"
+  },
+  {
+    "example": "examples/error-handling/loop-recovery.pflow.md",
+    "params": {},
+    "exit_code": 0,
+    "output": "error-handling__loop-recovery.json"
+  },
+  {
+    "example": "examples/error-handling/non-retriable-file-error.pflow.md",
+    "params": {},
+    "exit_code": 0,
+    "output": "error-handling__non-retriable-file-error.json"
+  },
+  {
+    "example": "examples/error-handling/retry-with-backoff.pflow.md",
+    "params": {},
+    "exit_code": 0,
+    "output": "error-handling__retry-with-backoff.json"
+  },
+  {
+    "example": "examples/error-handling/source-line-heavy-offsets.pflow.md",
+    "params": {},
+    "exit_code": 1,
+    "output": "error-handling__source-line-heavy-offsets.json"
+  },
+  {
+    "example": "examples/error-handling/source-line-multi-output.pflow.md",
+    "params": {},
+    "exit_code": 1,
+    "output": "error-handling__source-line-multi-output.json"
+  },
+  {
+    "example": "examples/error-handling/typo-on-failed-node.pflow.md",
+    "params": {},
+    "exit_code": 1,
+    "output": "error-handling__typo-on-failed-node.json"
+  },
+  {
+    "example": "examples/file-references/code-file-ref.pflow.md",
+    "params": {
+      "input": "hello"
+    },
+    "exit_code": 0,
+    "output": "file-references__code-file-ref.json"
+  },
+  {
+    "example": "examples/file-references/command-file-ref.pflow.md",
+    "params": {},
+    "exit_code": 0,
+    "output": "file-references__command-file-ref.json"
+  },
+  {
+    "example": "examples/file-references/no-file-refs.pflow.md",
+    "params": {},
+    "exit_code": 0,
+    "output": "file-references__no-file-refs.json"
+  },
+  {
+    "example": "examples/invalid/code-annotation-type-mismatch.pflow.md",
+    "params": {},
+    "exit_code": 1,
+    "output": "invalid__code-annotation-type-mismatch.json"
+  },
+  {
+    "example": "examples/invalid/code-missing-result-annotation.pflow.md",
+    "params": {},
+    "exit_code": 1,
+    "output": "invalid__code-missing-result-annotation.json"
+  },
+  {
+    "example": "examples/nested/to-uppercase.pflow.md",
+    "params": {
+      "text": "hello"
+    },
+    "exit_code": 0,
+    "output": "nested__to-uppercase.json"
+  },
+  {
+    "example": "examples/simple-workflow.pflow.md",
+    "params": {},
+    "exit_code": 0,
+    "output": "simple-workflow.json"
+  },
+  {
+    "example": "examples/test-nested-index.pflow.md",
+    "params": {},
+    "exit_code": 0,
+    "output": "test-nested-index.json"
+  }
+]

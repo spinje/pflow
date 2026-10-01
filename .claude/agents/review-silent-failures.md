@@ -30,7 +30,7 @@ Prioritize reading these files when they appear in the changes or are related to
 | `runtime/engine/batch_executor.py` | Complex error semantics (continue/fail_fast, partial/total fail, compile vs runtime errors) | 7 of 20 post-merge fixes |
 | `runtime/workflow_executor.py` | Parent/child workflow boundary — signals lost in transit | 3 fixes |
 | `runtime/output_resolver.py` | Output sources from non-executed branches silently absent | 2 fixes |
-| `runtime/template_resolver.py` + `runtime/engine/template_resolution.py` | Template resolution returning `None` on missing data | Multiple |
+| `core/templates.py` + `runtime/engine/template_resolution.py` | Template resolution returning `None` on missing data | Multiple |
 | `execution/formatters/` + `cli/workflow_output.py` | Display formatting — dual CLI/MCP output paths | Task 96 |
 | `core/workflow/validator.py` | Validation accepting invalid workflows | Multiple |
 | `runtime/cache.py` + `runtime/engine/instrumentation.py` | Cache serving stale data | 2 fixes |

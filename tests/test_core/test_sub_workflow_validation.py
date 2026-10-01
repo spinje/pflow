@@ -2229,3 +2229,18 @@ class TestSubWorkflowDiagnosticsCarrySeeAlso:
         assert load_errors[0].see_also == ["branching", "sub-workflows"], (
             f"see_also should be sorted union across all validation_errors, got: {load_errors[0].see_also}"
         )
+
+
+def test_alias_reference_inside_a_dynamic_index_counts() -> None:
+    """Per-item child validation keys on "do the params read the batch alias?". A
+    dynamic index's inner reference reads it too (Task 170 4a: ``extract_variables``
+    is the value view and no longer yields inner refs, so this reads the parse).
+
+    Mutation: check value-position roots only; the first assert fails.
+    """
+    from pflow.core.workflow.validator import WorkflowValidator
+
+    assert WorkflowValidator._params_reference_alias({"workflow": "${paths[${item.i}]}"}, "item") is True
+    assert WorkflowValidator._params_reference_alias({"workflow": "${item.path}"}, "item") is True
+    assert WorkflowValidator._params_reference_alias({"workflow": "${input.x} $${item.x}"}, "i") is False
+    assert WorkflowValidator._params_reference_alias(["${input.x}", {"k": "${i.x}"}], "i") is True

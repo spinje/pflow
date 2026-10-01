@@ -32,6 +32,7 @@ from pflow.core.exceptions import (
 from pflow.core.gate import GATE_KIND_APPROVAL
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_cache import CacheRenderContext
+from pflow.core.templates import Field, Reference, TemplateResolver, parse, resolve
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 from pflow.runtime.node_state import (
     FAILURE_CATEGORY_EXCEPTION,
@@ -45,7 +46,6 @@ from pflow.runtime.node_state import (
     get_node_failure,
     mark_node_failed,
 )
-from pflow.runtime.template_resolver import TemplateResolver
 
 from .api_warning_detector import detect_api_warning
 from .batch_executor import _collect_batch_trace, execute_batch
@@ -67,7 +67,7 @@ from .instrumentation import (
 from .loop_control import evaluate_loop_condition, is_carry_iteration, loop_runtime_scope, resolve_loop_cap
 from .namespaced_store import NamespacedSharedStore
 from .plan_node import NodePlan, plan_node
-from .template_resolution import contains_unresolved_template, resolve_templates
+from .template_resolution import resolve_templates
 from .types import CompiledWorkflow, NodeConfig
 
 # Map node class names to failure categories for step 17.5 (error-action
@@ -156,25 +156,22 @@ def _diagnose_carry_ref(template: str, node_id: str, latest: Any) -> tuple[str, 
     - any path that descends through a NON-dict value (e.g. a JSON string or list),
       which might still resolve at runtime — never claim absence we can't prove.
     """
-    if not isinstance(latest, dict):
+    parsed = parse(template)
+    if not isinstance(latest, dict) or not parsed.is_simple:
         return None
-    var = TemplateResolver.extract_simple_template_var(template)
-    if var is None or TemplateResolver.is_coalesce_expression(var):
+    operands = parsed.expressions[0].operands
+    ref = operands[0]
+    if len(operands) > 1 or not isinstance(ref, Reference) or ref.root != node_id:
         return None
-    prefix = f"{node_id}."
-    if not var.startswith(prefix):
-        return None
-    # Path after the node id; strip any [index] suffix per segment (dict-keyed walk).
-    segments = [seg.split("[", 1)[0] for seg in var[len(prefix) :].split(".") if seg]
     current: Any = latest
     walked: list[str] = []
-    for seg in segments:
-        if not isinstance(current, dict):
-            return None  # descends into a non-dict — may still resolve; defer
-        if seg not in current:
-            return (".".join([*walked, seg]), _loop_available_outputs(current), ".".join(walked))
-        walked.append(seg)
-        current = current[seg]
+    for seg in ref.path:
+        if not isinstance(seg, Field) or not isinstance(current, dict):
+            return None  # an index, or a non-dict value — may still resolve; defer
+        if seg.name not in current:
+            return (".".join([*walked, seg.name]), _loop_available_outputs(current), ".".join(walked))
+        walked.append(seg.name)
+        current = current[seg.name]
     return None  # fully resolved — not a carry failure
 
 
@@ -253,7 +250,7 @@ def _assert_carried_inputs_resolved(config: NodeConfig, plan: NodePlan, shared: 
     for key, template in carry.items():
         diag = _diagnose_carry_ref(template, node_id, latest)
         if resolved_inputs is not None:
-            unresolved = key not in resolved_inputs or contains_unresolved_template(resolved_inputs[key], template)
+            unresolved = key not in resolved_inputs or _plan_left_unresolved(plan, template)
         else:
             # strict: plan_node raised before resolving — only flag a self-ref whose
             # output the body demonstrably omitted (so an unrelated template error
@@ -267,6 +264,21 @@ def _assert_carried_inputs_resolved(config: NodeConfig, plan: NodePlan, shared: 
                 # name no specific field; list the loop node's top-level outputs.
                 missing_path, key_available, parent_prefix = None, available, ""
             raise _carry_unresolved_error(node_id, key, template, missing_path, key_available, parent_prefix)
+
+
+def _plan_left_unresolved(plan: NodePlan, template: str) -> bool:
+    """Whether resolution left the carry ``template`` literal (permissive: recorded, not raised).
+
+    Reads the ``inputs`` template-error entry's unresolved set — the resolver's own
+    verdict, so a carried value that merely CONTAINS ``${…}`` text is not flagged.
+    A carry value is a simple self-reference (the validator enforces it), so its
+    expression text is the one to look for.
+    """
+    var = TemplateResolver.extract_simple_template_var(template)
+    return any(
+        entry.get("unresolved") == ["inputs"] and var in entry["unresolved_expressions"]
+        for entry in plan.template_errors
+    )
 
 
 def build_prompt_cache_dict(
@@ -405,12 +417,12 @@ def _resolve_template_string(raw: Any, shared: dict[str, Any]) -> str | None:
     if not isinstance(raw, str):
         return str(raw) if raw is not None else None
     try:
-        resolved = TemplateResolver.resolve_template(raw, shared)
+        resolution = resolve(raw, shared)
     except (AttributeError, KeyError, TypeError, ValueError):
         return None
-    if not isinstance(resolved, str) or TemplateResolver.TEMPLATE_PATTERN.search(resolved):
+    if not resolution.ok or not isinstance(resolution.value, str):
         return None
-    return resolved
+    return resolution.value
 
 
 def parse_only_path(only_node: str | None) -> tuple[str | None, str | None]:

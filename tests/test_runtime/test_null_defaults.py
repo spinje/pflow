@@ -2,6 +2,7 @@
 
 import pytest
 
+from pflow.core.templates import TemplateResolver
 from pflow.registry import Registry
 from pflow.runtime import compile_workflow
 from pflow.runtime.engine import WorkflowEngine
@@ -11,7 +12,6 @@ from pflow.runtime.engine.template_resolution import (
     split_params,
 )
 from pflow.runtime.engine.types import TemplateConfig
-from pflow.runtime.template_resolver import TemplateResolver
 
 
 class TestNullDefaults:

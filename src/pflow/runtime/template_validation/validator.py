@@ -17,15 +17,15 @@ This module owns:
 """
 
 import logging
-import re
-from collections.abc import Iterator
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.suggestion_utils import find_similar_items
+from pflow.core.templates import DynamicIndex, Literal, Reference, Template, TemplateResolver, parse, resolve
+from pflow.core.workflow.template_surfaces import iter_template_surfaces
 from pflow.registry import Registry
-from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation.batch_item_validation import validate_batch_item_fields
+from pflow.runtime.template_validation.operands import OperandPolicy, iter_template_operands
 from pflow.runtime.template_validation.path_validation import validate_template_paths
 from pflow.runtime.template_validation.type_validation import (
     validate_code_node_input_annotations,
@@ -37,20 +37,6 @@ from pflow.runtime.template_validation.utils import get_node_ids
 __all__ = ["extract_node_outputs", "validate_workflow_templates"]
 
 logger = logging.getLogger(__name__)
-
-# More permissive pattern to catch malformed templates for validation
-# Supports array notation: ${node[0].field}, ${node.field[0].subfield}
-# Also supports nested index templates: ${node[${__index__}].field}
-# Also supports coalesce operator: ${a.field ?? b.field}
-# Also supports literal operands (Optional A): ${a ?? 0}, ${a ?? "x"}, ${0}
-# Skips `$${...}` escapes (any content) exactly like TemplateResolver.TEMPLATE_PATTERN.
-_PERM_VAR = r"[a-zA-Z_][\w-]*(?:(?:\[(?:[\d]+|\$\{[^}]+\})\])?(?:\.[\w-]*(?:\[(?:[\d]+|\$\{[^}]+\})\])?)*)?"
-# A coalesce operand is a literal OR a variable path. Literal sub-grammar is the
-# same one runtime resolution uses (kept in sync via TemplateResolver).
-_PERM_OPERAND = rf"(?:{TemplateResolver._LITERAL_PATTERN}|{_PERM_VAR})"
-_PERMISSIVE_PATTERN = re.compile(rf"(?<!\$)\$\{{({_PERM_OPERAND}(?:\s*\?\?\s*{_PERM_OPERAND})*)\}}")
-# A template opening; an escaped `$${` is literal text, not an opening.
-_TEMPLATE_OPEN = re.compile(r"(?<!\$)\$\{")
 
 # Batch output definitions matching the shape built by
 # runtime/engine/batch_executor.py:build_batch_output
@@ -101,8 +87,9 @@ def validate_workflow_templates(
         )
         return diagnostics
 
-    # Extract all templates from workflow
-    all_templates = _extract_all_templates(workflow_ir)
+    # Every reference in params, batch.items and loop fields, tagged with its policy
+    operands = list(iter_template_operands(workflow_ir))
+    all_templates = {operand.ref.raw for operand in operands}
     cache_templates = _extract_cache_templates_for_unused_check(workflow_ir)
 
     if all_templates or cache_templates:
@@ -114,10 +101,13 @@ def validate_workflow_templates(
         logger.debug("No template variables found in workflow")
 
     # Check for unused inputs — the union ensures inputs declared ONLY for use
-    # in ``## Cache`` aren't flagged as unused. Cache vars don't flow through
-    # ``validate_template_paths`` below (their resolution is handled by
-    # ``core/workflow/data_flow.py::_validate_cache_block`` with richer messages).
-    unused_input_diagnostics = _validate_unused_inputs(workflow_ir, all_templates | cache_templates)
+    # in ``## Cache`` or an output ``source:`` aren't flagged as unused. Neither
+    # flows through ``validate_template_paths`` below (cache vars are resolved by
+    # ``core/workflow/data_flow.py::_validate_cache_block``, output sources are
+    # root-checked by ``WorkflowValidator._validate_output_sources``).
+    unused_input_diagnostics = _validate_unused_inputs(
+        workflow_ir, all_templates | cache_templates | _extract_output_templates_for_unused_check(workflow_ir)
+    )
     diagnostics.extend(unused_input_diagnostics)
 
     # If no templates exist anywhere in the workflow, most template passes can
@@ -147,16 +137,10 @@ def validate_workflow_templates(
         f"Extracted outputs from {len(node_outputs)} node variables", extra={"outputs": sorted(node_outputs.keys())}
     )
 
-    # Pass 5: Validate each template path. Uses the field-checkable subset, NOT
-    # all_templates: operands of a multi-operand ?? chain are excluded because
-    # ?? falls through on a missing field at runtime (issue #441), so field-
-    # checking them would hard-error on a legitimately-optional field. Their
-    # root existence is still validated in core/workflow/data_flow.py.
-    diagnostics.extend(
-        validate_template_paths(
-            _field_checkable_templates(workflow_ir), available_params, node_outputs, workflow_ir, registry
-        )
-    )
+    # Pass 5: Validate each FIELD_CHECK template path (the operand classifier:
+    # a ?? operand's root is checked by core/workflow/data_flow.py instead).
+    field_checkable = {operand.ref.raw for operand in operands if operand.policy is OperandPolicy.FIELD_CHECK}
+    diagnostics.extend(validate_template_paths(field_checkable, available_params, node_outputs, workflow_ir, registry))
 
     # Pass 6: Validate template types match parameter expectations
     diagnostics.extend(validate_template_types(workflow_ir, node_outputs, registry))
@@ -165,7 +149,7 @@ def validate_workflow_templates(
     diagnostics.extend(validate_shell_command_types(workflow_ir, node_outputs))
 
     # Pass 8: Validate batch item field access (${item.field} against inferred structure)
-    diagnostics.extend(validate_batch_item_fields(workflow_ir, node_outputs))
+    diagnostics.extend(validate_batch_item_fields(workflow_ir, node_outputs, operands))
 
     # Pass 9: Validate code-node input annotations against upstream template types
     diagnostics.extend(validate_code_node_input_annotations(workflow_ir, node_outputs))
@@ -249,17 +233,17 @@ def _loop_condition_diagnostic(
     - **Typed-output gate (belt half 1)**: reject a `while:` whose source has a
       *known string* type (e.g. `${shell.stdout}`). `any`/un-inferable types are
       allowed so the motivating sub-workflow example isn't false-rejected. A
-      coalesce (`${a ?? b}`) is checked per non-literal operand — the runtime belt
-      raises on a string result too, so checking here keeps the validation half of
-      the belt-and-suspenders honest.
+      coalesce (`${a ?? b}`) is checked per operand, a string literal (`"false"`)
+      being a known string — the runtime belt raises on a string result too, so
+      checking here keeps the validation half of the belt-and-suspenders honest.
     """
     from pflow.runtime.template_validation.type_checker import infer_template_type
 
-    if any(ch in _LOOP_OPERATOR_CHARS for ch in condition_template):
+    if _has_loop_operator(condition_template):
         return _make_loop_operator_diagnostic(node_id, field_name, condition_template)
 
-    var = TemplateResolver.extract_simple_template_var(condition_template)
-    if var is None:
+    template = parse(condition_template)
+    if not template.is_simple:
         # Not a single ${...} reference. The schema pattern (^\$\{.+\}$) is too broad to
         # catch a multi-reference like `${a}${b}`, so reject it HERE rather than leaving the
         # runtime to silently single-pass on it (the runtime stops on this shape — issue #445).
@@ -270,15 +254,20 @@ def _loop_condition_diagnostic(
     # template ${c} — this is a node ID. Use ${c.output_key}") AND data-flow. Verified
     # via the CLI: such a workflow fails validation (exit 1), it does NOT silently loop
     # to the cap. Adding a third loop-specific error would only be noise.
-    is_coalesce = TemplateResolver.is_coalesce_expression(var)
-    operands = TemplateResolver.split_coalesce_operands(var) if is_coalesce else [var]
-    for operand in operands:
-        if TemplateResolver.is_literal_operand(operand):
-            continue
-        inferred = infer_template_type(operand, workflow_ir, node_outputs)
+    for operand in template.expressions[0].operands:
+        if isinstance(operand, Literal):
+            inferred = "str" if isinstance(operand.value, str) else None
+        else:
+            inferred = infer_template_type(operand.raw, workflow_ir, node_outputs)
         if inferred in _KNOWN_STRING_TYPES:
-            return _make_loop_string_type_diagnostic(node_id, field_name, condition_template, operand, str(inferred))
+            return _make_loop_string_type_diagnostic(
+                node_id, field_name, condition_template, operand.raw, str(inferred)
+            )
     return None
+
+
+def _has_loop_operator(condition_template: str) -> bool:
+    return any(ch in _LOOP_OPERATOR_CHARS for ch in condition_template)
 
 
 def _make_loop_operator_diagnostic(node_id: str, field_name: str, condition_template: str) -> Diagnostic:
@@ -397,18 +386,15 @@ def _carry_value_unknown_output(value: str, node_id: str, node_outputs: dict[str
     first checks each self-ref operand against the declared outputs. Non-self-ref operands
     are left to the self-ref check in data_flow.
     """
-    var = TemplateResolver.extract_simple_template_var(value)
-    if var is None:
+    template = parse(value)
+    if not template.is_simple:
         return None
-    operands = TemplateResolver.split_coalesce_operands(var) if TemplateResolver.is_coalesce_expression(var) else [var]
-    for operand in operands:
-        if TemplateResolver.is_literal_operand(operand):
+    for operand in template.expressions[0].operands:
+        if not isinstance(operand, Reference) or operand.root != node_id:
             continue
-        if TemplateResolver.extract_root_node_id(operand) != node_id:
-            continue
-        output_name = TemplateResolver.extract_first_field_segment(operand)
-        if output_name and f"{node_id}.{output_name}" not in node_outputs:
-            return output_name
+        first_field = operand.first_field()
+        if first_field and f"{node_id}.{first_field[1]}" not in node_outputs:
+            return first_field[1]
     return None
 
 
@@ -467,19 +453,12 @@ def _validate_loop_carry_prompt_usage(workflow_ir: dict[str, Any]) -> list[Diagn
         if not isinstance(node_id, str) or not isinstance(carry, dict):
             continue
         text = _loop_prompt_sink_text(node)
-        # Collect the ROOT id of every template referenced in the prompt/command text.
+        # Collect the ROOT id of every reference in the prompt/command text.
         # A carried key used via a nested path (`${state.summary}`), index
-        # (`${state[0]}`), or coalesce (`${state ?? ""}`) still roots at `state`, so it
-        # counts as referenced — an exact `${state}` substring check false-positives on
-        # all of those forms (the carry IS used, just not bare).
-        referenced_roots: set[str] = set()
-        for match in TemplateResolver.TEMPLATE_EXTRACT_PATTERN.finditer(text):
-            for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
-                if TemplateResolver.is_literal_operand(operand):
-                    continue
-                root = TemplateResolver.extract_root_node_id(operand)
-                if root:
-                    referenced_roots.add(root)
+        # (`${state[0]}`, `${x[${state}]}`), or coalesce (`${state ?? ""}`) still
+        # roots at `state`, so it counts as referenced — an exact `${state}` substring
+        # check false-positives on all of those forms (the carry IS used, just not bare).
+        referenced_roots = {ref.root for ref in parse(text).references}
         for key in carry:
             if isinstance(key, str) and key not in referenced_roots:
                 diagnostics.append(_make_loop_carry_unreferenced_warning(node_id, node_type, key))
@@ -536,11 +515,11 @@ def _validate_loop_carry_literal_fallback(workflow_ir: dict[str, Any]) -> list[D
         for key, value in carry.items():
             if not isinstance(key, str) or not isinstance(value, str):
                 continue
-            var = TemplateResolver.extract_simple_template_var(value)
-            if var is None or not TemplateResolver.is_coalesce_expression(var):
+            template = parse(value)
+            if not template.is_simple:
                 continue
-            operands = TemplateResolver.split_coalesce_operands(var)
-            if any(TemplateResolver.is_literal_operand(op) for op in operands):
+            operands = template.expressions[0].operands
+            if len(operands) > 1 and any(isinstance(op, Literal) for op in operands):
                 diagnostics.append(_make_loop_carry_literal_fallback_warning(node_id, key, value))
     return diagnostics
 
@@ -629,114 +608,83 @@ def _validate_unused_inputs(workflow_ir: dict[str, Any], all_templates: set[str]
     return diagnostics
 
 
-def _malformed_literal_operand_hint(value: str) -> tuple[str, list[str]] | None:
-    """Return a targeted (message, suggestions) for a malformed literal operand.
+def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+    """The ONE Issue pass: an unescaped ``${`` that opens no valid expression is an
+    ERROR on every template-bearing surface (``iter_template_surfaces``).
 
-    After Optional A, ``${a ?? 0}`` and friends are valid, but ``${a ?? [1,2]}``
-    (composite array) or ``${a ?? "unterminated}`` are not. Generic "malformed
-    template syntax" misleads agents into thinking their literal is fine. This
-    detects an operand that *looks* like a literal (starts with ``" [ { -`` or a
-    digit) but doesn't fully parse, and returns the literal-specific guidance.
-    Returns None when no such operand is found (caller uses the generic message).
-    """
-    if "??" not in value:
-        return None
-
-    for match in TemplateResolver.TEMPLATE_EXTRACT_PATTERN.finditer(value):
-        for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
-            if not TemplateResolver.is_literal_operand(operand):
-                continue
-            # Check against the literal GRAMMAR (not json.loads): composite
-            # arrays/objects like [1,2] parse as JSON but are deliberately
-            # excluded from the ?? literal grammar.
-            if re.fullmatch(TemplateResolver._LITERAL_PATTERN, operand) is None:
-                return (
-                    f"Malformed literal operand in '${{{match.group(1)}}}': literal operands must be "
-                    "JSON values — numbers, \"double-quoted strings\" (no '??' inside), "
-                    "true/false/null, [], or {}.",
-                    [
-                        "For complex defaults, use a code node that emits the value, then reference it.",
-                    ],
-                )
-    return None
-
-
-def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[Diagnostic]:  # noqa: C901
-    """Detect malformed template syntax by counting ${ vs valid template matches.
-
-    A malformed template is one where we find ${ but it doesn't form a valid template.
-    Examples: ${unclosed, ${}, ${ }
-
-    Args:
-        workflow_ir: The workflow IR
-
-    Returns:
-        Diagnostics for malformed templates
+    One diagnostic per value; a malformed literal operand gets targeted guidance.
+    Which Issues are errors on which surface is decided here and only here (the
+    deferred #621 tolerance is policy over Issues, never a parse mode).
     """
     diagnostics: list[Diagnostic] = []
-
-    for node in workflow_ir.get("nodes", []):
-        node_id = node.get("id", "unknown")
-        params = node.get("params", {})
-
-        def check_value(value: Any, node_id: str, param_path: str = "") -> None:
-            """Recursively check for malformed templates in any value type."""
-            if isinstance(value, str) and "${" in value:
-                # Count how many ${ we have
-                dollar_brace_count = len(_TEMPLATE_OPEN.findall(value))
-
-                # Count how many valid templates we matched
-                valid_matches = _PERMISSIVE_PATTERN.findall(value)
-
-                # Account for nested templates inside brackets - they're part of
-                # outer templates and shouldn't be counted separately.
-                # Example: ${results[${__index__}]} has 2 '${' but is 1 logical template
-                # - valid_matches = ['results[${__index__}]', '__index__'] (2 matches)
-                # - nested_count = 1 (one match contains '[${')
-                # - dollar_brace_count = 2
-                # - len(valid_matches) + nested_count = 3 >= 2 ✓ (no error)
-                nested_count = sum(f"${{{m}}}".count("[${") for m in valid_matches)
-
-                # If mismatch (accounting for nested), we have malformed syntax
-                if len(valid_matches) + nested_count < dollar_brace_count:
-                    path = f"nodes[id={node_id}].params.{param_path}" if param_path else f"nodes[id={node_id}].params"
-                    # Discriminate: a malformed LITERAL operand (Optional A) gets a
-                    # targeted message so agents don't think their literal is fine.
-                    literal_hint = _malformed_literal_operand_hint(value)
-                    if literal_hint is not None:
-                        message, suggestions = literal_hint
-                    else:
-                        message = (
-                            f"Malformed template syntax: found {dollar_brace_count} '${{' but only "
-                            f"{len(valid_matches)} valid template(s)."
-                        )
-                        suggestions = ["Check for missing '}' or empty templates like '${}'."]
-                    diagnostics.append(
-                        Diagnostic(
-                            severity=Severity.ERROR,
-                            source="validator",
-                            title="Template Error",
-                            node_id=node_id,
-                            message=message,
-                            suggestions=suggestions,
-                            context={
-                                "category": "template_error",
-                                "path": path,
-                                "template": value if isinstance(value, str) else None,
-                            },
-                        )
+    for surface in iter_template_surfaces(workflow_ir):
+        for location, template in surface.templates():
+            if template.issues and location in ("loop.while", "loop.until") and _has_loop_operator(template.source):
+                # `while: ${x > 0}`: the targeted "a condition is not an expression" guidance
+                diagnostics.append(
+                    _make_loop_operator_diagnostic(
+                        str(surface.node_id), location.removeprefix("loop."), template.source
                     )
-            elif isinstance(value, dict):
-                for key, val in value.items():
-                    check_value(val, node_id, f"{param_path}.{key}" if param_path else key)
-            elif isinstance(value, list):
-                for idx, item in enumerate(value):
-                    check_value(item, node_id, f"{param_path}[{idx}]")
-
-        for param_key, param_value in params.items():
-            check_value(param_value, node_id, param_key)
-
+                )
+            elif template.issues:
+                diagnostics.append(_issue_diagnostic(surface.node_id, surface.path(location), template))
+            elif surface.kind == "cache_prose" and template.expressions:
+                diagnostics.append(_cache_prose_reference_diagnostic(surface.path(location), template))
     return diagnostics
+
+
+def _issue_diagnostic(node_id: str | None, path: str, template: Template) -> Diagnostic:
+    first = template.issues[0]
+    if first.kind == "bad_literal":
+        inner = first.raw[2:-1] if first.raw.endswith("}") else first.raw[2:]
+        message = (
+            f"Malformed literal operand in '${{{inner}}}': literal operands must be "
+            "JSON values — numbers, \"double-quoted strings\" (no '??' inside), "
+            "true/false/null, [], or {}."
+        )
+        suggestions = ["For complex defaults, use a code node that emits the value, then reference it."]
+    else:
+        # Every unescaped `${` — an expression's own and its dynamic indices', and each
+        # one an Issue swallowed (`${first ${second` is one Issue, two openings).
+        opens = sum(
+            1
+            + sum(isinstance(seg, DynamicIndex) for op in expr.operands if isinstance(op, Reference) for seg in op.path)
+            for expr in template.expressions
+        ) + sum(issue.raw.count("${") - issue.raw.count("$${") for issue in template.issues)
+        message = (
+            f"Malformed template syntax: found {opens} '${{' but only {len(template.expressions)} valid template(s)."
+        )
+        shown = first.raw if len(first.raw) <= 60 else first.raw[:57] + "..."
+        suggestions = [
+            f"'{shown}' is not a valid template. A reference is ${{node.field}}: index a list as "
+            "items[0] (not items.0), close every '${' with '}', and write '$${' for a literal '${'."
+        ]
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Template Error",
+        node_id=node_id,
+        message=message,
+        suggestions=suggestions,
+        context={"category": "template_error", "path": path, "template": template.source},
+    )
+
+
+def _cache_prose_reference_diagnostic(path: str, template: Template) -> Diagnostic:
+    """A reference in a chunk's prose (reachable from dict IR only: the ``## Cache``
+    chunker turns every markdown reference into its own chunk). The prose is sent
+    verbatim, so the reference would reach the model unresolved."""
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Template Error",
+        message=(
+            f"Invalid cache block: cache prose may not contain template references "
+            f"(found ${{{template.expressions[0].raw}}})."
+        ),
+        suggestions=["Make each reference its own chunk: a `${var}` in the ## Cache block."],
+        context={"category": "template_error", "path": path, "template": template.source},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -744,88 +692,14 @@ def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[Diagnosti
 # ---------------------------------------------------------------------------
 
 
-def _operands_in_string(value: str) -> Iterator[tuple[str, bool]]:
-    """Yield ``(operand, in_coalesce)`` for each non-literal operand in one string.
-
-    Uses the permissive pattern (so malformed templates are still surfaced by the
-    separate malformed-syntax pass) and splits ``??`` chains. Literal operands
-    (Optional A — ``0``, ``"x"``, ``null``) are dropped: they are values, not refs.
-    ``in_coalesce`` is True for an operand of a multi-operand ``??`` chain.
-    """
-    for match in _PERMISSIVE_PATTERN.findall(value):
-        if "??" in match:
-            for op in TemplateResolver.split_coalesce_operands(match):
-                if not TemplateResolver.is_literal_operand(op):
-                    yield op, True
-        elif not TemplateResolver.is_literal_operand(match):
-            yield match, False
-
-
-def _node_template_value_sources(node: dict[str, Any]) -> Iterator[Any]:
-    """Yield every value on a node that may carry templates: params, ``batch.items``,
-    and the loop condition / ``max_iterations:`` sources.
-
-    Including the loop sources means an input used ONLY in ``while:`` isn't flagged
-    "unused", and the root of ``while: ${typo.x}`` is path-validated.
-    """
-    yield from node.get("params", {}).values()
-    batch_config = node.get("batch")
-    if batch_config and batch_config.get("items"):
-        yield batch_config["items"]
-    loop_config = node.get("loop")
-    if isinstance(loop_config, dict):
-        for key in ("while", "until", "max_iterations"):
-            value = loop_config.get(key)
-            if isinstance(value, str):
-                yield value
-
-
-def _iter_template_operands(workflow_ir: dict[str, Any]) -> Iterator[tuple[str, bool]]:
-    """Yield ``(operand, in_coalesce)`` for every non-literal template operand
-    found in node params, ``batch.items``, and loop conditions.
-
-    ``in_coalesce`` operands may be legitimately absent at runtime (``??`` falls
-    through on a missing field — issue #441), so they are NOT eligible for Pass-5
-    field validation, though they ARE references for unused-input detection. This
-    is the single source of traversal truth for both ``_extract_all_templates``
-    and ``_field_checkable_templates``.
-    """
-
-    def walk(value: Any) -> Iterator[tuple[str, bool]]:
-        if isinstance(value, str) and "$" in value:
-            yield from _operands_in_string(value)
-        elif isinstance(value, dict):
-            for val in value.values():
-                yield from walk(val)
-        elif isinstance(value, list):
-            for item in value:
-                yield from walk(item)
-
-    for node in workflow_ir.get("nodes", []):
-        for source in _node_template_value_sources(node):
-            yield from walk(source)
-
-
 def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:
-    """All non-literal template operands (both sides of every ``??`` chain).
+    """Every reference in node params, ``batch.items`` and loop fields, by source
+    text — both sides of every ``??`` chain and a dynamic index's inner references.
 
-    Used for unused-input detection — an operand is a reference even when ``??``
-    may let it be absent at runtime. Pass 5 (path validation) instead uses the
-    field-checkable subset (see ``_field_checkable_templates``).
+    The unused-input check counts these; Pass 5 field-checks only the
+    ``FIELD_CHECK`` ones (``operands.iter_template_operands``).
     """
-    return {operand for operand, _ in _iter_template_operands(workflow_ir)}
-
-
-def _field_checkable_templates(workflow_ir: dict[str, Any]) -> set[str]:
-    """Template operands eligible for Pass-5 path/field existence validation.
-
-    Excludes operands of a multi-operand ``??`` chain: under issue #441 ``??``
-    falls through on a missing field, so a legitimately-optional field must not
-    hard-error here. Their root existence is still validated in
-    ``core/workflow/data_flow.py``; a bare ``${node.field}`` (no ``??``) stays
-    fully field-checked.
-    """
-    return {operand for operand, in_coalesce in _iter_template_operands(workflow_ir) if not in_coalesce}
+    return {operand.ref.raw for operand in iter_template_operands(workflow_ir)}
 
 
 def _extract_cache_templates_for_unused_check(workflow_ir: dict[str, Any]) -> set[str]:
@@ -848,32 +722,30 @@ def _extract_cache_templates_for_unused_check(workflow_ir: dict[str, Any]) -> se
     ``all_templates`` set passed to ``validate_template_paths`` and friends.
     Only ``_validate_unused_inputs`` consumes the union.
     """
-    templates: set[str] = set()
-    cache_block = workflow_ir.get("cache")
-    if not isinstance(cache_block, dict):
-        return templates
-    cache_items = cache_block.get("items")
-    if not isinstance(cache_items, list):
-        return templates
-    for item in cache_items:
-        if not isinstance(item, dict):
-            continue
-        var = item.get("var")
-        if not isinstance(var, str) or not var:
-            continue
-        # Apply the same coalesce-split as node-param templates so a
-        # hypothetical ``${a ?? b}`` chunk var (parser doesn't allow this in v1
-        # but a programmatic IR could) is still split into operands for
-        # the unused-input check.
-        if "??" in var:
-            templates.update(
-                op
-                for op in TemplateResolver.split_coalesce_operands(var)
-                if not TemplateResolver.is_literal_operand(op)
-            )
-        elif not TemplateResolver.is_literal_operand(var):
-            templates.add(var)
-    return templates
+    return _surface_references(workflow_ir, "cache_var")
+
+
+def _extract_output_templates_for_unused_check(workflow_ir: dict[str, Any]) -> set[str]:
+    """The references of every output ``source:`` — an input may be declared only to
+    be returned. A plain ``node.x`` / ``input`` source is read as the ``${…}`` the
+    runtime resolves it as. Root-checked by ``WorkflowValidator._validate_output_sources``;
+    like cache vars, kept out of ``validate_template_paths``."""
+    references: set[str] = set()
+    for surface in iter_template_surfaces(workflow_ir):
+        if surface.kind == "output_source":
+            source = surface.value if "${" in surface.value else "${" + surface.value + "}"
+            references.update(ref.raw for ref in parse(source).references)
+    return references
+
+
+def _surface_references(workflow_ir: dict[str, Any], kind: str) -> set[str]:
+    return {
+        ref.raw
+        for surface in iter_template_surfaces(workflow_ir)
+        if surface.kind == kind
+        for _, template in surface.templates()
+        for ref in template.references
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1138,9 +1010,11 @@ def _resolve_child_workflow_outputs(
     if not workflow_ref or not isinstance(workflow_ref, str):
         return None
 
-    # Skip template references — can't resolve at validation time
-    if "${" in workflow_ref:
+    # Skip template references — can't resolve at validation time. An escape-only
+    # reference is the literal path the node receives.
+    if TemplateResolver.has_references(workflow_ref):
         return None
+    workflow_ref = resolve(workflow_ref, {}).value
 
     from pflow.core.file_resolver import is_workflow_file_reference
 
@@ -1223,7 +1097,9 @@ def _llm_response_type(node_params: dict[str, Any] | None) -> str:
     if not isinstance(node_params, dict) or node_params.get("output_schema") is None:
         return "str"
     schema = node_params["output_schema"]
-    if TemplateResolver.has_templates(schema) or not isinstance(schema, dict) or not schema:
+    # A templated schema is unknown until runtime; an escape-only one is the schema the node receives
+    schema = None if TemplateResolver.has_references(schema) else resolve(schema, {}).value
+    if not isinstance(schema, dict) or not schema:
         return "any"
     if "$ref" in schema or _LLM_ROOT_COMBINATORS.intersection(schema):
         return "any"

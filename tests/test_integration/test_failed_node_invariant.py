@@ -737,6 +737,7 @@ def test_template_error_shows_both_succeeded_and_failed_peers_in_context():
     failed and was archived to __failures__".
     """
     from pflow.core.diagnostic_render import format_diagnostic
+    from pflow.core.templates import resolve
     from pflow.runtime.engine.template_errors import build_template_error_diagnostic
     from pflow.runtime.node_state import FAILURE_CATEGORY_SHELL, mark_node_failed
 
@@ -765,6 +766,7 @@ def test_template_error_shows_both_succeeded_and_failed_peers_in_context():
         "command",
         "${missing_ref.stdout}",
         shared,
+        resolve("${missing_ref.stdout}", shared),
     )
 
     # Structured context exposes both lists

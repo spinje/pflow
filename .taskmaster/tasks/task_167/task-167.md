@@ -131,8 +131,8 @@ None hard.
   variable string) — but **no character span** (`runtime/engine/template_errors.py:126-224, 302-322`).
 
 ### Quick-fix column work (only if pursuing Tier B quick-fixes)
-- Would touch `core/markdown_parser.py` and the template tokenizer (`runtime/template_resolver.py`
-  `TEMPLATE_PATTERN`/`TEMPLATE_EXTRACT_PATTERN`) to record where each `${...}`/token starts and ends.
+- Would touch `core/markdown_parser.py`; template spans already exist: `core/templates.py`
+  `parse(text).segments` (`Expression.span` / `Issue.span`) record where each `${...}` starts and ends.
   **Scope unverified.**
 - **UTF-16 caveat:** LSP `character` positions are UTF-16 code units by default. Whole-line ranges at
   char 0 are immune, but real end-columns need UTF-16 counting or negotiating
@@ -179,8 +179,8 @@ The server validates the **live unsaved buffer** (`didChange`), so feedback is o
   location assembler
 - `src/pflow/runtime/engine/template_errors.py` — `unresolved_references` structure,
   `did_you_mean`/`corrected_var` (`:126-224, 302-322`)
-- `src/pflow/core/markdown_parser.py` + `src/pflow/runtime/template_resolver.py` — where column
-  tracking would be added for quick-fixes (Tier B optional)
+- `src/pflow/core/markdown_parser.py` + `src/pflow/core/templates.py` (`Template.segments` spans) —
+  where column tracking would be added for quick-fixes (Tier B optional)
 - `pyproject.toml` — add `[project.optional-dependencies] lsp` (no extras exist today)
 - External: LSP 3.17 spec; `pygls` (+ `lsprotocol`); SARIF 2.1.0; `none-ls.nvim`; VS Code SARIF
   Viewer; `nvim-lspconfig`

@@ -8,6 +8,7 @@ from typing import Any
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.prompt_refs import classify_prompt_refs, first_per_item_position
+from pflow.core.templates import TemplateResolver
 
 from .. import cost_estimation
 from ..below_min_tokens_detector import (
@@ -19,7 +20,7 @@ from ..below_min_tokens_detector import (
 from ..below_min_tokens_detector import (
     detect as detect_below_min_tokens,
 )
-from ..context import AnalysisContext, template_resolver
+from ..context import AnalysisContext
 from ..token_estimation import (
     tokenize_prompt_region,
     tokenize_prompt_region_for_projection,
@@ -477,15 +478,10 @@ def _opaque_prompt_warnings(
     prompt = node.get("params", {}).get("prompt", "")
     if not isinstance(prompt, str):
         return []
-    stripped = prompt.strip()
-    template_resolver_cls = template_resolver()
-    if not template_resolver_cls.is_simple_template(stripped):
+    inner = TemplateResolver.extract_simple_template_var(prompt.strip())
+    if inner is None or TemplateResolver.is_coalesce_expression(inner):
         return []
-
-    inner = stripped[2:-1]
-    if template_resolver_cls.is_coalesce_expression(inner):
-        return []
-    root = template_resolver_cls.extract_root_node_id(inner)
+    root = TemplateResolver.extract_root_node_id(inner)
 
     upstream_node = nodes_by_id.get(root)
     if upstream_node is None:
@@ -521,14 +517,10 @@ def _resolve_through_batch_alias(
     items_expr = batch.get("items", "")
     if not isinstance(items_expr, str):
         return None
-    items_stripped = items_expr.strip()
-    template_resolver_cls = template_resolver()
-    if not template_resolver_cls.is_simple_template(items_stripped):
+    items_inner = TemplateResolver.extract_simple_template_var(items_expr.strip())
+    if items_inner is None or TemplateResolver.is_coalesce_expression(items_inner):
         return None
-    items_inner = items_stripped[2:-1]
-    if template_resolver_cls.is_coalesce_expression(items_inner):
-        return None
-    items_root = template_resolver_cls.extract_root_node_id(items_inner)
+    items_root = TemplateResolver.extract_root_node_id(items_inner)
     return nodes_by_id.get(items_root)
 
 

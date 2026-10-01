@@ -10,7 +10,7 @@ node type that writes stderr to the shared store.
 
 from typing import Any
 
-from ..template_resolver import TemplateResolver
+from pflow.core.templates import parse
 
 
 def extract_node_ids_from_template(template: str) -> set[str]:
@@ -32,8 +32,7 @@ def extract_node_ids_from_template(template: str) -> set[str]:
         >>> sorted(extract_node_ids_from_template("${data[0].name}"))
         ['data']
     """
-    variables = TemplateResolver.extract_variables(template)
-    return {TemplateResolver.extract_root_node_id(var) for var in variables}
+    return {ref.root for ref in parse(template).references}
 
 
 def get_upstream_stderr(

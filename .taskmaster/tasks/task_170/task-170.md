@@ -10,7 +10,11 @@ language one small, typed thing an agent can load whole.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-10-01
 
 ## Priority
 
@@ -99,7 +103,7 @@ One module, `core/templates` (single file initially; split only if it grows), ow
   total, **context-free** (no per-param mode — the deferred #621 tolerance is *policy over
   Issues*, never a parse flag), and cached with a **bounded** `lru_cache` keyed on **author
   template text only** — helpers that run on resolved runtime values (cost analysis
-  `row_builder.py:928`, `token_estimation.py:414`, `sub_workflow_walker.py:537`,
+  `row_builder.py:928`, `token_estimation.py:414/:448/:452`, `sub_workflow_walker.py:537`,
   `engine.py:400`) never route through the cache.
 - **One value walk** (`lookup`/`resolve`) that also **returns the set of references it could
   not resolve** — the single judge of "unresolved" for the engine's strict check
@@ -200,10 +204,11 @@ Drift becomes loud through three meta-tests (pflow's native mechanism):
 4. **Typed parse + drift-site migration** — the AST and `parse()`; migrate the sites where
    drift actually lived: validation passes (`path_validation.py` is the heaviest consumer; the
    operand classifier lands here), `data_flow` operand loop (:787-796), engine resolution
-   (`template_resolution.py`, `engine.py:150-156` hand split, `engine.py:245` carry check,
+   (`template_resolution.py`, `engine.py:150-156` — the segment split inside
+  `_diagnose_carry_ref`, `engine.py:245` carry check,
    `_resolve_template_string` :393-401), `template_errors` classification (:137, :320),
-   `output_resolver` (:41-53 wraps the whole source; the prose-in-`source:` drift is recorded,
-   not fixed), `batch_executor.resolve_batch_items` :108-131, `loop_control` :131-153 (own
+   `output_resolver` (:41-53 wraps the whole source; the prose-in-`source:` drift is fixed by
+   Sanctioned delta 7), `batch_executor.resolve_batch_items` :108-131, `loop_control` :131-153 (own
    resolution path, no pre-pass), dry-run's per-item child inputs `execution/plan.py:1547`
    (bypasses `resolve_templates`) and `:2037`, `core/workflow/validator.py:1733`, cache-block
    chunking (`markdown_parser.py:1737-1745` — chunk names are the RAW source text between `${`
@@ -262,7 +267,9 @@ them blocked; say so at any park.
 - **A dynamic-index template is one Reference.** `${a[${i}].x}` is *simple* (type-preserving:
   a dict param gets a dict, not a JSON string) and any failure inside it — inner absent,
   non-int, out of range, outer path missing — makes the whole reference unresolved (strict
-  mode errors; `??` falls through; Optional inputs get `None`; declared outputs skip). This is
+  mode errors; `??` falls through; Optional inputs get `None`; a non-coalesce unresolved
+  declared output is an `OutputResolutionError`, skipped only for an all-absent `??` — a silent
+  skip is the failure class this task ends; wording amended 2026-09-28, session-08). This is
   the task's deliberate user-visible delta set, recorded per consumer in the phase-1
   characterization tests. The `${results[str]}` partial rewrite pinned by
   `test_nested_templates.py:54-59` flips.
@@ -281,6 +288,14 @@ them blocked; say so at any park.
   Both flip; corpus rows record the before-values.
 - **Task 118 waits** (moved to `then`, blocked-by recorded in its spec); the #621/#550 ruling is
   taken once after phase 5 (Out of scope).
+- **The runtime-only `$node.x` output-source form is removed** (`output_resolver._normalize_source`
+  drops its `$`-prefix branch) so validator and runtime agree by rejecting it. The validator always
+  rejected it, so no saved workflow can use it; admitting it would add a surface nothing calls.
+  DECIDED 2026-09-28 (session-08).
+- **A `??` chain as a `## Cache` chunk var is rejected explicitly at parse.** Today the runtime
+  silently drops such chunks (`_resolve_chunk_value` gates on the whole var's root) even when the
+  validator accepts the dotted form — loud beats silent. Lift only if the runtime ever resolves
+  chunk vars per operand. DECIDED 2026-09-28 (session-08).
 
 ## Dependencies
 
@@ -319,14 +334,15 @@ asymmetry the corpus cites; Tasks 112/120 collide on the type-compatibility matr
 - Dynamic index today (the **before** side of the Sanctioned delta; corpus records it):
   inner absent → text unchanged; inner int with the outer path missing → `'${a[0].x}'`
   (rewritten, unflagged); inner non-int → `'${a[abc].x}'` (rewritten, warning logged
-  :152-156, unflagged); `${a[${i}].x ?? b}` with a non-int inner → fallback never tried.
+  :152-156, unflagged); `${a[${i}].x ?? b}` with a non-int inner → fallback never tried,
+  with an int inner and a missing outer path → the fallback fires (kept).
 - Unresolved templates remain textually unchanged in output; the strict-vs-permissive **error
   policy** (raise vs record, `template_resolution.py:441-459`) stays with the engine (ADR-0014)
   — only the *detection* moves to the resolver's unresolved set.
 - `output_resolver._is_all_absent_coalesce` keeps its deliberately stricter semantics —
   consumes parsed operands but is NOT absorbed. Output `source:` with surrounding prose
-  (`source: prefix ${run.stdout}` → `'${prefix ok}'`) is a recorded drift, not fixed here.
-- Loop conditions: validator (`validator.py:261`) and runtime (`loop_control.py:132`) share
+  interpolates (`source: prefix ${run.stdout}` → `prefix ok`), Sanctioned delta 7.
+- Loop conditions: validator (`template_validation/validator.py:258-266`) and runtime (`loop_control.py:132`) share
   `extract_simple_template_var`; batch `continue` mode blocks dynamic indices
   (`path_validation.py:165-172`).
 
@@ -343,11 +359,22 @@ the named phase)
 4. **Escape consumes through `}`** (phase 4): `$${a[${i}]}` and `$${FOO:-${bar}}` stay literal.
 5. **Cache-block escape, option (a)** (phase 4/5): `$${` honoured in cache prose; hash and
    prepare stay byte-symmetric.
+Validator-only corrections that the Parity section forces are sanctioned alongside the deltas
+above and listed in the plan: over-rejections the runtime resolves (#262; a `[N]` index inside a
+declared nested structure or on a `list`-typed output; Pass 8 field-checking `??` operands) flip to
+accepted, and under-checks the runtime does not catch (coalesce roots in `batch.items`; an Issue on
+any surface) flip to ERROR. A runtime-only syntax the validator always rejected (`$node.x` output
+sources) is removed rather than admitted.
+
 6. Phase-4 type passes may emit **new** validator errors on the *outer* dynamic-index reference
    (today `extract_variables('${a[${i}].x}') == {'i'}`; inner references were never validated —
    `data_flow.py:287` skips them; an input used only inside a dynamic index is reported "never
    used"). The validator walk recurses into DynamicIndex operands for root, forward-reference and
    unused-input accounting.
+7. **Prose-wrapped output source interpolates** (phase 4a): the output normalizer wraps only a
+   bare source in `${…}`; a source that already contains template syntax is resolved as written,
+   so validator and runtime agree on the interpolated value. User ruling 2026-10-01; previously
+   the runtime produced the recorded drift `'${prefix S}'`.
 
 ### Parity (the point of the task)
 
@@ -361,8 +388,9 @@ the named phase)
   (`_node_template_value_sources`, `validator.py:764`).
 - Under-checks are visible: a static check that defers on `has_templates` must key on
   "contains a Reference", not "needs rewriting" (after #632 the two differ for escape-only
-  values: `core/workflow/validator.py:1008/:1047/:1262`, `template_validation/validator.py:1226`
-  currently skip agent params, `output_schema`, the LLM `model` key and downstream type
+  values: `core/workflow/validator.py:1008/:1047/:1155/:1262`, `template_validation/validator.py:1226`,
+  `core/workflow/sub_workflow_resolver.py:93` currently skip agent params, both `output_schema`
+  keys, the LLM `model` key, templated child refs and downstream type
   inference for them); any deliberate under-check that remains gets an INFO advisory or a named
   corpus row.
 - The historical drift bugs and today's (#620/#632, #630) exist as named regression fixtures
@@ -410,12 +438,16 @@ the named phase)
 - Unifying the validator's structure walk with the value walk (ADR-0006).
 - Migrating the string-helper long tail to the AST; the ~40 lexical `"${" in x` presence checks.
 - The type-compatibility matrix's *content* (only its home consolidates).
+- Unresolved elements of an inline-list `batch.items` stay literal (never flagged, as today);
+  the completion handback files a lane-B issue for it together with the cache-var-typo INFO
+  advisory (chunk silently ABSENT). DECIDED 2026-09-28 (session-08).
 - The web UI's TypeScript grammar mirrors beyond `scan.ts` (three lack the `$$` lookbehind:
   `batchItems.ts:26`, `format.ts:9`, `sourceDecorate.ts:32` — a separate issue).
 - `prompt_refs.first_per_item_position` tearing a nested index (`'Static text. ${results[${item.i}].x}'`
   cuts at 23) — an existing bug, recorded for a lane.
-- Fixing the output-`source:` prose wrap, #643's save-path params, #262's proper fix beyond
-  the corpus row (they are recorded; each has its own home).
+- #643's save-path params — fixed separately on main (PR #664, `validate_with_placeholder_inputs`).
+  #262 is not point-fixed but flips as a consequence of Pass 5 consuming parsed segments
+  (the root of `items[0]` is `items`) — its corpus row records the flip.
 
 ## Implementation Notes
 
@@ -437,6 +469,8 @@ the named phase)
 - The batch warm-up `system` path (`engine._resolve_template_string` → `batch_executor.py:628-637`)
   re-scans output: a `$${x}` in `system` would drop the user system prompt and warm a different
   cache prefix (read, not executed — verify in phase 1).
+- Phase 4d (the `web/src/graph/scan.ts` mirror) needs `npm ci` in `web/` first — the worktree
+  carries no `node_modules`; then `npx vitest run src/graph/scan.test.ts`.
 - Stale-doc fixes in passing: `template_validation/CLAUDE.md`'s regex table (add the current
   patterns, then rewrite as views in phase 3); `template_validation/CLAUDE.md`'s "`data_flow`
   still checks their roots" (false under a dynamic index + `??`).

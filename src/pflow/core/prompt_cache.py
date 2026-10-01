@@ -13,12 +13,16 @@ lazy-import runtime symbols inside function bodies.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
 from pflow.core.cache_ttl import parse_cache_ttl
 from pflow.core.llm_capabilities import get_breakpoint_budget
+from pflow.core.templates import Expression, TemplateResolver, Text, parse, resolve
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -143,37 +147,90 @@ def _resolve_chunk_value(chunk: CacheChunkIR, shared: dict[str, Any]) -> ChunkRe
 
     1. **Branch absent**: the upstream node has ``NodeStatus.ABSENT`` (e.g.
        conditional branch not taken). Detected before calling resolve.
-    2. **Permissive-mode echo**: ``TemplateResolver.resolve_template`` does
-       NOT raise on a missing var — it returns the literal ``"${var_expr}"``
-       string verbatim (this is the resolver's permissive default, distinct
-       from ``resolve_templates`` plural which raises in strict mode). If
-       the resolver echoes the input, the var didn't resolve; treat that as
-       absent so the filter contract holds. Without this guard the literal
-       would get folded into the deterministic serialization and silently
-       produce a stable hash with the placeholder string in it — and the
-       prep-side render would do the same — creating false byte-equivalence
+    2. **Left literal**: ``resolve`` does NOT raise on a missing var — it
+       leaves ``"${var_expr}"`` literal and reports it (``not resolution.ok``;
+       distinct from ``resolve_templates`` plural which raises in strict mode).
+       Treat that as absent so the filter contract holds. Without this guard
+       the literal would get folded into the deterministic serialization and
+       silently produce a stable hash with the placeholder string in it — and
+       the prep-side render would do the same — creating false byte-equivalence
        across structurally different runs.
 
     Returns the deterministic string representation otherwise. Cache
     chunks are validated to reference declared inputs/step outputs (B2.3),
     so for valid workflows the absent branches are: explicit ``NodeStatus.ABSENT``
     upstream OR a transient state where the value isn't yet seeded (the
-    permissive echo case).
+    left-literal case).
     """
     from pflow.runtime.node_state import NodeStatus, get_node_status
-    from pflow.runtime.template_resolver import TemplateResolver
 
     upstream_node = TemplateResolver.extract_root_node_id(chunk.var_expr)
     if get_node_status(shared, upstream_node) == NodeStatus.ABSENT:
         return _CHUNK_ABSENT
-    template = "${" + chunk.var_expr + "}"
-    resolved = TemplateResolver.resolve_template(template, shared)
-    # Permissive-mode echo: resolver returned the unchanged template string
-    # because the var didn't resolve. Collapse to the absent sentinel so the
-    # filter symmetry between hash and prep sites holds.
-    if isinstance(resolved, str) and resolved == template:
+    resolution = resolve("${" + chunk.var_expr + "}", shared)
+    # The var didn't resolve (the resolver left it literal). Collapse to the
+    # absent sentinel so the filter symmetry between hash and prep sites holds.
+    if not resolution.ok:
         return _CHUNK_ABSENT
-    return _deterministic_serialize(resolved)
+    return _deterministic_serialize(resolution.value)
+
+
+@dataclass(frozen=True)
+class RenderedChunk:
+    """One rendered chunk: the bytes the hash site keys on and the prepare site sends."""
+
+    name: str
+    prose: str  # ``prose_before`` with its ``$${`` escapes unescaped
+    value: str  # the deterministic-serialized chunk value, verbatim
+
+
+def render_cache_chunks(cache_ctx: CacheRenderContext, shared: dict[str, Any]) -> tuple[list[RenderedChunk], list[str]]:
+    """Render ``cache_ctx.subset`` in declaration order: ``(rendered, skipped names)``.
+
+    THE one renderer both the hash site (``plan_node._render_cache_for_hash``) and
+    the prepare site (``build_cache_system_blocks``: the LLM node and the prewarm
+    path) call, so their bytes match by construction (ADR-0015). ABSENT chunks are
+    skipped. Only the prose is unescaped — a value containing ``$${`` is data and
+    passes through verbatim.
+    """
+    if cache_ctx.cache_block is None:
+        return [], []
+    chunks_by_name = {c.name: c for c in cache_ctx.cache_block.items}
+    rendered: list[RenderedChunk] = []
+    skipped: list[str] = []
+    for name in cache_ctx.subset:
+        chunk = chunks_by_name.get(name)
+        if chunk is None:
+            # Unreachable through a compiled workflow: validation AND compile-time data
+            # flow reject undeclared subset entries (B2.3). Only a hand-built
+            # CacheRenderContext gets here, so the skip is logged, not silent.
+            logger.warning(
+                "cache rendering skipped undeclared chunk '%s' — the ## Cache block has no such item; "
+                "the validator should have rejected it (B2.3).",
+                name,
+            )
+            continue
+        value = _resolve_chunk_value(chunk, shared)
+        if isinstance(value, _ChunkAbsentSentinel):
+            skipped.append(name)
+            continue
+        rendered.append(RenderedChunk(name, _render_segments(chunk.prose_before, None), value))
+    return rendered, skipped
+
+
+def _render_segments(text: str, shared: Mapping[str, Any] | None) -> str:
+    """``text`` with its escapes unescaped and, when ``shared`` is given, each
+    resolvable Expression replaced by its deterministic serialization; anything
+    else (an unresolved Expression, an Issue) stays verbatim."""
+    parts: list[str] = []
+    for segment in parse(text).segments:
+        if isinstance(segment, Text):
+            parts.append(segment.text)
+            continue
+        raw = text[segment.span[0] : segment.span[1]]
+        resolution = resolve(raw, shared) if shared is not None and isinstance(segment, Expression) else None
+        parts.append(deterministic_serialize(resolution.value) if resolution is not None and resolution.ok else raw)
+    return "".join(parts)
 
 
 # --- Per-provider cache_control marker translation -------------------------
@@ -222,38 +279,18 @@ def _build_cache_control_marker(provider_name: str | None, ttl: str | None) -> d
 
 
 def _resolve_static_prefix_for_cache(template_str: str, shared: dict[str, Any]) -> str:
-    """Resolve every ``${var}`` in ``template_str`` deterministically.
+    """Render a batch prompt's static prefix deterministically.
 
-    Differs from ``TemplateResolver.resolve_template(template_str, shared)``
-    in one critical place: that function uses ``str(value)`` for embedded
-    refs in complex templates (per ``runtime/CLAUDE.md`` "complex templates
-    always string"). For dict/list values, ``str(value)`` produces Python
-    repr (``{'key': 'value'}``), NOT canonical JSON. A chunk's value at
-    ``_resolve_chunk_value`` and the same value embedded in a static prefix
-    would then produce different bytes — a silent cross-mode cache miss.
-
-    Substitutes per-ref via ``_deterministic_serialize`` so the bytes match
-    ``_resolve_chunk_value`` byte-for-byte for the same logical value.
-    Unresolvable refs (ABSENT upstream, missing key) are left in place; the
-    auto-batch cache prefix becomes non-deterministic in that case and the
-    analyzer tier surfaces it via ``cache.dynamic-before-static`` /
-    ``cache.discrepancy``.
+    Unlike ``resolve_template`` (complex templates stringify dict/list via
+    ``to_string``), each resolved Expression is written with
+    ``deterministic_serialize`` — sorted-key compact JSON — so a value embedded
+    here has the same bytes as the same value rendered as a chunk (a silent
+    cross-mode cache miss otherwise). Escapes are unescaped like everywhere else.
+    Unresolvable refs (ABSENT upstream, missing key) and Issues stay verbatim; the
+    auto-batch prefix is then non-deterministic, which the analyzer surfaces via
+    ``cache.dynamic-before-static`` / ``cache.discrepancy``.
     """
-    import re
-
-    from pflow.runtime.template_resolver import TemplateResolver
-
-    def _replace_one(match: re.Match[str]) -> str:
-        full_match = match.group(0)  # e.g. "${concept}" or "${a ?? b}"
-        resolved = TemplateResolver.resolve_template(full_match, shared)
-        if resolved == full_match:
-            # Unresolved — leave the literal ${var} so downstream renderers
-            # can see what didn't resolve. Mirrors permissive mode.
-            return full_match
-        return _deterministic_serialize(resolved)
-
-    result: str = TemplateResolver.TEMPLATE_PATTERN.sub(_replace_one, template_str)
-    return result
+    return _render_segments(template_str, shared)
 
 
 # --- Multi-breakpoint marker placement (task-159 follow-up) ----------------
@@ -386,43 +423,28 @@ def build_cache_system_blocks(
     When at least one chunk renders, the returned list is:
 
     1. The user's ``system`` param (when set) as the FIRST block, no marker.
-    2. One block per declared chunk in declaration order: ``prose_before``
-       concatenated with the deterministic-serialized chunk value.
+    2. One block per rendered chunk in declaration order: ``prose + value``
+       from ``render_cache_chunks``.
     3. Per-provider ``cache_control`` markers placed by
        ``_compute_marker_chunk_indices``: Anthropic gets up to 4 markers
        (first N-1 chunks individual + terminal merge); other providers get
        a terminal marker only.
 
-    The ABSENT filter is symmetric with
-    ``runtime/engine/plan_node._render_cache_for_hash`` — both sites import
-    ``_resolve_chunk_value`` from this module. If they diverge, hash and
-    prep render different bytes for the same logical state.
+    The bytes are symmetric with ``runtime/engine/plan_node._render_cache_for_hash``
+    because both sites call ``render_cache_chunks``.
     """
     if cache_ctx is None or not cache_ctx.subset or cache_ctx.cache_block is None:
         return None, []
 
-    chunks_by_name = {c.name: c for c in cache_ctx.cache_block.items}
-    rendered: list[tuple[str, str]] = []  # (prose_before, value_str)
-    chunks_skipped: list[str] = []
-
-    for name in cache_ctx.subset:
-        chunk = chunks_by_name.get(name)
-        if chunk is None:
-            continue
-        value = _resolve_chunk_value(chunk, shared)
-        if isinstance(value, _ChunkAbsentSentinel):
-            chunks_skipped.append(name)
-            continue
-        rendered.append((chunk.prose_before, value))
-
+    rendered, chunks_skipped = render_cache_chunks(cache_ctx, shared)
     if not rendered:
         return None, chunks_skipped
 
     blocks: list[dict[str, Any]] = []
     if user_system:
         blocks.append({"type": "text", "text": user_system})
-    for prose, value in rendered:
-        blocks.append({"type": "text", "text": prose + value})
+    for chunk in rendered:
+        blocks.append({"type": "text", "text": chunk.prose + chunk.value})
 
     from pflow.core.llm_providers import detect_provider
 

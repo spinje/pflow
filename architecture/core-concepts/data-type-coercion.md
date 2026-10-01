@@ -70,7 +70,7 @@ Every location in pflow where automatic JSON parsing or type coercion occurs:
 
 ### Point 1: Template Traversal (GOOD)
 
-**Location**: `src/pflow/runtime/template_resolver.py:202-231` — `_try_parse_json_for_traversal()`
+**Location**: `src/pflow/core/templates.py` — `_json_container()` (called by the path walk `_walk`)
 
 **When it fires**: User writes `${node.stdout.field}` — dot notation on a string value.
 
@@ -87,7 +87,7 @@ Every location in pflow where automatic JSON parsing or type coercion occurs:
 
 ### Point 2: resolve_nested Simple Template (ACCEPTABLE)
 
-**Location**: `src/pflow/runtime/template_resolver.py:632-638` — inside `resolve_nested()`
+**Location**: `src/pflow/core/templates.py` — the `auto_parse` leaf rule in `_resolve_string()` (`resolve_nested` = `resolve(..., auto_parse=True)`)
 
 **When it fires**: A simple template (`${var}` as the entire value) inside an inline structured object resolves to a JSON string.
 

@@ -177,6 +177,8 @@ Extract specific items from the results.
 - prompt: First: ${results[0]}, Tag: ${data.items[2].tags[1]}
 ```
 
+The index can itself be a reference, such as `${results[${__index__}].title}` in a batch. The whole expression is one reference: it keeps its value's type, and if the index does not resolve to an in-range whole number the reference is unresolved (a `??` fallback then applies).
+
 ## Batch processing
 
 In batch nodes, a special template variable (`${item}` by default) represents the current item:
@@ -325,7 +327,7 @@ echo 'Price: $${PRICE}'
 
 This produces the literal string `Price: ${PRICE}` instead of trying to resolve a variable.
 
-Whatever follows `$${` is left alone, so shell parameter expansion (`$${NAME:-world}`, `$${#ITEMS}`) and JavaScript template literals work the same way. Only `$${` is an escape: a bare `$$` (the shell's process ID) is passed through unchanged.
+An escape runs through its matching `}`, and anything inside it is literal, including braces nested one level deep: `$${NAME:-${default}}` produces `${NAME:-${default}}` without resolving `${default}`. So shell parameter expansion (`$${NAME:-world}`, `$${#ITEMS}`) and JavaScript template literals work the same way. Text after the closing `}` is templated as usual. Only `$${` is an escape: a bare `$$` (the shell's process ID) is passed through unchanged.
 
 ## Validation
 

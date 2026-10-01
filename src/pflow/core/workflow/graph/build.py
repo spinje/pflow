@@ -852,8 +852,8 @@ def _binding_uses_batch_alias(binding: str, alias: str) -> bool:
 def _params_strings(params: Any) -> list[tuple[str, str, bool]]:
     """Yield ``(name, string_leaf, shallow)`` for every string leaf in params.
 
-    Recurses dicts AND lists to any depth — validator parity (`_check_param_value`
-    in core/workflow/data_flow.py walks the same shapes), so every authored
+    Recurses dicts AND lists to any depth — validator parity (`TemplateSurface.templates`
+    in core/workflow/template_surfaces.py walks the same shapes), so every authored
     ``${ref}`` is visited wherever it sits. ``shallow`` marks binding-level names that may
     legitimately target a child-input port: a top-level string param, a depth-1
     dict value, or a direct item of a top-level list param. Deeper leaves keep

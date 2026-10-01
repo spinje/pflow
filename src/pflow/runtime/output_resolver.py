@@ -11,19 +11,13 @@ explicitly opted into fallthrough behavior.
 
 from typing import Any
 
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import Reference, Resolution, parse, resolve
+from pflow.runtime.node_state import NodeStatus, get_node_status
 
 
 def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> Any | None:
-    """Resolve a source expression to get output value.
-
-    Handles multiple source expression formats:
-    - ${node.output} - Template format with brackets
-    - $node.output - Dollar prefix format
-    - node.output - Plain format
-
-    Uses TemplateResolver.resolve_template() to support the full template syntax
-    including coalesce (??), nested index templates, and type preservation.
+    """Resolve an output source: a bare path or ``??`` chain (``n.out``, ``a.x[${i}]``)
+    resolves as one reference, anything else as the template it is (``prefix ${n.out}``).
 
     Args:
         source_expr: Template expression like "${node.output}" or "node.output"
@@ -34,28 +28,24 @@ def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> A
     """
     source_expr = _normalize_source(source_expr)
 
-    # Use resolve_template() which handles coalesce (??), nested indices,
-    # type preservation, and all other template syntax
-    result = TemplateResolver.resolve_template(source_expr, shared_storage)
-
-    # resolve_template returns the original string if unresolved
-    if result == source_expr:
-        return None
-    return result
+    resolution = resolve(source_expr, shared_storage)
+    return resolution.value if resolution.ok else None
 
 
 def _normalize_source(source_expr: str) -> str:
-    """Normalize a source expression to ${...} template format."""
-    if source_expr.startswith("${"):
-        return source_expr
-    if source_expr.startswith("$"):
-        return "${" + source_expr[1:] + "}"
-    return "${" + source_expr + "}"
+    """Wrap a bare source into ``${…}`` — one that is exactly an expression body, a
+    dynamic index included — or one with no template syntax at all, which then stays
+    loud (``n.out.0``, ``$n.out`` are Issues). Anything else resolves as written."""
+    wrapped = "${" + source_expr + "}"
+    if parse(wrapped).is_simple or not parse(source_expr).needs_resolution:
+        return wrapped
+    return source_expr
 
 
 def _diagnose_unresolved_output(
     source_expr: str,
     normalized: str,
+    resolution: Resolution,
     shared_storage: dict[str, Any],
 ) -> dict[str, Any]:
     """Diagnose why an output source expression could not be resolved.
@@ -67,7 +57,7 @@ def _diagnose_unresolved_output(
     """
     from pflow.runtime.engine.template_errors import classify_unresolved_references
 
-    structured_refs = classify_unresolved_references(normalized, shared_storage)
+    structured_refs = classify_unresolved_references(sorted(resolution.unresolved), shared_storage)
     available_keys = sorted(k for k in shared_storage if not str(k).startswith("_"))
 
     return {
@@ -90,15 +80,19 @@ def _is_all_absent_coalesce(normalized: str, shared_storage: dict[str, Any]) -> 
     to see. Returns False so the caller records a failure.
 
     Non-coalesce templates always return False (caller records a failure).
+
+    Judged on each operand's OUTER root node status — not on the diagnostic's
+    classification, which reports a dynamic index's unresolved inner reference in
+    place of its outer operand (``${p.items[${pick.i}] ?? q.v}`` with ``p`` run
+    must stay an error).
     """
-    inner = TemplateResolver.extract_simple_template_var(normalized)
-    if not (inner and TemplateResolver.is_coalesce_expression(inner)):
+    template = parse(normalized)
+    if not (template.is_simple and len(template.expressions[0].operands) > 1):
         return False
-
-    from pflow.runtime.engine.template_errors import classify_unresolved_references
-
-    refs = classify_unresolved_references(normalized, shared_storage)
-    return bool(refs) and all(ref.get("status") == "absent" for ref in refs)
+    return all(
+        isinstance(op, Reference) and get_node_status(shared_storage, op.root) == NodeStatus.ABSENT
+        for op in template.expressions[0].operands
+    )
 
 
 def _record_output_failure(
@@ -106,10 +100,11 @@ def _record_output_failure(
     output_config: dict[str, Any],
     source_expr: str,
     normalized: str,
+    resolution: Resolution,
     shared_storage: dict[str, Any],
 ) -> dict[str, Any]:
     """Build an OutputResolutionError failure entry with source-file context."""
-    failure = _diagnose_unresolved_output(source_expr, normalized, shared_storage)
+    failure = _diagnose_unresolved_output(source_expr, normalized, resolution, shared_storage)
     failure["output_name"] = output_name
     if "_source_line" in output_config:
         failure["source_line"] = output_config["_source_line"]
@@ -151,13 +146,11 @@ def populate_declared_outputs(
         source_expr = output_config["source"]
         normalized = _normalize_source(source_expr)
 
-        # Use resolve_template directly to distinguish unresolved from resolved-to-None
-        result = TemplateResolver.resolve_template(normalized, shared_storage)
-
-        if result != normalized:
-            # Resolved successfully (or resolved to None)
-            if result is not None:
-                shared_storage[output_name] = result
+        resolution = resolve(normalized, shared_storage)
+        if resolution.ok:
+            # Resolved (a found None is resolved, but writes nothing)
+            if resolution.value is not None:
+                shared_storage[output_name] = resolution.value
             continue
 
         # Unresolved — silently skip only if this is a legitimate all-absent
@@ -166,7 +159,9 @@ def populate_declared_outputs(
         if _is_all_absent_coalesce(normalized, shared_storage):
             continue
 
-        failures.append(_record_output_failure(output_name, output_config, source_expr, normalized, shared_storage))
+        failures.append(
+            _record_output_failure(output_name, output_config, source_expr, normalized, resolution, shared_storage)
+        )
 
     if failures:
         from pflow.core.user_errors import OutputResolutionError

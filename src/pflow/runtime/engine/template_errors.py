@@ -13,11 +13,20 @@ in ``core/diagnostic.py`` render this into the agent-actionable format.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.templates import (
+    DynamicIndex,
+    Field,
+    Reference,
+    Resolution,
+    TemplateResolver,
+    lookup,
+    parse,
+)
 from pflow.runtime.node_state import NodeStatus, get_node_failure, get_node_status
-from pflow.runtime.template_resolver import TemplateResolver
 
 
 def build_type_error_message(
@@ -33,8 +42,8 @@ def build_type_error_message(
     a different class from unresolved-template errors and don't need the
     structured Diagnostic treatment.
     """
-    var_match = TemplateResolver.TEMPLATE_EXTRACT_PATTERN.search(template_str)
-    var_name = var_match.group(1) if var_match else "variable"
+    expressions = parse(template_str).expressions
+    var_name = expressions[0].raw if expressions else "variable"
 
     error_msg = (
         f"Parameter '{param_key}' expects {expected_type} but received {actual_type}\n\n"
@@ -123,74 +132,103 @@ def build_json_parse_error_message(
     return "\n".join(error_lines)
 
 
+def _in_source_order(expressions: Iterable[str], template_str: str) -> list[str]:
+    """Order unresolved expressions as the author wrote them; a text absent from
+    the template (a rewritten dynamic index such as ``a[0].x``) sorts last."""
+
+    def position(expr: str) -> tuple[int, str]:
+        at = template_str.find(f"${{{expr}}}")
+        return (at if at >= 0 else len(template_str), expr)
+
+    return sorted(expressions, key=position)
+
+
 def classify_unresolved_references(
-    template_str: str,
+    expressions: Iterable[str],
     context: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Classify every variable reference in a template by execution status.
+    """Classify the references of unresolved expressions by execution status.
 
-    Variables that resolve successfully are not included.
+    ``expressions`` are texts inside ``${…}`` that resolution left literal — a
+    ``Resolution.unresolved`` set, in display order. Operands that resolve are
+    not included; literal operands always resolve. A dynamic index's inner
+    references are classified first: an unresolved inner is the cause and is
+    reported instead of the outer reference.
     """
     references: list[dict[str, Any]] = []
     seen_vars: set[str] = set()
 
-    for match in TemplateResolver.TEMPLATE_PATTERN.finditer(template_str):
-        expr = match.group(1)
-        operands = TemplateResolver.split_coalesce_operands(expr)
-        is_coalesce = len(operands) > 1
+    for expr in expressions:
+        parsed = parse(f"${{{expr}}}").expressions
+        if not parsed:
+            continue
+        operands = [op for op in parsed[0].operands if isinstance(op, Reference)]
+        is_coalesce = len(parsed[0].operands) > 1
 
         for operand in operands:
-            # Literal operands (Optional A) always resolve — never unresolved.
-            # Without this, a literal like `0` leaks into "Node '0' did not
-            # execute" errors with bogus peer suggestions.
-            if TemplateResolver.is_literal_operand(operand):
-                continue
-            if operand in seen_vars:
-                continue
-            seen_vars.add(operand)
-
-            ref = _classify_one_reference(
-                operand,
-                context,
-                in_coalesce=is_coalesce,
-                coalesce_expr=expr if is_coalesce else None,
-            )
-            if ref is not None:
-                references.append(ref)
+            # An inner that resolved is not a cause, whatever its root's node status
+            # (`__index__` is a reserved key, never a node).
+            classified = [
+                ref
+                for inner in (seg.ref for seg in operand.path if isinstance(seg, DynamicIndex))
+                if not lookup(inner, context)[0]
+                and (ref := _classify_one_reference(inner, context, in_coalesce=False, coalesce_expr=None))
+            ]
+            if not classified:
+                outer = _classify_one_reference(
+                    operand, context, in_coalesce=is_coalesce, coalesce_expr=expr if is_coalesce else None
+                )
+                classified = [outer] if outer else []
+            for ref in classified:
+                if ref["var"] not in seen_vars:
+                    seen_vars.add(ref["var"])
+                    references.append(ref)
 
     return references
 
 
 def _classify_one_reference(
-    var: str,
+    reference: Reference,
     context: dict[str, Any],
     *,
     in_coalesce: bool,
     coalesce_expr: str | None,
 ) -> dict[str, Any] | None:
-    """Classify a single variable reference. Returns None if it resolves."""
-    root = TemplateResolver.extract_root_node_id(var)
+    """Classify a single reference. Returns None if it resolves.
+
+    ``"absent"`` derives from the node status, never from the walk: a FAILED
+    node's root is missing from the live namespace too.
+    """
+    var, root = reference.raw, reference.root
     status = get_node_status(context, root)
 
     if status == NodeStatus.SUCCEEDED:
-        if TemplateResolver.variable_exists(var, context):
+        if lookup(reference, context)[0]:
             return None
-        return {
+        completed = (context.get("__execution__") or {}).get("completed_nodes")
+        path_error = {
             "var": var,
             "root": root,
             "status": "path_error",
+            # An input or a batch item is present in the context too, but is not a node.
+            "root_is_node": completed is None or root in completed,
             "in_coalesce": in_coalesce,
             "coalesce_expr": coalesce_expr,
             "available_fields": _get_available_fields(root, context),
-            "did_you_mean": _suggest_field_correction(var, root, context),
+            "did_you_mean": _suggest_field_correction(reference, context),
             "peer_suggestions": _find_peer_nodes_with_field(root, var, context),
         }
+        # A dynamic index whose source resolved: its value is the likely cause (out of
+        # range, not an int), which the field text alone cannot show.
+        if index_values := {source.raw: lookup(source, context)[1] for source in reference.index_sources}:
+            path_error["index_values"] = index_values
+        return path_error
 
     if status == NodeStatus.FAILED:
         failure = get_node_failure(context, root) or {}
         data = failure.get("data") or {}
         display_data = _extract_failure_display_data(failure.get("category"), data)
-        secondary_hint = _suggest_field_correction(var, root, {root: data}) if isinstance(data, dict) else None
+        secondary_hint = _suggest_field_correction(reference, {root: data}) if isinstance(data, dict) else None
         # When the user also has a typo (e.g. ${primary.stddout} where primary
         # failed and has `stdout`), prefer the corrected path for peer search
         # and the paste-able fix template. The original typo'd var stays on
@@ -299,41 +337,47 @@ def _extract_failure_display_data(category: str | None, data: Any) -> dict[str, 
     }
 
 
-def _suggest_field_correction(var: str, root: str, context: dict[str, Any]) -> str | None:
-    """Suggest a field name correction using close-string matching."""
-    output = context.get(root)
-    if not isinstance(output, dict):
+def _suggest_field_correction(reference: Reference, context: dict[str, Any]) -> str | None:
+    """Suggest the reference with its first field corrected by close-string matching.
+
+    Only for a field directly on the root's output: after a root index the root's
+    keys are not that field's container, so any suggestion would be wrong.
+    """
+    output = context.get(reference.root)
+    first = reference.path[0] if reference.path else None
+    if not isinstance(output, dict) or not isinstance(first, Field):
         return None
-    field_name = TemplateResolver.extract_first_field_segment(var)
-    if field_name is None:
-        return None
-    available = list(output.keys())
+    field_name = first.name
+    at = len(reference.root)
+    available = [str(key) for key in output]
     if field_name in available:
         return None
 
     import difflib
 
-    matches = difflib.get_close_matches(field_name, [str(key) for key in available], n=1, cutoff=0.6)
+    matches = difflib.get_close_matches(field_name, available, n=1, cutoff=0.6)
     if not matches:
         return None
-    # Rebuild the full path replacing only the first field segment.
-    field_path = var.split(".", 1)[1]
-    corrected_path = field_path.replace(field_name, matches[0], 1)
-    return f"{root}.{corrected_path}"
+    return f"{reference.raw[:at]}.{matches[0]}{reference.raw[at + 1 + len(field_name) :]}"
 
 
 def build_template_error_diagnostic(
     param_key: str,
     template: Any,
     context: dict[str, Any],
+    resolution: Resolution,
     *,
     node_id: str | None = None,
     source_file: str | None = None,
     source_line: int | None = None,
 ) -> Diagnostic:
-    """Build a fully-structured Diagnostic for an unresolved template."""
+    """Build a fully-structured Diagnostic for an unresolved template.
+
+    Classifies exactly ``resolution.unresolved`` — the set the caller's check
+    judged — so check and diagnostic cannot disagree.
+    """
     template_str = str(template)
-    references = classify_unresolved_references(template_str, context)
+    references = classify_unresolved_references(_in_source_order(resolution.unresolved, template_str), context)
 
     available_keys = sorted(key for key in context if _is_visible_context_key(key))
     failures = context.get("__failures__")

@@ -190,3 +190,40 @@ describe("buildFlow — plain-param reads correct the quiet claim (no edges, no 
     expect(leafOutputRows(leaf).every((r) => r.quiet)).toBe(true);
   });
 });
+
+describe("consumedReadPaths — runtime parity (mirrors scope.py)", () => {
+  // The shapes of `test_graph_build.py::test_refs_with_path_in_reads_the_template_parse`:
+  // the scan must read exactly the References `core/templates.parse()` yields —
+  // indices are not fields, a dynamic index reads its outer path AND its index source,
+  // an escape consumes through its balanced `}`, an Issue reads nothing.
+  const producers = [
+    node("gen", { output_shape: { field: "result", data_type: "dict", keys: [] } }),
+    node("idx", { output_shape: { field: "result", data_type: "int", keys: [] } }),
+  ];
+  const readsOf = (value: string): Record<string, string[]> => {
+    const g: RFGraph = {
+      nodes: [...producers, node("use", { params: [{ name: "p", value, is_dynamic: true, source: null }] })],
+      edges: [],
+      groups: [],
+    };
+    return Object.fromEntries(consumedReadPaths(g));
+  };
+
+  it.each<[string, string, Record<string, string[]>]>([
+    ["a static index is not a field", "${gen.result[0].ok}", { gen: ["result.ok"] }],
+    ["fields after an index are kept", "${gen.result[0].a.b}", { gen: ["result.a.b"] }],
+    [
+      "a dynamic index reads the outer path and its index source",
+      "${gen.result[${idx.result}].ok}",
+      { gen: ["result.ok"], idx: ["result"] },
+    ],
+    ["a dynamic index inside a coalesce", '${gen.result[${idx.result}] ?? "none"}', { gen: ["result"], idx: ["result"] }],
+    ["an escape consumes through its balanced brace (delta 4)", "$${FOO:-${gen.result.ok}}", {}],
+    ["a real ref after an escape still reads", "$${FOO:-${gen.result.ok}} ${gen.result.n}", { gen: ["result.n"] }],
+    ["an escaped dynamic index reads nothing", "$${gen.result[${idx.result}]}", {}],
+    ["multi-index is an Issue, not a read", "${gen.result[0][1]}", {}],
+    ["an Issue runs through its first brace", "${gen.result[${idx.result ?? 0}]}", {}],
+  ])("%s: %s", (_label, value, expected) => {
+    expect(readsOf(value)).toEqual(expected);
+  });
+});

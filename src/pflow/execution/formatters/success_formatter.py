@@ -9,6 +9,7 @@ from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.diagnostic_render import format_diagnostic
+from pflow.core.templates import TemplateResolver
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.formatters.batch_errors import (
     _truncate_error_message as _shared_truncate_error_message,
@@ -20,7 +21,6 @@ from pflow.execution.formatters.batch_errors import (
 from pflow.execution.formatters.batch_errors import (
     format_batch_errors_section as _shared_format_batch_errors_section,
 )
-from pflow.runtime.template_resolver import TemplateResolver
 
 
 def format_execution_success(

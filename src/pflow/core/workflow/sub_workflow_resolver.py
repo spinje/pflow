@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic
+from pflow.core.templates import TemplateResolver, resolve
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +90,12 @@ def resolve_sub_workflow(
     if not isinstance(workflow_ref, str) or not workflow_ref:
         return None
 
-    # Template references can't be resolved statically
-    if "${" in workflow_ref:
+    # Template references can't be resolved statically (``has_references`` is an
+    # uncached scan: the executor passes resolved values). An escape-only
+    # reference is the literal path the node receives.
+    if TemplateResolver.has_references(workflow_ref):
         return None
+    workflow_ref = resolve(workflow_ref, {}).value
 
     # Mode 1: File reference
     if is_workflow_file_reference(workflow_ref):

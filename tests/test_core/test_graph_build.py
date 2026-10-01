@@ -1344,6 +1344,40 @@ def test_refs_with_path_in_extracts_full_dotted_tail() -> None:
     assert refs_in("${a.b.c.d} and ${e}") == [("a", "b"), ("e", None)]
 
 
+def test_refs_with_path_in_reads_the_template_parse() -> None:
+    """Task 170: refs come from ``parse().references``, so the graph sees what the runtime resolves."""
+    from pflow.core.workflow.graph.scope import refs_with_path_in
+
+    # Indices are skipped in the field tuple (characterization delta; before: ("data", None, ())).
+    assert refs_with_path_in("${data[0].field}") == [("data", "field", ())]
+    assert refs_with_path_in("${a.b[0].c.d}") == [("a", "b", ("c", "d"))]
+    # A dynamic index is one Reference that ALSO depends on its index source: both roots, outer first.
+    assert refs_with_path_in("${p.results[${__index__}].stdout}") == [
+        ("p", "results", ("stdout",)),
+        ("__index__", None, ()),
+    ]
+    assert refs_with_path_in("${a[${i.j}].x ?? b.y}") == [("a", "x", ()), ("i", "j", ()), ("b", "y", ())]
+    # The escape consumes through its balanced `}` (delta 4): the shell default is literal text.
+    assert refs_with_path_in("$${FOO:-${n.result}}") == []
+    assert refs_with_path_in("$${a[${i}]} ${b.c}") == [("b", "c", ())]
+    # An Issue is never a ref (multi-index is outside the grammar on both layers), and it
+    # runs through its first `}`: the `${i ?? 0}` inside a non-variable index is not a ref.
+    assert refs_with_path_in("${m[0][1]}") == []
+    assert refs_with_path_in("${a[${i ?? 0}]}") == []
+
+
+def test_dynamic_index_read_draws_a_data_flow_edge_from_the_indexed_batch() -> None:
+    """``${process-batch.results[${__index__}].stdout}`` (the committed example) reads the
+    upstream batch's ``results`` — one DATA_FLOW edge carrying the ``stdout`` sub-path."""
+    graph = build_graph(_parse("examples/test-nested-index.pflow.md"))
+    into_correlate = [
+        edge for edge in graph.edges if edge.kind == EdgeKind.DATA_FLOW and edge.target.node_id == "correlate-batch"
+    ]
+    assert [(e.source, e.output_field, e.output_path, e.input_name) for e in into_correlate] == [
+        (NodeId("process-batch"), "results", ("stdout",), "command")
+    ]
+
+
 def test_data_flow_edges_carry_output_path_below_the_resolved_port() -> None:
     """A sub-key ref keeps its sub-path on the edge; wholesale/input refs carry none."""
     child = {

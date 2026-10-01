@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pflow.core.templates import TemplateResolver, resolve
 from pflow.core.trace_tree import normalize_workflow_path_key
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult, resolve_sub_workflow
 
@@ -527,16 +528,15 @@ def _resolve_child_input_value(edge: CrossWorkflowEdge, parent_ctx: AnalysisCont
             return None
         if edge.parent_batch_alias is not None:
             shared[edge.parent_batch_alias] = first_item
-    from pflow.runtime.template_resolver import TemplateResolver
 
     try:
-        resolved = TemplateResolver.resolve_template(value, shared)
+        resolution = resolve(value, shared)
     except Exception:
         logger.debug("failed to resolve child workflow input value", exc_info=True)
         return None
-    if isinstance(resolved, str) and TemplateResolver.TEMPLATE_PATTERN.search(resolved):
+    if resolution.unresolved:
         return None
-    return _normalize_empty(resolved)
+    return _normalize_empty(resolution.value)
 
 
 def _unchecked_parent_memo_roots(
@@ -550,7 +550,6 @@ def _unchecked_parent_memo_roots(
     declared_inputs = parent_ctx.workflow_ir.get("inputs") if isinstance(parent_ctx.workflow_ir, Mapping) else None
     input_names = set(declared_inputs) if isinstance(declared_inputs, Mapping) else set()
     tainted: set[tuple[str | None, str]] = set()
-    from pflow.runtime.template_resolver import TemplateResolver
 
     for ref in _extract_unique_refs(value):
         root = TemplateResolver.extract_root_node_id(ref)
@@ -576,7 +575,6 @@ def _resolve_first_batch_item(edge: CrossWorkflowEdge, parent_ctx: AnalysisConte
         return _normalize_empty(items_expr[0]) if items_expr else None
     if not isinstance(items_expr, str):
         return None
-    from pflow.runtime.template_resolver import TemplateResolver
 
     try:
         resolved = TemplateResolver.resolve_template(

@@ -74,6 +74,11 @@ storage is the runtime source of values. Batch nodes skip top-level template
 resolution so `${item}` resolves only in each item's context. Preserve source-line
 metadata through `split_params`; only cache hashing filters those keys.
 
+Whether a param resolved is read from its `Resolution` channels, never by comparing
+resolved text with the template. `inputs` resolves per key, so Optional-input `None`
+injection clears only the key whose references are absent; a sibling sharing the
+same expression text keeps its own channel.
+
 Strict-mode resolution attaches partial resolutions; the unresolved-reference path
 also attaches a Diagnostic, while strict type mismatches do not. Permissive errors
 must carry a `diagnostic` entry: `runner._extract_runtime_warnings`

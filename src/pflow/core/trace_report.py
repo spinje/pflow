@@ -25,6 +25,7 @@ from pflow.core.metrics import (
     unavailable_models_to_counts,
 )
 from pflow.core.node_type_display import node_type_tag
+from pflow.core.templates import TemplateResolver
 from pflow.core.trace_io import load_trace_file
 from pflow.core.trace_tree import TraceTree, batch_item_cost, event_cost
 from pflow.runtime.workflow_trace import final_events_by_node
@@ -515,7 +516,6 @@ def _suggest_template_fixes(
     suggestions: list[str] = []
 
     # Extract template variable paths from error message
-    from pflow.runtime.template_resolver import TemplateResolver
 
     variables = TemplateResolver.TEMPLATE_EXTRACT_PATTERN.findall(error)
 

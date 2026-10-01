@@ -187,7 +187,7 @@ def test_compute_overlaps_batch_scoped_skipped() -> None:
 
 
 def test_compute_overlaps_bash_syntax_filtered() -> None:
-    """Bash syntax (``${var:-default}``) fails the pflow var regex; no overlap."""
+    """Bash syntax (``${var:-default}``) is an Issue, not a Reference; no overlap."""
     overlaps = compute_overlaps(
         prompt_text="${var:-default}",
         prompt_cache=["var"],
@@ -257,3 +257,31 @@ def test_compute_overlaps_multiple_chunks_same_prompt() -> None:
         ("b", "b", "duplicate"),
         ("c", "c.field", "cache_contains_body"),
     ]
+
+
+# ----------------------------------------------------------------------
+# compute_overlaps — body refs come from the template parse (Task 170)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("prompt_text", "expected"),
+    [
+        # A dynamic index is one Reference that sends a sub-value of the cached chunk inline.
+        ("Row: ${items[${i}].x}", [("items", "items[${i}].x", "cache_contains_body")]),
+        # Its index source is not sent inline: a chunk named like the index never overlaps.
+        ("Row: ${other[${items}].x}", []),
+        # An escape is literal text through its balanced `}` — nothing inside it is a ref.
+        ("Literal $${a[${items}]} only", []),
+        # A real ref after an escape still counts.
+        ("Literal $${x} then ${items}", [("items", "items", "duplicate")]),
+    ],
+)
+def test_compute_overlaps_reads_the_value_view_of_the_parse(prompt_text: str, expected: list) -> None:
+    overlaps = compute_overlaps(
+        prompt_text=prompt_text,
+        prompt_cache=["items"],
+        cache_item_names={"items"},
+        batch_aliases=set(),
+    )
+    assert [(o.chunk_name, o.body_ref, o.kind) for o in overlaps] == expected

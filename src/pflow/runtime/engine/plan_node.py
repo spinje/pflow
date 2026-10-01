@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pflow.core.prompt_cache import (
-    CacheRenderContext,
-    _ChunkAbsentSentinel,
-    _resolve_chunk_value,
-)
+from pflow.core.prompt_cache import CacheRenderContext, render_cache_chunks
 
 from .instrumentation import (
     compute_config_hash,
@@ -21,8 +16,6 @@ from .instrumentation import (
 from .loop_control import carry_effective_config
 from .template_resolution import resolve_templates
 from .types import NodeConfig
-
-logger = logging.getLogger(__name__)
 
 NodePlanStatus = Literal["cached_memo", "cached_in_process", "miss", "cache_disabled"]
 
@@ -174,30 +167,8 @@ def _render_cache_for_hash(config: NodeConfig, shared: dict[str, Any]) -> list[d
     cache_ctx = _read_cache_context(shared, config.node_id)
     if cache_ctx is None or not cache_ctx.subset or cache_ctx.cache_block is None:
         return None
-    chunks_by_name = {c.name: c for c in cache_ctx.cache_block.items}
-    rendered: list[dict[str, Any]] = []
-    for name in cache_ctx.subset:
-        chunk = chunks_by_name.get(name)
-        if chunk is None:
-            # Validator catches undeclared subset entries (Segment 1 B2.3).
-            # Log when defense fires so bypass scenarios (direct
-            # compile_workflow without WorkflowValidator) are observable
-            # rather than silently producing a no-opt-in hash for a node
-            # that declared a subset.
-            logger.warning(
-                "cache rendering skipped undeclared chunk '%s' for node '%s' — "
-                "subset entry has no matching item in the workflow's ## Cache block; "
-                "validator should have rejected this (B2.3). The skip prevents a crash "
-                "but the resulting hash will exclude the chunk's content.",
-                name,
-                config.node_id,
-            )
-            continue
-        value = _resolve_chunk_value(chunk, shared)
-        if isinstance(value, _ChunkAbsentSentinel):
-            continue
-        rendered.append({"name": name, "prose": chunk.prose_before, "value": value})
-    return rendered or None
+    rendered, _skipped = render_cache_chunks(cache_ctx, shared)
+    return [{"name": c.name, "prose": c.prose, "value": c.value} for c in rendered] or None
 
 
 def _read_cache_context(shared: dict[str, Any], node_id: str) -> CacheRenderContext | None:

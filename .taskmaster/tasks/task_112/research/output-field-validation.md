@@ -41,7 +41,7 @@ result: dict = {
 ```
 
 The code node already parses these annotations at execution time for
-type checking (see `src/pflow/runtime/type_checker.py`). But the
+type checking (see `src/pflow/nodes/python/python_code.py`). But the
 annotation `dict` carries no information about which keys exist.
 
 ## Opportunity: TypedDict
@@ -111,7 +111,7 @@ rm /tmp/test.pflow.md
 - **Template validator**: `src/pflow/runtime/template_validator.py` — where field validation would be added
 - **Workflow validator**: `src/pflow/core/workflow_validator.py` — orchestrator that calls template validation
 - **Code node**: `src/pflow/nodes/python/python_code.py` — where TypedDict annotations would be parsed
-- **Type checker**: `src/pflow/runtime/type_checker.py` — existing type checking infrastructure
+- **Type checks**: `src/pflow/core/types.py` (`TypeSpec.accepts`, literal values); template-flow compatibility is `src/pflow/core/templates.py::is_type_compatible` (not a literal-value check)
 - **Markdown parser**: `src/pflow/core/markdown_parser.py` — already validates Python syntax with `ast.parse()`
 
 ## Complexity Assessment

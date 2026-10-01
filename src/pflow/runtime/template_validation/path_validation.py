@@ -6,17 +6,30 @@ and all error formatting for path-related issues.
 """
 
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.templates import (
+    TRAVERSABLE_TYPES,
+    TRUSTED_TRAVERSABLE_TYPES,
+    DynamicIndex,
+    Field,
+    Index,
+    Reference,
+    Segment,
+    parse_path,
+)
+from pflow.core.workflow.template_surfaces import iter_template_surfaces
 from pflow.registry import Registry
 from pflow.runtime.template_validation.utils import (
     MAX_DISPLAYED_FIELDS,
     build_paths_from_entries,
+    descend_index,
+    dotted_parts,
     find_similar_paths,
     get_node_ids,
     sanitize_for_display,
-    split_template_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -84,7 +97,7 @@ def validate_template_path(
     2. Root-level references (e.g., ${input_file} or ${config.nested.path})
 
     Args:
-        template: Template string like "var" or "var.field.subfield"
+        template: A reference path like "var", "var.field.subfield" or "a[${i}].x"
         initial_params: Parameters provided before execution
         node_outputs: Full structure info from node interfaces
         workflow_ir: The workflow IR to check for node IDs
@@ -93,35 +106,23 @@ def validate_template_path(
     Returns:
         Tuple of (is_valid, optional_warning)
     """
-    # Use smart split to preserve dots inside nested templates like ${item.field}
-    parts = split_template_path(template)
-    base_var = parts[0]
-    enable_namespacing = workflow_ir.get("enable_namespacing", True)
+    ref = parse_path(template)
+    if ref is None:
+        logger.debug("Template path %r is outside the reference grammar", template)
+        return (False, None)
 
-    # When namespacing is enabled, check if base_var is a node ID
-    if enable_namespacing:
-        node_ids = get_node_ids(workflow_ir)
+    # When namespacing is enabled, a root that is a node ID is a namespaced output reference
+    if workflow_ir.get("enable_namespacing", True) and ref.root in get_node_ids(workflow_ir):
+        return validate_namespaced_output(ref, node_outputs, template)
 
-        if base_var in node_ids:
-            # This is a namespaced node output reference
-            return validate_namespaced_output(parts, base_var, node_outputs, template)
-
-    # Not a node ID reference (or namespacing disabled), check as root-level reference
-
-    # Check initial_params first (higher priority)
-    if base_var in initial_params:
-        # For nested paths in initial_params, we can't validate at compile time
-        # since values are runtime-dependent. This is a limitation.
+    # A root-level reference. initial_params first (higher priority): their runtime
+    # structure is unknown, so nested paths and indices under them cannot be validated.
+    if ref.root in initial_params:
         return (True, None)
 
-    # Check node outputs (for backward compatibility when namespacing is disabled)
-    if base_var in node_outputs:
-        if len(parts) == 1:
-            return (True, None)
-
-        # Validate nested path in structure
-        output_key = base_var  # For non-namespaced, base_var is the output key
-        return validate_nested_path(parts[1:], node_outputs[base_var], full_template=template, output_key=output_key)
+    # Node outputs (for backward compatibility when namespacing is disabled)
+    if ref.root in node_outputs:
+        return validate_nested_path(ref.path, node_outputs[ref.root], full_template=template, output_key=ref.root)
 
     return (False, None)
 
@@ -154,109 +155,58 @@ def _batch_results_index_error(
     )
 
 
-def _validate_array_access(
-    parts: list[str],
-    base_var: str,
-    base_output: str,
-    output_info: dict[str, Any],
+def validate_namespaced_output(
+    ref: Reference,
+    node_outputs: dict[str, Any],
     template: str,
 ) -> tuple[bool, Diagnostic | None]:
-    """Validate array index access on a node output (e.g., results[0].field)."""
+    """Validate a namespaced node output reference (``node.output...``).
+
+    Handles patterns like ``node.output_key``, ``node.results[0]``,
+    ``node.results[${i}].field``.
+    """
+    if not ref.path or not isinstance(ref.path[0], Field):
+        # The node ID alone (or indexed) — an output key is required
+        return (False, None)
+    base_output = ref.path[0].name
+
+    node_output_key = f"{ref.root}.{base_output}"
+    if node_output_key not in node_outputs:
+        # Dynamic workflow nodes (outputs unknown at validation time) accept any output
+        is_dynamic = ref.root in node_outputs and node_outputs[ref.root].get("is_workflow_dynamic")
+        return (True, None) if is_dynamic else (False, None)
+
+    output_info = node_outputs[node_output_key]
+
     # Block index access on results when upstream uses error_handling: continue.
     # Results only contains successful items — positional indices don't correspond
     # to original input positions, so index-based access would silently return
     # wrong data.
     if (
-        base_output == "results"
+        len(ref.path) > 1
+        and isinstance(ref.path[1], Index | DynamicIndex)
+        and base_output == "results"
         and output_info.get("is_batch_output")
         and output_info.get("error_handling") == "continue"
     ):
-        return _batch_results_index_error(output_info, base_var, template)
+        return _batch_results_index_error(output_info, ref.root, template)
 
-    items_info = output_info.get("items", {})
-    if items_info:
-        # Use items structure for nested validation
-        if len(parts) == 2:
-            return (True, None)
-        return validate_nested_path(parts[2:], items_info, full_template=template, output_key=base_output)
-
-    # No items info but array access requested
-    output_type = output_info.get("type", "any")
-    # Allow if type is array (native array access)
-    if output_type == "array":
-        return (True, None)
-    # Also allow str types - they may contain JSON that gets auto-parsed at runtime
-    # This matches the behavior of check_type_allows_traversal for field access
-    if output_type in ["str", "string"]:
-        # Generate warning about JSON auto-parsing requirement
-        warning = Diagnostic(
-            severity=Severity.WARNING,
-            source="validator",
-            node_id=output_info.get("node_id", "unknown"),
-            message=(
-                f"Array access on '{output_type}' requires valid JSON array at runtime. "
-                f"Non-JSON strings cause 'Unresolved variables' error."
-            ),
-            suggestions=["Ensure the value is a valid JSON array at runtime."],
-            context={"template": template if template.startswith("${") else f"${{{template}}}"},
-        )
-        return (True, warning)
-    return (False, None)
-
-
-def validate_namespaced_output(
-    parts: list[str],
-    base_var: str,
-    node_outputs: dict[str, Any],
-    template: str,
-) -> tuple[bool, Diagnostic | None]:
-    """Validate a namespaced node output reference with array index support.
-
-    Handles patterns like:
-    - node_id.output_key
-    - node_id.results[0]
-    - node_id.results[0].field
-    """
-    if len(parts) == 1:
-        # Just the node ID without output key - invalid
-        return (False, None)
-
-    # Handle array indexing: parts[1] might be "results[0]" → base="results", index=0
-    output_part = parts[1]
-    array_index = None
-    if "[" in output_part and output_part.endswith("]"):
-        bracket_pos = output_part.index("[")
-        base_output = output_part[:bracket_pos]
-        array_index = output_part[bracket_pos + 1 : -1]
-    else:
-        base_output = output_part
-
-    node_output_key = f"{base_var}.{base_output}"
-    if node_output_key not in node_outputs:
-        # Dynamic workflow nodes (outputs unknown at validation time) accept any output
-        is_dynamic = base_var in node_outputs and node_outputs[base_var].get("is_workflow_dynamic")
-        return (True, None) if is_dynamic else (False, None)
-
-    output_info = node_outputs[node_output_key]
-
-    # If array access, validate array-specific rules
-    if array_index is not None:
-        return _validate_array_access(parts, base_var, base_output, output_info, template)
-
-    if len(parts) == 2:
-        return (True, None)
-
-    # Validate deeper nested path
-    return validate_nested_path(parts[2:], output_info, full_template=template, output_key=base_output)
+    return validate_nested_path(ref.path[1:], output_info, full_template=template, output_key=base_output)
 
 
 def validate_nested_path(
-    path_parts: list[str], output_info: dict[str, Any], full_template: str = "", output_key: str = ""
+    segments: Sequence[Segment], output_info: dict[str, Any], full_template: str = "", output_key: str = ""
 ) -> tuple[bool, Diagnostic | None]:
-    """Validate a nested path exists in the output structure.
+    """Walk ``segments`` through a declared output (or field) structure.
+
+    A field reads the current ``structure``; an index descends to the element
+    (``descend_index``, shared with type inference). Where a structure is missing,
+    the declared type decides: at an output or an indexed element the
+    ``check_type_allows_traversal`` rules apply (a string warns that it must hold
+    JSON); deeper, a traversable type is accepted as is.
 
     Args:
-        path_parts: List of path components after the base variable
+        segments: Path segments after the base variable
         output_info: Output info dict with type and structure
         full_template: Full template string for warning context
         output_key: The output key being accessed (for warning)
@@ -264,52 +214,68 @@ def validate_nested_path(
     Returns:
         Tuple of (is_valid, optional_warning)
     """
-    current_structure = output_info.get("structure", {})
-
-    # If no structure info, check if type allows traversal
-    if not current_structure:
-        output_type = output_info.get("type", "any")
-        return check_type_allows_traversal(output_type, path_parts, output_info, full_template, output_key)
-
-    # Traverse the structure
-    for i, part in enumerate(path_parts):
-        if part not in current_structure:
+    info: dict[str, Any] = output_info
+    at_element = True  # at the output itself or an indexed element (vs. a field inside a structure)
+    warning: Diagnostic | None = None
+    for position, segment in enumerate(segments):
+        if not isinstance(segment, Field):
+            element, json_at_runtime = descend_index(info)
+            if element is None:
+                return (False, None)
+            if json_at_runtime:
+                warning = warning or _json_array_warning(info, full_template)
+            info, at_element = element, True
+            continue
+        structure = info.get("structure") or {}
+        if not structure:
+            if at_element:
+                valid, traversal_warning = check_type_allows_traversal(
+                    info.get("type", "any"), segments[position:], info, full_template, output_key
+                )
+                return (valid, warning or traversal_warning)
+            if "type" in info:
+                # Can't traverse further unless the type allows it (str: JSON auto-parsed at runtime)
+                return (str(info["type"]).lower() in TRAVERSABLE_TYPES, warning)
             return (False, None)
-
-        next_item = current_structure[part]
-        if isinstance(next_item, dict):
-            # Check if this is a type definition or nested structure
-            if "type" in next_item:
-                # This is a field definition
-                if i < len(path_parts) - 1:
-                    # More parts to traverse
-                    current_structure = next_item.get("structure", {})
-                    if not current_structure:
-                        # Can't traverse further unless type allows it
-                        # str/string allowed for JSON auto-parsing at runtime
-                        field_type = next_item.get("type", "any").lower()
-                        return (field_type in ["dict", "object", "any", "str", "string"], None)
-                else:
-                    # This is the final part - valid
-                    return (True, None)
-            else:
-                # Direct nested structure
-                current_structure = next_item
-        else:
+        next_item = structure.get(segment.name)
+        if next_item is None:
+            return (False, None)
+        if not isinstance(next_item, dict):
             # Reached a leaf type string, no more traversal possible
-            return (i == len(path_parts) - 1, None)
+            return (position == len(segments) - 1, warning)
+        # A typed field definition, or a direct nested structure (no "type")
+        info = next_item if "type" in next_item else {"structure": next_item}
+        at_element = False
+    return (True, warning)
 
-    return (True, None)
+
+def _json_array_warning(info: dict[str, Any], template: str) -> Diagnostic:
+    output_type = info.get("type", "any")
+    return Diagnostic(
+        severity=Severity.WARNING,
+        source="validator",
+        node_id=info.get("node_id", "unknown"),
+        message=(
+            f"Array access on '{output_type}' requires valid JSON array at runtime. "
+            f"Non-JSON strings cause 'Unresolved variables' error."
+        ),
+        suggestions=["Ensure the value is a valid JSON array at runtime."],
+        context={"template": template if template.startswith("${") else f"${{{template}}}"},
+    )
 
 
 def check_type_allows_traversal(
-    output_type: str, path_parts: list[str], output_info: dict[str, Any], full_template: str, output_key: str
+    output_type: str,
+    path_parts: Sequence[Segment],
+    output_info: dict[str, Any],
+    full_template: str,
+    output_key: str,
 ) -> tuple[bool, Diagnostic | None]:
     """Check if output type allows traversal and generate warning if needed.
 
     Args:
         output_type: The output type string (may be union like "dict|str")
-        path_parts: List of path components for warning context
+        path_parts: Remaining path segments for warning context
         output_info: Output info dict for warning context
         full_template: Full template string for warning context
         output_key: The output key being accessed
@@ -318,31 +284,23 @@ def check_type_allows_traversal(
         Tuple of (is_valid, optional_warning)
     """
     # Parse union types (e.g., "dict|str" → ["dict", "str"])
-    types_in_union = [t.strip().lower() for t in output_type.split("|")]
+    types_in_union = {t.strip().lower() for t in output_type.split("|")}
 
     # Check if ANY type in the union allows traversal
     # - dict/object: structured data, traversable (trusted, no warning)
     # - any: explicit "could be anything" declaration (trusted, no warning)
     # - str/string: might contain JSON, defer to runtime via JSON auto-parsing (WARNING)
-    traversable_types = [t for t in types_in_union if t in ["dict", "object", "any", "str", "string"]]
-
-    if not traversable_types:
+    if not types_in_union & TRAVERSABLE_TYPES:
         return (False, None)
 
     # dict/object and any types are trusted - no warning needed
-    # - dict/object: structured data
-    # - any: node author explicitly declared "this could be anything"
-    trusted_types = [t for t in traversable_types if t in ["dict", "object", "any"]]
-    if trusted_types:
-        # At least one trusted type - allow without warning
+    if types_in_union & TRUSTED_TRAVERSABLE_TYPES:
         return (True, None)
 
     # Only str/string types remain - warn about JSON auto-parsing
     # This is the "surprising" case where nested access works via implicit parsing
-    string_types = [t for t in traversable_types if t in ["str", "string"]]
     warning = None
-
-    if string_types and len(path_parts) > 0:
+    if path_parts:
         warning = Diagnostic(
             severity=Severity.WARNING,
             source="validator",
@@ -382,8 +340,8 @@ def create_template_diagnostic(
     Returns:
         Validation diagnostic
     """
-    # Use smart split to preserve dots inside nested templates like ${item.field}
-    parts = split_template_path(template)
+    ref = parse_path(template)
+    parts = dotted_parts(ref) if ref is not None else [template]
     base_var = parts[0]
     enable_namespacing = workflow_ir.get("enable_namespacing", True)
 
@@ -412,55 +370,24 @@ def create_template_diagnostic(
 
 
 def _find_template_source_file(template: str, workflow_ir: dict[str, Any]) -> str | None:
-    """Find the external source file for a template variable, if any.
+    """Find the external source file of the value that references ``template``, if any.
 
-    Scans all nodes to find which node's param contains this template,
-    then checks that node's _source_files for the param's origin.
-
-    Returns the original file path (e.g., './prompts/foo.md') or None.
+    A node's ``_source_files`` maps a location (a param name, or
+    ``batch.items[N].key``) to the file its value was read from; returns the first
+    such file (e.g. ``'./prompts/foo.md'``) whose value references ``template``.
     """
-    search_pattern = f"${{{template}}}"
-    for node in workflow_ir.get("nodes", []):
-        if not isinstance(node, dict):
-            continue
-        source_files = node.get("_source_files", {})
+    source_files_by_node = {
+        node.get("id"): node.get("_source_files") or {}
+        for node in workflow_ir.get("nodes", [])
+        if isinstance(node, dict)
+    }
+    for surface in iter_template_surfaces(workflow_ir):
+        source_files = source_files_by_node.get(surface.node_id)
         if not source_files:
             continue
-        result = _search_params_for_source(search_pattern, node, source_files)
-        if result:
-            return result
-        result = _search_batch_items_for_source(search_pattern, node, source_files)
-        if result:
-            return result
-    return None
-
-
-def _search_params_for_source(search_pattern: str, node: dict[str, Any], source_files: dict[str, str]) -> str | None:
-    """Check node params for a template pattern and return its source file."""
-    for param_name, param_value in node.get("params", {}).items():
-        if isinstance(param_value, str) and search_pattern in param_value and param_name in source_files:
-            return source_files[param_name]
-    return None
-
-
-def _search_batch_items_for_source(
-    search_pattern: str, node: dict[str, Any], source_files: dict[str, str]
-) -> str | None:
-    """Check batch items for a template pattern and return its source file."""
-    batch = node.get("batch")
-    if not isinstance(batch, dict):
-        return None
-    items = batch.get("items")
-    if not isinstance(items, list):
-        return None
-    for i, item in enumerate(items):
-        if not isinstance(item, dict):
-            continue
-        for key, value in item.items():
-            if isinstance(value, str) and search_pattern in value:
-                provenance_key = f"batch.items[{i}].{key}"
-                if provenance_key in source_files:
-                    return source_files[provenance_key]
+        for location, parsed in surface.templates():
+            if location in source_files and any(ref.raw == template for ref in parsed.references):
+                return str(source_files[location])
     return None
 
 

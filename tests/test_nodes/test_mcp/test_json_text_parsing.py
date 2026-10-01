@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 from mcp.types import CallToolResult, TextContent
 
+from pflow.core.templates import TemplateResolver
 from pflow.nodes.mcp.node import MCPNode
-from pflow.runtime.template_resolver import TemplateResolver
 
 
 class TestJSONTextContentParsing:

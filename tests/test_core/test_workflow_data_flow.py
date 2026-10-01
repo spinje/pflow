@@ -96,6 +96,47 @@ def test_dynamic_cache_ttl_rejected_for_batch_prewarm_without_prompt_cache() -> 
     assert "cache.unsupported-provider-ttl" in {diag.id for diag in diagnostics}
 
 
+class TestCacheVarRoots:
+    """Task 170 (delta 6): a chunk var's dynamic-index inner reference is a root too.
+    Dict IR — the ## Cache chunker cannot form such a var from markdown yet."""
+
+    @staticmethod
+    def _messages(var: str) -> list[str]:
+        ir = {
+            "inputs": {"i": {"type": "number"}},
+            "cache": {"items": [{"name": var, "var": var, "prose_before": "Base: "}]},
+            "nodes": [
+                {"id": "p", "type": "shell", "params": {"command": "echo ${i}"}},
+                {"id": "b", "type": "shell", "params": {"command": "echo ${item}"}, "batch": {"items": [1, 2]}},
+            ],
+            "edges": [{"from": "p", "to": "b"}],
+        }
+        return [d.message for d in validate_data_flow(ir) if d.severity.value == "error"]
+
+    def test_inner_root_must_exist(self):
+        assert any("'nope'" in m for m in self._messages("p.stdout[${nope}]"))
+
+    def test_inner_batch_alias_is_batch_scoped(self):
+        assert any("batch-scoped" in m for m in self._messages("p.stdout[${item.i}]"))
+
+    def test_declared_inner_root_is_clean(self):
+        assert self._messages("p.stdout[${i}]") == []
+
+    def test_literal_var_is_rejected(self):
+        """``${42}`` is a Literal, not a reference: the runtime gates the chunk on the root
+        ``"42"`` and silently drops it, so the validator must keep rejecting it."""
+        assert any("'42' is not a declared input" in m for m in self._messages("42"))
+
+    def test_coalesce_var_from_dict_ir_is_rejected(self):
+        """Dict IR skips the ## Cache parser's coalesce rejection; a chain whose first root
+        exists must still not validate (the runtime would read only that first root)."""
+        assert self._messages("p.nope ?? i") == ["coalesce is not supported in a ## Cache chunk: '${p.nope ?? i}'."]
+
+    def test_issue_var_is_left_to_the_issue_pass(self):
+        """One diagnostic per mistake: the template Issue pass reports a malformed var."""
+        assert self._messages("p.stdout.0") == []
+
+
 class TestBuildExecutionOrder:
     """Test the topological sort for execution order."""
 
@@ -298,9 +339,8 @@ class TestValidateDataFlow:
     def test_nested_dict_param_path_reaches_deep_key(self):
         """Nested dict params: diagnostic path must point at the deepest offending key.
 
-        Regression guard for review feedback on PR #244 — ``_check_param_value``
-        used to recurse into dict/list values without extending ``param_name``,
-        so a typo in ``headers.Authorization`` reported its path as
+        Regression guard for review feedback on PR #244 — the param walk used to
+        recurse into dict/list values without extending the reported key, so a typo in ``headers.Authorization`` reported its path as
         ``nodes[id=X].params.headers`` instead of ``...params.headers.Authorization``.
         """
         workflow = {
@@ -808,8 +848,8 @@ class TestBatchDataFlowValidation:
 class TestNestedParamValidation:
     """Test that data flow validation recurses into nested dict/list params.
 
-    Covers the fix for GitHub issue #108: _validate_node_params now recurses
-    into dict and list values using _check_param_value(), rather than only
+    Covers the fix for GitHub issue #108: data-flow validation walks every
+    string inside dict and list params (``iter_node_surfaces``), rather than only
     checking top-level string params.
     """
 

@@ -420,16 +420,52 @@ def test_tokenize_prompt_region_returns_none_for_indirected_per_item_ref() -> No
     assert tokenize_prompt_region("${X}", model="", ctx=ctx) is None
 
 
-def test_tokenize_prompt_region_returns_none_when_resolved_value_contains_literal_template_bytes() -> None:
-    """Behavior: resolved values that still look like templates are unmeasurable.
+def test_tokenize_prompt_region_measures_resolved_values_containing_template_text() -> None:
+    """Behavior: a resolved value containing ``${...}`` text is real prompt bytes (#630).
 
-    History: code-node outputs can legitimately contain ``${...}`` text; the
-    conservative analyzer must not mistake that for fully resolved prompt
-    bytes. Mutation contract: remove the second template-pattern scan; this
-    test fails because the literal-looking output would be counted as text.
+    History: code-node outputs can legitimately contain ``${...}`` text, and the
+    analyzer used to re-scan the RESOLVED prompt and call it unmeasurable. The
+    resolver's unresolved channel is the judge (Task 170). Mutation contract:
+    re-scan the resolved value for templates; this test fails because it returns
+    ``None``.
     """
     ctx = _analysis_ctx({"text": "literal ${still.template}"})
-    assert tokenize_prompt_region("${text}", model="", ctx=ctx) is None
+    expected = estimate_tokens("", "literal ${still.template}")[0]
+    assert tokenize_prompt_region("${text}", model="", ctx=ctx) == expected
+
+
+class TestEscapedTemplateInPromptIsMeasured:
+    """A ``$${x}`` escape is literal ``${x}`` after resolution — measured, never
+    "partial" (the resolve-then-scan sites, Task 170 phase 4a). Mutation: judge
+    unresolved-ness by scanning the resolved text; every test here fails."""
+
+    def test_exact_tokenizer(self) -> None:
+        ctx = _analysis_ctx({"text": "T"})
+        region = "Use $${x} for ${text}"
+        assert tokenize_prompt_region(region, model="", ctx=ctx) == estimate_tokens("", "Use ${x} for T")[0]
+
+    def test_lower_bound_tokenizer(self) -> None:
+        ctx = _analysis_ctx({"text": "T"})
+        assert tokenize_prompt_region_lower_bound("Use $${x} for ${text}", model="", ctx=ctx) == (
+            estimate_tokens("", "Use ${x} for T")[0],
+            (),
+        )
+
+    def test_lower_bound_strips_only_the_unresolved_expressions(self) -> None:
+        """The escaped `$${missing}` spells the same `${missing}` bytes as the unresolved
+        expression; only the expression is cut (by author span)."""
+        ctx = _analysis_ctx({"text": "T"})
+        region = "Use $${missing} for ${text} and ${missing}"
+        expected = estimate_tokens("", "Use ${missing} for T and ")[0]
+        assert expected != estimate_tokens("", "Use  for T and ")[0]  # the collision is observable
+        assert tokenize_prompt_region_lower_bound(region, model="", ctx=ctx) == (expected, ("missing",))
+
+    def test_row_builder_prompt_resolution(self) -> None:
+        from pflow.core.prompt_cache_analysis.stages.row_builder import _resolve_prompt_for_tokenization
+
+        ctx = _analysis_ctx({"text": "T"})
+        assert _resolve_prompt_for_tokenization("Use $${x} for ${text}", ctx, {"id": "n"}) == ("Use ${x} for T", False)
+        assert _resolve_prompt_for_tokenization("Use ${missing}", ctx, {"id": "n"}) == ("Use ${missing}", True)
 
 
 # ---------------------------------------------------------------------------
@@ -500,12 +536,12 @@ def test_lower_bound_returns_zero_when_resolution_has_user_data_error(monkeypatc
     the raw region on ValueError; this test fails because measurable tokens
     become positive instead of zero.
     """
-    from pflow.runtime.template_resolver import TemplateResolver
+    from pflow.core.prompt_cache_analysis import token_estimation
 
     def _boom(*_args: Any, **_kwargs: Any) -> str:
         raise ValueError("synthetic resolver data failure")
 
-    monkeypatch.setattr(TemplateResolver, "resolve_template", staticmethod(_boom))
+    monkeypatch.setattr(token_estimation, "resolve", _boom)
     assert tokenize_prompt_region_lower_bound("Use ${known} and ${missing}", model="", ctx=_analysis_ctx({})) == (
         0,
         ("known", "missing"),
@@ -520,12 +556,12 @@ def test_prompt_region_tokenizers_do_not_swallow_programming_errors(monkeypatch:
     Mutation contract: restore a bare Exception catch in either helper; this
     test fails because RuntimeError no longer propagates.
     """
-    from pflow.runtime.template_resolver import TemplateResolver
+    from pflow.core.prompt_cache_analysis import token_estimation
 
     def _boom(*_args: Any, **_kwargs: Any) -> str:
         raise RuntimeError("synthetic programming failure")
 
-    monkeypatch.setattr(TemplateResolver, "resolve_template", staticmethod(_boom))
+    monkeypatch.setattr(token_estimation, "resolve", _boom)
     ctx = _analysis_ctx({})
 
     with pytest.raises(RuntimeError, match="synthetic programming failure"):

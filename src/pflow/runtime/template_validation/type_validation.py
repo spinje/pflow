@@ -5,35 +5,26 @@ Pass 7: Blocks structured data (dict/list) in shell command parameters.
 Pass 9: Validates code-node input annotations against template source types.
 """
 
-import re
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.templates import (
+    CONTAINER_TYPES,
+    Reference,
+    TemplateResolver,
+    is_type_compatible,
+    parse,
+)
 from pflow.core.types import outer_base_type
 from pflow.registry import Registry
-from pflow.runtime.template_resolver import TemplateResolver
-from pflow.runtime.template_validation.type_checker import (
-    get_parameter_type,
-    infer_template_type,
-    is_type_compatible,
-)
-
-# Pattern to detect templates exactly wrapped in single quotes: '${var}'
-# This is an escape hatch for structured types in shell commands.
-#
-# Matches:   '${var}', '${node.field}', '${data.items[0].name}'
-# Does NOT match: '${a} ${b}', 'prefix ${var}', '$${var}' (escaped)
-#
-# Note: Array indices use [] not {}, so [^}]+ correctly captures paths
-# like 'data.items[0].value' without stopping at brackets.
-_QUOTED_TEMPLATE_PATTERN = re.compile(r"'\$\{([^}]+)\}'")
+from pflow.runtime.template_validation.type_checker import get_parameter_type, infer_template_type
 
 # Types that are safe in shell commands (string-like or unknown type)
 # When a union contains one of these, runtime coercion to string is acceptable.
 _SHELL_SAFE_TYPES = {"str", "string", "any"}
 
 
-def _is_shell_safe_type(inferred_type: str, blocked_types: set[str]) -> tuple[bool, str | None]:
+def _is_shell_safe_type(inferred_type: str, blocked_types: frozenset[str]) -> tuple[bool, str | None]:
     """Check if a type is safe for shell command embedding.
 
     Args:
@@ -138,11 +129,6 @@ def _check_string_template_types(
         if not inferred_type or inferred_type == "any":
             continue
         if not is_type_compatible(inferred_type, expected_type):
-            suggestions: list[str] | None = None
-            available_fields: list[str] = []
-            if inferred_type in ["dict", "list", "object"] and expected_type in ["str", "string"]:
-                suggestions, available_fields = _generate_type_fix_suggestions(template, node_outputs, expected_type)
-
             diagnostics.append(
                 Diagnostic(
                     severity=Severity.ERROR,
@@ -153,16 +139,12 @@ def _check_string_template_types(
                         f"Type mismatch in parameter '{param_name}': template ${{{template}}} has type "
                         f"'{inferred_type}' but parameter expects '{expected_type}'."
                     ),
-                    suggestions=suggestions,
                     context={
                         "category": "validation",
                         "path": f"nodes[id={node_id}].params.{param_name}",
                         "template": f"${{{template}}}",
                         "inferred_type": inferred_type,
                         "expected_type": expected_type,
-                        "available_fields": available_fields or None,
-                        "available_fields_total": len(available_fields) if available_fields else None,
-                        "available_fields_label": "matching outputs" if available_fields else None,
                     },
                 )
             )
@@ -174,18 +156,21 @@ def _check_string_template_types(
 
 
 def _build_quoted_templates(command: str) -> set[str]:
-    """Extract templates wrapped in single quotes as escape hatch.
+    """The references of every expression exactly wrapped in single quotes
+    (``'${var}'``) — the shell escape hatch for structured types.
 
-    Splits coalesce operands so '${a ?? b}' exempts both 'a' and 'b'.
+    ``'${a} ${b}'``, ``'prefix ${var}'`` and an escaped ``'$${var}'`` are not
+    wrapped. Every operand counts, so ``'${a ?? b}'`` exempts both ``a`` and ``b``;
+    literal operands need no type-coercion exemption.
     """
-    result: set[str] = set()
-    for match in _QUOTED_TEMPLATE_PATTERN.finditer(command):
-        for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
-            # Literal operands (Optional A) need no type-coercion exemption.
-            if TemplateResolver.is_literal_operand(operand):
-                continue
-            result.add(operand)
-    return result
+    return {
+        operand.raw
+        for expression in parse(command).expressions
+        if command[expression.span[0] - 1 : expression.span[0]] == "'"
+        and command[expression.span[1] : expression.span[1] + 1] == "'"
+        for operand in expression.operands
+        if isinstance(operand, Reference)
+    }
 
 
 def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict[str, Any]) -> list[Diagnostic]:
@@ -211,10 +196,6 @@ def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict
         Diagnostics for structured data in shell commands
     """
     diagnostics: list[Diagnostic] = []
-    # Types that cannot be safely embedded in shell command strings.
-    # Includes both Python type names (dict, list) and JSON Schema names (object, array)
-    # since workflow IR may use either convention.
-    SHELL_BLOCKED_TYPES = {"dict", "object", "list", "array"}
 
     for node in workflow_ir.get("nodes", []):
         node_type = node.get("type")
@@ -251,7 +232,7 @@ def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict
                 continue
 
             # Check if type is safe (handles Fix 0 and Tier 1)
-            is_safe, blocked_type = _is_shell_safe_type(inferred_type, SHELL_BLOCKED_TYPES)
+            is_safe, blocked_type = _is_shell_safe_type(inferred_type, CONTAINER_TYPES)
             if not is_safe and blocked_type:
                 blocked_templates.append((template, blocked_type))
 
@@ -320,61 +301,6 @@ def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict
     return diagnostics
 
 
-# ---------------------------------------------------------------------------
-# Type fix suggestions
-# ---------------------------------------------------------------------------
-
-
-def _generate_type_fix_suggestions(
-    template: str, node_outputs: dict[str, Any], expected_type: str
-) -> tuple[list[str], list[str]]:
-    """Generate structured suggestions for type mismatches with actual available fields.
-
-    Args:
-        template: The template variable that has the wrong type
-        node_outputs: Node output metadata from registry
-        expected_type: The type that was expected
-
-    Returns:
-        Tuple of (suggestions, available_fields)
-    """
-    # For nested templates like node.output.field, we need to traverse to find structure
-    # Find the structure for this template by traversing
-    structure = None
-    for key in node_outputs:
-        if template.startswith(key + ".") or template == key:
-            output_info = node_outputs[key]
-            remaining_path = template[len(key) :].lstrip(".")
-
-            if not remaining_path:
-                # This IS the base output
-                structure = output_info.get("structure", {})
-                break
-            else:
-                # Need to traverse nested structure
-                structure = _traverse_to_structure(output_info.get("structure", {}), remaining_path)
-                if structure:
-                    break
-
-    if not structure:
-        return ([f"Access a specific field, for example ${{{template}.field}}.", "Serialize the value to JSON."], [])
-
-    # Find fields that match the expected type
-    matching_fields = []
-    for field_name, field_info in structure.items():
-        if isinstance(field_info, dict) and "type" in field_info:
-            field_type = field_info["type"]
-            # Check if this field matches the expected type
-            if field_type in [expected_type, "str", "string"] and expected_type in ["str", "string"]:
-                matching_fields.append(field_name)
-
-    if matching_fields:
-        suggestions = [f"Use ${{{template}.{field}}}" for field in matching_fields[:5]]
-        available_fields = [f"${{{template}.{field}}}" for field in matching_fields]
-        return (suggestions, available_fields)
-    return (["Access a nested field or serialize the value to JSON."], [])
-
-
 def _infer_missing_annotation_type(
     key: str,
     inputs: dict[str, Any],
@@ -406,7 +332,7 @@ def _infer_missing_annotation_type(
     templates = TemplateResolver.extract_variables(value)
     if not templates:
         return None
-    for template in templates:
+    for template in sorted(templates):
         inferred = infer_template_type(template, workflow_ir, node_outputs)
         if inferred and inferred != "any":
             return s1_type_to_python_display(inferred)
@@ -579,7 +505,7 @@ def _build_simple_template_mismatch_diagnostic(
     # Tailor the "change the source" wording to the template's origin.
     # Workflow inputs aren't "returned" by anything — telling the agent
     # to change a non-existent upstream node wastes cycles.
-    root = TemplateResolver.extract_root_node_id(template) or template.split(".")[0]
+    root = TemplateResolver.extract_root_node_id(template)
     if root in workflow_inputs:
         source_fix = (
             f"Or change the workflow input declaration for '{root}' "
@@ -937,34 +863,3 @@ def validate_code_node_input_annotations(workflow_ir: dict[str, Any], node_outpu
         )
 
     return diagnostics
-
-
-def _traverse_to_structure(structure: dict[str, Any], path: str) -> dict[str, Any] | None:
-    """Traverse nested structure to find the structure at a given path.
-
-    Args:
-        structure: The structure dict to traverse
-        path: Dot-separated path like "author.login"
-
-    Returns:
-        The structure dict at that path, or None if not found
-    """
-    if not path or not structure:
-        return structure
-
-    path_parts = path.split(".")
-    current = structure
-
-    for part in path_parts:
-        if part in current:
-            field_info = current[part]
-            if isinstance(field_info, dict):
-                current = field_info.get("structure", {})
-                if not current:
-                    return None
-            else:
-                return None
-        else:
-            return None
-
-    return current

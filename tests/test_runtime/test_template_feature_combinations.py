@@ -12,7 +12,7 @@ work in isolation but fail when composed — a common real-world pattern
 in branch-convergence workflows with JSON shell output.
 """
 
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver
 
 
 class TestCoalesceWithJsonAutoparse:

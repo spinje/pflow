@@ -26,7 +26,7 @@ from pflow.core.node_type_display import is_model_node_type
 if TYPE_CHECKING:
     from pflow.core.prompt_cache import CacheRenderContext
 
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver, resolve
 
 from .batch_item_summary import summarize_batch_item
 from .types import BatchConfig, NodeConfig
@@ -118,9 +118,10 @@ def resolve_batch_items(items_template: Any, shared: dict[str, Any]) -> Any:
     if isinstance(items_template, list):
         return TemplateResolver.resolve_nested(items_template, shared)
 
-    resolved = TemplateResolver.resolve_template(items_template.strip(), shared)
-    if resolved == items_template.strip():
+    resolution = resolve(items_template.strip(), shared)
+    if not resolution.ok:
         return None
+    resolved = resolution.value
 
     # Auto-parse JSON strings (enables shell -> batch patterns)
     if isinstance(resolved, str):
@@ -214,7 +215,15 @@ def _pre_warm_compile_cache(
         if config.template_config:
             from .template_resolution import resolve_templates
 
-            merged_params, _, _ = resolve_templates(config.template_config, temp_shared, config.node_id)
+            try:
+                merged_params, _, _ = resolve_templates(config.template_config, temp_shared, config.node_id)
+            except ValueError as exc:
+                if getattr(exc, "_pflow_template_diagnostic", None) is None:
+                    raise
+                # Item[0]'s strict template miss must not fail the whole batch: skip
+                # the pre-warm so the per-item loop applies `error_handling` to it.
+                logger.debug(f"Skipped compile pre-warm for '{config.node_id}': item[0] left a template unresolved")
+                return
             node.params = merged_params
 
         # Run prep() to populate _loaded_ir_cache. Pre-warm's job is to do

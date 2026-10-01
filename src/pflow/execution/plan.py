@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import math
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum, auto
 from pathlib import Path
 from time import time
@@ -39,6 +39,7 @@ from typing import Any, Literal
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import CompilationError, LoopConditionError, ResumeNotResumableError
+from pflow.core.templates import resolve
 from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
 from pflow.execution.result import Plan, PlanEntry, PlanSummary, ResumePlanInfo
 from pflow.registry import Registry
@@ -62,7 +63,6 @@ from pflow.runtime.engine.loop_control import loop_runtime_scope, resolve_loop_c
 from pflow.runtime.engine.plan_node import NodePlan, plan_node
 from pflow.runtime.engine.template_resolution import resolve_templates
 from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, NodeConfig
-from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.workflow_executor import WorkflowExecutor
 from pflow.runtime.workflow_trace import load_snapshot_or_raise
 
@@ -906,8 +906,6 @@ def _annotate_entry(entry: PlanEntry, config: NodeConfig, shared: dict[str, Any]
       cost/duration (and any sub_plan rollup) by this factor and flips the plan
       to ``upper_bound`` cost basis: the honest worst case for a cost gate.
     """
-    from dataclasses import replace
-
     if config.approval and entry.status != "cached":
         entry = replace(entry, approval=True)
     if config.loop_config is None:
@@ -1487,13 +1485,19 @@ def _prepare_batch_sub_workflow_params(
     batch_config: BatchConfig,
 ) -> _PreparedBatchSubWorkflowParams | PlanEntry:
     """Resolve item[0]-scoped params for a batch sub-workflow."""
+    template_config = config.template_config
+    if template_config and batch_config.error_handling == "continue":
+        # A bad item[0] fails only that item at runtime (the engine skips its compile
+        # pre-warm): take item[0]'s shape permissively, and let the per-item loop warn
+        # about it like any other item.
+        template_config = replace(template_config, resolution_mode="permissive")
     try:
         shared[batch_config.item_alias] = items[0]
         shared["__index__"] = 0
-        if config.template_config:
-            resolved_params, _, _ = resolve_templates(config.template_config, shared, config.node_id)
+        if template_config:
+            resolved_params, _, _ = resolve_templates(template_config, shared, config.node_id)
             merged = dict(getattr(curr, "params", {}) or {})
-            merged.update(config.template_config.static_params or {})
+            merged.update(template_config.static_params or {})
             merged.update(resolved_params)
         else:
             merged = dict(getattr(curr, "params", {}) or {})
@@ -1538,23 +1542,27 @@ def _resolve_per_item_sub_workflow_inputs(
     """Resolve child inputs for one batch item, falling back to item[0] shape.
 
     Returns (inputs, diagnostic). Diagnostic is non-None when resolution
-    produced a non-dict — runtime would raise ValueError in that case, so
-    we surface a WARNING to make the plan honest about a likely runtime failure.
+    produced a non-dict or left a template unresolved — runtime would reject the
+    item in that case, so we surface a WARNING to make the plan honest about a
+    likely runtime failure.
     """
     if raw_inputs_template is None:
         return default_inputs, None
     per_item_context = {**shared, batch_config.item_alias: item, "__index__": idx}
-    resolved_inputs = TemplateResolver.resolve_nested(raw_inputs_template, per_item_context)
-    if isinstance(resolved_inputs, dict):
+    resolution = resolve(raw_inputs_template, per_item_context, auto_parse=True)
+    resolved_inputs = resolution.value
+    if not isinstance(resolved_inputs, dict):
+        problem = f"resolved to {type(resolved_inputs).__name__}, expected dict"
+    elif not resolution.ok:
+        left = sorted(f"${{{expr}}}" for expr in resolution.unresolved) + sorted(resolution.issues)
+        problem = f"left {', '.join(left)} unresolved (strict mode)"
+    else:
         return resolved_inputs, None
     diag = Diagnostic(
         severity=Severity.WARNING,
         source="planner",
         node_id=node_id,
-        message=(
-            f"Batch item {idx}: 'inputs:' resolved to {type(resolved_inputs).__name__}, "
-            f"expected dict. Runtime will reject this item."
-        ),
+        message=f"Batch item {idx}: 'inputs:' {problem}. Runtime will reject this item.",
         context={"category": "validation", "batch_item_index": idx},
     )
     return default_inputs, diag

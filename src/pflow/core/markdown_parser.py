@@ -27,6 +27,7 @@ from pflow.core.cache_ttl import cache_ttl_syntax_hint, is_valid_cache_ttl
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import MarkdownParseError
 from pflow.core.suggestion_utils import find_similar_items
+from pflow.core.templates import parse
 from pflow.core.yaml_utils import safe_load_preserving_templates
 
 # --- Result dataclass ---
@@ -157,14 +158,6 @@ _CACHE_BLOCK_TAG = "cache"
 # Allowed values for the ``- ttl:`` parameter on ``## Cache`` are validated
 # through ``core.cache_ttl`` so parser/schema/rendering/analyzer share one
 # interpretation.
-
-# Pattern matching ``${...}`` template references inside the cache code block.
-# Inner content is a single match group with no nested braces — pflow has no
-# nested-template syntax, and this matches the existing TemplateResolver
-# extraction surface. Each match becomes one chunk; the parser never produces
-# a chunk with two ${var} references by construction (the algorithm splits at
-# every match).
-_CACHE_TEMPLATE_RE = re.compile(r"\$\{([^}]+)\}")
 
 _SECTION_SYNTAX_HINTS: dict[_SectionType, str] = {
     _SectionType.INPUTS: (
@@ -1721,28 +1714,37 @@ def _attach_cache_code_block(
 def _parse_cache_code_block(content: str, base_line: int) -> list[_CacheChunk]:
     """Split a cache code block's content into ``[prose-before-${var}][${var}]`` chunks.
 
-    Each ``${var}`` occurrence becomes a chunk whose ``prose_before`` is the
-    text from the previous chunk's end (or the start of the block) up to (but
-    not including) the ``${``. Trailing prose after the last ``${var}`` is
-    silently discarded — the chunk contract is "prose-then-var", and trailing
-    prose has no var to pair with.
+    Each Expression of ``parse(content)`` becomes a chunk; its ``prose_before`` is
+    the source text since the previous chunk (or the block start), kept ESCAPED and
+    verbatim — graph build re-emits it as template text, and the render helper
+    (``prompt_cache.render_cache_chunks``) unescapes it (ADR-0015). So an escape
+    ``$${x}`` is prose, and so is an Issue (``${}``, an unclosed ``${a``): the
+    validator's Issue pass reports it. The chunk name is the raw source slice
+    between ``${`` and ``}``. Trailing prose after the last chunk is discarded —
+    the contract is "prose-then-var".
 
     Raises:
         MarkdownParseError: if the block has no ``${var}`` references at all
-            (empty / prose-only block) or if any chunk identifier is duplicated.
+            (empty / prose-only block), if an Issue sits in the discarded tail, or
+            if any chunk identifier is duplicated.
     """
+    template = parse(content)
     chunks: list[_CacheChunk] = []
     seen_names: set[str] = set()
     last_end = 0
-    for match in _CACHE_TEMPLATE_RE.finditer(content):
-        prose = content[last_end : match.start()]
-        var_expr = match.group(1)
-        # The chunk identifier is the raw template path verbatim (post ``${`` /
-        # pre ``}``). Downstream root extraction happens in B2.3 via
-        # TemplateResolver.extract_root_node_id.
-        name = var_expr
-        line_offset = content.count("\n", 0, match.start())
-        chunk_line = base_line + line_offset
+    for expr in template.expressions:
+        start, end = expr.span
+        name = content[start + 2 : end - 1]
+        assert name == expr.raw  # noqa: S101 — names are sliced from source, never re-rendered
+        chunk_line = base_line + content.count("\n", 0, start)
+        # A chunk renders one value, gated on its root node having run: a `??` chain
+        # could only ever read its first root, so it is rejected rather than half-honoured.
+        if len(expr.operands) > 1:
+            raise MarkdownParseError(
+                f"coalesce is not supported in a ## Cache chunk: '${{{name}}}'.",
+                line=chunk_line,
+                suggestion="Reference one value per chunk; compute a fallback in an upstream step and cache its output.",
+            )
         if name in seen_names:
             raise MarkdownParseError(
                 f"Duplicate cache chunk identifier '{name}'.",
@@ -1754,15 +1756,19 @@ def _parse_cache_code_block(content: str, base_line: int) -> list[_CacheChunk]:
             )
         seen_names.add(name)
         chunks.append(
-            _CacheChunk(
-                name=name,
-                var_expr=var_expr,
-                prose_before=prose,
-                source_line=chunk_line,
-            )
+            _CacheChunk(name=name, var_expr=name, prose_before=content[last_end:start], source_line=chunk_line)
         )
-        last_end = match.end()
+        last_end = end
 
+    # An Issue is prose; one after the last chunk sits in the discarded tail, where the
+    # validator's Issue pass can never see it — so report it here (a block whose only
+    # `${` is malformed is the no-chunk case of the same rule).
+    if tail_issue := next((i for i in template.issues if i.span[0] >= last_end), None):
+        raise MarkdownParseError(
+            f"Malformed template syntax in '## Cache': '{tail_issue.raw}' is not a valid '${{var}}' reference.",
+            line=base_line + content.count("\n", 0, tail_issue.span[0]),
+            suggestion=_SECTION_SYNTAX_HINTS[_SectionType.CACHE],
+        )
     if not chunks:
         raise MarkdownParseError(
             "'## Cache' block must contain at least one '${var}' reference.",

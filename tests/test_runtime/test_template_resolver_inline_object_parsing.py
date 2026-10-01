@@ -6,7 +6,7 @@ it should be automatically parsed to enable structured data access.
 Escape hatch: Use complex templates ("prefix ${var}") to keep raw strings.
 """
 
-from pflow.runtime.template_resolver import TemplateResolver
+from pflow.core.templates import TemplateResolver
 from tests.shared.shell_command_utils import python_json_command
 
 

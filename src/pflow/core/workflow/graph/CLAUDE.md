@@ -65,7 +65,8 @@ authored-param scan recovers lost read roles (`web/src/graph/scan.ts`,
 Cache dependencies belong in `_add_cache_edges`: consumed chunk refs may not
 appear in the prompt body, so these edges are their only dependency visibility.
 Chunk scope is per workflow file; the cached prefix follows the same authored
-assembly rule as `core/prompt_cache.py::build_cache_system_blocks`.
+assembly rule as `core/prompt_cache.py::build_cache_system_blocks`, but as template
+text: `prose_before` stays escaped there (ADR-0015 unescapes only at render).
 
 Failed literal-batch child expansion is recorded in
 `Container.annotations["unexpanded_items"]`, analogous to `Node.unexpanded`.

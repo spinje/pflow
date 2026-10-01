@@ -2,12 +2,18 @@
 
 Provides common infrastructure used across multiple validation modules:
 - Display constants
-- Path splitting, sanitization, and suggestion matching
+- The index rule over declared structure, dotted-part display, sanitization,
+  and suggestion matching
 - Output structure flattening
 """
 
 import logging
+import re
+from collections.abc import Mapping
 from typing import Any
+
+from pflow.core.templates import LIST_TYPES, DynamicIndex, Field, Index, Reference
+from pflow.core.types import outer_base_type
 
 logger = logging.getLogger(__name__)
 
@@ -17,50 +23,46 @@ MAX_DISPLAYED_SUGGESTIONS = 3  # Cognitive limit for processing alternatives
 MAX_FLATTEN_DEPTH = 5  # Prevent infinite recursion on circular refs
 
 
-def split_template_path(template: str) -> list[str]:
-    """Split template path on dots, preserving dots inside ${...}.
+_PARAMETERIZED_LIST = re.compile(r"^(?:list|array)\[(.+)\]$")
 
-    Standard str.split(".") breaks nested templates like ${item.field}
-    inside array brackets. This function correctly handles:
 
-    - drafts.results[${item.draft_index}].response
-      -> ['drafts', 'results[${item.draft_index}]', 'response']
+def descend_index(info: Mapping[str, Any]) -> tuple[dict[str, Any] | None, bool]:
+    """``(element info, json_at_runtime)`` for an index (``[N]`` or ``[${…}]``) into a
+    declared output or field; element ``None`` when its type cannot be indexed.
 
-    - node.data[${__index__}].field
-      -> ['node', 'data[${__index__}]', 'field']
-
-    Args:
-        template: Template path string (without ${} wrapper)
-
-    Returns:
-        List of path components with nested templates preserved
+    The one index rule for Pass 5 and type inference (R9): ``items`` (batch
+    ``results``, declared arrays) IS the element; a list-typed field's ``structure``
+    is its element structure (``list[dict]`` elements are ``dict``); ``any`` indexes
+    to an unknown element; a string indexes only if it holds a JSON array at runtime.
     """
-    parts: list[str] = []
-    current = ""
-    depth = 0  # Track nesting level of ${...}
+    items = info.get("items")
+    if isinstance(items, dict):
+        return dict(items), False
+    declared = str(info.get("type", "any")).strip().lower()
+    types = {outer_base_type(member.strip()) for member in declared.split("|")}
+    if types & (LIST_TYPES | {"any"}):
+        structure = info.get("structure") or {}
+        # Only a single `list[X]` names its element; a union's element is unknown
+        element = _PARAMETERIZED_LIST.match(declared) if "|" not in declared else None
+        element_type = element.group(1) if element else ("dict" if structure else "any")
+        return {"type": element_type, "structure": structure}, False
+    if types & {"str", "string"}:
+        return {"type": "any"}, True
+    return None, False
 
-    i = 0
-    while i < len(template):
-        if template[i : i + 2] == "${":
-            depth += 1
-            current += template[i : i + 2]
-            i += 2
-        elif template[i] == "}" and depth > 0:
-            depth -= 1
-            current += template[i]
-            i += 1
-        elif template[i] == "." and depth == 0:
-            if current:
-                parts.append(current)
-            current = ""
-            i += 1
-        else:
-            current += template[i]
-            i += 1
 
-    if current:
-        parts.append(current)
-
+def dotted_parts(ref: Reference) -> list[str]:
+    """The reference as dot-separated parts, each name with its index: ``a[${i.j}].b[0]`` →
+    ``["a[${i.j}]", "b[0]"]`` (diagnostic display; dots inside an index are not separators)."""
+    parts = [ref.root]
+    for segment in ref.path:
+        match segment:
+            case Field(name):
+                parts.append(name)
+            case Index(value):
+                parts[-1] += f"[{value}]"
+            case DynamicIndex(inner):
+                parts[-1] += f"[${{{inner.raw}}}]"
     return parts
 
 
