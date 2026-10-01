@@ -31,6 +31,7 @@ If a row fails, fix the divergence, never the row (from phase 2 on).
 from __future__ import annotations
 
 import copy
+import importlib.util
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -44,7 +45,7 @@ from pflow.core.prompt_cache import CacheRenderContext, build_cache_system_block
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
 from pflow.registry import Registry
-from pflow.registry.scanner import scan_for_nodes
+from pflow.registry.scanner import extract_metadata
 from pflow.runtime import WorkflowEngine, compile_workflow
 from pflow.runtime.engine.batch_executor import _resolve_and_validate_items, resolve_batch_items
 from pflow.runtime.engine.engine import _resolve_template_string
@@ -60,23 +61,34 @@ from tests.shared.markdown_utils import write_workflow_file
 # ---------------------------------------------------------------------------
 
 _REPO = Path(__file__).resolve().parents[2]
-_CORPUS_NODES_DIR = _REPO / "tests" / "fixtures" / "template_corpus" / "nodes"
+_CORPUS_NODES_FILE = _REPO / "tests" / "fixtures" / "template_corpus" / "nodes" / "producer.py"
 
 
-def _scan_corpus_nodes() -> dict[str, dict[str, Any]]:
-    """Scan ONLY the fixture dir — scanning ``src/pflow/nodes`` here would import the agent
-    backend at collection time, before ``test_agent``'s SDK stub (tests/CLAUDE.md pitfall 17).
+def _corpus_node_entries() -> dict[str, dict[str, Any]]:
+    """Registry entries for the two corpus nodes, built from the fixture FILE.
 
-    The nodes live outside the pflow package, so they are "user" nodes: the compiler
-    imports them from their file path.
+    They are "user" nodes: the compiler imports them from ``file_path``. The entries are
+    not built by a directory scan, whose module naming depends on the checkout path (a
+    path component named ``pflow`` — CI's ``…/pflow/pflow/`` — misnames the module),
+    and scanning ``src/pflow/nodes`` here would import the agent backend before
+    ``test_agent``'s SDK stub (tests/CLAUDE.md pitfall 17).
     """
-    entries = scan_for_nodes([_CORPUS_NODES_DIR])
+    module_name = "template_corpus_nodes"
+    spec = importlib.util.spec_from_file_location(module_name, _CORPUS_NODES_FILE)
+    if spec is None or spec.loader is None:  # pragma: no cover
+        raise RuntimeError(f"cannot load {_CORPUS_NODES_FILE}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    entries = [
+        extract_metadata(cls, module_name, _CORPUS_NODES_FILE)
+        for cls in (module.TemplateCorpusProducer, module.TemplateCorpusSink)
+    ]
     return {e["name"]: {**{k: v for k, v in e.items() if k != "name"}, "type": "user"} for e in entries}
 
 
-_CORPUS_NODES = _scan_corpus_nodes()
+_CORPUS_NODES = _corpus_node_entries()
 if set(_CORPUS_NODES) != {"template-corpus-producer", "template-corpus-sink"}:  # pragma: no cover
-    raise RuntimeError(f"corpus node scan found {sorted(_CORPUS_NODES)}")
+    raise RuntimeError(f"corpus node entries are {sorted(_CORPUS_NODES)}")
 
 
 @pytest.fixture(autouse=True)

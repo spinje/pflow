@@ -1171,3 +1171,21 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
 - Completion-gate lens record: ran `review-spec-conformance`, `review-simplicity`, `review-validation-consistency`, `review-silent-failures`, `review-impact-completeness`, `review-feature-interactions`, `review-agent-ux`, `review-test-fidelity` (codex fan-out, full diff) + `review-falsifier` ×2 (direct; the second on the final state after the rulings). Skipped `review-concurrency-safety` (no new threads/executors; cached-AST hazard pinned by immutability tests), `review-plan`/`review-architecture-fit` (plan mode only).
 - Spec `## Status` → done, `## Completed` 2026-10-01; `task-review.md` written.
 - Next: create-pr.
+
+## [2026-10-01 06:30] Agent E (Opus) — CI fix — corpus scan path
+- Did: fixed the PR #673 collection failure (`test_template_parity.py:79: RuntimeError: corpus node scan found []` on `tests-and-type-check` 3.10–3.14 and `tests-windows (rest)`) in the test harness, per the orchestrator's ruling (scanner untouched).
+- Reproduced first: `git archive HEAD` into `scratchpads/task-170/ci-repro2/pflow/pflow/`, then the worktree venv's `python -m pytest tests/test_integration/test_template_parity.py` from there → `RuntimeError: corpus node scan found []`, 1 error during collection. Locally green, because the worktree path has no `pflow` component.
+- Cause (read + reproduced): `registry/scanner.py::_calculate_module_path` walks the path parts from the end, and the first `pflow` component wins. So under `…/pflow/pflow/tests/fixtures/template_corpus/nodes/producer.py` the module becomes `pflow.tests.fixtures.template_corpus.nodes.producer`; its import fails (logged as a warning) and the scan returns `[]`.
+- Fix (`tests/test_integration/test_template_parity.py`): `_scan_corpus_nodes` → `_corpus_node_entries`.
+  - It imports the fixture FILE via `importlib.util.spec_from_file_location("template_corpus_nodes", …/producer.py)` and builds both entries with `registry.scanner.extract_metadata(cls, module_name, file)` for `TemplateCorpusProducer` / `TemplateCorpusSink`.
+  - It keeps `type: "user"` and `file_path`, which `compilation/node_loader.py:82-89` imports from.
+  - The exactly-two-nodes guard is kept (message: "corpus node entries are …").
+  - The `scan_for_nodes` import is replaced by `extract_metadata`. The docstring states why there is no directory scan (checkout-path-dependent module naming; pitfall 17).
+- Verified:
+  - The parity file passes from the repro path (`…/ci-repro2/pflow/pflow/`, 327 passed) AND from the worktree (327 passed).
+  - `make check` green.
+  - `make test` 10232 passed (0 failed, 0 xfailed).
+- **Lane issue (pre-existing, user-facing, not fixed here):** `_calculate_module_path` misnames any user node kept under a directory named `pflow`, e.g. a project checked out at `~/code/pflow/…` or `…/pflow/nodes/x.py`. The import fails, and the node is silently skipped (warning-level log only). Repro: the archive above with the pre-fix harness (`scan_for_nodes([…/pflow/pflow/tests/fixtures/template_corpus/nodes])` → `[]`). Candidate fix: take the `pflow`-root branch only when the path is inside the installed `pflow` package (`Path(pflow.__file__).parent`), not on any component match.
+- Deviations/surprises: none. The fix is the orchestrator's suggested shape, and nothing simpler is robust under any checkout path.
+- Self-checks: fully happy. The repro-path run is the test of the fix; no new test was needed beyond collection under that path.
+- Next: the orchestrator commits and pushes.
