@@ -1034,6 +1034,10 @@ def _validate_cache_block(  # noqa: C901
                 continue
             chunk_name = item.get("name", "")
             chunk_line = item.get("_source_line")
+            # Dict IR skips the ## Cache parser, so its coalesce rule is restated here.
+            if _is_coalesce_var(var_expr):
+                diagnostics.append(_make_chunk_coalesce_diagnostic(chunk_name, var_expr, chunk_line))
+                continue
             roots = _cache_var_roots(var_expr)
             # Batch-scoped rejection: chunks that vary across calls referencing
             # the same chunk are invalid. ``${item.X}`` and any descendants of
@@ -1068,9 +1072,8 @@ def _validate_cache_block(  # noqa: C901
 def _cache_var_roots(var_expr: str) -> list[str]:
     """The roots a chunk var reads: each root of its one Reference, dynamic-index inner
     references included. An Issue has none (the Issue pass reports it: one diagnostic
-    per mistake). Any other var can never render as a chunk — a literal (``${42}``),
-    or a ``??`` chain from dict IR, which skips the ``## Cache`` parser's coalesce
-    rejection — so the whole var is its (unresolvable) root.
+    per mistake). Any other var — a literal (``${42}``) — can never render as a chunk,
+    so the whole var is its (unresolvable) root.
     """
     template = parse("${" + var_expr + "}")
     if template.issues:
@@ -1281,6 +1284,26 @@ def _make_chunk_resolution_diagnostic(
             "a declared input or an existing node output."
         ),
         suggestions=suggestions,
+        context=context,
+    )
+
+
+def _is_coalesce_var(var_expr: str) -> bool:
+    expressions = parse("${" + var_expr + "}").expressions
+    return bool(expressions) and len(expressions[0].operands) > 1
+
+
+def _make_chunk_coalesce_diagnostic(chunk_name: str, var_expr: str, chunk_line: int | None) -> Diagnostic:
+    """The ``## Cache`` parser's coalesce rule, for dict IR (which skips the parser)."""
+    context: dict[str, Any] = {"category": "validation", "path": f"cache.items[name={chunk_name}].var"}
+    if chunk_line is not None:
+        context["line"] = chunk_line
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        message=f"coalesce is not supported in a ## Cache chunk: '${{{var_expr}}}'.",
+        suggestions=["Reference one value per chunk; compute a fallback in an upstream step and cache its output."],
         context=context,
     )
 

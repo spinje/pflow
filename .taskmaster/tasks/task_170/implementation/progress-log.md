@@ -1140,3 +1140,28 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
 - [RULING] user (relayed by the main orchestrator, 2026-10-01): decision 1 = option (1) — "yes go ahead with your recommendations". Spec edits per the main orchestrator's list made by the orchestrator on the branch (Behavior-freeze line, phase-4 line, Sanctioned delta 7, Out-of-scope #643 half); plan §0.3/§1/§6 state the ruling.
 - Verified: `make test` 10226 passed, 0 failed, 0 xfailed (first fully green suite on the branch); `make check` green; E reported `make test-all-local` 10278 passed / 2 skipped and examples 29/29 unchanged; real run `prose-source.pflow.md` → `{'greeting': 'hello world!', 'bare': 'world'}`. Corpus xfail/flips machinery deleted (no users).
 - Next: targeted `review-falsifier` on the final state (prose-wrap seam, R5, re-run W1/S1 repros); E evaluates.
+
+## [2026-10-01 06:00] Agent E (Opus) — completion gate — falsifier (final)
+- Did: evaluated the targeted falsifier on `c9b16586` (`scratchpads/task-170/falsifier2/`) and fixed both findings.
+- Findings and dispositions:
+  1. **W1 — a BARE output source containing a dynamic index returned its path text** (`j.result.a[${j.result.i}]` → `"j.result.a[1]"`; base `"y"`). This is a delta-7 regression. CONFIRMED: the inner `${` made `needs_resolution` true, so the bare path was treated as prose. FIXED in `output_resolver._normalize_source`:
+     - The new rule: wrap if `${source}` parses as one simple expression (a bare path or `??` chain, dynamic index included), or if the source has no template syntax at all; otherwise resolve as written. That is the orchestrator's proposed shape, written as one condition.
+     - Executed table:
+       - `n.stdout`, `a ?? b` and the 3 dynamic-index shapes → wrapped;
+       - `prefix ${n.stdout}`, `${n.stdout}`, `$${n.stdout}` → as written;
+       - `n.stdout.0`, `$n.stdout`, `${p.out.items.0}` → wrapped into an Issue → loud (R4, `output_plain_issue_shape_stays_loud`, `output_issue_shape_loud` green).
+     - No simpler form gives that table: without the no-template-syntax arm, `n.stdout.0` / `$n.stdout` become silent literals.
+     - `resolve_output_source`'s docstring now states the rule in one sentence.
+     - Tests: parity rows `output_plain_dynamic_index` (`p.out_arr[${i}].x` → `A1`), `output_plain_coalesce_dynamic_index_after` (ghost first root), `output_plain_coalesce_dynamic_index_first`. Each row is validator Ok + runtime + end-to-end. With HEAD's `output_resolver.py` swapped in, all 3 runtime items fail.
+  2. **S1 — a dict-IR `??` chunk var said "… is not a declared input or an existing node output".** CONFIRMED. FIXED: `data_flow` STEP 3b checks `_is_coalesce_var` before root resolution and emits `_make_chunk_coalesce_diagnostic`. The message and suggestion are the markdown parser's ("coalesce is not supported in a ## Cache chunk: '${<var>}'."), with path `cache.items[name=…].var`. `_cache_var_roots`' docstring no longer claims the `??` case.
+     - Test: `TestCacheVarRoots::test_coalesce_var_from_dict_ir_is_rejected` now asserts the exact single error; it fails with the branch disabled.
+- Changed: `src/pflow/runtime/output_resolver.py`, `src/pflow/core/workflow/data_flow.py`, `tests/test_integration/test_template_parity.py` (+3 rows), `tests/test_core/test_workflow_data_flow.py`.
+- Verified:
+  - `make check` green.
+  - `make test` **10232 passed** (0 failed, 0 xfailed; +6 = 3 rows × 2 items).
+  - `make test-all-local` **10284 passed / 2 skipped**.
+  - `capture.py --check`: 29 examples, 0 differing.
+  - `d7gen.py dyn_bare dynb_coal_after dynb_coal_first` re-run: each of the three gives branch `--validate-only` "✓ Workflow is valid" and run `result={"o": "y"}`, identical to base.
+- Deviations/surprises: the duplicated coalesce sentence lives in two homes, `markdown_parser` (markdown) and `data_flow` (dict IR); both are pinned by exact-wording tests. Sharing a constant would make `data_flow` import the markdown parser for one string, which fails the deletion test. Nothing at importance ≥3.
+- Self-checks: fully happy. test-reflect: the new rows and the exact-wording test are revert-red; nothing shallow.
+- Next: the orchestrator commits.

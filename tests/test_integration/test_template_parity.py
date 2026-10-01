@@ -1311,6 +1311,33 @@ OUTPUT_ROWS: tuple[Row, ...] = (
     Row("output_template", "output_source", "${p.out_str}", Ok(), Resolves("S")),
     Row("output_plain", "output_source", "p.out_str", Ok(), Resolves("S")),
     Row("output_plain_coalesce", "output_source", "p.out_str ?? p.nope", Ok(), Resolves("S")),
+    # A bare source with a dynamic index is still bare: wrapped and resolved as one reference
+    Row(
+        "output_plain_dynamic_index",
+        "output_source",
+        "p.out_arr[${i}].x",
+        Ok(),
+        Resolves("A1"),
+        declared_inputs=I_INPUT,
+        mutation="treat any source with `${` as prose (never wrap)",
+    ),
+    Row(
+        "output_plain_coalesce_dynamic_index_after",
+        "output_source",
+        "g.out_str ?? p.out_arr[${i}].x",
+        Ok(),
+        Resolves("A1"),
+        declared_inputs=I_INPUT,
+        ghost=True,
+    ),
+    Row(
+        "output_plain_coalesce_dynamic_index_first",
+        "output_source",
+        "p.out_arr[${i}].x ?? p.out_str",
+        Ok(),
+        Resolves("A1"),
+        declared_inputs=I_INPUT,
+    ),
     Row(
         "output_dollar_prefix_r4",
         "output_source",

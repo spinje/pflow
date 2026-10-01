@@ -16,14 +16,8 @@ from pflow.runtime.node_state import NodeStatus, get_node_status
 
 
 def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> Any | None:
-    """Resolve a source expression to get output value.
-
-    Handles two source expression formats:
-    - ${node.output} - Template format with brackets
-    - node.output - Plain format
-
-    Supports the full template syntax including coalesce (??), nested index
-    templates, and type preservation.
+    """Resolve an output source: a bare path or ``??`` chain (``n.out``, ``a.x[${i}]``)
+    resolves as one reference, anything else as the template it is (``prefix ${n.out}``).
 
     Args:
         source_expr: Template expression like "${node.output}" or "node.output"
@@ -39,9 +33,13 @@ def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> A
 
 
 def _normalize_source(source_expr: str) -> str:
-    """A source with template syntax resolves as written (``prefix ${n.out}``); a bare
-    path (``n.out``) is wrapped into ``${n.out}``."""
-    return source_expr if parse(source_expr).needs_resolution else "${" + source_expr + "}"
+    """Wrap a bare source into ``${…}`` — one that is exactly an expression body, a
+    dynamic index included — or one with no template syntax at all, which then stays
+    loud (``n.out.0``, ``$n.out`` are Issues). Anything else resolves as written."""
+    wrapped = "${" + source_expr + "}"
+    if parse(wrapped).is_simple or not parse(source_expr).needs_resolution:
+        return wrapped
+    return source_expr
 
 
 def _diagnose_unresolved_output(
