@@ -39,10 +39,9 @@ def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> A
 
 
 def _normalize_source(source_expr: str) -> str:
-    """Normalize a source expression to ${...} template format."""
-    if source_expr.startswith("${"):
-        return source_expr
-    return "${" + source_expr + "}"
+    """A source with template syntax resolves as written (``prefix ${n.out}``); a bare
+    path (``n.out``) is wrapped into ``${n.out}``."""
+    return source_expr if parse(source_expr).needs_resolution else "${" + source_expr + "}"
 
 
 def _diagnose_unresolved_output(

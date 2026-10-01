@@ -203,8 +203,8 @@ Drift becomes loud through three meta-tests (pflow's native mechanism):
    (`template_resolution.py`, `engine.py:150-156` — the segment split inside
   `_diagnose_carry_ref`, `engine.py:245` carry check,
    `_resolve_template_string` :393-401), `template_errors` classification (:137, :320),
-   `output_resolver` (:41-53 wraps the whole source; the prose-in-`source:` drift is recorded,
-   not fixed), `batch_executor.resolve_batch_items` :108-131, `loop_control` :131-153 (own
+   `output_resolver` (:41-53 wraps the whole source; the prose-in-`source:` drift is fixed by
+   Sanctioned delta 7), `batch_executor.resolve_batch_items` :108-131, `loop_control` :131-153 (own
    resolution path, no pre-pass), dry-run's per-item child inputs `execution/plan.py:1547`
    (bypasses `resolve_templates`) and `:2037`, `core/workflow/validator.py:1733`, cache-block
    chunking (`markdown_parser.py:1737-1745` — chunk names are the RAW source text between `${`
@@ -337,7 +337,7 @@ asymmetry the corpus cites; Tasks 112/120 collide on the type-compatibility matr
   — only the *detection* moves to the resolver's unresolved set.
 - `output_resolver._is_all_absent_coalesce` keeps its deliberately stricter semantics —
   consumes parsed operands but is NOT absorbed. Output `source:` with surrounding prose
-  (`source: prefix ${run.stdout}` → `'${prefix ok}'`) is a recorded drift, not fixed here.
+  interpolates (`source: prefix ${run.stdout}` → `prefix ok`), Sanctioned delta 7.
 - Loop conditions: validator (`template_validation/validator.py:258-266`) and runtime (`loop_control.py:132`) share
   `extract_simple_template_var`; batch `continue` mode blocks dynamic indices
   (`path_validation.py:165-172`).
@@ -367,6 +367,10 @@ sources) is removed rather than admitted.
    `data_flow.py:287` skips them; an input used only inside a dynamic index is reported "never
    used"). The validator walk recurses into DynamicIndex operands for root, forward-reference and
    unused-input accounting.
+7. **Prose-wrapped output source interpolates** (phase 4a): the output normalizer wraps only a
+   bare source in `${…}`; a source that already contains template syntax is resolved as written,
+   so validator and runtime agree on the interpolated value. User ruling 2026-10-01; previously
+   the runtime produced the recorded drift `'${prefix S}'`.
 
 ### Parity (the point of the task)
 
@@ -437,8 +441,8 @@ sources) is removed rather than admitted.
   `batchItems.ts:26`, `format.ts:9`, `sourceDecorate.ts:32` — a separate issue).
 - `prompt_refs.first_per_item_position` tearing a nested index (`'Static text. ${results[${item.i}].x}'`
   cuts at 23) — an existing bug, recorded for a lane.
-- Fixing the output-`source:` prose wrap and #643's save-path params (recorded; each has its own
-  home). #262 is not point-fixed but flips as a consequence of Pass 5 consuming parsed segments
+- #643's save-path params — fixed separately on main (PR #664, `validate_with_placeholder_inputs`).
+  #262 is not point-fixed but flips as a consequence of Pass 5 consuming parsed segments
   (the root of `items[0]` is `items`) — its corpus row records the flip.
 
 ## Implementation Notes

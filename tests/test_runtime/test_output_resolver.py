@@ -550,3 +550,27 @@ class TestAllAbsentCoalesceWithDynamicIndex:
         shared = {"pick": {"i": 0}}
         populate_declared_outputs(shared, self._outputs("${p.items[${pick.i}] ?? q.value}"))
         assert "o" not in shared and shared == {"pick": {"i": 0}}
+
+
+class TestDeclaredOutputSourceShapesEndToEnd:
+    """A source with template syntax resolves as written; a bare path is wrapped (delta 7)."""
+
+    @staticmethod
+    def _output(source: str) -> object:
+        from pflow.execution.result import RunnerConfig
+        from pflow.execution.runner import WorkflowRunner
+
+        markdown = (
+            "# Output Source\n\n## Steps\n\n### n\n\nEmit.\n\n- type: shell\n\n"
+            "```shell command\nprintf S\n```\n\n"
+            f"## Outputs\n\n### o\n\nThe output.\n\n- source: {source}\n"
+        )
+        result = WorkflowRunner().run(markdown, {}, RunnerConfig(trace_enabled=False))
+        assert result.success, [e.get("message") for e in result.errors]
+        return result.shared_after["o"]
+
+    def test_prose_around_a_reference_interpolates(self):
+        assert self._output("prefix ${n.stdout} suffix") == "prefix S suffix"
+
+    def test_bare_path_is_wrapped(self):
+        assert self._output("n.stdout") == "S"

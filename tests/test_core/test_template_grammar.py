@@ -8,9 +8,9 @@ flipped in 4a), ``has_templates``,
 ``is_simple_template``, ``extract_variables`` and ``resolve_template`` on one
 small context. Every cell was measured by running the code, not derived.
 
-Row discipline matches ``tests/test_integration/test_template_parity.py``: the
-``today`` item passes; a row with ``after`` gets a second item asserting the
-post-flip columns under ``xfail(strict=True, raises=AssertionError)``.
+Row discipline matches ``tests/test_integration/test_template_parity.py``: each row
+states the CURRENT columns, one plain test item; ``why`` names the delta a row's
+cells come from.
 
 If a row fails, fix the divergence, never the row (from phase 2 on).
 """
@@ -20,7 +20,7 @@ from __future__ import annotations
 import itertools
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
@@ -52,7 +52,7 @@ _COLUMNS = ("strict", "discovery", "has", "simple", "variables", "resolved")
 
 @dataclass(frozen=True)
 class G:
-    """One grammar row: today's six columns, plus the columns a phase flips."""
+    """One grammar row: the six columns, and why the row reads as it does."""
 
     template: str
     strict: tuple[str, ...]
@@ -61,16 +61,7 @@ class G:
     simple: bool
     variables: frozenset[str]
     resolved: Any
-    after: Mapping[str, Any] = field(default_factory=dict)
-    flips_in: str | None = None
     why: str = ""
-
-    def __post_init__(self) -> None:
-        if bool(self.after) != (self.flips_in is not None) or not set(self.after) <= set(_COLUMNS):
-            raise TypeError(f"bad after/flips_in on {self.template!r}")
-
-    def flipped(self) -> G:
-        return replace(self, **self.after)
 
 
 def discovery_view(template: str) -> tuple[str, ...]:
@@ -206,22 +197,7 @@ GRAMMAR_ROWS: tuple[G, ...] = (
 # fmt: on
 
 
-def _items() -> list[Any]:
-    items: list[Any] = []
-    for row in GRAMMAR_ROWS:
-        items.append(pytest.param(row, id=f"{row.template!r}-today"))
-        if row.flips_in is not None:
-            items.append(
-                pytest.param(
-                    row.flipped(),
-                    id=f"{row.template!r}-after-{row.flips_in}",
-                    marks=pytest.mark.xfail(strict=True, raises=AssertionError, reason=f"{row.flips_in}: {row.why}"),
-                )
-            )
-    return items
-
-
-@pytest.mark.parametrize("row", _items())
+@pytest.mark.parametrize("row", GRAMMAR_ROWS, ids=[repr(row.template) for row in GRAMMAR_ROWS])
 def test_grammar_row(row: G) -> None:
     assert_row(row)
 
@@ -230,8 +206,6 @@ def test_grammar_table_size_and_uniqueness() -> None:
     templates = [row.template for row in GRAMMAR_ROWS]
     assert len(templates) == len(set(templates))
     assert len(templates) == 76
-    # All 17 pending rows flipped in 4a (their `today` items deleted).
-    assert sum(row.flips_in is not None for row in GRAMMAR_ROWS) == 0
 
 
 _OPEN = re.compile(r"(?<!\$)\$\{")

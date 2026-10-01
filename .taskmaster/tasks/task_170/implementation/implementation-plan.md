@@ -242,8 +242,8 @@ subtracting injected expressions from a dict-wide set (hides a sibling sharing t
   `len(errors) == 1` stay green with zero edits; a `bad_literal` first Issue selects the targeted
   literal message, absorbing `_malformed_literal_operand_hint`). Surfaces: params, `batch.items`,
   loop `while`/`until`/`max_iterations`, **carry values**, **output `source:`** (raw text, NOT
-  normalized — so `source: prefix ${n.stdout}` stays OK: the recorded prose-wrap drift is not fixed
-  here), **cache `var`s**, **cache `prose_before`** (dict IR may carry `${…}` there: an Expression or
+  normalized — so `source: prefix ${n.stdout}` stays OK; the runtime interpolates it — Sanctioned delta 7,
+  user ruling 2026-10-01), **cache `var`s**, **cache `prose_before`** (dict IR may carry `${…}` there: an Expression or
   Issue in prose is an ERROR "cache prose may not contain template references"; markdown-built IR
   never has one). `core/workflow/validator.py::_validate_template_in_source` and
   `data_flow._validate_cache_block` stop doing their own Issue/malformed checks and only root-check
@@ -420,7 +420,7 @@ verifies).
 
 **Output `source:` today** (validator / runtime on `{n:{stdout:'OK'}}`): `${n.stdout}` ok/OK;
 `$n.stdout` **error**/OK (R4: becomes error/error); `n.stdout` ok/OK; `n.stdout ?? n.x` ok/OK;
-`prefix ${n.stdout}` ok/`'${prefix OK}'` (recorded drift, not fixed); `${"v1"}` ok/`"v1"` (stays);
+`prefix ${n.stdout}` ok/`'${prefix OK}'` (before; after: ok/`prefix OK` — Sanctioned delta 7, user ruling 2026-10-01); `${"v1"}` ok/`"v1"` (stays);
 `$${a.x}` error("malformed")/`'${V}'`-ish (R3: error with the new message).
 
 **Validator over-rejections today** (one-way soundness; flip in 4b): `${items[0]}` on a declared list
@@ -1005,7 +1005,7 @@ Rotate C at ~400k. One job per resume message.
   `suggestions.py:150/:526`, `execution/formatters/*`, `mcp_server/services/field_service.py`.
 - **~35 lexical `"${" in x` presence checks** (17 files) + 7 `startswith("${")` checks: prefilters.
 - **Raw user-typed paths:** the raw-path mode; `cli/workflow_output.py:295-346` stays.
-- **Output `source:` prose wrap** (`prefix ${n.stdout}` → `'${prefix OK}'`): recorded, not fixed.
+- ~~Output `source:` prose wrap~~ — superseded: fixed as Sanctioned delta 7 (user ruling 2026-10-01; `_normalize_source` wraps only a bare source).
 - **Inline-list `batch.items` unresolved elements** stay literal (R12) — follow-up in the handback.
 - **`coerce_param_for_node`'s `json.dumps`** (third stringification): named, not unified.
 - **Cache var typo silently ABSENT** (`${plan.stdot}`): root-only validation stays (spec); an INFO

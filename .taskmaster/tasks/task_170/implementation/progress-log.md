@@ -1104,3 +1104,39 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
   - Either way: delete the corpus `flips()`/xfail machinery if unused (E's close-out note); `make check` + `make test-all-local`; `capture.py --check`.
   - Then: targeted `review-falsifier` (direct, orchestrator-launched) on the final state — both seams (prose-wrap, R5) + a re-run of its W1/S1 repros; E evaluates; spec `## Status` → done + `## Completed`; merge main again if moved (+ gates); `create-task-review`; `create-pr`; handback (PR #, head SHA, `gh pr checks` snapshot naming the `tests*` jobs incl. `tests-windows`, dev servers).
 - Follow-ups + CONTEXT proposals: unchanged from entry [2026-10-01 06:20].
+
+## [2026-10-01 05:30] Agent E (Opus) — decision 1 (1) applied
+- Did: applied the user's ruling (decision 1 = option (1), Sanctioned delta 7) at `4c912063`: a prose-wrapped output `source:` interpolates. Removed the now-unused corpus xfail scaffolding. Spec/plan not touched (the orchestrator's working-tree edits to both are theirs).
+- Changed:
+  - `runtime/output_resolver._normalize_source` → `source_expr if parse(source_expr).needs_resolution else "${" + source_expr + "}"`.
+    - The corpus decided the form: the simplest one (no `startswith("${")` clause) keeps all 356 output-resolver + parity items green, incl. the loud Issue rows and R4's `$p.out_str`.
+    - An Issue-only source (`${p.out.items.0}`) is now wrapped once more but stays loud. Executed: the error still names the author's source ("Unresolved template in output 'o': ${p.out.items.0}"), so C's extra clause is unneeded.
+    - `parse(...).needs_resolution` is `has_templates` exactly (pinned by `test_parse_and_resolve_never_raise`), on author text, with `parse` already imported. That makes it an escape-only `$${x}` resolves as written instead of being wrapped into an Issue.
+  - Corpus rows:
+    - `output_prose_wrap_recorded_drift` is renamed `output_prose_source_interpolates`, with runtime `Resolves("prefix S")` and comment "Sanctioned delta 7".
+    - `output_escape_only_r3` runtime → `Resolves("${p.out_str}")`.
+    - No other row or test asserted the old `'${prefix …}'` value (grepped).
+  - Scaffolding deleted:
+    - parity: `Expect`, `now()`, `flips()` and the xfail branch of `_row_items` are gone. `Row.validator`/`Row.runtime` are plain `Outcome`s; 306 `now(…)` wrappers were unwrapped token-wise (`scratchpads/task-170/gate/unwrap_now.py`, strings untouched). `_check_runtime`/the four test methods lost the `epoch` parameter; item ids are now the bare row id (was `<id>-today`).
+    - grammar: `G.after`/`flips_in`/`flipped()`/`__post_init__`, `_items()` and the "0 pending" assertion are gone; `why` is kept as the per-row annotation (it documents which delta a row's cells come from).
+    - Both module docstrings now describe plain rows (one item per side, a deliberate change edits the outcome in the same diff with a comment naming the delta) and keep "If a row fails, fix the divergence, never the row". `HarnessError`'s docstring no longer cites xfail.
+  - Tests: `test_output_resolver.py::TestDeclaredOutputSourceShapesEndToEnd` — a `WorkflowRunner` run with `source: prefix ${n.stdout} suffix` → `"prefix S suffix"`, + partner `source: n.stdout` → `"S"`.
+- Docs: no statement anywhere (`output_resolver.py`, `core/CLAUDE.md`, `runtime/CLAUDE.md`, `docs/`, `guide/`) said prose in `source:` yields the wrapped literal or is unsupported. `guide/core.md:300` ("template expression like `${node.key}`") stays true. No edit.
+- Verified:
+  - `make check` green.
+  - `make test` **10226 passed, 0 failed, 0 xfailed**. Against 10222 / 2 / 0: the 2 former ruling rows now pass + 2 new tests.
+  - `make test-all-local` **10278 passed / 2 skipped**, 0 failed, 0 xfailed.
+  - `capture.py --check`: 29 examples, 0 differing.
+  - Revert check: the old `startswith` normalizer turns `test_prose_around_a_reference_interpolates`, `test_runtime[output_prose_source_interpolates]` and `test_runtime[output_escape_only_r3]` red, while the bare-path partner stays green.
+  - **Real run** (`scratchpads/task-170/gate/surface/prose-source.pflow.md`; outputs `greeting: source: hello ${n.stdout}!`, `bare: source: n.stdout`, shell `printf world`): `uv run pflow --validate-only` → "✓ Workflow is valid"; `uv run pflow --output-format json` → `result: {'greeting': 'hello world!', 'bare': 'world'}`.
+- Deviations/surprises:
+  - (a) The orchestrator's `has_templates` wording, spelled `parse(...).needs_resolution` (same predicate, no new import).
+  - (b) Corpus item ids changed (`-today` suffix dropped), which affects anyone citing ids by name in the log/handback.
+  - (c) The grammar corpus keeps `why`. It is now pure documentation, which is legitimate row data, not scaffolding.
+- Self-checks: fully happy. test-reflect: the new runner test is revert-red with a presence partner; the scaffolding deletion removed no assertion (each row still yields exactly its former `today` item: 321 parity + 106 grammar items, unchanged counts minus the zero `after` items).
+- Next: the orchestrator commits.
+
+## [2026-10-01 09:00] task-orchestrator — decision 1 (1) applied + committed; targeted falsifier next
+- [RULING] user (relayed by the main orchestrator, 2026-10-01): decision 1 = option (1) — "yes go ahead with your recommendations". Spec edits per the main orchestrator's list made by the orchestrator on the branch (Behavior-freeze line, phase-4 line, Sanctioned delta 7, Out-of-scope #643 half); plan §0.3/§1/§6 state the ruling.
+- Verified: `make test` 10226 passed, 0 failed, 0 xfailed (first fully green suite on the branch); `make check` green; E reported `make test-all-local` 10278 passed / 2 skipped and examples 29/29 unchanged; real run `prose-source.pflow.md` → `{'greeting': 'hello world!', 'bare': 'world'}`. Corpus xfail/flips machinery deleted (no users).
+- Next: targeted `review-falsifier` on the final state (prose-wrap seam, R5, re-run W1/S1 repros); E evaluates.
