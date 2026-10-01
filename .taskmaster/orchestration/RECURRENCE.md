@@ -59,4 +59,15 @@ proof.
 - a subagent-authored durable doc (ADR-0015) carried a mechanism that did not exist (a "prose
   interpolator") because I wrote it from a lens's summary instead of the code — the context-free
   ADR review caught it; recognition would make "read the cited function before writing its
-  mechanism into an ADR/spec" a checklist line | s08 | n=1
+  mechanism into an ADR/spec" a checklist line. s09: the Task 170 spec's "prose-wrap: recorded, not
+  fixed" freeze line (written from a battery summary, before the plan) was contradicted by the plan's own
+  normalizer | s08, s09 | n=2 → PROPOSED
+- a lane ran `git stash push`/`pop` in a worktree and popped the USER's shared `stash@{0}` (Task 125 WIP) —
+  stashes are repo-wide across worktrees; recognition would add "never `git stash`" to every implementing
+  role's def (packets carried it ad hoc after) | s09 | n=1 → PROPOSED (severity override)
+- a falsifier cleaned up its probe with `pkill -x sleep -f` (kill by NAME) — can kill the user's unrelated
+  processes; ORCHESTRATION already scopes dev-server kills to owned PIDs, the falsifier def doesn't |
+  s09 | n=1 → PROPOSED (severity override)
+- I proposed an interim (UI approve-all button) without stating the final shape or whether the interim
+  survives into it — the user asked "why are we not doing the real fix?"; recognition would make
+  "final shape is X; this interim is/isn't part of it" a required line in any interim proposal | s09 | n=1

@@ -18,7 +18,7 @@ high
 
 ## Roadmap
 
-then
+next
 
 ## Problem
 
@@ -109,7 +109,7 @@ Persist loop position in the trace, restore it on resume, and let one pausabilit
 
 ## Dependencies
 
-- **Task 170** (One Template Language) — sequence after its merge: it edits the carry check
+- **Task 170** (One Template Language) — MERGED 2026-10-01 (PR #673); rebase-free start. Its edit sites were: it edits the carry check
   inside `engine.py` (`_assert_carried_inputs_resolved`, `:253-256`), `_resolve_template_string`,
   and migrates `evaluate_loop_condition`; this task's likely edits (loop counters `:790-834`,
   `_gate_pausable`, the gate branch `:1527-1596`, `_prepare_resume`, `resume_source`,

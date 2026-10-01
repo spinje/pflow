@@ -42,3 +42,4 @@ pruned to the rows that pass its bar; git history holds the removed ones._
   Task 118 → then (blocked by 170). Read for: #620 escape ruling and #630/#621/#550 deferral, the
   Task 170 spec-battery ledger, MCP stateless-standard research (#624/#644), cost-summary
   subscription labelling (#634), the worktree script's first live runs and `rm -f` semantics.
+- **session-09** (2026-09-29 → 10-01) — SHIPPED Task 170 (one template language, PR #673) and Task 94 (`settings llm models`, PR #670); lane B #617 #618 #615 #606 #654 #652 #643 #658 #657 #650. User's final-code lens put verbatim into root CLAUDE.md; lane gates bound to the deep-review rubric (falsifier). Specs Task 178 (MCP SDK 2.x) + Task 179 (durable loop position, overturns Task 164 restart-at-1). First end-to-end scope GRANT with commit authority. Read for: the lens and how it flipped recommendations; the "real fix" correction; stdio reservation seam (#652/#657 → 178); in-grant escalation handling.

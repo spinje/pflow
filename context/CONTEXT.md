@@ -43,6 +43,13 @@ serves both surfaces. _Avoid_: placeholder, interpolation, substitution.
 field/index segments — naming data in the shared store. _Avoid_: variable, pointer, path
 (unqualified).
 
+**Dynamic index** — a Reference whose index is itself a Reference (`${a[${i}].x}`); it is one
+Reference, unresolved unless the inner Reference resolves to an in-range integer. _Avoid_:
+nested template, computed index.
+
+**Issue** — an unescaped `${` in a Template that opens no valid expression; always a validator
+error, carried verbatim at run time. _Avoid_: malformed template, parse error (unqualified).
+
 **Coalesce** — the `??` operator in a template expression: Operands tried left to right, the
 first present one wins; an absent root *or* an absent field falls through. _Avoid_: fallback,
 default, or-else.

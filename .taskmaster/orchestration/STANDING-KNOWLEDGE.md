@@ -60,7 +60,9 @@ prompt's "Working with the user"._
   *"So you are FULLY happy? Any loose ends right now?"* and *"have you read all current reviews
   on the pr?"* — answer by GOING LOOKING (that pass found five real loose ends, including the
   auto-reviewer gate — since retired — I had skipped while declaring the PR ready). They audit
-  whether a gate RAN, not just what shipped.
+  whether a gate RAN, not just what shipped. (s08 "are the lanes using astra pflow reviews?";
+  s09 "including the falsifier etc?" — both answered by measuring the PR body/stderr, which is
+  what satisfied them; the s09 one exposed that packets never stated the rubric's floors.)
 - **User pressure-tests a new CLI surface hard and iteratively — and demands consistency be VERIFIED,
   not asserted** (s06, `pflow settings llm models` design). They serially caught surface
   incoherences (a status label that read as an imperative, a flag combo that made no sense,
