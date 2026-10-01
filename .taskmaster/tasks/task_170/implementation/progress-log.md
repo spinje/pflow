@@ -1189,3 +1189,7 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
 - Deviations/surprises: none. The fix is the orchestrator's suggested shape, and nothing simpler is robust under any checkout path.
 - Self-checks: fully happy. The repro-path run is the test of the fix; no new test was needed beyond collection under that path.
 - Next: the orchestrator commits and pushes.
+
+## [2026-10-01 21:30] task-orchestrator — CI fixes on PR #673
+- CI round 1 (`ce186c6a`): `tests-and-type-check` ×5 + `tests-windows (rest)` failed at collection — the corpus node scan returned `[]` under CI's `.../pflow/pflow/` checkout (`registry/scanner._calculate_module_path` names a user node's module after the last `pflow` path component). Fixed in the harness by E (`b1312b1c`); the scanner bug is pre-existing and user-facing → lane issue (repro in E's entry "CI fix — corpus scan path").
+- CI round 2 (`b1312b1c`): only `tests-and-type-check (3.11)` failed — `ValueError: mutable default <class 'mappingproxy'> for field payload` (Python 3.11's dataclass hashability check; mappingproxy is hashable from 3.12, and 3.10 checks only list/dict/set). Orchestrator fixed it inline (one line: `field(default_factory=lambda: DEFAULT_PAYLOAD)`); verified `uv run --python 3.11 … pytest tests/test_integration/test_template_parity.py` → 327 passed; `make test` + `make check` green.

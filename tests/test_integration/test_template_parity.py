@@ -190,7 +190,7 @@ class Row:
     validator: Outcome
     runtime: Outcome
     mutation: str = ""
-    payload: Mapping[str, Any] = DEFAULT_PAYLOAD
+    payload: Mapping[str, Any] = field(default_factory=lambda: DEFAULT_PAYLOAD)
     declared_inputs: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     params: Mapping[str, Any] = field(default_factory=dict)
     mode: str = "strict"
