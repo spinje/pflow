@@ -10,7 +10,11 @@ language one small, typed thing an agent can load whole.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-10-01
 
 ## Priority
 

@@ -1165,3 +1165,9 @@ Spec: `../task-170.md` · Plan: `implementation-plan.md` · Base: `7dc5ad5d` (==
 - Deviations/surprises: the duplicated coalesce sentence lives in two homes, `markdown_parser` (markdown) and `data_flow` (dict IR); both are pinned by exact-wording tests. Sharing a constant would make `data_flow` import the markdown parser for one string, which fails the deletion test. Nothing at importance ≥3.
 - Self-checks: fully happy. test-reflect: the new rows and the exact-wording test are revert-red; nothing shallow.
 - Next: the orchestrator commits.
+
+## [2026-10-01 10:30] task-orchestrator — close-out
+- Verified: targeted falsifier W1 (bare dynamic-index output source) + S1 (dict-IR `??` chunk wording) fixed by E with failing-first tests; `make test` 10232 passed / 0 failed / 0 xfailed; `make check` green; `make test-all-local` 10284 passed / 2 skipped; examples 29/29 unchanged; `./scripts/tasks --check` clean; `origin/main` still `91f58e98` (merged).
+- Completion-gate lens record: ran `review-spec-conformance`, `review-simplicity`, `review-validation-consistency`, `review-silent-failures`, `review-impact-completeness`, `review-feature-interactions`, `review-agent-ux`, `review-test-fidelity` (codex fan-out, full diff) + `review-falsifier` ×2 (direct; the second on the final state after the rulings). Skipped `review-concurrency-safety` (no new threads/executors; cached-AST hazard pinned by immutability tests), `review-plan`/`review-architecture-fit` (plan mode only).
+- Spec `## Status` → done, `## Completed` 2026-10-01; `task-review.md` written.
+- Next: create-pr.
