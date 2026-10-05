@@ -19,6 +19,7 @@ from pflow.core.exceptions import (
     LLMOutputSchemaError,
     LLMTransientError,
     MissingApiKeyError,
+    NodeError,
     UnknownModelError,
 )
 from pflow.core.llm_client import AdapterResponse
@@ -67,7 +68,7 @@ class TestLLMNode:
         node.set_params({})  # No prompt in params
         shared = {}
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(NodeError) as exc_info:
             node.run(shared)
 
         assert "LLM node requires 'prompt'" in str(exc_info.value)
@@ -479,7 +480,7 @@ class TestLLMNode:
         node.set_params({"prompt": "", "model": "openai/gpt-4o-mini"})  # Empty string
         shared = {}
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(NodeError) as exc_info:
             node.run(shared)
 
         assert "LLM node requires 'prompt'" in str(exc_info.value)
@@ -1607,7 +1608,7 @@ class TestTimeout:
         node.set_params({"prompt": "Test", "timeout": 0, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
-        with pytest.raises(ValueError, match="positive"):
+        with pytest.raises(NodeError, match="positive"):
             node.prep(shared)
 
     def test_timeout_negative_rejected(self):
@@ -1616,7 +1617,7 @@ class TestTimeout:
         node.set_params({"prompt": "Test", "timeout": -5, "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
-        with pytest.raises(ValueError, match="positive"):
+        with pytest.raises(NodeError, match="positive"):
             node.prep(shared)
 
     def test_timeout_invalid_string_rejected(self):
@@ -1625,7 +1626,7 @@ class TestTimeout:
         node.set_params({"prompt": "Test", "timeout": "abc", "model": "openai/gpt-4o-mini"})
         shared: dict = {}
 
-        with pytest.raises(ValueError, match="positive number"):
+        with pytest.raises(NodeError, match="positive number"):
             node.prep(shared)
 
 
@@ -1640,7 +1641,7 @@ class TestReasoningEffortValidation:
     def test_invalid_effort_rejected_in_prep(self):
         node = LLMNode()
         node.set_params({"prompt": "hello", "reasoning_effort": "ultra", "model": "openai/gpt-4o-mini"})
-        with pytest.raises(ValueError, match="Invalid reasoning_effort: 'ultra'"):
+        with pytest.raises(NodeError, match="Invalid reasoning_effort: 'ultra'"):
             node.prep({})
 
     @pytest.mark.parametrize(

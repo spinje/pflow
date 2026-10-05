@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from pflow.core.exceptions import NodeError
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
 
@@ -211,5 +212,5 @@ def test_runtime_still_defends_when_validation_bypassed() -> None:
     registry = ensure_test_registry()
     workflow = compile_workflow(ir, registry=registry, initial_params={})
 
-    with pytest.raises(TypeError, match=r"expects dict"):
+    with pytest.raises(NodeError, match=r"expects dict"):
         WorkflowEngine().run(workflow, {})

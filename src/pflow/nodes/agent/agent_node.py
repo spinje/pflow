@@ -98,7 +98,7 @@ class AgentNode(Node):
 
         - None: no schema requested (returns None)
         - {} (empty): likely a typo; raises with guidance
-        - Non-dict: TypeError
+        - Non-dict: raises
         - Legacy Python-alias format: raises with migration guidance
         - Missing or non-"object" top-level type: raises (Anthropic API tool-use limitation)
         - Otherwise: returns as-is; SDK/CLI enforces remaining JSON Schema validity
@@ -215,13 +215,11 @@ class AgentNode(Node):
             return default_timeout
         try:
             timeout_int = int(timeout)
-            if timeout_int < 30 or timeout_int > 3600:
-                raise ValueError
-            return timeout_int
         except (ValueError, TypeError):
-            raise AgentValidationError(
-                f"Invalid timeout: {timeout}. Must be integer between 30 and 3600 seconds."
-            ) from None
+            timeout_int = 0  # unparseable: rejected below like any out-of-range value
+        if not 30 <= timeout_int <= 3600:
+            raise AgentValidationError(f"Invalid timeout: {timeout}. Must be integer between 30 and 3600 seconds.")
+        return timeout_int
 
     def _validate_resume(self, resume: Any) -> str | None:
         """Validate resume session ID parameter."""

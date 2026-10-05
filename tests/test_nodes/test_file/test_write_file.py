@@ -6,6 +6,7 @@ import tempfile
 
 import pytest
 
+from pflow.core.exceptions import NodeError
 from pflow.nodes.file import WriteFileNode
 
 
@@ -180,7 +181,7 @@ class TestWriteFileNode:
             node.set_params({"file_path": tmp.name})
             shared = {}
 
-            with pytest.raises(ValueError, match="Missing required 'content' parameter"):
+            with pytest.raises(NodeError, match="Missing required 'content' parameter"):
                 node.prep(shared)
 
     def test_missing_file_path(self):
@@ -189,7 +190,7 @@ class TestWriteFileNode:
         node.set_params({"content": "Test"})
         shared = {}
 
-        with pytest.raises(ValueError, match="Missing required 'file_path' parameter"):
+        with pytest.raises(NodeError, match="Missing required 'file_path' parameter"):
             node.prep(shared)
 
     def test_params_fallback(self):
@@ -335,7 +336,7 @@ class TestWriteFileNode:
             node.set_params({"content": "not-valid-base64!@#$%", "content_is_binary": True, "file_path": file_path})
             shared = {}
 
-            with pytest.raises(ValueError, match="Invalid base64 content"):
+            with pytest.raises(NodeError, match="Invalid base64 content"):
                 node.prep(shared)
 
     def test_flag_false_writes_base64_as_text(self):

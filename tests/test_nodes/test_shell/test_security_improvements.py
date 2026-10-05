@@ -7,6 +7,7 @@ import tempfile
 
 import pytest
 
+from pflow.core.exceptions import NodeError
 from pflow.nodes.shell.shell import ShellNode
 
 
@@ -37,7 +38,7 @@ class TestExpandedDangerousPatterns:
 
         for cmd in dangerous_variations:
             shared = {}
-            with pytest.raises(ValueError, match="Dangerous command pattern detected"):
+            with pytest.raises(NodeError, match="Dangerous command pattern detected"):
                 run_shell_node(shared, command=cmd)
 
     def test_chmod_system_wide_blocked(self):
@@ -50,7 +51,7 @@ class TestExpandedDangerousPatterns:
 
         for cmd in dangerous_chmods:
             shared = {}
-            with pytest.raises(ValueError, match="Dangerous command pattern detected"):
+            with pytest.raises(NodeError, match="Dangerous command pattern detected"):
                 run_shell_node(shared, command=cmd)
 
     def test_sudo_with_dangerous_commands_blocked(self):
@@ -63,7 +64,7 @@ class TestExpandedDangerousPatterns:
 
         for cmd in sudo_dangers:
             shared = {}
-            with pytest.raises(ValueError, match="Dangerous command pattern detected"):
+            with pytest.raises(NodeError, match="Dangerous command pattern detected"):
                 run_shell_node(shared, command=cmd)
 
     def test_more_device_patterns_blocked(self):
@@ -78,7 +79,7 @@ class TestExpandedDangerousPatterns:
 
         for cmd in device_writes:
             shared = {}
-            with pytest.raises(ValueError, match="Dangerous command pattern detected"):
+            with pytest.raises(NodeError, match="Dangerous command pattern detected"):
                 run_shell_node(shared, command=cmd)
 
 
@@ -163,7 +164,7 @@ class TestStrictMode:
 
             for cmd in warning_commands:
                 shared = {}
-                with pytest.raises(ValueError, match="Command blocked in strict mode"):
+                with pytest.raises(NodeError, match="Command blocked in strict mode"):
                     run_shell_node(shared, command=cmd)
         finally:
             # Clean up
@@ -179,7 +180,7 @@ class TestStrictMode:
                 # Don't actually run, just test that prep raises
                 node = ShellNode()
                 node.set_params({"command": "sudo test"})
-                with pytest.raises(ValueError, match="Command blocked in strict mode"):
+                with pytest.raises(NodeError, match="Command blocked in strict mode"):
                     node.prep(shared)
             finally:
                 del os.environ["PFLOW_SHELL_STRICT"]
@@ -199,7 +200,7 @@ class TestStrictMode:
             node.prep(shared)
             # If prep succeeds, warning commands are allowed
             assert True
-        except ValueError as e:
+        except NodeError as e:
             # Should not raise in non-strict mode
             raise AssertionError("Command was blocked even without strict mode") from e
 

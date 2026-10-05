@@ -5,6 +5,7 @@ import tempfile
 
 import pytest
 
+from pflow.core.exceptions import NodeError
 from pflow.nodes.file import (
     CopyFileNode,
     DeleteFileNode,
@@ -71,7 +72,7 @@ class TestIntegration:
             write_node.set_params({"file_path": temp_path})
             # Note: content is missing, should fail in prep
 
-            with pytest.raises(ValueError, match="Missing required 'content' parameter"):
+            with pytest.raises(NodeError, match="Missing required 'content' parameter"):
                 write_node.prep(shared)
         finally:
             # Clean up temp file if it exists

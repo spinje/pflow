@@ -6,6 +6,7 @@ from typing import Any
 
 import requests
 
+from pflow.core.exceptions import NodeError
 from pflow.core.node import Node
 
 
@@ -49,7 +50,7 @@ class HttpNode(Node):
         # Required parameter
         url = self.params.get("url")
         if not url:
-            raise ValueError("HTTP node requires 'url' parameter")
+            raise NodeError("HTTP node requires 'url' parameter", param="url")
 
         # Optional parameters
         method = self.params.get("method")
@@ -70,9 +71,9 @@ class HttpNode(Node):
             try:
                 timeout = int(raw_timeout)
             except (TypeError, ValueError):
-                raise ValueError(f"Timeout must be a positive integer, got: {raw_timeout}") from None
+                raise NodeError(f"Timeout must be a positive integer, got: {raw_timeout}", param="timeout") from None
         if timeout <= 0:
-            raise ValueError(f"Timeout must be a positive integer, got: {timeout}")
+            raise NodeError(f"Timeout must be a positive integer, got: {timeout}", param="timeout")
 
         # Auto-detect method
         if not method:
@@ -82,14 +83,16 @@ class HttpNode(Node):
         method = method.upper()
         valid_methods = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
         if method not in valid_methods:
-            raise ValueError(f"Invalid HTTP method '{method}'. Allowed: {', '.join(sorted(valid_methods))}")
+            raise NodeError(
+                f"Invalid HTTP method '{method}'. Allowed: {', '.join(sorted(valid_methods))}", param="method"
+            )
 
         # Authentication - check for mutual exclusivity per spec
         auth_token = self.params.get("auth_token")
         api_key = self.params.get("api_key")
 
         if auth_token and api_key:
-            raise ValueError("Cannot specify both auth_token and api_key - they are mutually exclusive")
+            raise NodeError("Cannot specify both auth_token and api_key - they are mutually exclusive", param="api_key")
 
         if auth_token:
             headers["Authorization"] = f"Bearer {auth_token}"
@@ -162,25 +165,18 @@ class HttpNode(Node):
         }
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> None:
-        """Transform exceptions to actionable messages - MUST raise ValueError."""
-        # Transform technical errors to actionable user guidance
-        # Note: We use ValueError (not TypeError) to follow the pflow pattern
-        # where exec_fallback transforms exceptions into user-friendly error messages
+        """Translate the final request failure into an actionable execution error."""
+        url = prep_res["url"]
         if isinstance(exc, requests.Timeout):
-            raise ValueError(  # noqa: TRY004
-                f"Request to {prep_res['url']} timed out after {prep_res['timeout']} seconds. "
-                f"Try increasing timeout with --timeout=60 or check if the service is responding."
+            raise NodeError(
+                f"Request to {url} timed out after {prep_res['timeout']} seconds. "
+                "Increase the step's timeout (e.g. `- timeout: 60`) or check if the service is responding."
             )
-        elif isinstance(exc, requests.ConnectionError):
-            raise ValueError(  # noqa: TRY004
-                f"Could not connect to {prep_res['url']}. Please check the URL is correct and the service is running."
-            )
-        elif isinstance(exc, requests.RequestException):
-            raise ValueError(f"HTTP request failed: {exc}")  # noqa: TRY004
-        else:
-            raise ValueError(  # noqa: TRY004
-                f"HTTP request failed after {self.max_retries} attempts. URL: {prep_res['url']}, Error: {exc}"
-            )
+        if isinstance(exc, requests.ConnectionError):
+            raise NodeError(f"Could not connect to {url}. Please check the URL is correct and the service is running.")
+        if isinstance(exc, requests.RequestException):
+            raise NodeError(f"HTTP request failed: {exc}")
+        raise NodeError(f"HTTP request failed after {self.max_retries} attempts. URL: {url}, Error: {exc}")
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store results and determine action."""

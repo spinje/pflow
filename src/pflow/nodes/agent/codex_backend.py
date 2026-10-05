@@ -19,7 +19,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from pflow.core.exceptions import PflowError
+from pflow.core.exceptions import NodeError, PflowError
 from pflow.core.litellm_runtime import estimate_completion_cost_usd
 from pflow.nodes.agent.backend import AgentResult
 from pflow.nodes.agent.exceptions import AgentValidationError
@@ -69,7 +69,7 @@ class CodexNonRetriableError(PflowError):
     retriable = False
 
 
-class CodexEventParseError(Exception):
+class CodexEventParseError(PflowError):
     """The CLI emitted a non-JSON line despite running with ``--json``."""
 
 
@@ -91,7 +91,7 @@ class CodexProcessCancelledError(PflowError):
         super().__init__("Codex execution cancelled by the batch executor")
 
 
-class CodexProcessError(Exception):
+class CodexProcessError(PflowError):
     """Preserve failed-process evidence behind a secret-safe string surface."""
 
     def __init__(
@@ -879,7 +879,7 @@ class CodexBackend:
         continuation["resume"] = session_id
         return continuation
 
-    def translate_error(self, exc: Exception, options: dict[str, Any]) -> Exception:
+    def translate_error(self, exc: Exception, options: dict[str, Any]) -> PflowError:
         if isinstance(exc, CodexNonRetriableError):
             return exc
         if isinstance(exc, CodexProcessCancelledError):
@@ -890,7 +890,7 @@ class CodexBackend:
                 "`npm install -g @openai/codex`, then authenticate with `codex login`."
             )
         if isinstance(exc, (CodexModelTimeoutError, subprocess.TimeoutExpired)):
-            return ValueError(
+            return NodeError(
                 f"Codex execution timed out after {options.get('timeout', 300)} seconds. "
                 "Increase timeout or split the task into smaller steps."
             )
@@ -915,14 +915,14 @@ class CodexBackend:
         if isinstance(exc, CodexProcessError):
             detail = _readable_failure_detail(exc.failure_messages)
             if detail:
-                return ValueError(f"Codex CLI failed with exit code {exc.returncode}. Codex reported: {detail}")
-            return ValueError(
+                return NodeError(f"Codex CLI failed with exit code {exc.returncode}. Codex reported: {detail}")
+            return NodeError(
                 f"Codex CLI failed with exit code {exc.returncode}. "
                 "Run the same Codex command directly to inspect provider diagnostics."
             )
         if isinstance(exc, CodexEventParseError):
-            return ValueError(f"Codex CLI returned invalid --json output: {exc}")
-        return ValueError(f"Codex execution failed after {self.max_retries} attempts ({type(exc).__name__}).")
+            return NodeError(f"Codex CLI returned invalid --json output: {exc}")
+        return NodeError(f"Codex execution failed after {self.max_retries} attempts ({type(exc).__name__}).")
 
     @staticmethod
     def _is_auth_failure(exc: CodexProcessError) -> bool:
