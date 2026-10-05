@@ -533,7 +533,7 @@ class MCPNode(Node):
 
         Raises:
             FileNotFoundError: If configuration file doesn't exist
-            KeyError: If server not found in configuration
+            NodeError: If server not found in configuration
         """
         config_path = Path("~/.pflow/mcp-servers.json").expanduser()
 
@@ -551,7 +551,7 @@ class MCPNode(Node):
 
         if server_name not in servers:
             available = ", ".join(servers.keys()) if servers else "none"
-            raise KeyError(
+            raise NodeError(
                 f"MCP server '{server_name}' not found in configuration. "
                 f"Available servers: {available}. "
                 f"Run 'pflow mcp add {server_name}' to configure it."

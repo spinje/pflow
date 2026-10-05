@@ -69,7 +69,7 @@ class CodexNonRetriableError(PflowError):
     retriable = False
 
 
-class CodexEventParseError(Exception):
+class CodexEventParseError(PflowError):
     """The CLI emitted a non-JSON line despite running with ``--json``."""
 
 
@@ -91,7 +91,7 @@ class CodexProcessCancelledError(PflowError):
         super().__init__("Codex execution cancelled by the batch executor")
 
 
-class CodexProcessError(Exception):
+class CodexProcessError(PflowError):
     """Preserve failed-process evidence behind a secret-safe string surface."""
 
     def __init__(

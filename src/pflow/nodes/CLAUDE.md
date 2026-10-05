@@ -33,9 +33,10 @@ Raise `core/exceptions.py:NodeError` for failures the author must see: pass
 `param=` when a step param is missing or invalid, omit it for a runtime failure
 the node translated (`http/http.py:exec_fallback`). Agent params keep
 `AgentValidationError`. Never construct a vanilla `ValueError`/`TypeError`/
-`RuntimeError`/`Exception` — `tests/test_nodes/test_node_exception_types.py`
-fails on it. OS errors raised for the node's own `exec_fallback` to dispatch on
-(`file/`) are not vanilla in this sense.
+`RuntimeError`/`KeyError`/`Exception`, nor define an exception class on one —
+`tests/test_nodes/test_node_exception_types.py` fails on it. OS errors raised
+for the node's own `exec_fallback` to dispatch on (`file/`) are not vanilla in
+this sense.
 
 ## Navigation
 

@@ -9,9 +9,11 @@ param is at fault, ``execution_failure`` otherwise) and the param name.
 The ratchet scans every module under ``src/pflow/nodes/`` for a *construction*
 of a vanilla exception — ``raise ValueError(...)``, a bare ``raise ValueError``,
 and ``return ValueError(...)`` (the agent backends' ``translate_error`` builds
-exceptions that ``exec_fallback`` raises). Semantic builtins that a node's own
-``exec_fallback`` dispatches on (``FileNotFoundError``, ``OSError``) are not
-vanilla and are out of scope.
+exceptions that ``exec_fallback`` raises) — and for an exception class defined
+on a vanilla base (it would render exactly like the vanilla one). Semantic
+builtins a node's own ``exec_fallback`` dispatches on (``FileNotFoundError``,
+``OSError``) and Python protocol errors (a module ``__getattr__``'s
+``AttributeError``, an import guard's ``ImportError``) are out of scope.
 
 See ``src/pflow/nodes/CLAUDE.md`` → "Errors".
 """
@@ -31,7 +33,7 @@ import pflow.nodes
 from pflow.cli.main import main
 
 NODES_DIR = Path(pflow.nodes.__file__).parent
-VANILLA = frozenset({"Exception", "ValueError", "TypeError", "RuntimeError"})
+VANILLA = frozenset({"Exception", "ValueError", "TypeError", "RuntimeError", "KeyError"})
 
 # (path relative to src/pflow/nodes, enclosing function, exception name) -> reason
 ALLOWLIST: dict[tuple[str, str, str], str] = {
@@ -61,21 +63,28 @@ def _scan(node: ast.AST, rel: str, function: str, found: set[tuple[str, str, str
             found.add((rel, function, child.func.id, child.lineno))
         if isinstance(child, ast.Raise) and isinstance(child.exc, ast.Name) and child.exc.id in VANILLA:
             found.add((rel, function, child.exc.id, child.lineno))
+        if isinstance(child, ast.ClassDef):
+            for base in child.bases:
+                if isinstance(base, ast.Name) and base.id in VANILLA:
+                    found.add((rel, f"class {child.name}", base.id, child.lineno))
         _scan(child, rel, scope, found)
 
 
 def test_node_code_constructs_no_vanilla_exceptions() -> None:
-    violations = sorted(
+    sites = sorted(_vanilla_constructions())
+    keys = [(rel, function, name) for rel, function, name, _ in sites]
+    violations = [
         f"  {rel}:{line} in {function}(): {name}"
-        for rel, function, name, line in _vanilla_constructions()
-        if (rel, function, name) not in ALLOWLIST
-    )
+        for rel, function, name, line in sites
+        # An allowlist entry covers exactly one site: a second one in the same function is new code.
+        if (rel, function, name) not in ALLOWLIST or keys.count((rel, function, name)) > 1
+    ]
     assert not violations, (
         "Node code must raise NodeError (pflow.core.exceptions) — pass param= when a step param "
         "is at fault — or another PflowError subclass, never a vanilla exception:\n"
         + "\n".join(violations)
         + "\nOnly an exception that never escapes the node (a stdlib hook protocol caught locally) "
-        "may be added to ALLOWLIST, with its reason."
+        "may be added to ALLOWLIST, with its reason — one entry per site."
     )
 
 
@@ -86,6 +95,7 @@ def test_scanner_detects_every_construction_form() -> None:
         "def check(x):\n    try:\n        int(x)\n        raise TypeError\n    except TypeError:\n        pass\n"
         "def translate_error(exc):\n    return RuntimeError(str(exc))\n"
         "def fine():\n    raise NodeError('ok', param='x')\n"
+        "class LocalParamError(ValueError):\n    pass\n"
     )
     found: set[tuple[str, str, str, int]] = set()
     _scan(ast.parse(source), "x.py", "<module>", found)
@@ -93,6 +103,7 @@ def test_scanner_detects_every_construction_form() -> None:
         ("prep", "ValueError"),
         ("check", "TypeError"),
         ("translate_error", "RuntimeError"),
+        ("class LocalParamError", "ValueError"),
     }
 
 

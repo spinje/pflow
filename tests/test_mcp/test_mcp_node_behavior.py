@@ -334,9 +334,9 @@ class TestMCPNodeErrorHandling:
 
     def test_load_server_config_server_not_found(self, tmp_path):
         """When config file exists but requested server is not in it,
-        _load_server_config should raise KeyError listing available servers.
+        _load_server_config should raise NodeError listing available servers.
 
-        Real Bug: Users get a bare KeyError with no guidance about what
+        Real Bug: Users got a bare KeyError with no guidance about what
         servers are configured or how to add the missing one.
         """
         config_file = tmp_path / "mcp-servers.json"
@@ -350,7 +350,7 @@ class TestMCPNodeErrorHandling:
         node = MCPNode()
 
         with patch("pflow.nodes.mcp.node.Path.expanduser", return_value=config_file):
-            with pytest.raises(KeyError) as exc_info:
+            with pytest.raises(NodeError) as exc_info:
                 node._load_server_config("nonexistent")
 
             error_msg = str(exc_info.value)
