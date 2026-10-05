@@ -35,13 +35,26 @@ class TestOutputSourceValidation:
         """✅ Valid: Output references nested output path (multiple dots)."""
         workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "node1", "type": "mcp", "params": {}}],
+            "nodes": [{"id": "node1", "type": "llm", "params": {}}],
             "edges": [],
-            "outputs": {"deep": {"source": "node1.result.data.items", "description": "Nested"}},
+            "outputs": {"deep": {"source": "node1.response.data.items", "description": "Nested"}},
         }
 
         errors, _ = split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 0
+
+    def test_output_field_typo_is_an_error_when_no_step_has_a_template(self):
+        """❌ Invalid (#678): a typo'd field is caught even when the output source is the
+        workflow's only template — the no-templates early return must not skip Pass 5."""
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "sh", "type": "shell", "params": {"command": "echo hi"}}],
+            "edges": [],
+            "outputs": {"out": {"source": "sh.stdot", "description": "Typo"}},
+        }
+
+        errors, _ = split_validator_diagnostics(workflow, {}, Registry())
+        assert [e.message for e in errors] == ["Node 'sh' (type: shell) does not output 'stdot'."]
 
     def test_invalid_output_source_nonexistent_node(self):
         """❌ Invalid: Output references node that doesn't exist."""
@@ -232,9 +245,9 @@ class TestOutputSourceValidation:
             ],
             "edges": [{"from": "fetch_data", "to": "process"}, {"from": "process", "to": "save"}],
             "outputs": {
-                "raw_data": {"source": "fetch_data.body", "description": "Raw API response"},
+                "raw_data": {"source": "fetch_data.response", "description": "Raw API response"},
                 "analysis": {"source": "process.response", "description": "LLM analysis"},
-                "file_path": {"source": "save.file_path", "description": "Saved file location"},
+                "written": {"source": "save.written", "description": "Whether the file was saved"},
             },
         }
 

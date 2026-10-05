@@ -26,13 +26,13 @@ def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> A
     Returns:
         The resolved value or None if not found
     """
-    source_expr = _normalize_source(source_expr)
+    source_expr = normalize_output_source(source_expr)
 
     resolution = resolve(source_expr, shared_storage)
     return resolution.value if resolution.ok else None
 
 
-def _normalize_source(source_expr: str) -> str:
+def normalize_output_source(source_expr: str) -> str:
     """Wrap a bare source into ``${…}`` — one that is exactly an expression body, a
     dynamic index included — or one with no template syntax at all, which then stays
     loud (``n.out.0``, ``$n.out`` are Issues). Anything else resolves as written."""
@@ -144,7 +144,7 @@ def populate_declared_outputs(
     for output_name, output_config in outputs.items():
         # Every output has a source: the schema and compile_validation reject sourceless ones.
         source_expr = output_config["source"]
-        normalized = _normalize_source(source_expr)
+        normalized = normalize_output_source(source_expr)
 
         resolution = resolve(normalized, shared_storage)
         if resolution.ok:

@@ -1402,8 +1402,53 @@ OUTPUT_ROWS: tuple[Row, ...] = (
         "output_missing_field",
         "output_source",
         "${p.nope}",
-        Ok(),
+        # Flipped by #678 — output sources are field-checked by Pass 5, like params
+        Error("does not output 'nope'"),
         Raises("OutputResolutionError", "${p.nope}"),
+        mutation="leave output sources out of Pass 5",
+    ),
+    Row(
+        "output_plain_missing_field",
+        "output_source",
+        "p.nope",
+        Error("does not output 'nope'"),
+        Raises("OutputResolutionError", "p.nope"),
+    ),
+    Row(
+        "output_prose_missing_field",
+        "output_source",
+        "prefix ${p.nope}",
+        Error("does not output 'nope'"),
+        Raises("OutputResolutionError", "p.nope"),
+    ),
+    Row(
+        "output_plain_dynamic_index_missing_field",
+        "output_source",
+        "p.out_arr[${i}].nope",
+        # #678: a bare source is checked as the ${…} the runtime resolves; the
+        # element's fields are unknown, so this one stays a runtime error.
+        Ok(),
+        Raises("OutputResolutionError", "p.out_arr["),
+        declared_inputs=I_INPUT,
+    ),
+    Row(
+        "output_plain_dynamic_index_typo_root",
+        "output_source",
+        "typo.out_arr[${i}].x",
+        # #678: the root check parses a bare source as the runtime resolves it
+        Error("non-existent source 'typo'"),
+        Raises("OutputResolutionError", "typo.out_arr["),
+        declared_inputs=I_INPUT,
+        mutation="root-check a templated output source as written (no normalize_output_source)",
+    ),
+    Row(
+        "output_whole_node_stays_valid",
+        "output_source",
+        "p",
+        # A whole-node source has no field to check: it returns the node's namespace
+        Ok(),
+        Resolves(dict(DEFAULT_PAYLOAD)),
+        mutation="field-check whole-node output sources",
     ),
     Row(
         "output_all_absent_coalesce_skipped",
@@ -2091,19 +2136,20 @@ class TestHistoricalFixtures:
         assert result.success, [d.message for d in result.errors]
         assert result.shared_after["t"]["result"] == "A0"
 
-    def test_643_child_output_typo_in_output_source_is_an_under_check(self, tmp_path: Path) -> None:
-        """#643 / PR #664 sibling gap, pinned: output sources are root-checked only, so a
-        typo'd child output passes validation and fails loudly at run. (Params ARE
-        field-checked against the child's outputs — the partner assertion.)"""
+    def test_643_child_output_typo_in_output_source_is_a_validator_error(self, tmp_path: Path) -> None:
+        """#643 / #678: a typo'd child output in an output source fails validation, as it
+        does in a param (the partner assertion), instead of passing and failing at run."""
         row = Row("643", "sub_inputs", "${p.out_str}", Ok(), Ok())
         ir = build_ir(row, tmp_path)
         ir["outputs"] = {"out": {"source": "${s.gto}", "description": "a typo'd child output"}}
-        assert validator_errors(ir, {}) == []
+        errors = validator_errors(ir, {})
+        assert any("does not output 'gto'" in e for e in errors), errors
         result = _run(ir)
         assert not result.success
-        assert any("Unresolved" in d.message and "${s.gto}" in d.message for d in result.errors), [
-            d.message for d in result.errors
-        ]
+        assert any("does not output 'gto'" in d.message for d in result.errors), [d.message for d in result.errors]
+
+        ir["outputs"] = {"out": {"source": "${s.got}", "description": "the child's real output"}}
+        assert validator_errors(ir, {}) == []
 
         ir["nodes"].append(_code_node("t", "${s.gto}"))
         ir["edges"].append({"from": "s", "to": "t"})
