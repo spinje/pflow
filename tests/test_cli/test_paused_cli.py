@@ -788,3 +788,88 @@ def test_stream_fault_pause_falls_through_to_failed(home, gate_wf, monkeypatch):
     # No dead-end affordance either: there is no file to resume from, so the
     # error document must not advertise a resume_command the loader would refuse.
     assert "resume_command" not in document
+
+
+_OLD_TRACE_THEN_GATE_WF = """# Loop Then Gate
+
+A loop step that fails at its second iteration while the flag says so, then a gated step.
+
+## Inputs
+
+### flag
+
+Fail flag file.
+
+- type: string
+- required: true
+
+## Steps
+
+### k
+
+Loops twice.
+
+- type: code
+- inputs:
+    i: ${__iteration__}
+    flag: ${flag}
+- loop:
+    while: ${k.result}
+    max_iterations: 2
+- next: gated
+
+```python code
+from pathlib import Path
+
+i: int
+flag: str
+if i == 2 and Path(flag).read_text(encoding="utf-8") == "1":
+    raise RuntimeError("injected")
+result: bool = True
+```
+
+### gated
+
+Needs approval.
+
+- type: shell
+- approval: required
+
+```shell command
+echo gated
+```
+"""
+
+
+@pytest.mark.parametrize("output_format", ["text", "json"])
+def test_pause_after_a_restarted_loop_still_says_the_loop_restarted(home, tmp_path, output_format):
+    """Gate review (agent-ux): a resume of a pre-2.8.0 trace restarts the loop at iteration 1
+    and says so — and that advisory must survive when the resumed run then PAUSES at a later
+    gate (the pause document/text used to drop every non-error diagnostic)."""
+    wf = tmp_path / "loop_then_gate.pflow.md"
+    wf.write_text(_OLD_TRACE_THEN_GATE_WF, encoding="utf-8")
+    flag = tmp_path / "flag"
+    flag.write_text("1", encoding="utf-8")
+    failed = _runner().invoke(cli, [str(wf), f"flag={flag}"])
+    assert failed.exit_code == 1, failed.stderr
+    [trace] = (home / ".pflow" / "debug").glob("workflow-trace-*.json")
+    lines = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+    exec_id = lines[0]["execution_id"]
+    # Rewrite into the pre-2.8.0 shape: no recorded loop position.
+    trace.write_text(
+        "\n".join(json.dumps({k: v for k, v in line.items() if k != "iteration"}) for line in lines) + "\n",
+        encoding="utf-8",
+    )
+    flag.write_text("0", encoding="utf-8")
+
+    paused = _runner().invoke(cli, ["resume", exec_id, "--force", "--output-format", output_format])
+    assert paused.exit_code == 4, paused.stderr
+    if output_format == "json":
+        document = json.loads(paused.stdout)
+        assert document["status"] == "paused"
+        assert document["errors"] == []
+        # The loop restarted (and, run to its cap of 2, said so too) before the gate paused.
+        assert {d["id"] for d in document["diagnostics"]} == {"resume.loop-restart", "loop.max-iterations-reached"}
+    else:
+        assert "Paused at 'gated'" in paused.stdout
+        assert "Loop step 'k' restarted at iteration 1" in paused.stderr

@@ -202,9 +202,12 @@ def _carry_unresolved_error(
     )
 
 
-def _assert_carried_inputs_resolved(config: NodeConfig, plan: NodePlan, shared: dict[str, Any]) -> None:
+def assert_carried_inputs_resolved(config: NodeConfig, plan: NodePlan, shared: dict[str, Any]) -> None:
     """Make a carried output the body didn't produce this iteration fail LOUD and
     CARRY-AWARE in every template-resolution mode.
+
+    A no-op outside a carried iteration and on cache hits. Shared by the engine and
+    the dry-run planner, which plans a resumed loop step at its carried iteration.
 
     Carry is structural plumbing, so an unresolved carried input must raise a
     ``LoopCarryError`` that names the loop node and lists its available outputs —
@@ -218,6 +221,8 @@ def _assert_carried_inputs_resolved(config: NodeConfig, plan: NodePlan, shared: 
       resolved params); a carried *self-reference* whose output the body omitted is
       the failure. Coalesce/complex refs are deferred to the generic error.
     """
+    if not is_carry_iteration(config, shared) or plan.status in ("cached_memo", "cached_in_process"):
+        return
     carry = config.loop_config.carry if config.loop_config is not None else {}
     if not carry:
         return
@@ -658,6 +663,73 @@ def continue_after_step(
     return decision.next_node
 
 
+@dataclass(frozen=True)
+class ResumeEntry:
+    """Where a resumed walk enters (Task 179) — the one answer engine and planner share."""
+
+    node: Any  # the walk's entry node
+    iteration: int  # the iteration the entry runs at: the resumed loop step's, else 1
+    seeded: dict[str, dict[str, Any]]  # the seeded final events (the attempt's re-record source)
+    restarts_loop: bool  # a loop step with no recorded position: the caller says so (advisory)
+
+    @property
+    def restored_nodes(self) -> list[str]:
+        """Seeded AND not run in this attempt — a resumed loop step is seeded but runs on."""
+        return [nid for nid in self.seeded if nid != self.node.node_id]
+
+
+def prepare_resume_entry(
+    workflow: CompiledWorkflow,
+    shared: dict[str, Any],
+    events: list[dict[str, Any]],
+    *,
+    step: str,
+    after: bool,
+    resume_iteration: int | None,
+    loop_counts: dict[str, int],
+    loop_caps: dict[str, int],
+    source_id: str | None,
+) -> ResumeEntry:
+    """Seed the store and locate a resumed walk's entry — the engine's ``_prepare_resume``
+    and the dry-run planner's ``_resolve_walk_start`` both call this, so they cannot drift.
+
+    ``step`` is the step the loader positioned (the entry, or with ``after`` the completed
+    step to resume after). A loop step continues at ``resume_iteration`` (``None`` = no
+    recorded position → 1): the seed holds its previous iteration and ``loop_counts[step]``
+    is restored, so the walk's own increment, carry, condition and cap continue as if
+    uninterrupted. ``after`` then makes the decision the walk would have made
+    (``continue_after_step``). A step whose ``loop:`` was removed since the run (``--force``)
+    runs plainly at 1; a step removed or renamed refuses. State stamping, trace re-recording
+    and advisory delivery stay with the caller.
+    """
+    config = workflow.node_configs.get(step)
+    is_loop = config is not None and config.loop_config is not None
+    iteration = (resume_iteration or 1) if is_loop else 1
+    try:
+        node, seeded = seed_walk_entry(
+            shared, events, entry=step, start_node=workflow.start_node, entry_iteration=iteration
+        )
+    except CompilationError:
+        # Without this wrap, a --force resume after the step was renamed/removed surfaces
+        # find_node_by_id's "compiler/graph bug" error — misattributed.
+        raise ResumeNotResumableError(
+            f"Step '{step}' no longer exists in the workflow — it was renamed or removed since the failed run.",
+            execution_id=source_id,
+            suggestions=["Re-run the workflow from the start instead of resuming."],
+        ) from None
+    if is_loop:
+        loop_counts[step] = iteration - 1
+    if after:
+        entry = continue_after_step(
+            node, workflow.node_configs[step], shared, loop_counts, loop_caps, source_id=source_id
+        )
+        if entry is not node:
+            node, iteration = entry, 1
+    return ResumeEntry(
+        node=node, iteration=iteration, seeded=seeded, restarts_loop=is_loop and resume_iteration is None
+    )
+
+
 def build_snapshot_degraded_diagnostic(this_only: str, *, source: Literal["planner", "runtime"]) -> Diagnostic:
     """Build the ``only.snapshot-degraded`` WARNING ``Diagnostic``.
 
@@ -993,52 +1065,33 @@ class WorkflowEngine:
         tail) and adds no ``loop_runtime_scope`` (that's the snapshot's
         single-shot pattern; the walk wraps every node itself).
 
-        A loop step K resumes at its saved iteration N (Task 179): the seed holds
-        K's iteration N-1 output and ``loop_counts[K] = N-1``, so the walk's own
-        increment, carry, condition and cap continue exactly as uninterrupted.
-        ``resume_after`` K (N = the iteration after K's last completed one) then
-        makes the re-entry decision the walk would have made — ``should_reenter``
-        re-enters K, otherwise the walk continues at K's default successor.
+        The entry itself — a loop step continuing at its saved iteration, or the
+        decision after a completed loop step — is ``prepare_resume_entry`` (Task 179),
+        shared with the dry-run planner.
         """
         step = str(self.resume_from or self.resume_after)
-        config = workflow.node_configs.get(step)
-        # A step whose `loop:` was removed since the run (--force) runs plainly, at iteration 1.
-        is_loop = config is not None and config.loop_config is not None
-        iteration = (self.resume_iteration or 1) if is_loop else 1
-        try:
-            entry_node, final = seed_walk_entry(
-                shared,
-                self.resume_events or [],
-                entry=step,
-                start_node=workflow.start_node,
-                entry_iteration=iteration,
-            )
-        except CompilationError:
-            # Without this wrap, a --force resume after K was renamed/removed
-            # surfaces find_node_by_id's "compiler/graph bug" error — misattributed.
-            raise ResumeNotResumableError(
-                f"Step '{step}' no longer exists in the workflow — it was renamed or removed since the failed run.",
-                execution_id=self.resume_source_id,
-                suggestions=["Re-run the workflow from the start instead of resuming."],
-            ) from None
+        entry = prepare_resume_entry(
+            workflow,
+            shared,
+            self.resume_events or [],
+            step=step,
+            after=self.resume_after is not None,
+            resume_iteration=self.resume_iteration,
+            loop_counts=loop_counts,
+            loop_caps=loop_caps,
+            source_id=self.resume_source_id,
+        )
         initialize_execution_state(shared)
-        if is_loop:
-            loop_counts[step] = iteration - 1
-            if self.resume_iteration is None:
-                shared.setdefault("__warnings__", {})["__resume_loop_restart__"] = build_loop_restart_diagnostic(
-                    step, source="runtime"
-                )
-        if self.resume_after is not None:
-            entry_node = continue_after_step(
-                entry_node, workflow.node_configs[step], shared, loop_counts, loop_caps, source_id=self.resume_source_id
+        if entry.restarts_loop:
+            shared.setdefault("__warnings__", {})["__resume_loop_restart__"] = build_loop_restart_diagnostic(
+                step, source="runtime"
             )
         # Engine-only keys, stamped here per the node_state pattern — never added
         # to new_execution_state(). The display/JSON surface reads all four.
-        # Restored = seeded AND not run in this attempt (a resumed loop step runs on).
-        shared["__execution__"]["restored_nodes"] = [nid for nid in final if nid != entry_node.node_id]
+        shared["__execution__"]["restored_nodes"] = entry.restored_nodes
         shared["__execution__"]["resumed_from"] = self.resume_source_id
-        shared["__execution__"]["resume_entry_node"] = entry_node.node_id
-        shared["__execution__"]["resume_entry_iteration"] = iteration if entry_node.node_id == step else 1
+        shared["__execution__"]["resume_entry_node"] = entry.node.node_id
+        shared["__execution__"]["resume_entry_iteration"] = entry.iteration
         # Decision 6: re-record each SEEDED node's final event into THIS attempt's
         # trace so it is self-contained — resume-of-a-resume and later --only runs
         # seed from the newest attempt alone. cached=True supplies status "cached"
@@ -1047,7 +1100,7 @@ class WorkflowEngine:
         # cached host is safe for tree()/cost). ``iteration`` is copied so a
         # resumed loop step's position survives into the attempt.
         if self.trace is not None:
-            for nid, ev in final.items():
+            for nid, ev in entry.seeded.items():
                 self.trace.record_node_execution(
                     node_id=nid,
                     node_type=ev.get("node_type", "unknown"),
@@ -1058,7 +1111,7 @@ class WorkflowEngine:
                     restored=True,
                     iteration=ev.get("iteration"),
                 )
-        return entry_node
+        return entry.node
 
     @staticmethod
     def _emit_snapshot_degraded_advisory(shared: dict[str, Any], this_only: str) -> None:
@@ -1166,7 +1219,7 @@ class WorkflowEngine:
         Here we assert that no carried input was left unresolved and raise a
         carry-aware error in EITHER mode — strict (``plan_node`` captured a
         template error) or permissive (``plan_node`` left a literal ``${...}``).
-        See ``_assert_carried_inputs_resolved``.
+        See ``assert_carried_inputs_resolved``.
         """
         start_time = time.perf_counter()
         shared_keys_before = set(shared.keys()) if (self.trace or self.metrics) else set()
@@ -1209,8 +1262,7 @@ class WorkflowEngine:
             # node + listing available outputs), not a generic `inputs:` template
             # error. Skipped on cache hits (a carry iteration is always a re-entry
             # miss, but stay defensive). Permissive mode lands here with no exception.
-            if is_carry_iteration(config, shared) and plan.status not in ("cached_memo", "cached_in_process"):
-                _assert_carried_inputs_resolved(config, plan, shared)
+            assert_carried_inputs_resolved(config, plan, shared)
 
             if plan.template_exception is not None:
                 raise plan.template_exception

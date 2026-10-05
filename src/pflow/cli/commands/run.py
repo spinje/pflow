@@ -650,9 +650,14 @@ def _display_paused_result(result: Any, output_format: str) -> None:
     data (a calling process must be able to capture it). The gate CONTENT goes
     to stderr (like ``_maybe_echo_resume_hint``, so it survives ``-p``): an
     agent must be able to compose the answer from this output alone, without a
-    blind resume round-trip.
+    blind resume round-trip. Non-error diagnostics the run produced before the
+    pause (e.g. a resumed loop's ``resume.loop-restart`` advisory) are kept — a
+    pause carries no error, but what happened on the way to it still matters.
     """
+    from pflow.execution.formatters.success_formatter import partition_surfaced_diagnostics
     from pflow.execution.gate_prompt import format_gate_lines, format_resume_answer_command
+
+    surfaced = [d for d in result.diagnostics if d.severity in {Severity.WARNING, Severity.INFO}]
 
     pause = result.trace.pause_request or {}
     node_id = pause.get("paused_node_id")
@@ -678,7 +683,7 @@ def _display_paused_result(result: Any, output_format: str) -> None:
             "gate_request": masked_request,
             "resume_command": resume_command,
             "errors": [],
-            "diagnostics": [],
+            "diagnostics": [diagnostic.to_dict() for diagnostic in surfaced],
         }
         click.echo(json.dumps(document, indent=2, default=str))
         return
@@ -689,6 +694,16 @@ def _display_paused_result(result: Any, output_format: str) -> None:
     for line in format_gate_lines(gate_request):
         click.echo(f"   {line}", err=True)
     click.echo("", err=True)
+    warnings_list, advisories = partition_surfaced_diagnostics(surfaced)
+    for heading, block in (
+        ("⚠️ Warnings:", warnings_list),
+        ("\N{INFORMATION SOURCE}\N{VARIATION SELECTOR-16} Advisories:", advisories),
+    ):
+        if block:
+            click.echo(heading, err=True)
+            for diagnostic in block:
+                click.echo(format_diagnostic(diagnostic), err=True)
+            click.echo("", err=True)
     click.echo(f"To answer: {resume_command}", err=True)
 
 

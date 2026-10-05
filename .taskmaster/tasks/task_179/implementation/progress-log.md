@@ -572,3 +572,84 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   deep-review via the pflow fan-out (codex), per-seam targets for the dimension lenses, cross-cutting lenses over the
   whole diff vs `origin/main`; `review-falsifier` launched by me directly, LAST, after the battery's fixes land.
 - dev servers: none.
+
+## [2026-10-06 03:20] phase-implementer (Opus) — completion gate (code-mode deep-review)
+- Did: one pflow fan-out (codex), 7 lenses with per-lens targets (silent-failures, feature-interactions,
+  validation-consistency, agent-ux, test-fidelity, simplicity, spec-conformance) over `git diff origin/main...HEAD`;
+  `scratchpads/task-179/gate-review.md` read in full; coverage complete (all 7 reported, exit 0; each lens notes it was
+  read-only and not an exhaustive full-file pass). Spec-conformance's Requirement Inventory →
+  `scratchpads/task-179/requirement-inventory.md`.
+- Findings (2 Critical / 3 Warning / 1 Suggestion) and dispositions:
+  1. **Critical (silent-failures) — a recovered loop position is lost when the RESUMED attempt is itself
+     interrupted.** Verified by reading: the attempt that resumed K at 4 after a recovered failure re-records only the
+     seeded events (H; K's failed-final event is not seedable), so if it is killed in K's iteration 4 (dangling
+     `node.start`, which carries no iteration) the next load finds no K event → `resume_iteration` = 1 → K restarts
+     and repeats iterations 1–3, with no advisory. **SKIPPED — needs your ruling** (same root as 2).
+  2. **Warning (feature-interactions) — a pause at a NON-loop step (e.g. a gated on-error handler H) whose back edge
+     returns to loop K restarts K at 1.** Verified by reading: only the resume step's counter is restored
+     (`loop_counts[step]`); every other loop node's count starts empty, while the live walk would continue K's count.
+     Pre-existing shape (before this task everything restarted), outside the spec's "the loop step's own pause/failure"
+     promise. **SKIPPED — ruling** (same root as 1).
+     Root and recommended fix for 1+2: restore EVERY loop node's counter, not just the entry's — the loader derives
+     `loop_positions = {node: last recorded iteration}` (one reader, all statuses); the engine seeds `loop_counts`
+     from it then applies the entry override; and for attempt self-containment the attempt records the positions it
+     started from (a `loop_positions` meta field set at construction like `resumed_from`, which means
+     `trace_io.META_KEYS` + `_meta_fields` + `TraceFixtureBuilder` move together, the Task 164 invariant);
+     `resume_iteration` then falls back to `positions[step] + 1` when the step has no event. A trace-format
+     addition, so ruling-worthy. Alternative: record both as known limits (hand-written backward-edge cycles into a
+     loop step, plus a second interruption or a gate on the handler) beside plan §8's existing backward-edge edge.
+     My recommendation: build it as a follow-up task, not at this gate. It is exotic, but it is the one remaining
+     "guess" in the mechanism.
+  3. **Critical (validation-consistency) — the resumed dry-run skipped the carry guard.** Reproduced first (test
+     written, failed): with permissive mode, `resume --dry-run` of a loop resumed at a carried iteration whose carry
+     cannot resolve planned a clean entry while the real resume raised `LoopCarryError`; in strict mode the planner
+     showed the generic "Unresolved variables" error instead of the carry-aware one. **FIXED**: the guard is now public
+     and self-gating (`engine.assert_carried_inputs_resolved` checks carry-iteration and cache-hit itself), and is
+     called by both the engine and `plan._plan_standard_node` (before the template exception, like the engine → a
+     `_template_error_entry`). Pin: `test_plan_drift.py::test_resumed_plan_applies_the_carry_guard_like_the_engine
+     [permissive|strict]` (both failed before the fix).
+  4. **Warning (agent-ux) — the pause output dropped every non-error diagnostic**, so an old-trace resume that
+     restarted its loop and then paused at a later gate never said "restarted". Reproduced first (test failed in
+     both formats). **FIXED**: `_display_paused_result` keeps WARNING/INFO diagnostics — JSON `diagnostics` carries
+     them (`errors` stays `[]`); text renders the Warnings/Advisories blocks before "To answer". Pin:
+     `test_paused_cli.py::test_pause_after_a_restarted_loop_still_says_the_loop_restarted[text|json]`.
+  5. **Warning (spec-conformance) — completion evidence outstanding** (final `verify.sh`, Windows gate). `verify.sh`
+     run below. The Windows `tests-windows` gate is CI on the PR — **left to you**.
+  6. **Suggestion (simplicity) — engine and planner duplicated the resume-entry preparation.** **FIXED**: one
+     module-level `engine.prepare_resume_entry(...) -> ResumeEntry(node, iteration, seeded, restarts_loop;
+     .restored_nodes)` handles iteration normalisation, seeding, missing-step refusal, restoring the counter, and the
+     after-step decision. `_prepare_resume` keeps only state stamping, re-recording and the advisory;
+     `_resolve_walk_start` keeps only the plan info and the advisory. Net −16 lines, and there is now one copy.
+- Verified: `make check` green; `make test-all-local` → **10379 passed, 2 skipped** (merged base 10375 + 4 new);
+  `verify.sh` → `summary: 75 passed, 12 drifted, 0 harness errors` — the 7 P0 drifts unchanged plus 5 NEW:
+  `02-validator-errors/{03-prompt-cache-on-shell-node,05-subworkflow-references-parent-chunk}`,
+  `04-warning-catalog/{03-cache.invalid-on-non-llm,09d-cache.prewarm-disabled-below-min,09e-cache.conditional-warmup-recommended}`.
+  All 5 are the output-source field-check class, from the merged `origin/main` #704 (48a9d426, "field-check output
+  sources like step params"): the baseline no longer shows the extra "does not output 'response'" template error /
+  `other_blocking_errors` entry. This task's only touch in that area is a one-word docstring rename in
+  `template_validation/validator.py`. Attribution is by diff content and #704's file list; it was not re-run on a
+  pristine `origin/main`. The baseline expected files need regenerating by #704's owner (not this task).
+- Deviations/surprises: the gate surfaced a real planner/engine divergence (3) that existed only because the planner
+  now plans a carried iteration — the "shared resume-entry" consolidation (6) makes the next divergence of that kind
+  harder.
+- Self-checks: the two new pins were written before the fixes and failed for the reported reason; full suites green
+  after the refactor.
+- Next: your rulings on 1+2 and the Windows gate; then `review-falsifier`.
+
+## [2026-10-06 03:40] task-orchestrator (Opus) — gate dispositions; baseline attribution confirmed
+- Accepted the three fixes (carry guard shared with the planner; pause output keeps WARNING/INFO diagnostics;
+  `prepare_resume_entry` consolidation). Findings 1+2 (only the entry step's loop counter is restored → a backward-edge
+  cycle into a loop step restarts it at 1 when (1) the resumed attempt is itself killed after a recovered failure, or
+  (2) the pause is at a non-loop step that loops back): **DISPOSITION — known limit + proposed follow-up, importance 2,
+  decided here.** Reasons: no regression (both shapes restarted at 1 before this task, also silently); they need a
+  hand-written backward-edge cycle into a loop step; the remedy (restore every loop counter, `loop_positions` in the
+  attempt's meta line) is a trace-format/META_KEYS design that deserves its own deliberate change, not a gate fix.
+  The limit is written into ADR-0010's amendment and `runtime/CLAUDE.md` (dev-facing; the user guide's promise covers
+  the loop step's own pause/failure, which holds). Follow-up proposed to the main orchestrator in the handback.
+- Baseline attribution VERIFIED (not assumed): `git archive baf2d73f` (pristine merged-in `origin/main`) →
+  `scratchpads/task-179/main-export-baf2/`, `run-case.sh --diff` on the 5 new cases → all 5 drift (rc=1) on pristine
+  main; `01-parser-errors/01-empty-cache-block` passes there (rc=0). So the 5 are #704's, pre-existing on main; this
+  branch adds no drift. Bar restated: branch drift set == main's drift set (7 + 5). #704's expected files need
+  regenerating — belongs with #680 (main orchestrator).
+- Windows: `tests-windows` is CI on the PR; no new subprocess/encoding/path code (fixtures write `encoding="utf-8"`).
+- Next: commit gate fixes → merge `origin/main` b59cf9e5 (#707) → re-gate → `review-falsifier` (direct, last).

@@ -38,7 +38,7 @@ from time import time
 from typing import Any, Literal
 
 from pflow.core.diagnostic import Diagnostic, Severity
-from pflow.core.exceptions import CompilationError, LoopConditionError, ResumeNotResumableError
+from pflow.core.exceptions import LoopCarryError, LoopConditionError
 from pflow.core.templates import resolve
 from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
 from pflow.execution.result import Plan, PlanEntry, PlanSummary, ResumePlanInfo
@@ -47,10 +47,11 @@ from pflow.runtime.cache import MemoizationCache
 from pflow.runtime.engine.batch_executor import build_batch_output, resolve_batch_items
 from pflow.runtime.engine.engine import (
     RouteKind,
+    assert_carried_inputs_resolved,
     build_loop_restart_diagnostic,
     build_prompt_cache_dict,
     build_snapshot_degraded_diagnostic,
-    continue_after_step,
+    prepare_resume_entry,
     route_action,
     seed_walk_entry,
     validate_only_target,
@@ -519,13 +520,11 @@ def _resolve_walk_start(
     ``_prepare_resume`` uses — parity pinned by ``test_plan_drift``); unlike
     ``--only`` this does NOT set ``state.only_node``, so the walk continues across
     the whole resumed tail. ``--only`` and resume are mutually exclusive by
-    construction (the CLI never passes both). A resumed loop step K continues at
-    ``resume_iteration`` exactly as ``_prepare_resume`` does (Task 179): the seed holds
-    K's previous iteration and ``start_iteration`` is the ``__iteration__`` the walk
-    plans K at (1 for every other start); a saved run without loop position restarts
-    K at 1 with the shared advisory. ``resume_after`` K runs the engine's own re-entry
-    decision (``should_reenter``) on the planner's store — so the preview says what
-    WILL run: K again, or its default successor.
+    construction (the CLI never passes both). The resume entry is the engine's own
+    ``prepare_resume_entry`` (Task 179): a resumed loop step K continues at its saved
+    iteration (``start_iteration`` is the ``__iteration__`` the walk plans it at, 1 for
+    every other start), and ``resume_after`` K makes the walk's re-entry decision on the
+    planner's store — so the preview says what WILL run.
 
     No ``--only`` snapshot → hard error. K removed since the run → the SAME
     ``ResumeNotResumableError`` the engine raises (lockstep — a ``--force`` resume
@@ -536,45 +535,27 @@ def _resolve_walk_start(
     """
     step = resume_from or resume_after
     if step is not None:
-        config = compiled.node_configs.get(step)
-        is_loop = config is not None and config.loop_config is not None
-        iteration = (resume_iteration or 1) if is_loop else 1
-        try:
-            entry_node, final = seed_walk_entry(
-                shared,
-                resume_events or [],
-                entry=step,
-                start_node=compiled.start_node,
-                entry_iteration=iteration,
-            )
-        except CompilationError:
-            raise ResumeNotResumableError(
-                f"Step '{step}' no longer exists in the workflow — it was renamed or removed since the failed run.",
-                execution_id=resume_source_id,
-                suggestions=["Re-run the workflow from the start instead of resuming."],
-            ) from None
-        if is_loop and resume_iteration is None:
-            diagnostics.append(build_loop_restart_diagnostic(step, source="planner"))
-        if resume_after is not None:
-            # The planner's own count/cap dicts: its loop_stopped/advisory stay in this scratch store.
-            after = continue_after_step(
-                entry_node,
-                compiled.node_configs[step],
-                shared,
-                {step: iteration - 1},
-                {},
-                source_id=resume_source_id,
-            )
-            iteration = iteration if after is entry_node else 1
-            entry_node = after
-        restored = [nid for nid in final if nid != entry_node.node_id]
-        info = ResumePlanInfo(
-            entry_node=entry_node.node_id,
-            restored_nodes=restored,
-            execution_id=resume_source_id or "",
-            entry_iteration=iteration,
+        # Fresh count/cap dicts: an after-step decision's loop_stopped/advisory stay in this scratch store.
+        entry = prepare_resume_entry(
+            compiled,
+            shared,
+            resume_events or [],
+            step=step,
+            after=resume_after is not None,
+            resume_iteration=resume_iteration,
+            loop_counts={},
+            loop_caps={},
+            source_id=resume_source_id,
         )
-        return entry_node, info, iteration
+        if entry.restarts_loop:
+            diagnostics.append(build_loop_restart_diagnostic(step, source="planner"))
+        info = ResumePlanInfo(
+            entry_node=entry.node.node_id,
+            restored_nodes=entry.restored_nodes,
+            execution_id=resume_source_id or "",
+            entry_iteration=entry.iteration,
+        )
+        return entry.node, info, entry.iteration
     if this_only is None:
         return compiled.start_node, None, 1
     events, source_status = load_snapshot_or_raise(workflow_path, this_only)
@@ -978,6 +959,12 @@ def _plan_standard_node(
     planned = plan_node(curr, config, shared)
 
     workflow_path = shared.get("_pflow_workflow_file")
+    try:
+        # Before the template exception, like the engine: a resumed loop step plans at its
+        # carried iteration, where an unresolvable carry is the engine's LoopCarryError.
+        assert_carried_inputs_resolved(config, planned, shared)
+    except LoopCarryError as exc:
+        return _template_error_entry(config, exc)
     if planned.template_exception is not None:
         return _template_error_entry(config, planned.template_exception)
     if planned.status == "cache_disabled":

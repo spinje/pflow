@@ -2835,6 +2835,37 @@ def test_engine_and_planner_mid_loop_resume_state_match(tmp_path) -> None:
     assert engine_result.shared_after["k"]["result"]["acc"] == "4:3:2:1:seed"
 
 
+@pytest.mark.trace_files
+@pytest.mark.parametrize("mode", ["permissive", "strict"])
+def test_resumed_plan_applies_the_carry_guard_like_the_engine(tmp_path, monkeypatch, mode) -> None:
+    """Gate review (validation-consistency C1): the planner now plans a resumed loop step at
+    iteration N, where carry applies — so it must reject an unresolvable carried input exactly
+    as the engine will (``LoopCarryError``), in permissive mode too, instead of previewing a
+    clean run the resume then fails."""
+    from pflow.runtime.resume_source import load_resume_source
+
+    monkeypatch.setenv("PFLOW_TEMPLATE_RESOLUTION_MODE", mode)
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        "# Carry miss\n\nIteration 1 omits the carried field.\n\n"
+        "## Steps\n\n### k\n\nLoop.\n\n- type: code\n- inputs:\n    acc: seed\n"
+        "- loop:\n    carry:\n      acc: ${k.result.acc}\n    while: ${k.result.more}\n    max_iterations: 3\n\n"
+        "```python code\nacc: str\nresult: dict = {'more': True}\n```\n",
+        encoding="utf-8",
+    )
+    failed = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert not failed.success
+    assert any("carried input 'acc'" in d.message for d in failed.diagnostics), [d.message for d in failed.diagnostics]
+    trace_path = failed.trace.save_to_file()
+    source = load_resume_source(execution_id=failed.trace.execution_id, debug_dir=trace_path.parent)
+    assert (source.entry_node_id, source.entry_iteration) == ("k", 2)
+
+    plan = WorkflowRunner().plan(str(wf), {}, RunnerConfig(), resume_source=source)
+    errors = [d for d in plan.diagnostics if d.severity.value == "error"]
+    assert [d.node_id for d in errors] == ["k"]
+    assert "carried input 'acc'" in errors[0].message
+
+
 def _after_loop_step_source(tmp_path: Path, *, stop_after: int) -> tuple[Path, Any]:
     """A real run of prep → k (code loop, 3 iterations) → s, its trace cut right after k's
     iteration ``stop_after`` (no trailer: an interrupted run) and loaded as a resume source —
