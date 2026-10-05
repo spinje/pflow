@@ -326,3 +326,223 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   iteration (plan Q5).
 - Self-checks: fully happy with P1+P2.
 - Next: await P3.
+
+## [2026-10-06 01:20] phase-implementer (Opus) — P3 surfaces, CLI chain, MCP, docs, ADR-0010 amendment
+- Did: Q6 one rule — `format_gate_lines` leads with `Loop iteration N` when `gate_request["iteration"]` is an int
+  (CLI pause stderr, MCP `Gate:` block, `ResumeAnswerRequiredError`); the TTY prompt headers and the flag echo gain
+  ` — iteration N` (`_iteration_suffix`); the gate_prompt module/function docstrings no longer claim the prompt shares
+  `format_gate_lines`. `resume list`: `PausedRun.iteration` from the trailer's `gate_request` → GATE column
+  `approval · iteration 2`, JSON `iteration`. Resume indicator: a fourth engine stamp `resume_entry_iteration`
+  (the entry's iteration; 1 when the after-K decision exits to a successor) → `⤷ Resumed from <id> at 'k' (iteration 3)`
+  (CLI text, `-p`, MCP via the shared `format_resume_indicator`), JSON `execution.resume_entry_iteration`;
+  `ResumePlanInfo.entry_iteration` → dry-run header `Resuming from 'k' (iteration 3): …` + JSON `resume.entry_iteration`.
+  #615 deletion: `run.py`'s warning + `answered_loop` strip removed (an answered loop step now lands in the generic
+  "will pause at approval gate(s) [gated]" note — true); `_fully_answered_gate_ids` kept, docstring rewritten to the
+  multiplicity rationale; `resume.py::_approval_answer` comment rewritten. Docs: `guide/features/resume.md` (one rule;
+  answered escalation continues "after" = next step or the loop's decision; failed loop step re-runs its failed
+  iteration; killed-between after a loop step; LLM `prompt`/`system` carry → loud carry guard), `approval.md` (each
+  gated iteration pauses; browser Approve answers one iteration and the next pauses in the panel; loop escalations
+  pause; final-step escalation (loop included) cannot — ruling (b); recipe text "round" → "iteration" and the
+  non-interactive `--choose` flow + "give the loop step a next step"), `docs/reference/cli/index.mdx`,
+  `docs/how-it-works/approval-gates.mdx`; ADR-0010 amendment (as built: `resume_iteration` incl. recovered-failure and
+  `None`; `continue_after_step` → `should_reenter`; preflight pass-through + successor position; gate-line fold);
+  `runtime/CLAUDE.md` resume paragraph ((step, iteration) entry, minus-the-entry restored list, fold by iteration);
+  `execution/CLAUDE.md` (pause eligibility + preflight mirror sentence; planner loop-cost note).
+- Changed: `src/pflow/execution/{gate_prompt.py,result.py,plan.py,formatters/plan_formatter.py,
+  formatters/success_formatter.py,CLAUDE.md}`, `src/pflow/cli/{commands/run.py,commands/resume.py,workflow_output.py}`,
+  `src/pflow/runtime/{engine/engine.py (stamp),resume_source.py (PausedRun),CLAUDE.md}`, guides/docs above,
+  `context/adr/0010-…md`; tests: `test_paused_cli.py` (chain test deepened: `Loop iteration N` per pause, generic
+  note present, #615 text absent; + `test_loop_gate_position_reaches_every_pause_surface` — JSON doc, list text+JSON,
+  answer-required refusal; non-loop absence pair in `test_paused_run_exits_4…`), `test_resume_list_cli.py` (non-loop
+  absence pair: no `· iteration`, JSON `iteration: null`), `test_gate_prompt.py` (+ `test_loop_gate_leads_with_its_
+  iteration` incl. non-loop absence; + `TestLoopIterationInPromptHeaders` ×2), `test_resume_engine.py` (indicator unit
+  + replacement pin asserts the dry-run header and `resume_entry_iteration`/text indicator), `test_resume_cli.py`
+  (exact `resume` JSON block gains `entry_iteration`), `test_execution_workflow.py` (+ MCP pause → CLI resume ×3).
+- Verified: `make check` green (see deviation 1); `make test` → 10278 passed with my P3 tree (10272 + 6), 10279 at
+  handback incl. P4's in-flight server test; `make test-all-local` → **10331 passed, 2 skipped**. Mutations (restore
+  from snapshot): drop the `Loop iteration` line → 4 failed (unit, CLI chain, surfaces, MCP); `PausedRun.iteration`
+  forced None → the surfaces test fails. Docs: `tests/test_docs` 24 passed.
+  **Real surface** (`scratchpads/task-179/p3real/`, `HOME=$PWD/home`, `</dev/null`, `uv run --project ../../.. pflow`):
+  (a) `pflow loop.pflow.md marker=…` → rc=4, stderr `   Loop iteration 1` above the preview; `resume <t1> --approve
+  yes` → `✓ Gate 'gated' — iteration 1 approved via --approve yes`, rc=4, `   Loop iteration 2`; stderr has the generic
+  "will pause at approval gate(s) [gated]" note and NO "answers only the first iteration"; `resume list` →
+  `dce69f51-…  loop  gated  approval · iteration 2  3s`, JSON `"iteration": 2`; `resume <t2>` (no answer) → rc=1
+  "Paused gate needs an answer … `Loop iteration 2` … → Answer with: pflow resume <t2> --approve yes|no"; two more
+  answers → rc=4 (`Loop iteration 3`), rc=0; effects `effect 1/2/3`; `resume list` → "No paused runs.".
+  (b) failure chain (`fail.pflow.md`, cap 5, fails at 3): iterations `1 2 3`; `resume <id> --dry-run` → "Resuming from
+  'k' (iteration 3): 1 upstream step restored from <id> …"; `resume <id> --force` → rc=0, three `k...` lines,
+  `⤷ Resumed from 8a147395-… at 'k' (iteration 3) — 1 upstream step restored`, cap advisory; iterations
+  `1 2 3 3 4 5` (1–2 fired once each). (c) re-fork recipe (a looping `workflow` step whose child exposes the marker —
+  `agent` needs a paid model; `code` is a router and cannot pause): rc=4, `Loop iteration 1 / which way? / 1. left /
+  2. right`, `--choose "<answer or option number>"`; `resume <t> --choose 2` → rc=0, `impl` ran once more then
+  `after`, `⤷ Resumed from b01437bb-… at 'impl' (iteration 2)`, output `{"escalation": null, "applied": "right"}`.
+  (d) MCP: `ExecutionService.execute_workflow(loop.pflow.md, {"marker": …})` under the isolated HOME → `status:
+  paused`, `resume_command: pflow resume a52911a6-… --approve yes|no`, `Gate:\n  Loop iteration 1`; CLI resumes →
+  rc 4, 4, 0; `mcp/effects.txt` = `effect 1/2/3`. (e) old format: the failed trace rewritten to 2.7.0 shape (no
+  `iteration` anywhere) → `--dry-run`: "ℹ [k] Loop step 'k' would restart at iteration 1: the saved run predates loop
+  position, so the iteration it stopped at is unknown. Earlier iterations run again."; real resume: same advisory
+  ("restarted"), status success, iterations `1 2 3 1 2 3 4 5`.
+  **Final grep** (`grep -rniE "restart|iteration 1|first iteration|loop.*(cannot|can't) pause" src/pflow/guide docs
+  src/pflow/**/CLAUDE.md .claude/agents architecture`): no remaining restart-at-1 / iteration-1-only statement — the
+  loop hits are the new text (`resume.md:82` "Loop steps continue where they stopped … Saved runs that predate loop
+  position restart the loop at iteration 1 and say so", `approval.md:76/102` final-step-escalation rule) plus
+  `loop.md:43` (carry seeds the first iteration — true); the rest are unrelated (MCP/editor restarts, Task 106
+  history). A wider `src/pflow` grep for `#615|answers only the first|engine-ephemeral|first iteration` leaves only
+  the new docstrings and gate_prompt's accurate "#615" provenance tag. | Assumed (P4 verifies live): the browser
+  chains the next pause in the panel after Approve (`approval.md:34` states it).
+- Deviations/surprises: (1) **A second agent is working in this worktree concurrently** — P4 changes appeared during
+  my run (`web/src/{components/GateCallout*,types.ts,views/GraphView*}`,
+  `.claude/skills/screenshot-pflow-web-ui/SKILL.md`, `tests/test_cli/test_ui_interaction_server.py`, a live
+  `pflow ui --port 8779` and click runs on `scratchpads/task-179/p4`). I touched none of them, but `make check`
+  first failed on THEIR stale generated asset; the `pre-commit run -a` step (part of `make check`) then regenerated
+  `.agents/skills/screenshot-pflow-web-ui/SKILL.md` from their canonical edit — a deterministic write to a P4-owned
+  file, stated here. My `make test` counts include their new server test. ORCHESTRATION's "never two agents
+  concurrently in one worktree" is being violated; commit hygiene needs care (P3 vs P4 file sets above are disjoint).
+  (2) Real re-fork run uses a looping `workflow` step, not `agent` (no paid model) — the e2e test pins the
+  agent-shaped recipe with a test node. (3) `resume_entry_iteration` is always emitted in JSON when resumed (1 for a
+  non-loop entry), the indicator only shows it when > 1. (4) Not changed (out of scope, noted): the dry-run ⏸ footer
+  still says "non-interactive runs need --auto-approve=…" — imprecise since Task 171 (they pause), not loop-specific.
+- Proposed `context/CONTEXT.md` wording (main orchestrator writes): append to **Resume**'s definition "— a loop step
+  re-enters at the Iteration where it stopped". No new noun.
+- Self-checks: test-reflect (my call — the MCP→CLI chain was the subtle one): tightened its loop from
+  `exit_code in (0, 4)` to the exact `[4, 4, 0]` sequence; every surface test mutation-killed (above); every absence
+  assertion paired with a presence in the same medium. Nothing deleted.
+- Next: hand back; P4 is in flight in this worktree.
+
+## [2026-10-06 01:40] phase-implementer (Opus) — "FULLY happy?" self-check (P3)
+- Did: re-read the P3 diff against the as-built mechanism. `resume_entry_iteration` semantics hold in every entry shape:
+  at-K = the resumed iteration; after-K re-entry = N+1; after-K exit = 1 (the successor starts fresh); a substituted
+  successor that already ran (back edge) = its own position from the preflight; `loop:` removed via `--force` = 1;
+  the indicator and dry-run header show it only when > 1. ADR-0010 amendment re-checked claim by claim against
+  `resume_iteration`, `_seedable_final_events`, `continue_after_step`, the preflight arm, `_apply_gate_resolutions`.
+- Loose ends found and fixed (text only): (1) `approval.md:76` still said an answered escalation "continues at the
+  next step" before qualifying loops later in the bullet. Now it says "continues after it (the next step, or for a
+  loop step its next iteration or exit)". (2) `runtime/CLAUDE.md` said resolution lines fold onto the iteration's
+  event without naming the keyless-line fallback. Added "(keyless lines: the node's final event)".
+- Verified: `tests/test_docs` 24 passed; `make check` green (did not touch `.agents/` again — same one-line P4
+  diff as before); `make test` green (count above in the command output: see handback).
+- Deviations/surprises: none. Remaining, accepted: the dry-run ⏸ footer wording (your follow-up); the browser
+  sentence in `approval.md:34` is pending P4's live verification.
+- Self-checks: fully happy with P3.
+- Next: await orchestrator.
+
+## [2026-10-06 01:50] task-orchestrator (Opus) — P3 verified; P4 in flight; main moved
+- P3 read (01:20 + 01:40 entries): self-checks clean after two text fixes; real-surface runs (a)–(e) recorded there are
+  the task's CLI/MCP/old-trace evidence. Commit of P3 deferred until P4 stops (pre-commit's stash cycle would run over
+  P4's uncommitted `web/` edits).
+- Process note (my call, logged): P4 (Fable, `web/`) was launched in parallel with P3 on disjoint files. Cost observed:
+  P3's `make check` regenerated `.agents/skills/screenshot-pflow-web-ui/SKILL.md` from P4's canonical edit, and P3's
+  test counts include P4's in-flight server test. No file conflict. Lesson: parallel implementers in one worktree share
+  the gates — prefer sequential unless the time saved is real (here: the user-checkpoint latency).
+- P4 died once on a transient API 529 after verifying the success banner + 3-line effects file; resumed (same agent)
+  per the transient-death rule.
+- Follow-ups carried (not this task): dry-run ⏸ footer "non-interactive runs need --auto-approve" is imprecise since
+  Task 171 (they pause) — not loop-specific; planner after-K cap advisory not surfaced in dry-run (plan-accepted).
+- **Main moved** (coordinator FYI): `origin/main` 90b891cb → 48a9d426 (PR #704, #678 — output sources field-checked).
+  Touches my surface: `tests/test_runtime/test_resume_engine.py`, `tests/test_cli/test_resume_cli.py` (one fixture
+  string each → a validator-allowed but run-failing source like `${step1.stdout.nope}`), `tests/test_execution/
+  test_plan_drift.py`. Also: a workflow whose only template is in `## Outputs` no longer skips Pass 5. At pre-PR merge:
+  read those three, check none of this task's new test workflows relies on a typo'd output field reaching the engine,
+  re-gate on the merged result.
+- Proposed CONTEXT.md wording (main orchestrator writes): **Resume** += "— a loop step re-enters at the Iteration where
+  it stopped".
+- Next: P4 handback → full gate → commit P3 + P4 → draft #656 checkpoint page → hand back.
+
+## [2026-10-06 02:05] phase-implementer (Fable) — P4 built + real-browser verified; STOPPED at the #656 user checkpoint
+- Did: the gate panel eyebrow gains ` · iteration N` when `req.iteration` is a number (existing `.gate-eyebrow`
+  type, no badge/colour); `GateRequest.iteration?: number | null` mirrored in `types.ts`; the `GraphView.tsx:74-76`
+  comment corrected (a loop step's later pauses MERGE over the prior iteration's completion — the merge already
+  handled it; comment only); `/api/gate` loop-payload assertion; SKILL.md documents the `run=<execution_id>` URL
+  param (the searcher gap). P4b NOT built (checkpoint rule). Run was cut once by a transient API 529 right after
+  the success-banner step; on resume every owned file re-read complete, and all three gates re-ran green.
+- Changed (owned files only; nothing under `src/pflow/ui/`): `web/src/components/GateCallout.tsx` (+1 line),
+  `web/src/types.ts`, `web/src/views/GraphView.tsx` (comment), `web/src/components/GateCallout.test.tsx` (+1 test:
+  eyebrow presence for `iteration: 2` AND the absence pair for `iteration: null`, same medium),
+  `web/src/views/GraphView.test.tsx` (+1 test: the second-pause chain — pinned `run=r1` snapshot paused at
+  iteration 1 → Approve → URL + re-subscription pin to `attempt-2`, round-1 panel gone → the new attempt's trailer
+  arrives `paused` → panel re-shows reading `iteration 2` from `/api/gate("attempt-2")`, ⏸ badge back),
+  `tests/test_cli/test_ui_interaction_server.py` (`TestGateEndpoint::test_loop_pause_payload_carries_the_iteration`
+  on a REAL CLI-paused loop run → `gate_request.iteration == 1`; plus `iteration is None` pinned on the existing
+  non-loop real-producer test), `.claude/skills/screenshot-pflow-web-ui/SKILL.md` (`run` row in the URL-params table).
+- Verified (my runs): vitest 812 passed (baseline 810; +2); `tsc --noEmit` clean; `uv run pytest
+  tests/test_cli/test_ui_interaction_server.py` 91 passed (baseline 90; +1). NOT run per the launch packet: `make
+  check`/`make test` (P3 in flight in the same worktree) — the orchestrator runs the full gate.
+  **Real browser** (`make ui-build`; `HOME=scratchpads/task-179/p4/home uv run pflow ui --no-open --port 8779`;
+  chrome-devtools-mcp 1.10.1 headless; fixture `scratchpads/task-179/p4/gated-loop.pflow.md` with a deliberately
+  long node id `append-one-effect-line-per-approved-iteration`, run `</dev/null` with the same isolated HOME):
+  - `01-pause-iteration-1-panel.png` — `run=c2bf9f25…` → ⏸ badge + panel, eyebrow
+    `PythonCodeNode · append-one-effect-line-per-approved-iteration · iteration 1`; `/api/gate` → `iteration: 1`.
+  - `02-after-approve-1-same-page.png` — `click.pflow.md selector='.gate-approve'` on that page; the SAME page
+    2.5 s later (no reload — the click workflow never navigates) shows RUN `30fbbdde`, banner "Run paused · 1 nodes",
+    panel re-shown reading `iteration 2`. `/api/runs`: `30fbbdde` paused, `resumed_from c2bf9f25`. effects: 1 line.
+  - `03-after-approve-2-same-page.png` — same on `run=30fbbdde…` → RUN `1a3b85e1`, panel `iteration 3`. effects: 2.
+  - `04-after-approve-3-same-page-success.png` — same on `run=1a3b85e1…` → RUN `412ba092`, banner "Run success ·
+    1 nodes", ✓ badge, no panel. `cat effects.txt` → `effect 1 / effect 2 / effect 3` (exactly 3 lines, none twice).
+  - `05-non-loop-gate-no-iteration.png` — absence pair: `gated-once.pflow.md` (shell, non-loop) paused; eyebrow
+    `ShellNode · deploy`, no iteration; `/api/gate` → `iteration: None`.
+  - `06-short-id-loop-gate-iteration-1.png` — `gated-loop-short.pflow.md` (`gated`): eyebrow
+    `PythonCodeNode · gated · iteration 1` on one line — the plan's intended look.
+  All under `/Users/andfal/projects/pflow-worktrees/feat-task-179-durable-loop-position/scratchpads/task-179/p4/`.
+  Look/feel: the panel is pixel-identical to Task 176 apart from the suffix; with the 45-char id the eyebrow wraps
+  to two lines in the same muted mono (01–03) — acceptable, it is how the eyebrow already behaved for long ids
+  (the callout subtitle wraps the same way); no truncation, no overflow, buttons unaffected.
+- Mutation checks (snapshot → Edit → run → restore from snapshot; no `git checkout --`, no stash):
+  (M1) eyebrow suffix removed → GateCallout eyebrow test AND the GraphView chain test fail (2/76);
+  (M2) `selectRun`'s `setGateDismissed(false)` removed → chain test still green → NOT a guard of this test (the
+  panel must be open to click Approve); I removed the dismiss/re-open detour from the test and corrected its
+  comment rather than claim coverage I don't have — the re-arm stays pinned by the existing Task 176 tests;
+  (M3) `onPinRun(newRunId)` pin dropped in `resumeAnswer.tsx` → chain test fails (with 4 Task 176 tests);
+  (M4, server) `iteration` stripped from `/api/gate`'s `gate_request` → the new loop test AND the non-loop
+  `is None` pin fail (the key must ride, empty). Files restored and diffed identical to the snapshots.
+- Deviations from plan: (a) the GraphView chain test uses `runSnapshot` for the second attempt (the pinned
+  re-subscribe path) rather than `runComplete` — it is the trailer path a pinned tailer actually delivers; the
+  banner clear + remount chain is identical. (b) The absence pair is a second real-producer pin (`iteration is
+  None`) on the EXISTING `/api/gate` test, not a new test — one home. (c) Port 8779 and an isolated `HOME` as the
+  packet directed; the skill's `screenshot.pflow.md` writes to `/tmp/pflow-shots` (its workspace root), so each
+  PNG was copied into the scratchpad with a descriptive name. (d) The P4 Python fixture is a second inline copy of
+  `test_paused_cli.py::_LOOP_GATE_WF` — the server test module already keeps its own `_PAUSED_GATE_WF` rather than
+  importing across test modules; same convention, flagged in case the orchestrator prefers a shared fixture.
+- Insight for #656 (my one paragraph): the live flow did not change my mind — planner's "not now" stands. Three
+  clicks for three iterations felt like the gate doing its job, and each pause re-showed within ~2.5 s with no
+  reload, so the round-by-round loop has no friction worth a second button yet. What I DID notice: the browser
+  has no cue that it is "iteration 2 of up to 3" — only `iteration 2`. If an "approve all remaining" ever lands,
+  the cap (`max_iterations`) belongs on the wire first, or the button approves an unknown count.
+- Self-checks: (1) FULLY happy? Yes on scope; one honest doubt — the chain test's mock `subscribe` means the
+  "re-subscribe on the new run id" assertion checks the call, not a real SSE handoff; the real handoff is what
+  screenshots 02–04 evidence, so the pair (unit + browser) covers it. (2) test-reflect (directed): applied — the
+  M2 result above IS its outcome (a claimed guard that could not fail was removed from the test's contract);
+  no other shallow test in my area (the eyebrow test asserts exact text in both directions; the server test runs
+  the real producer).
+- Tooling postmortem (screenshot-pflow-web-ui): worked well — `click.pflow.md`'s post-click screenshot doubles
+  as the "no manual reload" evidence (same page, 2.5 s later), and `-p` kept each run to one output line.
+  Friction: (1) `click` returns `panel: null`/`before: null` for a callout click (it only reads `.read-panel h2`
+  and a `measure_id` node rect) — fine, but a `measure_selector` would let it report the gate eyebrow text
+  directly instead of eyeballing a PNG [M]; (2) the POST response is invisible to the skill, so the new attempt
+  id must come from `/api/runs` between clicks (plan knew this; a `read` step returning the URL's `run=` after the
+  click would close it) [S]; (3) `out_dir` must be under `/tmp` (server workspace root), so scratchpad evidence is
+  a copy step [S — documented already]; (4) no near-misses; no flaw worked around silently. The `run=` URL param
+  is now documented in SKILL.md (the searcher gap).
+- dev servers: none (8779 killed; PID 27642, argv carried this worktree path). Context health: good (~115k used).
+- Next / exact resume point: **awaiting #656 ruling; if yes → P4b per plan** (`_parse_resume_body` `auto_approve`,
+  `_resume_cli_args` `--auto-approve <paused_node_id>`, button only when `req.iteration` is a number, copy decided
+  from a screenshot, 400-on-contradiction + argv pin + presence/absence pair + one-click browser run). If no →
+  P4 is complete as logged; orchestrator runs `make check`/`make test` after P3 lands.
+  (Appended by the orchestrator from the implementer's scratch entry — written concurrently with P3, so it went to a file.)
+
+## [2026-10-06 02:10] task-orchestrator (Opus) — P4 verified; full gate on P1–P4; parked at the #656 user checkpoint
+- Verified (my runs, whole tree): `make check` exit 0; `make test` 10279 passed, 0 failed; vitest 812/812; `tsc
+  --noEmit` clean. Viewed screenshots 02 and 06: the panel shows `· iteration N` in the eyebrow's existing muted mono
+  type, and after Approve the same page shows the next attempt with `iteration 2`. Observed but NOT introduced here:
+  with a long step id the panel header crowds the GATE label, and the Deny/Approve row sits below a scroll fold
+  (Task 176 layout) — noted for the checkpoint page, not fixed.
+- P4 flags dispositioned: inline fixture copy in the server test — ACCEPTED (module convention); M2 removal of a
+  non-guarding claim from the chain test — ACCEPTED (correct test-reflect outcome).
+- Tooling postmortem dispositions (screenshot-pflow-web-ui): (1) `measure_selector` on `click` [M] → DROP for now (an
+  eyeball of the PNG was enough; no task needs it yet); (2) post-click `read` of the new `run=` [S] → DROP (`/api/runs`
+  works; documented in the skill now); (3) `out_dir` under `/tmp` [S] → already documented, no action.
+- **PARKED — exact resume point:** P1–P4 committed (this entry's commit). Awaiting the user's #656 ruling ("approve all
+  remaining iterations" button). If YES → resume the P4 Fable implementer for P4b (plan §4 P4b; note its observation
+  that `max_iterations` is not on the wire, so the button would approve an unknown count — the plan's design already
+  assumes that). If NO → P4 complete; next is pre-PR: merge `origin/main` (48a9d426+, see 01:50 entry), re-gate, then
+  the completion gate (code-mode deep-review via the P1–P3 implementer + `review-falsifier` launched by me), then
+  `make test-all-local`, `verify.sh`, `create-task-review`, `create-pr`.

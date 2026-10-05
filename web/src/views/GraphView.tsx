@@ -73,8 +73,10 @@ const eventState = (e: RunEvent): NodeRunState => ({ status: e.status, durationM
 // paused status over any existing entry instead of replacing it: an ESCALATION's frontier is the
 // already-COMPLETED escalating step (`last_completed_node_id == paused_node_id`), whose real success
 // event carries the metrics + event id the badge hover and the "This run" section key on — a bare
-// `{status}` clobbered them (post-close review finding). An approval's frontier never ran (the gate
-// fires before node.start), so there is nothing to merge and its entry is the bare paused status.
+// `{status}` clobbered them (post-close review finding). An approval's frontier has no entry on its
+// FIRST pause (the gate fires before node.start) — the merge then yields the bare paused status; a
+// loop step's later pauses (Task 179: every iteration gates) merge over the prior iteration's
+// completion, exactly like the escalation case.
 const pausedKey = (run: RunComplete | null): string | null =>
   run?.paused_node_id ? refKey({ node_id: run.paused_node_id, ancestor_path: [], port: null }) : null;
 

@@ -92,6 +92,7 @@ Base `http://127.0.0.1:<port>/` (default port 8765). Source: `web/src/utils/view
 | `collapse` | `all` \| `none` | auto | initial container collapse override |
 | `source` | `1` \| `0` | `0` | open the left source pane on load |
 | `node` | a `node_id` (or flat id) | whole graph | frame the camera on one node — needed for small geometry (a connector/handle) |
+| `run` | an `execution_id` | follow newest | PIN the run overlay to one run (Task 173 D6): its per-node states, banner, and — for a `paused` run — the gate panel at the ⏸ node. The browser writes it on every run pick and on Approve (the answered attempt's NEW id), so a resumed chain is captured round by round: read the new id from `/api/runs`, re-open with `run=<new id>`. Omit it to follow the newest live run |
 | `focus` | a `node_id`, flat id, or flat EDGE id (`e12`) | none | apply the click-focus state on load: dim non-incident, reveal data lines, (beautiful) expand the card + its data-flow endpoints to rows — the only way to capture the focused/expanded state without driving the UI. An EDGE id captures edge SELECTION (bright+halo+elevated line, EdgePanel open); get edge ids from `/api/graph` |
 
 ## Before running
