@@ -303,3 +303,26 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   `seed_walk_entry` pattern; removes a duplicated refusal).
   (5) P3 test flipped early + preflight touched in P2a — fine (forced by the behaviour change).
 - Next: commit P1+P2; resume the implementer with "FULLY happy?" (post-review fixes), then P3.
+
+## [2026-10-06 01:25] phase-implementer (Opus) — "FULLY happy?" self-check (P1+P2, post-review fixes)
+- Did: re-traced the three post-review fixes against the walk. (1) `continue_after_step`'s `__iteration__` install
+  mirrors `_run_inner` exactly: the walk decides with `__iteration__` still set, then pops before routing; on
+  re-entry the walk's scope re-sets it; non-loop `resume_after` is guarded (no `loop_counts` lookup). (2)
+  `resume_iteration`'s recovered rule only changes shapes where the walk re-entered K after its failure: the failed
+  arm's terminal root has no later success by construction, so unrecovered failures are unchanged; the seed excluding
+  K's failed final event matches the live store (failure archival moved K's output to `__failures__`). Restored events
+  are re-recorded at the attempt's start, so they can never count as a "later recovery". (3) The preflight successor
+  position returns 1 for a never-run successor and `None` for a keyless one: honest for old traces (advisory), harmless
+  for non-loop steps. Also re-checked: `by_iteration` keys cannot collide (restored N−1 vs live ≥ N; after-K restored N
+  vs live ≥ N+1); `--force` edits adding or removing `loop:` route to clean refusals or plain runs.
+- Loose ends found and fixed: two claims in my 00:55 entry had no pin. Added
+  `test_kill_after_a_recovered_failure_continues_past_the_failed_iteration` (dangling K start after a recovered
+  failure → 4) and `TestResumeAfterLoopStep::test_template_cap_resolves_against_the_completed_iteration` (the cap half
+  of the convergent finding). Mutation-verified: drop `and not recovered` → 1 failed; drop the `__iteration__`
+  install → 1 failed; files restored.
+- Verified: `make check` green; `make test` → 10272 passed, 0 failed (+2 tests; no src change since 3052158a).
+- Deviations/surprises: none beyond the 00:55 entry. Remaining known limits (accepted, logged): the dry-run omits the
+  after-K cap advisory; a cap template referencing the loop node's OWN output re-resolves against the resumed
+  iteration (plan Q5).
+- Self-checks: fully happy with P1+P2.
+- Next: await P3.

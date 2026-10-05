@@ -1201,3 +1201,17 @@ def test_unrecovered_failure_reruns_its_iteration_even_with_a_failed_handler_aft
     )
     source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
     assert (source.entry_node_id, source.entry_iteration) == ("k", 3)
+
+
+def test_kill_after_a_recovered_failure_continues_past_the_failed_iteration(tmp_path: Path) -> None:
+    """K failed at 3, its on-error handler H recovered and routed back, and the run was killed
+    mid-iteration 4 (dangling K start): the walk was past iteration 3, so the entry is K at 4."""
+    _write_incomplete_trace(
+        tmp_path,
+        execution_id="killed-after-recovery",
+        timestamp="20260101-000000",
+        completed=[*_k_iterations(1, 2, 3, failed_last=True), _node("h")],
+        killed_node="k",
+    )
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert (source.entry_node_id, source.entry_iteration) == ("k", 4)

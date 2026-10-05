@@ -816,6 +816,16 @@ class TestResumeAfterLoopStep:
             _pause_loop_escalation_then_resume_after(tmp_path, {"while": "${__iteration__}", "max_iterations": 3})
         assert (exc_info.value.request.node_id, exc_info.value.request.iteration) == ("esc", 2)
 
+    def test_template_cap_resolves_against_the_completed_iteration(self, tmp_path, monkeypatch):
+        """The cap half of the same review finding: ``max_iterations: ${__iteration__}``
+        resolves to the completed iteration (1), as in the walk — not an unresolved template."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        shared = _pause_loop_escalation_then_resume_after(
+            tmp_path, {"while": "${esc.result.escalation}", "max_iterations": "${__iteration__}"}
+        )
+        assert shared["__execution__"]["completed_nodes"] == ["after"]
+        assert shared["esc"]["loop_stopped"] == "max_iterations"
+
     def test_condition_still_true_at_the_cap_exits_with_the_cap_advisory(self, tmp_path, monkeypatch):
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         shared = _pause_loop_escalation_then_resume_after(
