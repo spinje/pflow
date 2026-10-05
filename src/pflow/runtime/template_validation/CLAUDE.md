@@ -38,10 +38,14 @@ useful unknown-type error with a validator exception.
   only (a `??` operand may miss its field at runtime and fall through); Pass 8 also
   filters by node id, since batch nodes may share an alias. `ROOT_ONLY` roots
   are checked by `core/workflow/data_flow.py`, over the same surfaces.
-- A carry value's own reference, output sources and cache vars have their own
-  passes (one diagnostic per mistake). Output sources and cache vars also join
-  unused-input accounting (`_extract_output_templates_for_unused_check`,
-  `_extract_cache_templates_for_unused_check`). A carry may only reference the loop
+- Output sources: `operands.iter_output_source_operands` parses each as the
+  runtime resolves it (`output_resolver.normalize_output_source` — a bare `n.x`
+  is `${n.x}`). Their roots are `WorkflowValidator._validate_output_sources`'s;
+  Pass 5 field-checks their `FIELD_CHECK` node-output paths only (a whole-node
+  `n` source is legal), and all of them count toward unused inputs.
+- A carry value's own reference and cache vars have their own passes (one
+  diagnostic per mistake); cache vars also join unused-input accounting
+  (`_extract_cache_templates_for_unused_check`). A carry may only reference the loop
   node itself, but its dynamic-index sources (`${s.lst[${i}]}`) are ordinary reads:
   `iter_template_operands` and data_flow check them (`Reference.index_sources`).
   Feeding cache vars to path validation produces two diagnostics for one mistake.
