@@ -66,12 +66,14 @@ Persist loop position in the trace, restore it on resume, and let one pausabilit
 ## Design Decisions
 
 - **One mechanism for pause AND failure** — the same saved position serves approval, escalation,
-  and failure-resume; special-casing any one of them keeps a second rule alive. (Scope ruling
-  pending — see Open questions Q1.)
+  and failure-resume; special-casing any one of them keeps a second rule alive (Q1 = (c)).
 - **Delete what the mechanism makes obsolete, in-task** — `_gate_pausable`'s loop clauses, the
-  #615 loop warning/footer logic (`cli/commands/run.py:469-515`, `_fully_answered_gate_ids`),
-  the between-nodes-after-a-loop refusal (`resume_preflight.py:261-273`), and every statement of the
-  restart rule: `guide/features/resume.md:82`, `guide/features/approval.md:34, 52`,
+  #615 loop warning (`cli/commands/run.py:468-480`), the between-nodes-after-a-loop refusal
+  (`resume_preflight.py:261-273`), and every statement of the restart rule. NOT deleted:
+  `_fully_answered_gate_ids` (`run.py:499-515`) — it states answer-vs-occurrence multiplicity
+  (`--approve yes` answers one gate; a loop step has up to `max_iterations` occurrences, so the
+  answered step still pauses at the next iteration and belongs in the `--dry-run` ⏸ footer and the
+  run-start note). Restart-rule statements: `guide/features/resume.md:82`, `guide/features/approval.md:34, 52`,
   `runtime/engine/CLAUDE.md` ("Approval additionally requires no loop or the loop's first iteration"),
   `docs/reference/cli/index.mdx:90`. The deletion test is the acceptance bar for "simpler final code".
 - **The "pinned" restart test is a weak pin.** `tests/test_runtime/test_resume_engine.py:736`
@@ -89,7 +91,7 @@ Persist loop position in the trace, restore it on resume, and let one pausabilit
   this doesnt mean is overfitting to "top 10% of codebases" and overengineering, this is about more
   simple code that is optimized for AI agents to understand and add features to."*
 
-## Open questions (resolve at start — user rulings marked)
+## Decisions (Q1/Q2 user rulings; Q3–Q6 resolved by the planner — rationale in `implementation/implementation-plan.md` §3)
 
 - **Q1 (user) — scope. DECIDED 2026-10-05: (c).** (a) approval gates only; (b) approval + escalation
   (unblocks the documented re-fork recipe); (c) (b) + failure-resume (changes Task 164's pinned stance
@@ -102,21 +104,29 @@ Persist loop position in the trace, restore it on resume, and let one pausabilit
   lives in `workflow_trace.py` (`_strip_redundant_llm_trace_fields`) and today's resume does not refuse
   on it; the planner decides whether a stripped prompt counts as "can't restore faithfully" for a loop
   node (it did not for Task 164's node-level resume).
-- **Q3 — where position is stored** (trace-format minor bump either way; readers accept `2.*`,
-  `workflow_trace.py:164`; current `2.7.0`). (a) an `iteration` field on every loop-node event —
-  self-describing, also feeds the UI overlay and the pause surfaces; (b) a loop record on the
-  pause/failure trailer only; (c) count same-node events (no bump; fragile — breaks exactly when
-  #659 overwrites). Recommendation: (a).
-- **Q4 — seeding K's own last output.** Relax `_seedable_final_events`' never-seed-the-entry
-  invariant for loop nodes (K-scoped: seed iteration N-1's output + counters), or add a separate
-  loop-state channel. Both `--only` and resume share this code — the planner states which and why.
-- **Q5 — what resume re-derives vs restores.** Cap (template caps read `dict(shared)`,
-  `loop_control.py:184-186`), the visit guard (`instrumentation.py:53-82`), carry — rebuilt from
-  seeded state or restored verbatim.
-- **Q6 — pause surfaces.** All four consumers of `format_resume_answer_command` show the loop
-  position, or none ("one home" rule — never a subset). Constraint: `resume list` hands the formatter
-  only `{"kind": run.gate_kind}` built from `PausedRun` (`cli/commands/resume.py:440, 471`;
-  `resume_source.py:936`) — position must thread through `PausedRun`, not be read from the trace twice.
+- **Q3 — where position is stored. DECIDED (planner, 2026-10-05): (a)** — `iteration` on every
+  loop-node trace event (format `2.8.0`, additive), plus `GateRequest.iteration` so the pause record —
+  and therefore every pause surface — knows the iteration without reading the event stream. No
+  `max_iterations` on the gate (no consumer). Rationale and rejected options: implementation plan §3.
+- **Q4 — seeding K's own last output. DECIDED: the resume entry is a (step, iteration) pair.**
+  `_seedable_final_events(events, entry, entry_iteration=1)` ends its slice before the entry's event for
+  that iteration, so the entry's earlier iterations are upstream of it and seed like any completed work;
+  the invariant becomes "never seed the iteration about to run". `--only` passes iteration 1 and is
+  unchanged. One rule for both surfaces; no second seed channel, no mode flag.
+- **Q5 — re-derive vs restore. DECIDED:** restored — the loop's own counter (`loop_counts[K] =
+  entry_iteration − 1`) and `shared[K]` (via the seed). Re-derived by unchanged code — `__iteration__`,
+  carry (`plan_node` → `carry_effective_config`), the condition, the cap (re-resolved at the attempt's
+  first re-entry check). Not restored — the hard visit guard (a per-process safety net; the restored
+  counter bounds the cap exactly).
+- **Q6 — pause surfaces. DECIDED: all of them, from one field.** `format_gate_lines` renders `Loop
+  iteration N` from `gate_request["iteration"]` (CLI pause stderr, MCP `Gate:` block, the answer-required
+  error); the CLI JSON pause document and `GET /api/gate` carry it inside `gate_request`; `resume list`
+  threads `PausedRun.iteration` from the trailer's `gate_request` into its row; the web gate panel shows it
+  in its eyebrow. Position is read from the trace once (the loader) and from the trailer once (`resume
+  list`) — never from the event stream twice.
+- **Q2 correction resolved:** a stripped LLM `prompt`/`system` is not a loader refusal; a carry
+  referencing it fails loudly at the resumed iteration through the existing strict carry guard
+  (`LoopCarryError`), the same stance as node-level resume.
 
 ## Dependencies
 
@@ -184,7 +194,8 @@ Persist loop position in the trace, restore it on resume, and let one pausabilit
 - An old-format trace (no position) resumes with restart-at-1 and says so.
 - Deleted special cases are gone (grep) and their tests replaced, not orphaned.
 - Real surface: `uv run pflow` + `pflow resume` non-TTY (`</dev/null`), MCP paused response,
-  `pflow resume list`; `make test-all-local`; Task-159 baseline green.
+  `pflow resume list`; `make test-all-local`; Task-159 baseline unchanged (the same pre-existing drifts as the
+  base commit — 8 at `90b891cb`, recorded in the plan — and no new ones).
 
 ## References
 
