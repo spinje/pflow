@@ -338,7 +338,19 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
         line = lines[line_idx]
         line_num = line_idx + 1  # 1-based
 
-        # --- Code fence boundaries (highest priority) ---
+        # --- Multi-line YAML item continuation (highest priority) ---
+        # A blank line, or one indented at/past the open `- key:` item's content
+        # column, belongs to that item's value — so a `- key: |` block scalar is
+        # opaque to fence and heading detection, as a fenced block's content is.
+        # Blank lines are kept so block scalars with blank-line separators
+        # round-trip through yaml.safe_load; _flush_yaml_item strips trailing ones.
+        if in_yaml_continuation:
+            if line.strip() == "" or len(line) - len(line.lstrip()) >= yaml_indent_level:
+                yaml_current_item_lines.append(line)
+                continue
+            _flush_yaml_item()
+
+        # --- Code fence boundaries ---
         if _is_code_fence(line):
             if in_code_block:
                 if _is_closing_fence(line, code_fence_pattern):
@@ -495,21 +507,6 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
 
         # --- Inside an entity: YAML params, prose ---
         if current_entity is not None:
-            # YAML continuation tracking
-            #
-            # A line continues the current multi-line item if it is blank OR
-            # indented at/past the bullet's content column. Blank lines are
-            # preserved so `|`/`>` block scalars containing blank-line separators
-            # (per YAML semantics) round-trip correctly through yaml.safe_load.
-            # Trailing blanks are stripped by _flush_yaml_item.
-            if in_yaml_continuation:
-                content_start = len(line) - len(line.lstrip())
-                if line.strip() == "" or content_start >= yaml_indent_level:
-                    yaml_current_item_lines.append(line)
-                    continue
-                # Not a continuation — flush and fall through
-                _flush_yaml_item()
-
             # New YAML item: line starts with "- " (with optional leading whitespace)
             yaml_match = re.match(r"^(\s*)- (.+)$", line)
             if yaml_match:
@@ -523,8 +520,6 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
                 continue
 
             # Blank line outside YAML continuation — ignored.
-            # Blank lines during continuation are consumed by the continuation
-            # branch above (preserving them inside multi-line block scalars).
             if stripped == "":
                 continue
 

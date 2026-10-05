@@ -1060,6 +1060,92 @@ class TestYAMLParamParsing:
         assert "Focus on key findings" in batch["items"][0]["prompt"]
         assert batch["items"][1]["prompt"] == "Extract action items"
 
+    # A `- key: |` value is opaque to fence and heading detection, exactly like a
+    # fenced block's content (#521, #389): before, these lines were read as
+    # structure — a reserved name raised "Duplicate section", any other H1/H2
+    # silently truncated the value, an H3 raised "Invalid entity ID", a fence
+    # swallowed the rest of the file.
+    @pytest.mark.parametrize(
+        "structural_line",
+        ["## Steps", "## Output format", "# Top heading", "### Subsection", "```"],
+    )
+    def test_block_scalar_is_opaque_to_fences_and_headings(self, structural_line: str) -> None:
+        literal = _md(f"""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### run
+
+            Runs a thing.
+
+            - type: shell
+            - command: |
+                echo start
+                {structural_line}
+
+                echo done
+            - timeout: 5
+        """)
+        node = parse_markdown(literal).ir["nodes"][0]
+        assert node["params"] == {"command": f"echo start\n{structural_line}\n\necho done", "timeout": 5}
+
+    def test_column_zero_structure_still_ends_a_block_scalar(self) -> None:
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### first
+
+            First step.
+
+            - type: shell
+            - command: |
+                echo a
+            ### second
+
+            Second step.
+
+            - type: shell
+            - command: echo b
+        """)
+        nodes = parse_markdown(content).ir["nodes"]
+        assert [(n["id"], n["params"]) for n in nodes] == [
+            ("first", {"command": "echo a"}),
+            ("second", {"command": "echo b"}),
+        ]
+        with pytest.raises(MarkdownParseError, match=r"Duplicate '## Steps' section") as exc_info:
+            parse_markdown(content + "## Steps\n")
+        assert exc_info.value.line == 20
+
+    def test_indented_fence_under_an_item_belongs_to_the_item(self) -> None:
+        """Indentation decides membership for every line kind: a fence indented
+        under a `- key:` item is part of that item's YAML, not a code block."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### run
+
+            Runs a thing.
+
+            - type: shell
+
+              ```shell command
+              echo hi
+              ```
+        """)
+        with pytest.raises(MarkdownParseError, match="YAML syntax error"):
+            parse_markdown(content)
+
 
 # ===========================================================================
 # 5. Code block parsing
