@@ -447,7 +447,9 @@ def test_has_resumable_step_agrees_with_the_loader_on_common_cases(tmp_path) -> 
             "nodes": [
                 {"id": "step1", "type": "shell", "purpose": "emit a ready marker", "params": {"command": "echo ready"}}
             ],
-            "outputs": {"result": {"description": "references a key step1 never wrote", "source": "${step1.nope}"}},
+            "outputs": {
+                "result": {"description": "a JSON path into non-JSON stdout", "source": "${step1.stdout.nope}"}
+            },
         },
         "output_fail",
     )

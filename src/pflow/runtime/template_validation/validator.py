@@ -25,7 +25,11 @@ from pflow.core.templates import DynamicIndex, Literal, Reference, Template, Tem
 from pflow.core.workflow.template_surfaces import iter_template_surfaces
 from pflow.registry import Registry
 from pflow.runtime.template_validation.batch_item_validation import validate_batch_item_fields
-from pflow.runtime.template_validation.operands import OperandPolicy, iter_template_operands
+from pflow.runtime.template_validation.operands import (
+    OperandPolicy,
+    iter_output_source_operands,
+    iter_template_operands,
+)
 from pflow.runtime.template_validation.path_validation import validate_template_paths
 from pflow.runtime.template_validation.type_validation import (
     validate_code_node_input_annotations,
@@ -89,6 +93,7 @@ def validate_workflow_templates(
 
     # Every reference in params, batch.items and loop fields, tagged with its policy
     operands = list(iter_template_operands(workflow_ir))
+    output_operands = list(iter_output_source_operands(workflow_ir))
     all_templates = {operand.ref.raw for operand in operands}
     cache_templates = _extract_cache_templates_for_unused_check(workflow_ir)
 
@@ -101,14 +106,24 @@ def validate_workflow_templates(
         logger.debug("No template variables found in workflow")
 
     # Check for unused inputs — the union ensures inputs declared ONLY for use
-    # in ``## Cache`` or an output ``source:`` aren't flagged as unused. Neither
-    # flows through ``validate_template_paths`` below (cache vars are resolved by
-    # ``core/workflow/data_flow.py::_validate_cache_block``, output sources are
-    # root-checked by ``WorkflowValidator._validate_output_sources``).
+    # in ``## Cache`` or an output ``source:`` aren't flagged as unused. Cache vars
+    # never reach ``validate_template_paths`` below (see
+    # ``_extract_cache_templates_for_unused_check``).
     unused_input_diagnostics = _validate_unused_inputs(
-        workflow_ir, all_templates | cache_templates | _extract_output_templates_for_unused_check(workflow_ir)
+        workflow_ir, all_templates | cache_templates | {operand.ref.raw for operand in output_operands}
     )
     diagnostics.extend(unused_input_diagnostics)
+
+    # Pass 5's input: each FIELD_CHECK reference (the operand classifier: a ?? operand's
+    # root is checked by core/workflow/data_flow.py instead). An output source adds only
+    # its node-output paths: its roots are WorkflowValidator._validate_output_sources's,
+    # and a whole-node source (``n``) is a legal output.
+    node_ids = get_node_ids(workflow_ir)
+    field_checkable = {operand.ref.raw for operand in operands if operand.policy is OperandPolicy.FIELD_CHECK} | {
+        operand.ref.raw
+        for operand in output_operands
+        if operand.policy is OperandPolicy.FIELD_CHECK and operand.ref.root in node_ids and operand.ref.path
+    }
 
     # If no templates exist anywhere in the workflow, most template passes can
     # return early. Code-node annotation boundary checks still need to run,
@@ -117,29 +132,18 @@ def validate_workflow_templates(
     # run even with no extractable operands (an operator-only `while: ${x > 0}`
     # yields no template operand but must still be rejected — issue #445).
     has_loop = any(node.get("loop") for node in workflow_ir.get("nodes", []))
-    if not all_templates and not has_loop:
+    if not all_templates and not field_checkable and not has_loop:
         diagnostics.extend(validate_code_node_input_annotations(workflow_ir, {}))
         return diagnostics
 
     # Get full output structure from nodes
     node_outputs = extract_node_outputs(workflow_ir, registry, available_params)
 
-    if not all_templates:
-        # Only loop conditions remain to check (no node-param templates).
-        diagnostics.extend(validate_code_node_input_annotations(workflow_ir, node_outputs))
-        diagnostics.extend(_validate_loop_conditions(workflow_ir, node_outputs))
-        diagnostics.extend(_validate_loop_carry_refs(workflow_ir, node_outputs))
-        diagnostics.extend(_validate_loop_carry_prompt_usage(workflow_ir))
-        diagnostics.extend(_validate_loop_carry_literal_fallback(workflow_ir))
-        return diagnostics
-
     logger.debug(
         f"Extracted outputs from {len(node_outputs)} node variables", extra={"outputs": sorted(node_outputs.keys())}
     )
 
-    # Pass 5: Validate each FIELD_CHECK template path (the operand classifier:
-    # a ?? operand's root is checked by core/workflow/data_flow.py instead).
-    field_checkable = {operand.ref.raw for operand in operands if operand.policy is OperandPolicy.FIELD_CHECK}
+    # Pass 5: Validate each field-checkable template path
     diagnostics.extend(validate_template_paths(field_checkable, available_params, node_outputs, workflow_ir, registry))
 
     # Pass 6: Validate template types match parameter expectations
@@ -723,19 +727,6 @@ def _extract_cache_templates_for_unused_check(workflow_ir: dict[str, Any]) -> se
     Only ``_validate_unused_inputs`` consumes the union.
     """
     return _surface_references(workflow_ir, "cache_var")
-
-
-def _extract_output_templates_for_unused_check(workflow_ir: dict[str, Any]) -> set[str]:
-    """The references of every output ``source:`` — an input may be declared only to
-    be returned. A plain ``node.x`` / ``input`` source is read as the ``${…}`` the
-    runtime resolves it as. Root-checked by ``WorkflowValidator._validate_output_sources``;
-    like cache vars, kept out of ``validate_template_paths``."""
-    references: set[str] = set()
-    for surface in iter_template_surfaces(workflow_ir):
-        if surface.kind == "output_source":
-            source = surface.value if "${" in surface.value else "${" + surface.value + "}"
-            references.update(ref.raw for ref in parse(source).references)
-    return references
 
 
 def _surface_references(workflow_ir: dict[str, Any], kind: str) -> set[str]:

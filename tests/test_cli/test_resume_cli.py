@@ -488,7 +488,8 @@ def output_fail_wf(tmp_path):
             {"id": "step1", "type": "shell", "purpose": "emit a ready marker", "params": {"command": "echo ready"}}
         ],
         "outputs": {
-            "result": {"description": "references a key step1 never wrote", "source": "${step1.does_not_exist}"}
+            # Valid statically (nested access on str is a runtime JSON check), unbuildable at run
+            "result": {"description": "a JSON path into non-JSON stdout", "source": "${step1.stdout.does_not_exist}"}
         },
     }
     path = tmp_path / "outwf.pflow.md"
@@ -504,6 +505,8 @@ def test_output_resolution_failure_omits_resume_hint(home, output_fail_wf):
     yet resume refuses it (nothing to resume) — so no dead-end resume hint is offered."""
     result = _runner().invoke(cli, [str(output_fail_wf)])
     assert result.exit_code == 1, result.stderr
+    assert "step1... ✓" in result.stderr
+    assert "Unresolved variables in output 'result'" in result.stderr
     assert "pflow resume" not in result.stderr
 
 
@@ -514,6 +517,7 @@ def test_output_resolution_failure_json_omits_resume_fields(home, output_fail_wf
     assert result.exit_code == 1
     document = json.loads(result.stdout)
     assert document["success"] is False
+    assert document["error"].startswith("Unresolved variables in output 'result'")
     assert "execution_id" not in document
     assert "resume_command" not in document
 

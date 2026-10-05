@@ -442,7 +442,7 @@ def test_exception_trace_preserves_prior_runtime_cache_warnings(mock_llm_client,
                 "params": {"model": "anthropic/claude-sonnet-4-5", "prompt": "Summarize briefly."},
             }
         ],
-        "outputs": {"broken": {"source": "${ask.missing_field}", "description": "forces post-run failure"}},
+        "outputs": {"broken": {"source": "${ask.response.missing_field}", "description": "forces post-run failure"}},
         "edges": [],
     }
 

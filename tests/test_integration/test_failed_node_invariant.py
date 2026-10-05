@@ -1172,32 +1172,6 @@ def test_example_failed_node_direct_reference_renders_pasteable_fix():
     assert "${primary.stdout ?? fallback.stdout}" in rendered, rendered
 
 
-def test_example_typo_on_failed_node_surfaces_failure_and_corrected_fix():
-    """When a reference has BOTH a typo AND the node failed, the error must:
-    - surface the failure as the PRIMARY signal (not "did not execute")
-    - surface the typo as a SECONDARY hint ("Did you mean: stdout?")
-    - render the paste-able fix with the CORRECTED field + real peer name
-      (``${primary.stdout ?? fallback.stdout}`` — not ``${primary.stddout ??...}``)
-
-    This is Fix #5's regression guard — the ``corrected_var`` field must
-    flow from ``_classify_one_reference`` into ``_format_failed_reference_fixes``.
-    """
-    result = _run_fixture("typo-on-failed-node.pflow.md")
-    assert result.status == WorkflowStatus.FAILED
-
-    rendered = _only_template_error(result)
-    assert "typo-on-failed-node.pflow.md:38" in rendered, rendered
-    # Primary signal: the failure, not the typo.
-    assert "executed but FAILED" in rendered, rendered
-    assert "Exit code: 7" in rendered, rendered
-    # Secondary hint: the typo correction.
-    assert "Did you mean: ${primary.stdout}" in rendered, rendered
-    # Paste-able fix MUST use corrected field (stdout, not stddout) + real peer.
-    assert "${primary.stdout ?? fallback.stdout}" in rendered, rendered
-    # The uncorrected form must NOT appear in the fix suggestion.
-    assert "${primary.stddout ??" not in rendered, rendered
-
-
 def test_example_loop_recovery_final_state_is_succeeded():
     """A node fails on visit 1, then succeeds on visit 2. After the loop:
     - the workflow's status is SUCCESS

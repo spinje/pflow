@@ -2189,7 +2189,7 @@ def test_plan_downstream_bfs_detects_sub_workflow_cycle(tmp_path) -> None:
                 },
             ],
             "edges": [],
-            "outputs": {"out": {"source": "${back-to-parent.out}", "description": "out"}},
+            "outputs": {"out": {"source": "${back-to-parent.final}", "description": "out"}},
         },
         child_a_path,
     )
