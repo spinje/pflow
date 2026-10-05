@@ -1432,6 +1432,16 @@ OUTPUT_ROWS: tuple[Row, ...] = (
         declared_inputs=I_INPUT,
     ),
     Row(
+        "output_plain_dynamic_index_typo_field",
+        "output_source",
+        "p.nope[${i}].x",
+        # #678: the field check sees the bare source's outer reference, not just ${i}
+        Error("does not output 'nope["),
+        Raises("OutputResolutionError", "p.nope["),
+        declared_inputs=I_INPUT,
+        mutation="parse output sources as written in iter_output_source_operands",
+    ),
+    Row(
         "output_plain_dynamic_index_typo_root",
         "output_source",
         "typo.out_arr[${i}].x",
