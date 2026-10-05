@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from mcp.types import CallToolResult, TextContent
 
+from pflow.core.exceptions import NodeError
 from pflow.core.user_errors import MCPError
 from pflow.nodes.mcp.node import MCPNode
 
@@ -373,7 +374,7 @@ class TestMCPNodeErrorHandling:
         with patch.object(node, "_load_server_config") as mock_config:
             mock_config.return_value = {"command": "test"}
 
-            with pytest.raises(ValueError, match="Invalid 'timeout' parameter"):
+            with pytest.raises(NodeError, match="Invalid 'timeout' parameter"):
                 node.prep({})
 
     def test_prep_rejects_negative_timeout(self):
@@ -391,7 +392,7 @@ class TestMCPNodeErrorHandling:
         with patch.object(node, "_load_server_config") as mock_config:
             mock_config.return_value = {"command": "test"}
 
-            with pytest.raises(ValueError, match="Invalid 'timeout' parameter"):
+            with pytest.raises(NodeError, match="Invalid 'timeout' parameter"):
                 node.prep({})
 
 

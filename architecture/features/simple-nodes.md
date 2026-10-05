@@ -90,7 +90,7 @@ class ReadFileNode(Node):  # Use Node for retry support
         # Read from params (template resolution handles shared store wiring)
         file_path = self.params.get("file_path")
         if not file_path:
-            raise ValueError("file_path parameter is required")
+            raise NodeError("file_path parameter is required", param="file_path")  # pflow.core.exceptions
         return file_path
 
     def exec(self, prep_res):

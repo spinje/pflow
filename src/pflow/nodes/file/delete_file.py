@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
+from pflow.core.exceptions import NodeError
 from pflow.core.node import Node
 
 from .exceptions import NonRetriableError
@@ -48,7 +49,7 @@ class DeleteFileNode(Node):
         # File path is required
         file_path = self.params.get("file_path")
         if not file_path:
-            raise ValueError("Missing required 'file_path' parameter")
+            raise NodeError("Missing required 'file_path' parameter", param="file_path")
 
         # Normalize the path
         file_path = os.path.expanduser(file_path)
@@ -57,7 +58,7 @@ class DeleteFileNode(Node):
 
         # Confirmation flag MUST come from shared store only (not params)
         if "confirm_delete" not in shared:
-            raise ValueError(
+            raise NodeError(
                 "Missing required 'confirm_delete' in shared store. "
                 "This safety flag must be explicitly set in shared store."
             )

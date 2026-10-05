@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
+from pflow.core.exceptions import NodeError
 from pflow.core.node import Node
 
 # Set up logging
@@ -42,7 +43,7 @@ class ReadFileNode(Node):
         # Get file path from params
         file_path = self.params.get("file_path")
         if not file_path:
-            raise ValueError("Missing required 'file_path' parameter")
+            raise NodeError("Missing required 'file_path' parameter", param="file_path")
 
         # Normalize the path
         file_path = os.path.expanduser(file_path)  # Expand ~

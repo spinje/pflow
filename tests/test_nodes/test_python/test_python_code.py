@@ -9,7 +9,7 @@ import threading
 
 import pytest
 
-from pflow.nodes.file.exceptions import NonRetriableError
+from pflow.core.exceptions import NodeError
 from pflow.nodes.python.python_code import (
     PythonCodeNode,
     _extract_error_location,
@@ -113,7 +113,7 @@ class TestNativeObjectExecution:
     def test_none_input_fails_type_check(self):
         """None input value fails type validation — catches upstream issues early."""
         shared: dict = {}
-        with pytest.raises(TypeError, match=r"data.*expects dict.*received NoneType"):
+        with pytest.raises(NodeError, match=r"data.*expects dict.*received NoneType"):
             run_code_node(
                 shared,
                 code="data: dict\nresult: str = 'done'",
@@ -148,7 +148,7 @@ class TestTypeAnnotationContract:
     def test_missing_input_annotation_rejected(self):
         """Input without type annotation in code is caught before execution."""
         shared: dict = {}
-        with pytest.raises(ValueError, match=r"missing type annotation.*data"):
+        with pytest.raises(NodeError, match=r"missing type annotation.*data"):
             run_code_node(
                 shared,
                 code="result: int = 42",
@@ -158,7 +158,7 @@ class TestTypeAnnotationContract:
     def test_missing_result_annotation_rejected(self):
         """Code without result or next type annotation is rejected."""
         shared: dict = {}
-        with pytest.raises(ValueError, match="result type annotation"):
+        with pytest.raises(NodeError, match="result type annotation"):
             run_code_node(
                 shared,
                 code="x: int = 5",
@@ -168,7 +168,7 @@ class TestTypeAnnotationContract:
     def test_input_type_mismatch_caught(self):
         """Wrong input type caught in prep with actionable error."""
         shared: dict = {}
-        with pytest.raises(TypeError, match=r"data.*expects list.*received dict"):
+        with pytest.raises(NodeError, match=r"data.*expects list.*received dict"):
             run_code_node(
                 shared,
                 code="data: list\nresult: int = 0",
@@ -178,7 +178,7 @@ class TestTypeAnnotationContract:
     def test_type_mismatch_error_includes_suggestion(self):
         """Type error suggests the correct type annotation."""
         shared: dict = {}
-        with pytest.raises(TypeError) as exc_info:
+        with pytest.raises(NodeError) as exc_info:
             run_code_node(
                 shared,
                 code="data: str\nresult: int = 0",
@@ -197,7 +197,7 @@ class TestTypeAnnotationContract:
         enforced identically to bare annotations.
         """
         shared: dict = {}
-        with pytest.raises(TypeError, match=r"x.*expects .*dict.*received list"):
+        with pytest.raises(NodeError, match=r"x.*expects .*dict.*received list"):
             run_code_node(
                 shared,
                 code='x: "dict"\nresult: str = str(x)',
@@ -298,15 +298,16 @@ class TestOutputCapture:
         assert shared["stderr"] == "warn"
 
     def test_missing_result_assignment(self):
-        """Code that declares result type but never assigns it."""
+        """Code that declares result type but never assigns it routes to error, keeping its output."""
         shared: dict = {}
         action = run_code_node(
             shared,
-            code="result: int\nx = 5",
+            code='print("progress")\nresult: int\nx = 5',
             inputs={},
         )
         assert action == "error"
-        assert "must set 'result' variable" in shared["error"]
+        assert shared["error"] == "Code must set 'result' variable. Add: result = <your_value>"
+        assert shared["stdout"] == "progress\n"
 
 
 # Each item signals entry, then waits on events to force the interleaving under
@@ -469,7 +470,7 @@ class TestSafetyAndErrors:
         defers annotation evaluation and the runtime NameError never fires.
         """
         shared: dict = {}
-        with pytest.raises(NonRetriableError) as exc_info:
+        with pytest.raises(NodeError) as exc_info:
             run_code_node(
                 shared,
                 code="x: Union[int, str] = 1\nresult: int = x",
@@ -484,7 +485,7 @@ class TestSafetyAndErrors:
     def test_list_in_annotation_rejected_with_lowercase_generic_hint(self):
         """List/Dict/Tuple in an annotation should be rejected at prep with a PEP 585 hint."""
         shared: dict = {}
-        with pytest.raises(NonRetriableError) as exc_info:
+        with pytest.raises(NodeError) as exc_info:
             run_code_node(
                 shared,
                 code="x: List[int] = [1, 2]\nresult: int = len(x)",
@@ -750,7 +751,7 @@ x: dict
     def test_literal_in_annotation_rejected_with_import_hint(self):
         """Literal (no modern alternative) should be rejected at prep with an import hint."""
         shared: dict = {}
-        with pytest.raises(NonRetriableError) as exc_info:
+        with pytest.raises(NodeError) as exc_info:
             run_code_node(
                 shared,
                 code='x: Literal["a", "b"] = "a"\nresult: str = x',
@@ -918,7 +919,7 @@ class TestNextVariableRouting:
     def test_no_result_and_no_next_rejected(self):
         """Code without either result or next annotation is rejected in prep."""
         shared: dict = {}
-        with pytest.raises(ValueError, match="result type annotation"):
+        with pytest.raises(NodeError, match="result type annotation"):
             run_code_node(
                 shared,
                 code="x: int = 5",
@@ -928,7 +929,7 @@ class TestNextVariableRouting:
     def test_next_annotation_wrong_type_rejected(self):
         """Next annotated as non-str type is rejected in prep."""
         shared: dict = {}
-        with pytest.raises(ValueError, match="'next' must be annotated as str"):
+        with pytest.raises(NodeError, match="'next' must be annotated as str"):
             run_code_node(
                 shared,
                 code="next: int = 5\nresult: int = 1",
@@ -975,7 +976,7 @@ class TestInputAnnotationSyntaxDetection:
     def test_str_annotation_in_input_value_detected(self):
         """str = value pattern caught with actionable error."""
         shared: dict = {}
-        with pytest.raises(ValueError, match=r"'text'.*type annotation"):
+        with pytest.raises(NodeError, match=r"'text'.*type annotation"):
             run_code_node(
                 shared,
                 code="text: str\nresult: str = text.upper()",
@@ -985,7 +986,7 @@ class TestInputAnnotationSyntaxDetection:
     def test_int_annotation_in_input_value_detected(self):
         """int = value pattern caught."""
         shared: dict = {}
-        with pytest.raises(ValueError, match=r"'count'.*type annotation"):
+        with pytest.raises(NodeError, match=r"'count'.*type annotation"):
             run_code_node(
                 shared,
                 code="count: int\nresult: int = count * 2",
@@ -995,7 +996,7 @@ class TestInputAnnotationSyntaxDetection:
     def test_list_annotation_in_input_value_detected(self):
         """list = value pattern caught."""
         shared: dict = {}
-        with pytest.raises(ValueError, match=r"'data'.*type annotation"):
+        with pytest.raises(NodeError, match=r"'data'.*type annotation"):
             run_code_node(
                 shared,
                 code="data: list\nresult: int = len(data)",
@@ -1005,7 +1006,7 @@ class TestInputAnnotationSyntaxDetection:
     def test_generic_type_annotation_detected(self):
         """list[dict] = value pattern caught."""
         shared: dict = {}
-        with pytest.raises(ValueError, match=r"'items'.*type annotation"):
+        with pytest.raises(NodeError, match=r"'items'.*type annotation"):
             run_code_node(
                 shared,
                 code="items: list[dict]\nresult: int = len(items)",
@@ -1015,7 +1016,7 @@ class TestInputAnnotationSyntaxDetection:
     def test_dict_annotation_in_input_value_detected(self):
         """dict = value pattern caught."""
         shared: dict = {}
-        with pytest.raises(ValueError, match=r"'config'.*type annotation"):
+        with pytest.raises(NodeError, match=r"'config'.*type annotation"):
             run_code_node(
                 shared,
                 code="config: dict\nresult: str = 'ok'",
@@ -1025,7 +1026,7 @@ class TestInputAnnotationSyntaxDetection:
     def test_error_message_shows_correct_syntax(self):
         """Error message includes the fix: inputs without type, code with type."""
         shared: dict = {}
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(NodeError) as exc_info:
             run_code_node(
                 shared,
                 code="text: str\nresult: str = text",
@@ -1071,7 +1072,7 @@ class TestInputAnnotationSyntaxDetection:
     def test_template_reference_with_type_annotation_detected(self):
         """The actual issue #148 scenario: str = ${ref} after template resolution."""
         shared: dict = {}
-        with pytest.raises(ValueError, match=r"'text'.*type annotation"):
+        with pytest.raises(NodeError, match=r"'text'.*type annotation"):
             run_code_node(
                 shared,
                 code="text: str\nresult: str = text.upper()",
@@ -1091,17 +1092,17 @@ class TestEdgeCases:
 
     def test_empty_code_rejected(self):
         shared: dict = {}
-        with pytest.raises(ValueError, match="Missing required 'code' parameter"):
+        with pytest.raises(NodeError, match="Missing required 'code' parameter"):
             run_code_node(shared, code="", inputs={})
 
     def test_whitespace_only_code_rejected(self):
         shared: dict = {}
-        with pytest.raises(ValueError, match="Missing required 'code' parameter"):
+        with pytest.raises(NodeError, match="Missing required 'code' parameter"):
             run_code_node(shared, code="   \n  \n  ", inputs={})
 
     def test_negative_timeout_rejected(self):
         shared: dict = {}
-        with pytest.raises(ValueError, match="positive number"):
+        with pytest.raises(NodeError, match="positive number"):
             run_code_node(shared, code="result: int = 1", timeout=-5)
 
     def test_requires_field_accepted_without_validation(self):
@@ -1325,12 +1326,12 @@ class TestOptionalTypeSupport:
 
     def test_check_input_types_rejects_none_for_non_optional(self):
         """None is rejected for non-optional 'str' annotation."""
-        with pytest.raises(TypeError, match=r"x.*expects str.*received NoneType"):
+        with pytest.raises(NodeError, match=r"x.*expects str.*received NoneType"):
             PythonCodeNode._check_input_types({"x": None}, {"x": "str"})
 
     def test_check_input_types_rejects_wrong_type_for_optional(self):
         """Wrong type (int) is rejected even when annotation is optional."""
-        with pytest.raises(TypeError, match=r"x.*expects str \| None.*received int"):
+        with pytest.raises(NodeError, match=r"x.*expects str \| None.*received int"):
             PythonCodeNode._check_input_types({"x": 42}, {"x": "str | None"})
 
     # --- extract_optional_input_keys ---
@@ -1455,7 +1456,7 @@ class TestAnyAutoInjection:
 
     def test_lowercase_any_rejected(self):
         shared: dict = {}
-        with pytest.raises(NonRetriableError, match="Use 'Any'"):
+        with pytest.raises(NodeError, match="Use 'Any'"):
             run_code_node(
                 shared,
                 code="x: any\nresult: int = 1",
@@ -1464,7 +1465,7 @@ class TestAnyAutoInjection:
 
     def test_lowercase_any_in_result_rejected(self):
         shared: dict = {}
-        with pytest.raises(NonRetriableError, match="## Inputs"):
+        with pytest.raises(NodeError, match="## Inputs"):
             run_code_node(
                 shared,
                 code="result: any = 1",
@@ -1473,7 +1474,7 @@ class TestAnyAutoInjection:
 
     def test_lowercase_any_in_list_generic_rejected(self):
         shared: dict = {}
-        with pytest.raises(NonRetriableError, match="Use 'Any'"):
+        with pytest.raises(NodeError, match="Use 'Any'"):
             run_code_node(
                 shared,
                 code="x: list[any]\nresult: int = 1",
@@ -1489,7 +1490,7 @@ class TestAnyAutoInjection:
         learns their 'any' is wrong.
         """
         shared: dict = {}
-        with pytest.raises(NonRetriableError, match="Use 'Any'"):
+        with pytest.raises(NodeError, match="Use 'Any'"):
             run_code_node(
                 shared,
                 code='x: "list[any]" = [1, 2]\nresult: int = len(x)',
@@ -1498,7 +1499,7 @@ class TestAnyAutoInjection:
 
     def test_lowercase_any_in_dict_value_rejected(self):
         shared: dict = {}
-        with pytest.raises(NonRetriableError, match="Use 'Any'"):
+        with pytest.raises(NodeError, match="Use 'Any'"):
             run_code_node(
                 shared,
                 code="x: dict[str, any]\nresult: int = 1",
@@ -1507,7 +1508,7 @@ class TestAnyAutoInjection:
 
     def test_lowercase_any_in_pipe_union_rejected(self):
         shared: dict = {}
-        with pytest.raises(NonRetriableError, match="Use 'Any'"):
+        with pytest.raises(NodeError, match="Use 'Any'"):
             run_code_node(
                 shared,
                 code="x: int | any\nresult: int = 1",
@@ -1516,7 +1517,7 @@ class TestAnyAutoInjection:
 
     def test_lowercase_any_in_optional_rejected(self):
         shared: dict = {}
-        with pytest.raises(NonRetriableError, match="Use 'Any'"):
+        with pytest.raises(NodeError, match="Use 'Any'"):
             run_code_node(
                 shared,
                 code="x: Optional[any]\nresult: int = 1",

@@ -5,6 +5,7 @@ import tempfile
 
 import pytest
 
+from pflow.core.exceptions import NodeError
 from pflow.nodes.file import ReadFileNode
 
 
@@ -145,5 +146,5 @@ class TestReadFileNode:
         node = ReadFileNode()
         shared = {}
 
-        with pytest.raises(ValueError, match="Missing required 'file_path' parameter"):
+        with pytest.raises(NodeError, match="Missing required 'file_path' parameter"):
             node.prep(shared)

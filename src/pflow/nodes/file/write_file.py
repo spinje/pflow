@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
+from pflow.core.exceptions import NodeError
 from pflow.core.node import Node
 
 # Set up logging
@@ -51,12 +52,12 @@ class WriteFileNode(Node):
         # Content is required
         content = self.params.get("content")
         if content is None:
-            raise ValueError("Missing required 'content' parameter")
+            raise NodeError("Missing required 'content' parameter", param="content")
 
         # File path is required
         file_path = self.params.get("file_path")
         if not file_path:
-            raise ValueError("Missing required 'file_path' parameter")
+            raise NodeError("Missing required 'file_path' parameter", param="file_path")
 
         # Normalize the path
         file_path = os.path.expanduser(file_path)  # Expand ~
@@ -77,7 +78,7 @@ class WriteFileNode(Node):
             try:
                 content = base64.b64decode(content)
             except Exception as e:
-                raise ValueError(f"Invalid base64 content: {str(e)[:100]}") from e
+                raise NodeError(f"Invalid base64 content: {str(e)[:100]}", param="content") from e
 
         # Convert content to string if not binary
         # Use JSON serialization for dicts/lists to produce valid JSON

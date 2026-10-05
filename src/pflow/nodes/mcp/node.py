@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from pflow.core.exceptions import PflowError
+from pflow.core.exceptions import NodeError, PflowError
 from pflow.core.node import Node
 from pflow.mcp.auth_utils import build_auth_headers, expand_env_vars_nested
 from pflow.mcp.errors import unwrap_exception_group
@@ -203,13 +203,14 @@ class MCPNode(Node):
         timeout_param = self.params.get("timeout", 30)
         try:
             timeout_value = int(timeout_param)
-            if timeout_value <= 0:
-                raise ValueError
-            self._timeout = timeout_value
         except Exception:
-            raise ValueError(
-                f"Invalid 'timeout' parameter: {timeout_param!r}. Must be a positive integer (seconds)."
-            ) from None
+            timeout_value = 0  # unparseable: rejected below like any non-positive value
+        if timeout_value <= 0:
+            raise NodeError(
+                f"Invalid 'timeout' parameter: {timeout_param!r}. Must be a positive integer (seconds).",
+                param="timeout",
+            )
+        self._timeout = timeout_value
 
         result_format = self.params.get("result_format")
         if result_format is not None and result_format != JSON_BLOCK:
@@ -289,7 +290,7 @@ class MCPNode(Node):
         elif transport_type == "stdio" or transport_type is None:
             return await self._exec_async_stdio(prep_res)
         else:
-            raise ValueError(f"Unsupported transport type: {transport_type}")
+            raise NodeError(f"Unsupported transport type: {transport_type}")
 
     async def _exec_async_stdio(self, prep_res: dict) -> dict:
         """Stdio transport implementation using MCP SDK.
@@ -370,7 +371,7 @@ class MCPNode(Node):
         url = config.get("url")
 
         if not url:
-            raise ValueError(f"HTTP transport requires 'url' in config for server {prep_res['server']}")
+            raise NodeError(f"HTTP transport requires 'url' in config for server {prep_res['server']}")
 
         # Build authentication headers
         headers = self._build_auth_headers(config)

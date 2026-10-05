@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
+from pflow.core.exceptions import NodeError
 from pflow.core.node import Node
 
 from .exceptions import NonRetriableError
@@ -44,12 +45,12 @@ class CopyFileNode(Node):
         # Source path is required
         source_path = self.params.get("source_path")
         if not source_path:
-            raise ValueError("Missing required 'source_path' parameter")
+            raise NodeError("Missing required 'source_path' parameter", param="source_path")
 
         # Destination path is required
         dest_path = self.params.get("dest_path")
         if not dest_path:
-            raise ValueError("Missing required 'dest_path' parameter")
+            raise NodeError("Missing required 'dest_path' parameter", param="dest_path")
 
         # Normalize paths
         source_path = os.path.expanduser(source_path)

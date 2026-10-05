@@ -40,7 +40,7 @@ from unittest.mock import patch
 import pytest
 
 from pflow.core.diagnostic import Severity
-from pflow.core.exceptions import PflowError
+from pflow.core.exceptions import NodeError, PflowError
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.nodes.agent.agent_node import AgentNode
 from pflow.nodes.agent.backend import AgentResult
@@ -408,7 +408,7 @@ def test_no_schema_means_no_output_format(agent_node):
     assert "output_format" not in mock_options.call_args.kwargs
 
 
-# Test Criteria 12: Rate limit error → ValueError with retry message
+# Test Criteria 12: Rate limit error → NodeError with retry message
 def test_rate_limit_error(agent_node):
     """Test rate limit error handling."""
     agent_node.params = {"backend": "claude", "prompt": "test prompt"}
@@ -429,14 +429,14 @@ def test_rate_limit_error(agent_node):
             agent_node.exec(prep_res)
 
         # Test exec_fallback handling
-        with pytest.raises(ValueError) as fallback_exc:
+        with pytest.raises(NodeError) as fallback_exc:
             agent_node.exec_fallback(prep_res, exc_info.value)
 
         assert "rate limit exceeded" in str(fallback_exc.value).lower()
         assert "wait a moment and try again" in str(fallback_exc.value).lower()
 
 
-# Test Criteria 13: Timeout at 300s → ValueError with timeout message
+# Test Criteria 13: Timeout at 300s → NodeError with timeout message
 def test_timeout_error(agent_node):
     """Test timeout error handling."""
     # Speed up test with shorter timeout via params (minimum allowed is 30s, but we patch it)
@@ -460,7 +460,7 @@ def test_timeout_error(agent_node):
             agent_node.exec(prep_res)
 
         # Test exec_fallback handling
-        with pytest.raises(ValueError) as fallback_exc:
+        with pytest.raises(NodeError) as fallback_exc:
             agent_node.exec_fallback(prep_res, asyncio.TimeoutError())
 
         assert "timed out" in str(fallback_exc.value).lower()
@@ -487,7 +487,7 @@ def test_cli_not_found_error_handling(agent_node):
             agent_node.exec(prep_res)
 
         # Test exec_fallback transforms the error
-        with pytest.raises(ValueError) as fallback_exc:
+        with pytest.raises(NodeError) as fallback_exc:
             agent_node.exec_fallback(prep_res, CLINotFoundError("Test"))
 
         assert "Claude Code CLI not installed" in str(fallback_exc.value)
@@ -514,7 +514,7 @@ def test_cli_connection_error_handling(agent_node):
             agent_node.exec(prep_res)
 
         # Test exec_fallback transforms the error
-        with pytest.raises(ValueError) as fallback_exc:
+        with pytest.raises(NodeError) as fallback_exc:
             agent_node.exec_fallback(prep_res, CLIConnectionError("Test"))
 
         assert "Failed to connect to Claude Code" in str(fallback_exc.value)
@@ -544,7 +544,7 @@ def test_process_error_handling(agent_node):
             agent_node.exec(prep_res)
 
         # Test exec_fallback includes exit code
-        with pytest.raises(ValueError) as fallback_exc:
+        with pytest.raises(NodeError) as fallback_exc:
             agent_node.exec_fallback(prep_res, error)
 
         assert "exit code 127" in str(fallback_exc.value)
@@ -1123,7 +1123,7 @@ def test_generic_error_fallback(agent_node):
     # Generic exception
     generic_error = Exception("Something went wrong")
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(NodeError) as exc_info:
         agent_node.exec_fallback(prep_res, generic_error)
 
     error_msg = str(exc_info.value)
@@ -1992,7 +1992,7 @@ def test_is_auth_error_matches_only_auth_markers():
 
 def test_exec_fallback_auth_default_suggests_subscription(agent_node):
     """Default-mode auth failure points to subscription first, API key second."""
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(NodeError) as exc_info:
         agent_node.exec_fallback({"_backend": ClaudeBackend(), "use_api_key": False}, Exception("authentication_error"))
     msg = str(exc_info.value)
     assert "claude auth login" in msg
@@ -2001,7 +2001,7 @@ def test_exec_fallback_auth_default_suggests_subscription(agent_node):
 
 def test_exec_fallback_auth_with_api_key_suggests_fixing_key(agent_node):
     """Opt-in guidance covers either effective credential without assuming a key."""
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(NodeError) as exc_info:
         agent_node.exec_fallback(
             {"_backend": ClaudeBackend(), "use_api_key": True}, Exception("Your credit balance is too low")
         )
@@ -2015,7 +2015,7 @@ def test_exec_fallback_auth_with_api_key_suggests_fixing_key(agent_node):
 
 def test_exec_fallback_non_auth_error_has_no_auth_guidance(agent_node):
     """Non-auth failures fall through to the generic message (no auth hint)."""
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(NodeError) as exc_info:
         agent_node.exec_fallback({"_backend": ClaudeBackend(), "use_api_key": False}, Exception("disk full"))
     msg = str(exc_info.value)
     assert "claude auth login" not in msg
@@ -2051,7 +2051,7 @@ def test_invalid_api_key_surfaces_real_error_text_and_status(agent_node):
     with patch("pflow.nodes.agent.claude_backend.query") as mock_query:
         mock_query.return_value = mock_response()
         prep_res = agent_node.prep({})
-        with pytest.raises(RuntimeError) as exc_info:
+        with pytest.raises(NodeError) as exc_info:
             agent_node.exec(prep_res)
 
     assert "Invalid API key" in str(exc_info.value)
@@ -2059,7 +2059,7 @@ def test_invalid_api_key_surfaces_real_error_text_and_status(agent_node):
     # The enriched exception is now recognized as auth, and exec_fallback gives the
     # use_api_key=True remediation (the key, not subscription setup).
     assert ClaudeBackend._is_auth_error(exc_info.value)
-    with pytest.raises(ValueError) as fb:
+    with pytest.raises(NodeError) as fb:
         agent_node.exec_fallback(prep_res, exc_info.value)
     assert "Anthropic Console" in str(fb.value)
     assert "Remove `- use_api_key: true`" in str(fb.value)
@@ -2077,7 +2077,7 @@ def test_api_error_status_detected_even_without_text(agent_node):
     with patch("pflow.nodes.agent.claude_backend.query") as mock_query:
         mock_query.return_value = mock_response()
         prep_res = agent_node.prep({})
-        with pytest.raises(RuntimeError) as exc_info:
+        with pytest.raises(NodeError) as exc_info:
             agent_node.exec(prep_res)
 
     assert "api_error_status=401" in str(exc_info.value)
@@ -2096,11 +2096,11 @@ def test_non_auth_error_result_stays_generic(agent_node):
     with patch("pflow.nodes.agent.claude_backend.query") as mock_query:
         mock_query.return_value = mock_response()
         prep_res = agent_node.prep({})
-        with pytest.raises(RuntimeError) as exc_info:
+        with pytest.raises(NodeError) as exc_info:
             agent_node.exec(prep_res)
 
     assert not ClaudeBackend._is_auth_error(exc_info.value)
-    with pytest.raises(ValueError) as fb:
+    with pytest.raises(NodeError) as fb:
         agent_node.exec_fallback(prep_res, exc_info.value)
     assert "claude auth login" not in str(fb.value)
     assert "disk full" in str(fb.value)
