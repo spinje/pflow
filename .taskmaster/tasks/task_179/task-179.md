@@ -128,6 +128,18 @@ Persist loop position in the trace, restore it on resume, and let one pausabilit
   referencing it fails loudly at the resumed iteration through the existing strict carry guard
   (`LoopCarryError`), the same stance as node-level resume.
 
+## Rulings at launch (2026-10-05, main orchestrator with the user)
+
+- **Final-step loop escalation — DECIDED (b)**: a loop step whose escalation fires on the workflow's final step
+  keeps today's cannot-pause rule (the default-successor conjunct); `guide/features/approval.md` states that the
+  re-fork recipe needs a step after the loop. User: *"go ahead with your recommendations and implement"* on the
+  planner's recommendation. (c) — dropping the conjunct for all escalations via `resume_after` — is recorded as
+  its own future ruling, not built here.
+- Serialize/fold note (also on main's spec copy): **#690** (fix-then-resume refused twice — side-effect gate
+  ignores that the entry never executed; stale-workflow gate hashes the whole IR) and **#458** (`--only` demands
+  inputs it then ignores) sit on `resume_preflight.py` / the snapshot surface — the task orchestrator notes in the
+  progress log whether Q2's rule already decides them or they stay behind this task.
+
 ## Dependencies
 
 - **Task 170** (One Template Language) — MERGED 2026-10-01 (PR #673); rebase-free start. Its edit sites were: it edits the carry check
