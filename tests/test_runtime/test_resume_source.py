@@ -38,6 +38,7 @@ from pflow.runtime.resume_source import (
     ResumeSource,
     _iter_raw_trace_lines,
     load_resume_source,
+    seed_snapshot_into_shared,
 )
 from pflow.runtime.workflow_trace import format_trace_filename
 from tests.shared.trace_jsonl import flatten_trace_to_lines, write_trace_jsonl
@@ -45,13 +46,18 @@ from tests.shared.trace_jsonl import flatten_trace_to_lines, write_trace_jsonl
 WF = "/work/project/wf.pflow.md"
 
 
-def _node(node_id: str, *, status: str = "success", output: dict[str, Any] | None = None) -> dict[str, Any]:
-    return {
+def _node(
+    node_id: str, *, status: str = "success", output: dict[str, Any] | None = None, iteration: int | None = None
+) -> dict[str, Any]:
+    event: dict[str, Any] = {
         "node_id": node_id,
         "node_type": "ShellNode",
         "status": status,
         "node_output": output if output is not None else {"stdout": f"{node_id}-out"},
     }
+    if iteration is not None:  # trace 2.8.0: loop-node events only, like the producer
+        event["iteration"] = iteration
+    return event
 
 
 def _write_trace(
@@ -290,6 +296,7 @@ def _write_incomplete_trace(
     workflow_path: str = WF,
     name: str = "wf",
     resumed_from: str | None = None,
+    gate_lines: list[dict[str, Any]] | None = None,
 ) -> Path:
     """Write a production-faithful incomplete (interrupted) trace, returning its path.
 
@@ -323,6 +330,7 @@ def _write_incomplete_trace(
             "node_type": "ShellNode",
             "run_id": execution_id,
         })
+    lines.extend(gate_lines or [])
     path = debug_dir / format_trace_filename(workflow_path, name, timestamp)
     path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
     return path
@@ -1054,3 +1062,142 @@ def test_real_failed_run_is_resumable_end_to_end(tmp_path: Path) -> None:
     # and this trace predates nothing — inputs are an (empty) dict, never a crash.
     assert source.content_hash
     assert source.inputs in ({}, None)
+
+
+# --- Task 179: the resume entry is a (step, iteration) pair ----------------------
+
+
+def _k_iterations(*iterations: int, failed_last: bool = False) -> list[dict[str, Any]]:
+    events = [_node("k", iteration=n, output={"result": {"n": n}}) for n in iterations]
+    if failed_last:
+        events[-1] = _node("k", status="failed", output={}, iteration=iterations[-1])
+    return events
+
+
+def test_killed_mid_iteration_continues_at_that_iteration(tmp_path: Path) -> None:
+    """A dangling top-level node.start for K after iterations 1..2 = killed mid-iteration 3."""
+    _write_incomplete_trace(
+        tmp_path,
+        execution_id="killed-mid-loop",
+        timestamp="20260101-000000",
+        completed=[_node("prep"), *_k_iterations(1, 2)],
+        killed_node="k",
+    )
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert (source.entry_node_id, source.entry_iteration) == ("k", 3)
+
+
+def test_failed_iteration_reruns_at_that_iteration_and_seeds_the_previous_one(tmp_path: Path) -> None:
+    _write_trace(
+        tmp_path,
+        execution_id="failed-at-3",
+        timestamp="20260101-000000",
+        nodes=[_node("prep"), *_k_iterations(1, 2, 3, failed_last=True)],
+    )
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert (source.entry_node_id, source.entry_iteration) == ("k", 3)
+    shared: dict[str, Any] = {}
+    seeded = seed_snapshot_into_shared(shared, source.events, exclude="k", exclude_iteration=3)
+    assert list(seeded) == ["prep", "k"]
+    assert shared["k"] == {"result": {"n": 2}}  # the iteration before the one about to run
+
+
+def test_step_without_recorded_position_has_no_entry_iteration(tmp_path: Path) -> None:
+    """Keyless final event → ``None`` ("no recorded position"): a non-loop step, or a loop
+    step from a trace that predates 2.8.0 — the engine tells them apart by the step's config
+    (a loop step then restarts at 1 with an advisory)."""
+    _write_trace(
+        tmp_path,
+        execution_id="keyless",
+        timestamp="20260101-000000",
+        nodes=[_node("prep"), _node("k", status="failed", output={})],
+    )
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert (source.entry_node_id, source.entry_iteration) == ("k", None)
+
+
+def test_step_that_never_ran_starts_at_iteration_one(tmp_path: Path) -> None:
+    """An approval paused at a step's first iteration: no event for it → exactly 1, never None."""
+    _write_paused_approval(tmp_path)
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path, gate_answer={"approve": True})
+    assert (source.entry_node_id, source.entry_iteration) == ("gated", 1)
+
+
+def test_seed_guard_scans_the_entry_previous_iteration(tmp_path: Path) -> None:
+    """Q2: what resume would restore from K's own iteration 2 is guarded like any upstream —
+    a lossy binary placeholder refuses rather than seeding silently."""
+    _write_trace(
+        tmp_path,
+        execution_id="lossy-k",
+        timestamp="20260101-000000",
+        nodes=[
+            _node("prep"),
+            _node("k", iteration=1, output={"data": "ok"}),
+            _node("k", iteration=2, output={"data": "<binary data: 9 bytes>"}),
+            _node("k", status="failed", output={}, iteration=3),
+        ],
+    )
+    with pytest.raises(ResumeFidelityError) as exc_info:
+        load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert exc_info.value.node_id == "k"
+
+
+def _iteration_escalation(n: int, *, decision: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Gate lines for an escalation raised at iteration ``n`` (pause, plus resolution when answered)."""
+    lines: list[dict[str, Any]] = [
+        {"kind": "gate", "node_id": "k", "phase": "pause", "gate_kind": "escalation", "iteration": n}
+    ]
+    if decision is not None:
+        lines.append({**_escalation_resolution("k", decision), "iteration": n})
+    return lines
+
+
+def test_earlier_iteration_answer_never_decides_a_later_unanswered_escalation(tmp_path: Path) -> None:
+    """D2b (2): K escalated at iteration 1 (answered A) and again at 2 with a NEW question;
+    the run was killed at the prompt. Folding A onto iteration 2's marker would continue with
+    an answer to a different question — the fold pairs by iteration, so the resume refuses."""
+    _write_incomplete_trace(
+        tmp_path,
+        execution_id="killed-at-prompt",
+        timestamp="20260101-000000",
+        completed=[
+            _node("k", iteration=1, output={"result": {"escalation": {"question": "q1?"}}}),
+            _node("k", iteration=2, output={"result": {"escalation": {"question": "q2?"}}}),
+        ],
+        gate_lines=[*_iteration_escalation(1, decision={"chosen": "A", "notes": None}), *_iteration_escalation(2)],
+    )
+    with pytest.raises(ResumeNotResumableError, match="unresolved escalation") as exc_info:
+        load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert exc_info.value.node_id == "k"
+
+
+def test_answer_folds_onto_the_iteration_that_raised_it(tmp_path: Path) -> None:
+    """D2b (1), loader half: iteration 1's answer decides iteration 1's marker — the one the
+    seed restores when iteration 2 failed — so a decided escalation never false-refuses."""
+    _write_trace(
+        tmp_path,
+        execution_id="answered-then-failed",
+        timestamp="20260101-000000",
+        nodes=[
+            _node("k", iteration=1, output={"result": {"escalation": {"question": "q1?"}}}),
+            _node("k", status="failed", output={}, iteration=2),
+        ],
+        gate_lines=_iteration_escalation(1, decision={"chosen": "A", "notes": None}),
+    )
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert (source.entry_node_id, source.entry_iteration) == ("k", 2)
+    first = next(e for e in source.events if e["node_id"] == "k" and e.get("iteration") == 1)
+    assert first["node_output"]["result"]["escalation"]["decision"] == {"chosen": "A", "notes": None}
+
+
+def test_unrecovered_failure_reruns_its_iteration_even_with_a_failed_handler_after(tmp_path: Path) -> None:
+    """K fails at 3 and its on-error handler F fails too: the terminal failure root is K and
+    nothing recovered it, so iteration 3 re-runs (a later FAILED event is not a recovery)."""
+    _write_trace(
+        tmp_path,
+        execution_id="both-fail",
+        timestamp="20260101-000000",
+        nodes=[*_k_iterations(1, 2, 3, failed_last=True), _node("f", status="failed", output={})],
+    )
+    source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert (source.entry_node_id, source.entry_iteration) == ("k", 3)

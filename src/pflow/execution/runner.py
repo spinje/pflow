@@ -74,6 +74,39 @@ def workflow_path_id(resolved: ResolvedWorkflow) -> str:
 _workflow_path_id = workflow_path_id
 
 
+def _check_resume_entry(resume_source: "ResumeSource | None", caller: str) -> None:
+    """Library-misuse guard: refuse a resume source whose entry the CLI has not resolved.
+
+    A resolved source names its entry step. A between-nodes source reaches the engine only
+    for a loop step whose position the loader proved (``entry_iteration`` >= 2) — the engine
+    then makes the re-entry decision. Anything else must be resolved by
+    ``preflight_resume`` first: threading it through would run (or plan) the whole workflow
+    while claiming a resume.
+    """
+    if resume_source is None or resume_source.entry_node_id is not None:
+        return
+    if resume_source.last_completed_node_id is None or (resume_source.entry_iteration or 1) < 2:
+        raise ValueError(f"resume_source.entry_node_id must be resolved before {caller}()")
+
+
+def _resume_kwargs(resume_source: "ResumeSource | None") -> dict[str, Any]:
+    """The engine/planner resume kwargs (Task 164/179) — one mapping for ``run`` and ``plan``.
+
+    The entry K to re-enter at, or the completed loop step to resume AFTER; the source
+    trace's events to seed from; the source run's id (lineage); the iteration to continue at.
+    """
+    if resume_source is None:
+        return {}
+    after = resume_source.last_completed_node_id if resume_source.entry_node_id is None else None
+    return {
+        "resume_from": resume_source.entry_node_id,
+        "resume_after": after,
+        "resume_events": resume_source.events,
+        "resume_source_id": resume_source.execution_id,
+        "resume_iteration": resume_source.entry_iteration,
+    }
+
+
 class WorkflowRunner:
     """Stateless workflow execution pipeline.
 
@@ -128,17 +161,12 @@ class WorkflowRunner:
                 execution-config-only. The caller merges ``resume_source.inputs``
                 into ``params`` BEFORE calling; the runner threads the entry node,
                 events, and lineage id to the collector and engine, nothing more.
-                Its ``entry_node_id`` must already be resolved (never ``None``).
+                Its entry must already be resolved (``_check_resume_entry``).
 
         Returns:
             ExecutionResult -- always. Never raises (except KeyboardInterrupt/SystemExit).
         """
-        if resume_source is not None and resume_source.entry_node_id is None:
-            # Library-misuse guard (mirrors the engine's resume_from+only_node
-            # ValueError): a between-nodes source must have its entry resolved
-            # by the CLI before run() — threading None would silently run the
-            # whole workflow from the start while claiming a resume.
-            raise ValueError("resume_source.entry_node_id must be resolved before run()")
+        _check_resume_entry(resume_source, "run")
         params = dict(params)  # Copy at boundary -- never mutate caller's dict
 
         # Resources created in run() scope so finally ALWAYS has them for cleanup.
@@ -347,12 +375,7 @@ class WorkflowRunner:
             # (resolved file path or synthesized ir-hash:<md5>) so --only's
             # snapshot loader finds this workflow's own most-recent full-run trace.
             workflow_path=_workflow_path_id(resolved),
-            # Task 164: resume re-entry — the failed node K, the source trace's
-            # events to seed upstream from, and the source run's id for the
-            # __execution__ lineage stamp.
-            resume_from=resume_source.entry_node_id if resume_source is not None else None,
-            resume_events=resume_source.events if resume_source is not None else None,
-            resume_source_id=resume_source.execution_id if resume_source is not None else None,
+            **_resume_kwargs(resume_source),
         )
 
         try:
@@ -493,13 +516,9 @@ class WorkflowRunner:
         resumed run: the planner seeds upstream from the source trace and starts AT
         the failed step K, so the plan + cost cover the resumed tail only. Same
         kwarg shape as ``run`` (the caller merges ``resume_source.inputs`` into
-        ``params`` first); its ``entry_node_id`` must already be resolved.
+        ``params`` first); its entry must already be resolved (``_check_resume_entry``).
         """
-        if resume_source is not None and resume_source.entry_node_id is None:
-            # Same library-misuse guard as run(): an unresolved between-nodes
-            # source would thread resume_from=None to build_plan and silently
-            # plan the WHOLE workflow while the plan header claims a resume.
-            raise ValueError("resume_source.entry_node_id must be resolved before plan()")
+        _check_resume_entry(resume_source, "plan")
 
         from pflow.execution.plan import build_plan
         from pflow.registry import Registry
@@ -527,9 +546,7 @@ class WorkflowRunner:
             registry,
             workflow_name=workflow_name,
             only_node=config.only_node,
-            resume_from=resume_source.entry_node_id if resume_source is not None else None,
-            resume_events=resume_source.events if resume_source is not None else None,
-            resume_source_id=resume_source.execution_id if resume_source is not None else None,
+            **_resume_kwargs(resume_source),
             _parent_workflow_file=resolved.file_path,
         )
 

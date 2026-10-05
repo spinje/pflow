@@ -1096,8 +1096,7 @@ class GateNotInteractiveError(PflowError):
             "the workflow was submitted inline (no source file to resume from — save it and run by name/path "
             "to pause instead), the run targeted a single node with --only (its snapshot trace isn't "
             "resumable — run the full workflow to pause), or the gate is in an unsupported position "
-            "(parallel batch item, sub-workflow child, a loop step's approval after its first iteration, "
-            "or a loop-/code-node/final-step escalation)."
+            "(parallel batch item, sub-workflow child, or a code-node/final-step escalation)."
         )
         return [
             Diagnostic(

@@ -183,13 +183,14 @@ def _node_registry_type(ir: dict[str, Any], node_id: str | None) -> str | None:
 
 
 def _node_has_loop(ir: dict[str, Any], node_id: str | None) -> bool:
-    """Whether ``node_id`` is a ``loop:`` node — its next step is condition-determined.
+    """Whether ``node_id`` is a ``loop:`` node — its next step is the engine's to decide.
 
     A loop node re-enters itself until its ``while:``/``until:`` condition flips;
-    that re-entry is engine-ephemeral, never a graph edge, so the only DECLARED
-    edge out of a loop node is its exit route. After a loop iteration completes,
-    the next step is "another iteration" or "the exit successor" — decided by the
-    runtime condition, which an interrupted trace never records.
+    re-entry is not a graph edge, so after a completed iteration the next step is
+    "another iteration" or "the exit successor". That is the router of who decides
+    a between-nodes resume: the preflight pins a plain step's single successor; a
+    positioned loop step's continuation is the engine's re-entry decision
+    (``WorkflowEngine(resume_after=)``).
     """
     for node in ir.get("nodes", []):
         if node.get("id") == node_id:
@@ -227,11 +228,14 @@ def _resolve_between_nodes_entry(resolved: ResolvedWorkflow, source: ResumeSourc
     traced — resume only when it is UNAMBIGUOUS: refuse a dynamic router (only a
     ``code`` node routes at runtime — its taken route was never recorded, so even a
     single declared edge can be wrong) and refuse zero/multiple default successors.
-    Otherwise pin the entry to the single default successor.
+    Otherwise pin the entry to the single default successor — except for a loop
+    step (Task 179), whose continuation (another iteration or that exit) is the
+    engine's re-entry decision: its source passes through unchanged, provided the
+    saved run recorded the step's position.
 
     Task 171: for honestly-issued paused tokens these refusals are UNREACHABLE by
     construction — the engine's ``_gate_pausable`` never stamps ``paused`` for
-    loop/code/terminal escalations. They stay as belt-and-braces for the one path
+    code/terminal escalations. They stay as belt-and-braces for the one path
     that can still reach them: the workflow was EDITED between pause and resume
     (hash gate bypassed with ``--force``). The message speaks the source's real
     state ("is paused" vs "was interrupted") so an edited-workflow refusal never
@@ -258,19 +262,6 @@ def _resolve_between_nodes_entry(resolved: ResolvedWorkflow, source: ResumeSourc
             node_id=last,
             suggestions=["Re-run the workflow from the start."],
         )
-    # A loop node's continuation is condition-determined and untraced. A `code` loop node
-    # is already refused above (dynamic router); this arm covers the NON-code loop shapes
-    # the code arm misses — notably a `workflow`-type node looping on a child's typed output.
-    if _node_has_loop(resolved.ir, last):
-        raise ResumeNotResumableError(
-            f"The run {state} after loop step '{last}', whose next step depends on the loop "
-            "condition (another iteration or the exit route) and was never recorded, so resume "
-            "cannot tell where to continue.",
-            execution_id=source.execution_id,
-            trace_path=str(source.path),
-            node_id=last,
-            suggestions=["Re-run the workflow from the start."],
-        )
     successor = _single_default_successor(resolved.ir, str(last))
     if successor is None:
         if paused:
@@ -292,7 +283,24 @@ def _resolve_between_nodes_entry(resolved: ResolvedWorkflow, source: ResumeSourc
             node_id=last,
             suggestions=["Re-run the workflow from the start."],
         )
-    return dataclasses.replace(source, entry_node_id=successor)
+    if _node_has_loop(resolved.ir, last):
+        if source.entry_iteration is None:
+            raise ResumeNotResumableError(
+                f"The run {state} after loop step '{last}', and the saved run predates loop position, "
+                "so the next step — another iteration or the exit — cannot be known.",
+                execution_id=source.execution_id,
+                trace_path=str(source.path),
+                node_id=last,
+                suggestions=["Re-run the workflow from the start."],
+            )
+        return source
+    from pflow.runtime.resume_source import resume_iteration
+
+    # `entry_iteration` described `last`; the successor's own position is 1 unless it already
+    # ran (a backward edge into a loop step continues that step's count, as the live walk does).
+    return dataclasses.replace(
+        source, entry_node_id=successor, entry_iteration=resume_iteration(source.events, successor)
+    )
 
 
 def _side_effect_refusal(
@@ -312,7 +320,8 @@ def _side_effect_refusal(
         return None
     from pflow.runtime.compilation import is_side_effecting
 
-    entry = source.entry_node_id
+    # A loop step passed through between-nodes may re-run (its next iteration): check it.
+    entry = source.entry_node_id or source.last_completed_node_id
     node_type = _node_registry_type(resolved.ir, entry)
     if node_type is None or not is_side_effecting(node_type):
         return None

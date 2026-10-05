@@ -37,8 +37,10 @@ logger = logging.getLogger(__name__)
 # additive) adds ``resumed_from`` to the meta line (attempt-chain lineage) and ``restored: true`` on
 # cached-status events a resumed run re-recorded from its source trace. 2.7.0 (Task 171, additive)
 # adds the durable gate pause: ``final_status: "paused"`` plus ``paused_node_id`` and ``gate_request``
-# on the ``run.complete`` trailer. Consumers gate on ``startswith("2.")``; old traces remain readable.
-TRACE_FORMAT_VERSION = "2.7.0"
+# on the ``run.complete`` trailer. 2.8.0 (Task 179, additive) records loop position: ``iteration`` on
+# every loop-node event and on its ``gate`` lines, and inside ``gate_request``. Consumers gate on
+# ``startswith("2.")``; old traces remain readable.
+TRACE_FORMAT_VERSION = "2.8.0"
 
 
 def format_trace_filename(workflow_path: str | None, workflow_name: str, timestamp: str) -> str:
@@ -635,6 +637,7 @@ class WorkflowTraceCollector:
         resolution: str | None = None,
         resolved_via: str | None = None,
         decision: dict[str, Any] | None = None,
+        iteration: int | None = None,
     ) -> None:
         """Task 125: stream one ``gate`` line (``phase="pause"`` carrying the
         GateRequest payload, or ``phase="resolution"`` carrying the verdict).
@@ -646,6 +649,10 @@ class WorkflowTraceCollector:
         ``--only``. The reconstruct reader ignores the kind
         (``trace_io._partition_trace_lines``); Task 171 reads gate lines with
         its own explicit reader.
+
+        ``iteration`` (2.8.0) is the loop iteration that raised the gate, written on BOTH
+        phases when set: ``resume_source._apply_gate_resolutions`` pairs a decision with the
+        event of that iteration, not the node's final event.
         """
         if resolution == "denied":
             self.gate_outcome = "denied"
@@ -662,9 +669,11 @@ class WorkflowTraceCollector:
             line["resolved_via"] = resolved_via
         if decision is not None:
             line["decision"] = decision
+        if iteration is not None:
+            line["iteration"] = iteration
         self._flush_line(line)
 
-    def record_node_execution(
+    def record_node_execution(  # noqa: C901 — a flat run of independent opt-in field stamps, no nesting
         self,
         node_id: str,
         node_type: str,
@@ -680,6 +689,7 @@ class WorkflowTraceCollector:
         cached: bool = False,
         restored: bool = False,
         frame: _HostFrame | None = None,
+        iteration: int | None = None,
     ) -> None:
         """Record detailed node execution data.
 
@@ -703,6 +713,9 @@ class WorkflowTraceCollector:
                 ``cached=True``: ``status: "cached"`` keeps every cost/UI
                 consumer correct with zero change; ``restored: true`` is the
                 honest marker on top. Excluded from ``nodes_executed``.
+            iteration: 2.8.0 — the loop node's 1-based iteration this event records;
+                ``None`` (key omitted) for every non-loop event, so a keyless event
+                means "not a loop iteration" or "recorded before 2.8.0".
         """
         event: dict[str, Any] = {
             "node_id": node_id,
@@ -713,6 +726,8 @@ class WorkflowTraceCollector:
         }
         if restored:
             event["restored"] = True
+        if iteration is not None:
+            event["iteration"] = iteration
 
         if error:
             event["error"] = error

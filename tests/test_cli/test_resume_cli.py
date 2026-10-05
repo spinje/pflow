@@ -568,7 +568,11 @@ def _resolved(ir: dict) -> Any:
     return ResolvedWorkflow(ir=ir, source="file", file_path="/x/wf.pflow.md")
 
 
-def _between_source(last_completed: str) -> Any:
+def _between_source(
+    last_completed: str, *, entry_iteration: int | None = None, events: list[dict[str, Any]] | None = None
+) -> Any:
+    """A between-nodes source; ``entry_iteration`` is what the loader derived for ``last_completed``
+    (``None`` = its events carry no position: a non-loop step, or a pre-2.8.0 trace)."""
     from pflow.runtime.resume_source import ResumeSource
 
     return ResumeSource(
@@ -577,9 +581,10 @@ def _between_source(last_completed: str) -> Any:
         execution_id="inc-1",
         entry_node_id=None,
         last_completed_node_id=last_completed,
-        events=[],
+        events=events or [],
         inputs=None,
         content_hash=None,
+        entry_iteration=entry_iteration,
     )
 
 
@@ -612,18 +617,10 @@ def test_between_nodes_dynamic_code_router_refused():
         _resolve_between_nodes_entry(_resolved(ir), _between_source("router"))
 
 
-def test_between_nodes_loop_node_refused():
-    # A loop node's next step (another iteration vs. the exit route) is decided by the
-    # runtime loop condition, which an interrupted trace never records — taking the single
-    # declared (exit) edge would skip the remaining loop body. The realistic non-code loop
-    # shape is a WORKFLOW-type node looping on a child's typed output (verified to validate;
-    # a shell node CANNOT loop — no bool output). It is NOT a `code` node, so the dynamic-
-    # router arm does not catch it — the loop arm is what refuses it. (A `code` loop node is
-    # refused by the dynamic-router arm instead — test_between_nodes_dynamic_code_router_refused.)
-    from pflow.core.exceptions import ResumeNotResumableError
-    from pflow.execution.resume_preflight import _resolve_between_nodes_entry
-
-    ir = {
+def _looping_poll_ir(*, exit_successor: bool = True) -> dict[str, Any]:
+    # The realistic non-code loop shape: a WORKFLOW-type node looping on a child's typed
+    # output (a `code` loop node is refused by the dynamic-router arm instead).
+    ir: dict[str, Any] = {
         "nodes": [
             {
                 "id": "poll",
@@ -631,12 +628,77 @@ def test_between_nodes_loop_node_refused():
                 "params": {"workflow": "child.pflow.md"},
                 "loop": {"while": "${poll.keep_going}", "max_iterations": 5},
             },
-            {"id": "after", "type": "shell", "params": {"command": "echo done"}},
         ],
-        "edges": [{"from": "poll", "to": "after"}],
+        "edges": [],
     }
-    with pytest.raises(ResumeNotResumableError, match="loop"):
-        _resolve_between_nodes_entry(_resolved(ir), _between_source("poll"))
+    if exit_successor:
+        ir["nodes"].append({"id": "after", "type": "shell", "params": {"command": "echo done"}})
+        ir["edges"].append({"from": "poll", "to": "after"})
+    return ir
+
+
+def test_between_nodes_positioned_loop_node_passes_through_to_the_engine():
+    """Task 179: after a loop step's completed iteration the next step (another iteration
+    or the exit) is the ENGINE's re-entry decision — the preflight must not pin the exit
+    edge (that would skip the remaining iterations). The source passes through unchanged."""
+    from pflow.execution.resume_preflight import _resolve_between_nodes_entry
+
+    source = _between_source("poll", entry_iteration=3)
+    resolved = _resolve_between_nodes_entry(_resolved(_looping_poll_ir()), source)
+    assert resolved is source
+    assert (resolved.entry_node_id, resolved.last_completed_node_id, resolved.entry_iteration) == (None, "poll", 3)
+
+
+def test_between_nodes_successor_that_already_ran_continues_its_own_position():
+    """P2 review (feature-interactions W2): a kill after H on ``K(loop) → H → K`` (a backward
+    edge) pins the entry to K — whose position is K's own (iteration 3 after two), never the
+    ``1`` of a successor that never ran (that would re-seed from before K's first event)."""
+    from pflow.execution.resume_preflight import _resolve_between_nodes_entry
+
+    ir = {
+        "nodes": [
+            {
+                "id": "k",
+                "type": "workflow",
+                "params": {"workflow": "child.pflow.md"},
+                "loop": {"while": "${k.more}", "max_iterations": 5},
+            },
+            {"id": "h", "type": "shell", "params": {"command": "echo h"}},
+        ],
+        "edges": [{"from": "k", "to": "h"}, {"from": "h", "to": "k", "action": "default"}],
+    }
+    events = [
+        {"node_id": "k", "status": "success", "iteration": 1},
+        {"node_id": "k", "status": "success", "iteration": 2},
+        {"node_id": "h", "status": "success"},
+    ]
+    resolved = _resolve_between_nodes_entry(_resolved(ir), _between_source("h", events=events))
+    assert (resolved.entry_node_id, resolved.entry_iteration) == ("k", 3)
+    fresh = _resolve_between_nodes_entry(_resolved(ir), _between_source("h", events=events[2:]))
+    assert (fresh.entry_node_id, fresh.entry_iteration) == ("k", 1)  # never ran → 1
+
+
+def test_between_nodes_unpositioned_loop_node_refused():
+    """A saved run that predates loop position cannot say whether the loop would continue —
+    refused with that reason (never a guess at the exit edge)."""
+    from pflow.core.exceptions import ResumeNotResumableError
+    from pflow.execution.resume_preflight import _resolve_between_nodes_entry
+
+    with pytest.raises(ResumeNotResumableError, match="predates loop position") as exc_info:
+        _resolve_between_nodes_entry(_resolved(_looping_poll_ir()), _between_source("poll", entry_iteration=None))
+    assert exc_info.value.node_id == "poll"
+
+
+def test_between_nodes_loop_node_without_exit_successor_refused():
+    """Ruling (b): a loop step that is the workflow's final step keeps the no-successor
+    refusal even when positioned (mirrors ``_gate_pausable``'s successor conjunct)."""
+    from pflow.core.exceptions import ResumeNotResumableError
+    from pflow.execution.resume_preflight import _resolve_between_nodes_entry
+
+    with pytest.raises(ResumeNotResumableError, match="ambiguous"):
+        _resolve_between_nodes_entry(
+            _resolved(_looping_poll_ir(exit_successor=False)), _between_source("poll", entry_iteration=3)
+        )
 
 
 def test_between_nodes_terminal_node_refused():
@@ -783,3 +845,69 @@ def test_resume_honors_pflow_execution_id_env(home, shell_wf, monkeypatch):
     by_id = {meta["execution_id"]: meta for meta in metas}
     assert forced in by_id, f"the resumed attempt's trace must carry the forced id; saw {sorted(by_id)}"
     assert by_id[forced].get("resumed_from") == exec_id  # and it is the ATTEMPT, not the source
+
+
+def _write_looping_host(tmp_path: Path) -> tuple[Path, Path]:
+    """A ``workflow`` host looping over a child that drops one contender per round (4 rounds),
+    logging each round's carried input. Returns ``(workflow, rounds log)``."""
+    log = tmp_path / "rounds.jsonl"
+    child = tmp_path / "round.pflow.md"
+    child.write_text(
+        "# Round\n\nDrop the first contender.\n\n## Inputs\n\n### contenders\n\nThis round's contenders.\n\n"
+        "- type: array\n\n## Outputs\n\n### survivors\n\nNext round's contenders.\n\n- type: array\n"
+        "- source: ${judge.result.survivors}\n\n### more\n\nWhether another round is needed.\n\n"
+        "- type: boolean\n- source: ${judge.result.more}\n\n## Steps\n\n### judge\n\nLog, then drop one.\n\n"
+        "- type: code\n- inputs:\n    contenders: ${contenders}\n\n"
+        "```python code\nimport json\n\ncontenders: list\n"
+        f"with open({log.as_posix()!r}, 'a', encoding='utf-8') as fh:\n    fh.write(json.dumps(contenders) + '\\n')\n"
+        "survivors = contenders[1:]\nresult: dict = {'survivors': survivors, 'more': len(survivors) > 1}\n```\n",
+        encoding="utf-8",
+    )
+    wf = tmp_path / "rounds.pflow.md"
+    wf.write_text(
+        "# Rounds\n\nElimination rounds over a looping sub-workflow.\n\n## Steps\n\n### rounds\n\nRun the rounds.\n\n"
+        f"- type: workflow\n- workflow: {child.as_posix()}\n"
+        '- inputs:\n    contenders: ["a", "b", "c", "d", "e"]\n'
+        "- loop:\n    carry:\n      contenders: ${rounds.survivors}\n    while: ${rounds.more}\n    max_iterations: 10\n"
+        "- next: winner\n\n### winner\n\nAnnounce the survivor.\n\n- type: shell\n\n"
+        "```shell command\nprintf 'winner %s' '${rounds.survivors[0]}'\n```\n",
+        encoding="utf-8",
+    )
+    return wf, log
+
+
+def test_killed_between_loop_iterations_continues_with_the_engine_decision_e2e(home, tmp_path):
+    """Task 179 D3 + review-fold W1, through the real CLI: a run killed after a looping
+    ``workflow`` host's iteration 2 (the host emits no ``node.start``, so a kill inside an
+    iteration looks the same) loads as ``(None, host)`` at iteration 3. The preflight passes it
+    through but still asks to confirm the side-effecting step that may re-run (the host, by
+    its registry type); ``--force`` resumes, and the engine re-enters at iteration 3 with
+    iteration 2's carried survivors — rounds 1-2 never re-run."""
+    wf, log = _write_looping_host(tmp_path)
+    full = _runner().invoke(cli, [str(wf)])
+    assert full.exit_code == 0, full.stderr
+    rounds = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert len(rounds) == 4
+
+    # Cut the real trace right after the host's iteration-2 event (no trailer → incomplete).
+    [trace] = (home / ".pflow" / "debug").glob("workflow-trace-*.json")
+    lines = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+    cut = next(
+        i
+        for i, line in enumerate(lines)
+        if line["kind"] == "event" and line["node_id"] == "rounds" and line.get("iteration") == 2
+    )
+    trace.write_text("\n".join(json.dumps(line) for line in lines[: cut + 1]) + "\n", encoding="utf-8")
+    log.write_text("".join(json.dumps(r) + "\n" for r in rounds[:2]), encoding="utf-8")
+    exec_id = lines[0]["execution_id"]
+
+    refused = _runner().invoke(cli, ["resume", exec_id])
+    assert refused.exit_code == 1
+    combined = refused.stdout + refused.stderr
+    assert "Resuming re-runs step 'rounds' (a workflow step)" in combined
+    assert [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] == rounds[:2]
+
+    resumed = _runner().invoke(cli, ["resume", exec_id, "--force"])
+    assert resumed.exit_code == 0, resumed.stderr
+    assert [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] == rounds
+    assert "winner e" in resumed.stdout

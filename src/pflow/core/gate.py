@@ -48,6 +48,9 @@ class GateRequest:
     question: str | None = None
     options: tuple[dict[str, Any], ...] = ()
     recommendation: str | None = None
+    # The 1-based loop iteration that raised this gate; ``None`` for a non-loop step.
+    # Display-only — resume derives its position from the trace events, never from here.
+    iteration: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -66,7 +69,7 @@ class GateResolution:
     notes: str | None = None
 
 
-def build_approval_request(node_id: str, node_type: str, params: Any) -> GateRequest:
+def build_approval_request(node_id: str, node_type: str, params: Any, *, iteration: int | None = None) -> GateRequest:
     """Approval payload from the node's (resolved) params.
 
     ``_``-prefixed keys are parser/engine bookkeeping (``_source_line``, ...), not
@@ -74,19 +77,23 @@ def build_approval_request(node_id: str, node_type: str, params: Any) -> GateReq
     (node_output_formatter / trace_report convention).
     """
     if not isinstance(params, dict):
-        return GateRequest(node_id=node_id, node_type=node_type, kind=GATE_KIND_APPROVAL)
+        return GateRequest(node_id=node_id, node_type=node_type, kind=GATE_KIND_APPROVAL, iteration=iteration)
     preview = {key: json_safe(value) for key, value in params.items() if not key.startswith("_")}
-    return GateRequest(node_id=node_id, node_type=node_type, kind=GATE_KIND_APPROVAL, preview=preview)
+    return GateRequest(
+        node_id=node_id, node_type=node_type, kind=GATE_KIND_APPROVAL, preview=preview, iteration=iteration
+    )
 
 
-def build_escalation_request(node_id: str, node_type: str, marker: Any) -> GateRequest:
+def build_escalation_request(node_id: str, node_type: str, marker: Any, *, iteration: int | None = None) -> GateRequest:
     """Escalation payload from a node's ``result.escalation`` marker.
 
     Lenient by design: a string marker becomes the question; dict fields that are
     missing or oddly shaped render as absent — never crash at the pause point.
     """
     if isinstance(marker, str):
-        return GateRequest(node_id=node_id, node_type=node_type, kind=GATE_KIND_ESCALATION, question=marker)
+        return GateRequest(
+            node_id=node_id, node_type=node_type, kind=GATE_KIND_ESCALATION, question=marker, iteration=iteration
+        )
     question = marker.get("question")
     raw_options = marker.get("options")
     options = tuple(json_safe(o) for o in raw_options if isinstance(o, dict)) if isinstance(raw_options, list) else ()
@@ -98,6 +105,7 @@ def build_escalation_request(node_id: str, node_type: str, marker: Any) -> GateR
         question=str(question) if question is not None else None,
         options=options,
         recommendation=str(recommendation) if recommendation is not None else None,
+        iteration=iteration,
     )
 
 

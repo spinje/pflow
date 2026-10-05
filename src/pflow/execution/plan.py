@@ -47,8 +47,10 @@ from pflow.runtime.cache import MemoizationCache
 from pflow.runtime.engine.batch_executor import build_batch_output, resolve_batch_items
 from pflow.runtime.engine.engine import (
     RouteKind,
+    build_loop_restart_diagnostic,
     build_prompt_cache_dict,
     build_snapshot_degraded_diagnostic,
+    continue_after_step,
     route_action,
     seed_walk_entry,
     validate_only_target,
@@ -228,8 +230,10 @@ def build_plan(
     workflow_name: str = "<unnamed>",
     only_node: str | None = None,
     resume_from: str | None = None,
+    resume_after: str | None = None,
     resume_events: list[dict[str, Any]] | None = None,
     resume_source_id: str | None = None,
+    resume_iteration: int | None = 1,
     _visited_paths: list[str] | None = None,
     _depth: int = 0,
     _parent_workflow_file: str | None = None,
@@ -243,8 +247,10 @@ def build_plan(
         workflow_name=workflow_name,
         only_node=only_node,
         resume_from=resume_from,
+        resume_after=resume_after,
         resume_events=resume_events,
         resume_source_id=resume_source_id,
+        resume_iteration=resume_iteration,
         _visited_paths=_visited_paths,
         _depth=_depth,
         _parent_workflow_file=_parent_workflow_file,
@@ -261,8 +267,10 @@ def _build_plan_with_shared(
     workflow_name: str = "<unnamed>",
     only_node: str | None = None,
     resume_from: str | None = None,
+    resume_after: str | None = None,
     resume_events: list[dict[str, Any]] | None = None,
     resume_source_id: str | None = None,
+    resume_iteration: int | None = 1,
     _visited_paths: list[str] | None = None,
     _depth: int = 0,
     _parent_workflow_file: str | None = None,
@@ -335,15 +343,17 @@ def _build_plan_with_shared(
         depth=_depth,
     )
 
-    curr, resume_info = _resolve_walk_start(
+    curr, resume_info, iteration = _resolve_walk_start(
         compiled,
         shared,
         workflow_path,
         this_only,
         state.diagnostics,
         resume_from=resume_from,
+        resume_after=resume_after,
         resume_events=resume_events,
         resume_source_id=resume_source_id,
+        resume_iteration=resume_iteration,
     )
     while curr is not None:
         node_id = getattr(curr, "node_id", None)
@@ -355,14 +365,16 @@ def _build_plan_with_shared(
         enforce_loop_guard(node_id, shared)
 
         target_child_only = child_only if (this_only is not None and node_id == this_only) else None
-        # issue #445: expose ${__iteration__}=1 and raise __loop_active__ while
+        # issue #445: expose ${__iteration__} and raise __loop_active__ while
         # planning a loop body so its templates resolve (mirrors batch's
         # ${__index__}=0) AND the loop node's memo read is suppressed — matching the
         # engine, which re-executes a loop body rather than serving a cached hit.
+        # The iteration is 1, except for a resumed loop step walked first (Task 179:
+        # it continues at its saved iteration, so carry resolves as the engine's will).
         # clear_iteration_on_exit=True: the planner walks the body once, so neither
         # marker should leak to later nodes at plan time.
         is_loop_node = config.loop_config is not None
-        with loop_runtime_scope(shared, is_loop_node, iteration=1, clear_iteration_on_exit=True):
+        with loop_runtime_scope(shared, is_loop_node, iteration=iteration, clear_iteration_on_exit=True):
             entry = _plan_one_node(
                 curr,
                 config,
@@ -373,6 +385,7 @@ def _build_plan_with_shared(
                 depth=_depth,
                 child_only_node=target_child_only,
             )
+        iteration = 1
         state.entries.append(entry)
         if entry.sub_plan is not None:
             state.diagnostics.extend(entry.sub_plan.diagnostics)
@@ -492,10 +505,12 @@ def _resolve_walk_start(
     diagnostics: list[Diagnostic],
     *,
     resume_from: str | None = None,
+    resume_after: str | None = None,
     resume_events: list[dict[str, Any]] | None = None,
     resume_source_id: str | None = None,
-) -> tuple[Any, ResumePlanInfo | None]:
-    """Return ``(walk_start_node, resume_info)`` for the planner.
+    resume_iteration: int | None = 1,
+) -> tuple[Any, ResumePlanInfo | None, int]:
+    """Return ``(walk_start_node, resume_info, start_iteration)`` for the planner.
 
     Full plan → the workflow start node. Flat ``--only`` → seed upstream from the
     snapshot (issue #443) and start AT the target so the plan is a single entry.
@@ -504,7 +519,13 @@ def _resolve_walk_start(
     ``_prepare_resume`` uses — parity pinned by ``test_plan_drift``); unlike
     ``--only`` this does NOT set ``state.only_node``, so the walk continues across
     the whole resumed tail. ``--only`` and resume are mutually exclusive by
-    construction (the CLI never passes both).
+    construction (the CLI never passes both). A resumed loop step K continues at
+    ``resume_iteration`` exactly as ``_prepare_resume`` does (Task 179): the seed holds
+    K's previous iteration and ``start_iteration`` is the ``__iteration__`` the walk
+    plans K at (1 for every other start); a saved run without loop position restarts
+    K at 1 with the shared advisory. ``resume_after`` K runs the engine's own re-entry
+    decision (``should_reenter``) on the planner's store — so the preview says what
+    WILL run: K again, or its default successor.
 
     No ``--only`` snapshot → hard error. K removed since the run → the SAME
     ``ResumeNotResumableError`` the engine raises (lockstep — a ``--force`` resume
@@ -513,29 +534,51 @@ def _resolve_walk_start(
     When the ``--only`` snapshot source is DEGRADED, append the shared loud advisory
     so ``--dry-run --only`` shows the partial-upstream caveat too.
     """
-    if resume_from is not None:
+    step = resume_from or resume_after
+    if step is not None:
+        config = compiled.node_configs.get(step)
+        is_loop = config is not None and config.loop_config is not None
+        iteration = (resume_iteration or 1) if is_loop else 1
         try:
             entry_node, final = seed_walk_entry(
-                shared, resume_events or [], entry=resume_from, start_node=compiled.start_node
+                shared,
+                resume_events or [],
+                entry=step,
+                start_node=compiled.start_node,
+                entry_iteration=iteration,
             )
         except CompilationError:
             raise ResumeNotResumableError(
-                f"Step '{resume_from}' no longer exists in the workflow — it was renamed or "
-                f"removed since the failed run.",
+                f"Step '{step}' no longer exists in the workflow — it was renamed or removed since the failed run.",
                 execution_id=resume_source_id,
                 suggestions=["Re-run the workflow from the start instead of resuming."],
             ) from None
-        restored = list(final)
-        return entry_node, ResumePlanInfo(
-            entry_node=resume_from, restored_nodes=restored, execution_id=resume_source_id or ""
+        if is_loop and resume_iteration is None:
+            diagnostics.append(build_loop_restart_diagnostic(step, source="planner"))
+        if resume_after is not None:
+            # The planner's own count/cap dicts: its loop_stopped/advisory stay in this scratch store.
+            after = continue_after_step(
+                entry_node,
+                compiled.node_configs[step],
+                shared,
+                {step: iteration - 1},
+                {},
+                source_id=resume_source_id,
+            )
+            iteration = iteration if after is entry_node else 1
+            entry_node = after
+        restored = [nid for nid in final if nid != entry_node.node_id]
+        info = ResumePlanInfo(
+            entry_node=entry_node.node_id, restored_nodes=restored, execution_id=resume_source_id or ""
         )
+        return entry_node, info, iteration
     if this_only is None:
-        return compiled.start_node, None
+        return compiled.start_node, None, 1
     events, source_status = load_snapshot_or_raise(workflow_path, this_only)
     entry_node, _ = seed_walk_entry(shared, events, entry=this_only, start_node=compiled.start_node)
     if source_status == "degraded":
         diagnostics.append(build_snapshot_degraded_diagnostic(this_only, source="planner"))
-    return entry_node, None
+    return entry_node, None, 1
 
 
 def create_planner_shared(
@@ -901,8 +944,10 @@ def _annotate_entry(entry: PlanEntry, config: NodeConfig, shared: dict[str, Any]
       never gates (nothing to approve); stamping it would make the ⏸ footer
       and the JSON ``approval`` field promise a pause the engine won't make.
     - ``loop_iterations`` (issue #445): the planner walks a ``loop:`` body ONCE
-      — re-entry is not an edge — then records the resolved ``max_iterations``
-      upper bound. ``_summarize`` multiplies the entry's single-pass
+      — re-entry is not an edge — then records the iterations still possible:
+      the resolved ``max_iterations`` minus those a resumed loop step already
+      completed (``__iteration__`` - 1, still set inside the walk's loop scope).
+      ``_summarize`` multiplies the entry's single-pass
       cost/duration (and any sub_plan rollup) by this factor and flips the plan
       to ``upper_bound`` cost basis: the honest worst case for a cost gate.
     """
@@ -917,7 +962,7 @@ def _annotate_entry(entry: PlanEntry, config: NodeConfig, shared: dict[str, Any]
         # Unresolvable template cap at plan time → use the hard ceiling as the
         # conservative upper bound rather than crashing the dry run.
         cap = MAX_NODE_VISITS
-    return replace(entry, loop_iterations=cap)
+    return replace(entry, loop_iterations=max(cap - (shared.get("__iteration__", 1) - 1), 1))
 
 
 def _plan_standard_node(

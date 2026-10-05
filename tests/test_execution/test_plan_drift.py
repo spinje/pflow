@@ -2770,6 +2770,148 @@ def test_engine_and_planner_resume_entry_state_match(tmp_path) -> None:
 
 
 @pytest.mark.trace_files
+def test_engine_and_planner_mid_loop_resume_state_match(tmp_path) -> None:
+    """Engine↔planner parity for a loop step resumed mid-loop (Task 179).
+
+    K fails at iteration 3 of 4. Both sides seed K's iteration-2 output (the carry and
+    condition source) beside the upstream, list only the upstream as restored, and enter
+    K at iteration 3 — the planner's ``__iteration__`` is 3 while it plans K, so its loop
+    entry charges the 2 iterations still possible, not the whole cap.
+    """
+    from pflow.execution.plan import _build_plan_with_shared
+    from pflow.execution.workflow_resolver import resolve_workflow
+    from pflow.runtime.resume_source import load_resume_source
+
+    flag = tmp_path / "k-fail"
+    flag.write_text("1", encoding="utf-8")
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        "# Mid-loop resume\n\nA carried loop failing at its third iteration.\n\n## Steps\n\n"
+        "### first\n\nUpstream.\n\n- type: shell\n\n```shell command\nprintf first-v1\n```\n\n"
+        "### k\n\nAccumulate.\n\n- type: code\n- inputs:\n    acc: seed\n    i: ${__iteration__}\n"
+        "- loop:\n    carry:\n      acc: ${k.result.acc}\n    while: ${k.result.more}\n    max_iterations: 4\n\n"
+        "```python code\nfrom pathlib import Path\n\nacc: str\ni: int\n"
+        f"if i == 3 and Path({flag.as_posix()!r}).read_text(encoding='utf-8') == '1':\n"
+        "    raise RuntimeError('injected')\n"
+        "result: dict = {'acc': f'{i}:{acc}', 'more': i < 4}\n```\n",
+        encoding="utf-8",
+    )
+    ir = resolve_workflow(str(wf)).ir
+
+    failed = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert not failed.success, [d.message for d in failed.diagnostics]
+    assert failed.trace is not None, [d.message for d in failed.diagnostics]
+    trace_path = failed.trace.save_to_file()
+    source = load_resume_source(execution_id=failed.trace.execution_id, debug_dir=trace_path.parent)
+    assert (source.entry_node_id, source.entry_iteration) == ("k", 3)
+    flag.write_text("0", encoding="utf-8")
+
+    compiled, registry = _compile(ir)
+    plan, planner_shared = _build_plan_with_shared(
+        compiled,
+        {},
+        MemoizationCache(),
+        registry,
+        workflow_name="wf",
+        resume_from=source.entry_node_id,
+        resume_events=source.events,
+        resume_source_id=source.execution_id,
+        resume_iteration=source.entry_iteration,
+        _parent_workflow_file=str(wf),
+    )
+    engine_result = WorkflowRunner().run(str(wf), {}, RunnerConfig(), resume_source=source)
+    assert engine_result.success, [d.message for d in engine_result.diagnostics]
+    engine_execution = engine_result.shared_after["__execution__"]
+
+    # Entry K at iteration 3 on both sides; only the upstream is "restored".
+    assert engine_execution["resume_entry_node"] == "k"
+    assert [entry.node_id for entry in plan.entries] == ["k"]
+    assert plan.resume is not None
+    assert plan.resume.restored_nodes == engine_execution["restored_nodes"] == ["first"]
+    assert plan.entries[0].loop_iterations == 2
+    # K's seed is its iteration-2 output; the engine continued from exactly that.
+    assert planner_shared["k"]["result"] == {"acc": "2:1:seed", "more": True}
+    assert planner_shared["first"] == engine_result.shared_after["first"]
+    assert engine_result.shared_after["k"]["result"]["acc"] == "4:3:2:1:seed"
+
+
+def _after_loop_step_source(tmp_path: Path, *, stop_after: int) -> tuple[Path, Any]:
+    """A real run of prep → k (code loop, 3 iterations) → s, its trace cut right after k's
+    iteration ``stop_after`` (no trailer: an interrupted run) and loaded as a resume source —
+    the between-nodes shape ``(None, "k")`` at iteration ``stop_after + 1``."""
+    import json
+
+    from pflow.runtime.resume_source import load_resume_source
+
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        "# After a loop step\n\nA loop step between two steps.\n\n## Steps\n\n"
+        "### prep\n\nUpstream.\n\n- type: shell\n\n```shell command\nprintf ready\n```\n\n"
+        "### k\n\nLoop three times.\n\n- type: code\n- inputs:\n    i: ${__iteration__}\n"
+        "- loop:\n    while: ${k.result.more}\n    max_iterations: 5\n\n"
+        "```python code\ni: int\nresult: dict = {'more': i < 3}\n```\n\n"
+        "### s\n\nAfter the loop.\n\n- type: shell\n\n```shell command\nprintf done\n```\n",
+        encoding="utf-8",
+    )
+    full = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert full.success, [d.message for d in full.diagnostics]
+    trace = full.trace.save_to_file()
+    lines = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+    cut = next(
+        i
+        for i, line in enumerate(lines)
+        if line["kind"] == "event" and line["node_id"] == "k" and line.get("iteration") == stop_after
+    )
+    trace.write_text("\n".join(json.dumps(line) for line in lines[: cut + 1]) + "\n", encoding="utf-8")
+    source = load_resume_source(execution_id=full.trace.execution_id, debug_dir=trace.parent)
+    assert (source.entry_node_id, source.last_completed_node_id, source.entry_iteration) == (None, "k", stop_after + 1)
+    return wf, source
+
+
+@pytest.mark.trace_files
+@pytest.mark.parametrize(
+    ("stop_after", "planned", "entry", "restored", "ran"),
+    [
+        (1, ["k", "s"], "k", ["prep"], [2, 3]),  # condition still true → K re-enters at iteration 2
+        (3, ["s"], "s", ["prep", "k"], []),  # condition false → K's output stands; exit to s
+    ],
+)
+def test_engine_and_planner_resume_after_loop_step_decide_alike(
+    tmp_path, stop_after, planned, entry, restored, ran
+) -> None:
+    """Task 179 D3: resume AFTER a loop step — the planner runs the engine's own
+    ``continue_after_step`` on its seeded store, so the preview and the run agree on whether
+    K re-enters or the walk exits to its successor, and on what is restored."""
+    from pflow.execution.plan import _build_plan_with_shared
+    from pflow.execution.workflow_resolver import resolve_workflow
+
+    wf, source = _after_loop_step_source(tmp_path, stop_after=stop_after)
+    compiled, registry = _compile(resolve_workflow(str(wf)).ir)
+    plan, _ = _build_plan_with_shared(
+        compiled,
+        {},
+        MemoizationCache(),
+        registry,
+        workflow_name="wf",
+        resume_after=source.last_completed_node_id,
+        resume_events=source.events,
+        resume_source_id=source.execution_id,
+        resume_iteration=source.entry_iteration,
+        _parent_workflow_file=str(wf),
+    )
+    result = WorkflowRunner().run(str(wf), {}, RunnerConfig(), resume_source=source)
+    assert result.success, [d.message for d in result.diagnostics]
+    execution = result.shared_after["__execution__"]
+
+    assert [e.node_id for e in plan.entries] == planned
+    assert plan.resume is not None
+    assert plan.resume.entry_node == execution["resume_entry_node"] == entry
+    assert plan.resume.restored_nodes == execution["restored_nodes"] == restored
+    live = [(e["node_id"], e.get("iteration")) for e in result.trace.events if not e.get("restored")]
+    assert live == [*(("k", n) for n in ran), ("s", None)]
+
+
+@pytest.mark.trace_files
 def test_engine_and_planner_paused_approval_entry_state_match(tmp_path) -> None:
     """Engine↔planner parity on a PAUSED-approval source (Task 171 Phase 2).
 

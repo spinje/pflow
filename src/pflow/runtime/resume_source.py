@@ -79,6 +79,13 @@ class ResumeSource:
     (`entry_node_id == paused_node_id`); a paused escalation is between-nodes
     (`entry_node_id=None`, `last_completed_node_id == paused_node_id`) so the
     CLI resolves the successor exactly like the incomplete arm.
+
+    Task 179: `entry_iteration` is the loop iteration the resume step (the entry,
+    or the last completed step of a between-nodes source) continues at — the
+    resume entry is a *(step, iteration)* pair. `1` when the step never ran;
+    `None` when its events carry no recorded position (a non-loop step, or a
+    trace that predates loop position — a loop step then restarts at 1 and says
+    so). Derived by `resume_iteration`, the one reader of the events' field.
     """
 
     path: Path
@@ -91,6 +98,7 @@ class ResumeSource:
     content_hash: str | None
     paused_node_id: str | None = None
     gate_request: dict[str, Any] | None = None
+    entry_iteration: int | None = 1
 
 
 def _is_trace_locked(path: Path) -> bool | None:
@@ -307,7 +315,9 @@ def _select_resume_trace(
     _raise_resume_source_missing(debug_dir, workflow_path, execution_id)
 
 
-def _seedable_final_events(events: list[dict[str, Any]], entry_node_id: str | None) -> dict[str, dict[str, Any]]:
+def _seedable_final_events(
+    events: list[dict[str, Any]], entry_node_id: str | None, entry_iteration: int = 1
+) -> dict[str, dict[str, Any]]:
     """THE seedable set: each node's final event BEFORE the entry, minus failed-final-status nodes.
 
     The single derivation shared by seeding (``seed_snapshot_into_shared``) and
@@ -317,13 +327,27 @@ def _seedable_final_events(events: list[dict[str, Any]], entry_node_id: str | No
     refuse a resume) and nothing less. Failed-final-status nodes are excluded
     (seed fidelity — their data lived in ``__failures__``, never the store).
     ``entry_node_id=None`` (incomplete between-nodes resume) scopes to ALL
-    events. The slice ends before the entry's FIRST event, so the returned map
-    provably never contains the entry itself.
+    events.
+
+    The entry is a *(step, iteration)* pair (Task 179): the slice ends before the
+    entry's first event at ``entry_iteration`` or later (a keyless event counts as
+    iteration 1), so the map never holds the iteration about to run — the entry's
+    EARLIER iterations are upstream of it and seed like any completed work. ``>=``,
+    not ``==``: a resumed attempt holds the entry's restored iteration N-1 and then
+    live N.., never an iteration-1 event, so ``--only`` (iteration 1) against it
+    must still stop at the entry's first event. No such event → the whole trace.
     """
     if entry_node_id is None:
         scope = events
     else:
-        idx = next((i for i, e in enumerate(events) if e.get("node_id") == entry_node_id), None)
+        idx = next(
+            (
+                i
+                for i, e in enumerate(events)
+                if e.get("node_id") == entry_node_id and (e.get("iteration") or 1) >= entry_iteration
+            ),
+            None,
+        )
         scope = events if idx is None else events[:idx]
     return {nid: ev for nid, ev in final_events_by_node(scope).items() if ev.get("status") != "failed"}
 
@@ -341,18 +365,27 @@ def _apply_gate_resolutions(path: Path, events: list[dict[str, Any]]) -> None:
     upstream escalation reads as undecided and ``_guard_seed_scope`` false-refuses
     the resume, claiming no human decided when one did. Mirrors
     ``run_escalation_gate``'s write shape exactly (dict marker gains
-    ``decision``; string marker becomes ``{"question", "decision"}``). Applied to
-    each node's FINAL event in file order, so a looping node's last resolution
-    wins — pairing with the final event that seeding restores.
+    ``decision``; string marker becomes ``{"question", "decision"}``).
+
+    A decision folds onto the event of the ITERATION that raised it (the line's
+    ``iteration``, trace 2.8.0): a loop step's earlier iterations can be seeded as
+    the upstream of a resumed iteration, so iteration 1's answer must decide
+    iteration 1's marker — never a later, unanswered one. Lines without the key
+    (non-loop steps, pre-2.8.0 traces) pair with the node's final event.
     """
     final = final_events_by_node(events)
+    by_iteration = {(e.get("node_id"), e["iteration"]): e for e in events if e.get("iteration") is not None}
     for line in _iter_raw_trace_lines(path):
         if line.get("kind") != "gate" or line.get("phase") != "resolution":
             continue
         decision = line.get("decision")
         if not isinstance(decision, dict):
             continue  # approval/denied/non-interactive resolutions carry no decision
-        _fold_decision_into_event(final.get(line.get("node_id")), decision)  # type: ignore[arg-type]
+        node_id, iteration = line.get("node_id"), line.get("iteration")
+        if not isinstance(node_id, str):
+            continue
+        target = final.get(node_id) if iteration is None else by_iteration.get((node_id, iteration))
+        _fold_decision_into_event(target, decision)
 
 
 def _fold_decision_into_event(event: dict[str, Any] | None, decision: dict[str, Any]) -> None:
@@ -487,8 +520,8 @@ def _resolve_resume_entry(path: Path, data: dict[str, Any], execution_id: str) -
             # CLI resolves the single default successor post-compile.
             return None, paused_node_id
         # Approval: the gate fires at engine step 7.5, BEFORE node.start — the
-        # gated node has NO event in the trace, so `_seedable_final_events`
-        # provably excludes it and the seed-scope guards compose unchanged.
+        # gated iteration has NO event (a loop step's earlier iterations do), so
+        # the (step, iteration) seed slice never holds it.
         return paused_node_id, None
     if final_status != "failed":
         raise ResumeNotResumableError(
@@ -555,6 +588,31 @@ def _resolve_incomplete_entry(
         trace_path=str(path),
         suggestions=["Run the workflow again from the start."],
     )
+
+
+def resume_iteration(events: list[dict[str, Any]], node_id: str | None) -> int | None:
+    """The iteration a resume of ``node_id`` continues at — the ONE reader of the events' ``iteration``.
+
+    No event for the step → ``1`` (nothing of it ran). Its final event carries no
+    ``iteration`` → ``None``: no recorded position (a non-loop step, or a trace
+    that predates 2.8.0). A failed final event that nothing after it recovered →
+    its own iteration (the failed iteration re-runs); otherwise the next one: an
+    approval paused at N or a kill mid-N leaves N-1 as the last completed, an
+    answered escalation at N (or a kill before the re-entry decision) continues
+    after N, and a step re-entered after its failure was recovered (an on-error
+    edge leading back to it) is already past that iteration.
+    """
+    if node_id is None:
+        return 1
+    index = next((i for i in range(len(events) - 1, -1, -1) if events[i].get("node_id") == node_id), None)
+    if index is None:
+        return 1
+    final = events[index]
+    iteration = final.get("iteration")
+    if not isinstance(iteration, int):
+        return None
+    recovered = any(e.get("status") in ("success", "cached") for e in events[index + 1 :])
+    return iteration if final.get("status") == "failed" and not recovered else iteration + 1
 
 
 def _guard_seed_scope(scope: Iterable[dict[str, Any]], execution_id: str, path: Path) -> None:
@@ -650,7 +708,7 @@ def _validate_gate_answer(
 def _apply_paused_answer(
     path: Path,
     data: dict[str, Any],
-    events: list[dict[str, Any]],
+    seedable: dict[str, dict[str, Any]],
     gate_answer: dict[str, Any] | None,
     execution_id: str,
 ) -> tuple[str | None, dict[str, Any] | None]:
@@ -661,7 +719,8 @@ def _apply_paused_answer(
     answers nothing; refuse rather than ignore it — loader-side so by-exec-id
     and by-name behave identically). Paused → the answer must exist and match
     the gate kind (``_validate_gate_answer``); an escalation's ``chosen`` is then
-    folded into the paused node's final event using the identical marker shape
+    folded into the paused node's SEEDED event (``seedable`` — an escalation
+    source is between-nodes, so that is its final event) using the identical marker shape
     the source run would have recorded — so ``_guard_seed_scope`` sees a DECIDED
     marker, seeding restores it, and the engine's re-record loop writes it into
     the attempt trace (self-containment for resume-of-a-resume with zero new
@@ -687,7 +746,7 @@ def _apply_paused_answer(
             "chosen": _map_choose_answer(str(gate_answer["chosen"]), gate_request),
             "notes": gate_answer.get("notes"),
         }
-        _fold_decision_into_event(final_events_by_node(events).get(paused_node_id), decision)
+        _fold_decision_into_event(seedable.get(paused_node_id), decision)
     return paused_node_id, gate_request
 
 
@@ -781,9 +840,11 @@ def load_resume_source(
     entry_node_id, last_completed_node_id = _resolve_resume_entry(path, data, source_execution_id)
 
     events = list(data.get("nodes") or [])
+    entry_iteration = resume_iteration(events, entry_node_id or last_completed_node_id)
     _apply_gate_resolutions(path, events)
-    paused_node_id, gate_request = _apply_paused_answer(path, data, events, gate_answer, source_execution_id)
-    _guard_seed_scope(_seedable_final_events(events, entry_node_id).values(), source_execution_id, path)
+    seedable = _seedable_final_events(events, entry_node_id, entry_iteration or 1)
+    paused_node_id, gate_request = _apply_paused_answer(path, data, seedable, gate_answer, source_execution_id)
+    _guard_seed_scope(seedable.values(), source_execution_id, path)
 
     return ResumeSource(
         path=path,
@@ -796,6 +857,7 @@ def load_resume_source(
         content_hash=data.get("content_hash"),
         paused_node_id=paused_node_id,
         gate_request=gate_request,
+        entry_iteration=entry_iteration,
     )
 
 
@@ -812,6 +874,7 @@ def seed_snapshot_into_shared(
     events: list[dict[str, Any]],
     *,
     exclude: str,
+    exclude_iteration: int = 1,
 ) -> dict[str, dict[str, Any]]:
     """Seed the target's UPSTREAM outputs from a snapshot into ``shared``.
 
@@ -840,13 +903,17 @@ def seed_snapshot_into_shared(
     genuinely missing one then surfaces as the normal loud unresolved-reference
     error.
 
-    NEVER seeds ``exclude`` itself — ``_seedable_final_events``'s slice ends
-    before the target's first event, so the target must execute fresh, never
-    read a stale copy of itself. Returns that seedable map (failed-final-status
-    nodes excluded), so callers derive ``restored_nodes`` — and the resume
-    re-record loop — from exactly what was seeded, without a second pass.
+    NEVER seeds the iteration about to run: the slice ends before the target's
+    first event at ``exclude_iteration`` or later (``_seedable_final_events``).
+    At the default ``1`` (``--only``, a non-loop resume) that is the target's
+    first event, so it executes fresh against no copy of itself; a loop step
+    resumed at iteration N is seeded with its iteration N-1 output — the carry
+    and condition source the next iteration reads. Returns that seedable map
+    (failed-final-status nodes excluded) so callers derive the resume re-record
+    loop from exactly what was seeded; ``restored_nodes`` is that map minus the
+    target (it runs).
     """
-    final = _seedable_final_events(events, exclude)
+    final = _seedable_final_events(events, exclude, exclude_iteration)
     for nid, ev in final.items():
         output = ev.get("node_output")
         if output is None:

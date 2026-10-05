@@ -12,7 +12,7 @@ second numbered pipeline here.
 | Cache verdict differs between plan and run | `plan_node.py::plan_node` |
 | Cache application, metrics, trace, progress | `instrumentation.py` |
 | Batch failure, item retries, aggregation | `batch_executor.py::execute_batch`, `_execute_batch_item`, `build_batch_output` |
-| Loop conditions, caps, carried inputs | `loop_control.py` |
+| Loop conditions, caps, carried inputs; the re-entry decision | `loop_control.py` (`should_reenter`) |
 | Approval/escalation | `gate.py`; pause eligibility in `engine.py::_gate_pausable` and `_execute_node` |
 | Parameter resolution/type conversion | `template_resolution.py::resolve_templates` |
 | Structured unresolved-reference diagnostic | `template_errors.py`; upstream stderr in `error_context.py` |
@@ -48,15 +48,18 @@ Cache hits return before approval. On a cache miss, approval precedes the start
 callback and `node.start` trace marker, so denied nodes never appear as started.
 
 Gate exceptions bypass ordinary failure archival. A sub-workflow host must still
-close the correlation frame reserved at descent. Resolver bugs are errors, not
-pauses. The escalation gate runs after trace/completion and before loop re-entry.
+close the correlation frame reserved at descent — only for a gate from its child
+(`not originating`): a gate at the host's own level fired before this visit
+reserved a frame, or after step 16 consumed it (#659). Resolver bugs are errors,
+not pauses. The escalation gate runs after trace/completion and before loop re-entry.
 
 Pause eligibility is deliberately narrow; `_execute_node` and `_gate_pausable`
 are the authorities. It requires the originating `GateNotInteractiveError`, a
 root/non-nested engine, no parallel batch, no `--only`, a real workflow identity
-(not `ir-hash:`), and a collector. Approval additionally requires no loop or the
-loop's first iteration (resume restarts loops at 1); escalation requires no loop,
-a non-code node, a non-`end` action, and a default successor.
+(not `ir-hash:`), and a collector. Approval requires nothing further; escalation
+requires a non-code node, a non-`end` action, and a default successor. A resumed
+loop step continues at its saved iteration; `resume_after` runs the re-entry
+decision first (`continue_after_step`).
 The runner requires tracing enabled before returning PAUSED. A usable resume
 token additionally requires successful persistence; an in-memory paused stamp
 alone is insufficient.

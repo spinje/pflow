@@ -26,7 +26,6 @@ from pflow.core.exceptions import (
     GateNotInteractiveError,
     GateResolverError,
     LoopCarryError,
-    LoopConditionError,
     ResumeNotResumableError,
 )
 from pflow.core.gate import GATE_KIND_APPROVAL
@@ -64,7 +63,7 @@ from .instrumentation import (
     write_execution_history,
     write_memo_cache,
 )
-from .loop_control import evaluate_loop_condition, is_carry_iteration, loop_runtime_scope, resolve_loop_cap
+from .loop_control import is_carry_iteration, loop_runtime_scope, should_reenter
 from .namespaced_store import NamespacedSharedStore
 from .plan_node import NodePlan, plan_node
 from .template_resolution import resolve_templates
@@ -95,39 +94,32 @@ _NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
 _CLEAN_SUCCESS_ACTIONS = frozenset({"", "default", "end"})
 
 
-def _gate_pausable(request: Any, config: NodeConfig, node: Any, action: Any, iteration: int | None) -> bool:
+def _gate_pausable(request: Any, config: NodeConfig, node: Any, action: Any) -> bool:
     """Only stamp ``paused`` when the resume path can honor the token (Task 171: pause = promise).
 
-    Loop re-entry state is engine-ephemeral: a resumed loop node restarts at
-    iteration 1, so no gate kind can resume mid-loop.
+    Approvals are always honorable: they resume AT the gated (step, iteration)
+    — the gate fires at step 7.5, before ``node.start``, so the gated action never
+    ran, and a loop step continues at the gated iteration (Task 179). They need no
+    preflight mirror: their entry is the gated node itself, never a successor.
 
-    Approvals resume AT the gated node, and the gate fires at step 7.5 (before
-    ``node.start``), so the gated action never ran — but inside a loop only the
-    FIRST iteration (``iteration`` = the loop's 1-based ``__iteration__``) is
-    honorable. From the second on, the restart would re-run the approved
-    iterations and spend the answer on an action the human never saw (#615), so
-    the gate fails loudly instead (its error names ``--auto-approve``).
-    Approvals need no preflight mirror: their entry is the gated node itself,
-    never a between-nodes successor.
-
-    Escalations resume at the node's SUCCESSOR, so they are pausable only when
-    that successor is resolvable. Each escalation clause mirrors a refusal arm in
+    Escalations resume AFTER the node — at its successor, or, for a loop step, at
+    whatever ``loop_control.should_reenter`` decides on resume (another iteration
+    or the exit). Three conjuncts, each mirroring a refusal arm in
     ``resume_preflight._resolve_between_nodes_entry`` (execution/resume_preflight.py)
     KIND-for-kind, so the producer never emits a token the resume path bounces.
     The CLI-side refusals stay as belt-and-braces — the workflow can be edited
     between pause and resume (hash gate + ``--force``).
     """
     if request.kind == GATE_KIND_APPROVAL:
-        return config.loop_config is None or iteration == 1
+        return True
     return (
-        # A restored loop node can't resume mid-loop (see above).
-        config.loop_config is None
         # A code node is a dynamic router: its successor can't be known from the graph alone.
-        and config.node_type_name != "PythonCodeNode"
+        config.node_type_name != "PythonCodeNode"
         # Terminal action: the escalating step was the last one — nothing left to run.
         and str(action or "") != "end"
         # Escalations fire only on clean-success actions, so the successor (when
-        # it exists) is the single default one.
+        # it exists) is the single default one. Kept for a loop step too: a final
+        # loop step's escalation stays unpausable (Task 179 ruling (b)).
         and node.successors.get("default") is not None
     )
 
@@ -600,6 +592,7 @@ def seed_walk_entry(
     *,
     entry: str,
     start_node: Any,
+    entry_iteration: int = 1,
 ) -> tuple[Any, dict[str, dict[str, Any]]]:
     """Seed upstream outputs from a prior run's events and locate the walk entry node.
 
@@ -611,10 +604,12 @@ def seed_walk_entry(
     re-entry + planner resume view) becomes additional callers of this exact
     composition.
 
-    Returns ``(entry_node, seeded_final_events_by_node)`` — the seeded map
-    provably never contains ``entry`` itself (its scope slice ends before the
-    entry's first event), so callers use its keys as ``restored_nodes``
-    directly. Deliberately NOTHING else is shared here (scope guard: if this
+    The entry is a *(step, iteration)* pair (Task 179): ``entry_iteration`` refines
+    the entry's identity, it is not a mode — ``--only`` is iteration 1. Returns
+    ``(entry_node, seeded_final_events_by_node)``; the map never holds the
+    iteration about to run, but holds the entry's own previous iteration when it
+    resumes a loop past iteration 1 — so ``restored_nodes`` is its keys minus the
+    entry. Deliberately NOTHING else is shared here (scope guard: if this
     grows a mode flag or callback, back off): loading events,
     ``initialize_execution_state``, ``restored_nodes``/``only_node`` stamping,
     and degraded advisories all stay caller-side — they differ per surface by
@@ -622,8 +617,45 @@ def seed_walk_entry(
     """
     from pflow.runtime.resume_source import seed_snapshot_into_shared
 
-    final = seed_snapshot_into_shared(shared, events, exclude=entry)
+    final = seed_snapshot_into_shared(shared, events, exclude=entry, exclude_iteration=entry_iteration)
     return find_node_by_id(start_node, entry), final
+
+
+def continue_after_step(
+    node: Any,
+    config: NodeConfig,
+    shared: dict[str, Any],
+    loop_counts: dict[str, int],
+    loop_caps: dict[str, int],
+    *,
+    source_id: str | None,
+) -> Any:
+    """The walk entry for a resume AFTER the completed step ``node`` (Task 179).
+
+    Makes the decision the walk would have made after that step: ``should_reenter``
+    (a loop step, its count restored) → ``node`` again; otherwise its default
+    successor. Shared by the engine's ``_prepare_resume`` and the dry-run planner so
+    the preview and the run cannot diverge. A step without a default successor is
+    reachable only via ``--force`` on an edited workflow — refused, never ended silently.
+    Like the walk, the decision sees the completed iteration as ``${__iteration__}``
+    (a condition or cap may reference it), cleared before the entry runs.
+    """
+    if config.loop_config is not None:
+        shared["__iteration__"] = loop_counts[config.node_id]
+    try:
+        reenter = should_reenter(config, shared, config.node_id, loop_counts, loop_caps)
+    finally:
+        shared.pop("__iteration__", None)
+    if reenter:
+        return node
+    decision = route_action("default", node.successors)
+    if decision.kind is not RouteKind.FOLLOW:
+        raise ResumeNotResumableError(
+            f"Step '{config.node_id}' has no next step to continue at — it was the final step.",
+            execution_id=source_id,
+            suggestions=["Re-run the workflow from the start instead of resuming."],
+        )
+    return decision.next_node
 
 
 def build_snapshot_degraded_diagnostic(this_only: str, *, source: Literal["planner", "runtime"]) -> Diagnostic:
@@ -657,6 +689,29 @@ def build_snapshot_degraded_diagnostic(this_only: str, *, source: Literal["plann
     )
 
 
+def build_loop_restart_diagnostic(node_id: str, *, source: Literal["planner", "runtime"]) -> Diagnostic:
+    """Build the ``resume.loop-restart`` INFO ``Diagnostic`` (Task 179).
+
+    A saved run that predates loop position (trace < 2.8.0) cannot say which
+    iteration a loop step stopped at, so the resumed step restarts at iteration 1
+    — said, never guessed. INFO, not WARNING: the restored data is not degraded.
+    Shared by ``_prepare_resume`` (sink ``__warnings__["__resume_loop_restart__"]``)
+    and the dry-run planner (sink: the plan's diagnostics) so the two cannot drift.
+    """
+    verb = "would restart" if source == "planner" else "restarted"
+    return Diagnostic(
+        severity=Severity.INFO,
+        title="Loop restarts at iteration 1",
+        message=(
+            f"Loop step '{node_id}' {verb} at iteration 1: the saved run predates loop position, "
+            f"so the iteration it stopped at is unknown. Earlier iterations run again."
+        ),
+        node_id=node_id,
+        source=source,
+        id="resume.loop-restart",
+    )
+
+
 class WorkflowEngine:
     """Executes a CompiledWorkflow by walking the node graph and handling all runtime concerns."""
 
@@ -668,12 +723,14 @@ class WorkflowEngine:
         workflow_path: str | None = None,
         snapshot_events: list[dict] | None = None,
         resume_from: str | None = None,
+        resume_after: str | None = None,
         resume_events: list[dict] | None = None,
         resume_source_id: str | None = None,
+        resume_iteration: int | None = 1,
         nested: bool = False,
     ):
-        if resume_from is not None and only_node is not None:
-            raise ValueError("resume_from and only_node are mutually exclusive")
+        if sum(target is not None for target in (only_node, resume_from, resume_after)) > 1:
+            raise ValueError("only_node, resume_from and resume_after are mutually exclusive")
         self.metrics = metrics_collector
         self.trace = trace_collector
         self.only_node = only_node
@@ -692,8 +749,14 @@ class WorkflowEngine:
         # source run's execution_id, stamped into ``__execution__`` for the
         # display/JSON surface. All default ``None`` (normal full run).
         self.resume_from = resume_from
+        # Task 179: resume AFTER this completed loop step (an answered escalation, or a
+        # kill before the re-entry decision) — the engine makes that decision on resume.
+        self.resume_after = resume_after
         self.resume_events = resume_events
         self.resume_source_id = resume_source_id
+        # Task 179: the loop iteration the resume step (``resume_from`` / ``resume_after``)
+        # continues at (``ResumeSource.entry_iteration``); ``None`` = no recorded position (= 1).
+        self.resume_iteration = resume_iteration
         # Task 171: True for CHILD engines (the one construction site:
         # workflow_executor.py). Node ids are author-chosen and not unique across
         # the parent/child boundary, so the durable-pause arm needs an explicit
@@ -792,15 +855,16 @@ class WorkflowEngine:
         if "__execution__" in shared and "node_visit_counts" in shared["__execution__"]:
             shared["__execution__"]["node_visit_counts"] = {}
 
+        # issue #445: per-node loop iteration counters (the loop's OWN count,
+        # distinct from the hard ``node_visit_counts`` guard) and resolved caps.
+        # Created before the entry so a resume can restore its step's count.
+        loop_counts: dict[str, int] = {}
+        loop_caps: dict[str, int] = {}
         # 2. Walk graph, entering at the start node — or at the failed node K
         # when resuming (Task 164: a parameterized entry into the one loop,
         # never a second traversal).
-        curr = self._walk_entry(workflow, shared)
+        curr = self._walk_entry(workflow, shared, loop_counts, loop_caps)
         last_action = None
-        # issue #445: per-node loop iteration counters (the loop's OWN count,
-        # distinct from the hard ``node_visit_counts`` guard) and resolved caps.
-        loop_counts: dict[str, int] = {}
-        loop_caps: dict[str, int] = {}
         try:
             while curr is not None:
                 node_id = getattr(curr, "node_id", None)
@@ -839,7 +903,7 @@ class WorkflowEngine:
                 # routing so neither a post-loop node NOR an on-error handler reads
                 # a stale value, then fall through to normal successor routing.
                 if config.loop_config is not None:
-                    if not str(last_action or "").startswith("error") and self._loop_should_reenter(
+                    if not str(last_action or "").startswith("error") and should_reenter(
                         config, shared, node_id, loop_counts, loop_caps
                     ):
                         continue
@@ -908,14 +972,18 @@ class WorkflowEngine:
         self._populate_outputs(workflow, shared, last_action)
         return str(last_action) if last_action else "default"
 
-    def _walk_entry(self, workflow: CompiledWorkflow, shared: dict[str, Any]) -> Any:
-        """Return the walk's entry node: ``start_node``, or K when resuming (Task 164)."""
-        if self.resume_from is not None:
-            return self._prepare_resume(workflow, shared)
+    def _walk_entry(
+        self, workflow: CompiledWorkflow, shared: dict[str, Any], loop_counts: dict[str, int], loop_caps: dict[str, int]
+    ) -> Any:
+        """Return the walk's entry node: ``start_node``, or the resume entry (Task 164 / 179)."""
+        if self.resume_from is not None or self.resume_after is not None:
+            return self._prepare_resume(workflow, shared, loop_counts, loop_caps)
         return workflow.start_node
 
-    def _prepare_resume(self, workflow: CompiledWorkflow, shared: dict[str, Any]) -> Any:
-        """Seed upstream from the source trace and return the walk entry node K (Task 164).
+    def _prepare_resume(
+        self, workflow: CompiledWorkflow, shared: dict[str, Any], loop_counts: dict[str, int], loop_caps: dict[str, int]
+    ) -> Any:
+        """Seed upstream from the source trace and return the walk entry node (Task 164).
 
         Runs inside ``_run_inner`` on the main thread, after ``start_streaming()``
         — the re-recorded restored events flush right after the meta line. The
@@ -924,36 +992,61 @@ class WorkflowEngine:
         ``__execution__["only_node"]`` (outputs route across the whole resumed
         tail) and adds no ``loop_runtime_scope`` (that's the snapshot's
         single-shot pattern; the walk wraps every node itself).
+
+        A loop step K resumes at its saved iteration N (Task 179): the seed holds
+        K's iteration N-1 output and ``loop_counts[K] = N-1``, so the walk's own
+        increment, carry, condition and cap continue exactly as uninterrupted.
+        ``resume_after`` K (N = the iteration after K's last completed one) then
+        makes the re-entry decision the walk would have made — ``should_reenter``
+        re-enters K, otherwise the walk continues at K's default successor.
         """
+        step = str(self.resume_from or self.resume_after)
+        config = workflow.node_configs.get(step)
+        # A step whose `loop:` was removed since the run (--force) runs plainly, at iteration 1.
+        is_loop = config is not None and config.loop_config is not None
+        iteration = (self.resume_iteration or 1) if is_loop else 1
         try:
             entry_node, final = seed_walk_entry(
-                shared, self.resume_events or [], entry=str(self.resume_from), start_node=workflow.start_node
+                shared,
+                self.resume_events or [],
+                entry=step,
+                start_node=workflow.start_node,
+                entry_iteration=iteration,
             )
         except CompilationError:
             # Without this wrap, a --force resume after K was renamed/removed
             # surfaces find_node_by_id's "compiler/graph bug" error — misattributed.
             raise ResumeNotResumableError(
-                f"Step '{self.resume_from}' no longer exists in the workflow — it was renamed or "
-                f"removed since the failed run.",
+                f"Step '{step}' no longer exists in the workflow — it was renamed or removed since the failed run.",
                 execution_id=self.resume_source_id,
                 suggestions=["Re-run the workflow from the start instead of resuming."],
             ) from None
         initialize_execution_state(shared)
-        restored = list(final)
+        if is_loop:
+            loop_counts[step] = iteration - 1
+            if self.resume_iteration is None:
+                shared.setdefault("__warnings__", {})["__resume_loop_restart__"] = build_loop_restart_diagnostic(
+                    step, source="runtime"
+                )
+        if self.resume_after is not None:
+            entry_node = continue_after_step(
+                entry_node, workflow.node_configs[step], shared, loop_counts, loop_caps, source_id=self.resume_source_id
+            )
         # Engine-only keys, stamped here per the node_state pattern — never added
         # to new_execution_state(). The display/JSON surface reads all three.
-        shared["__execution__"]["restored_nodes"] = restored
+        # Restored = seeded AND not run in this attempt (a resumed loop step runs on).
+        shared["__execution__"]["restored_nodes"] = [nid for nid in final if nid != entry_node.node_id]
         shared["__execution__"]["resumed_from"] = self.resume_source_id
-        shared["__execution__"]["resume_entry_node"] = self.resume_from
-        # Decision 6: re-record each restored node's final event into THIS attempt's
+        shared["__execution__"]["resume_entry_node"] = entry_node.node_id
+        # Decision 6: re-record each SEEDED node's final event into THIS attempt's
         # trace so it is self-contained — resume-of-a-resume and later --only runs
         # seed from the newest attempt alone. cached=True supplies status "cached"
         # (cost exclusion + UI rendering follow with zero further change); no
         # sub_workflow_events/batch_items (seeding never reads them; a childless
-        # cached host is safe for tree()/cost).
+        # cached host is safe for tree()/cost). ``iteration`` is copied so a
+        # resumed loop step's position survives into the attempt.
         if self.trace is not None:
-            for nid in restored:
-                ev = final[nid]
+            for nid, ev in final.items():
                 self.trace.record_node_execution(
                     node_id=nid,
                     node_type=ev.get("node_type", "unknown"),
@@ -962,6 +1055,7 @@ class WorkflowEngine:
                     node_output=ev.get("node_output"),
                     cached=True,
                     restored=True,
+                    iteration=ev.get("iteration"),
                 )
         return entry_node
 
@@ -985,106 +1079,6 @@ class WorkflowEngine:
         """
         shared.setdefault("__warnings__", {})["__only_snapshot__"] = build_snapshot_degraded_diagnostic(
             this_only, source="runtime"
-        )
-
-    def _loop_should_reenter(
-        self,
-        config: NodeConfig,
-        shared: dict[str, Any],
-        node_id: str,
-        loop_counts: dict[str, int],
-        loop_caps: dict[str, int],
-    ) -> bool:
-        """Decide whether a ``loop:`` node re-enters after a clean run (issue #445).
-
-        Order is load-bearing: a falsy condition is a CLEAN drain (``loop_stopped:
-        "condition"``); a truthy condition that has reached the cap is a
-        non-degrading advisory (``loop_stopped: "max_iterations"`` + INFO). The cap
-        counts the loop's OWN iterations and is always ``<= MAX_NODE_VISITS``, so it
-        stops before the hard visit guard would raise.
-
-        The cap is resolved ONCE per loop and memoized in ``loop_caps`` — a
-        ``max_iterations: ${template}`` that resolves to different values across
-        iterations uses its first-iteration value (a loop's cap is fixed by design).
-        """
-        loop_config = config.loop_config
-        if loop_config is None:  # caller guards; defensive for type-narrowing
-            return False
-
-        if loop_config.until_template is not None:
-            should_continue = evaluate_loop_condition(loop_config.until_template, shared, node_id, until=True)
-        elif loop_config.while_template is not None:
-            should_continue = evaluate_loop_condition(loop_config.while_template, shared, node_id)
-        else:
-            raise LoopConditionError(
-                f"Node '{node_id}' loop has neither `while:` nor `until:` configured.",
-                node_id=node_id,
-                suggestion="Declare exactly one loop condition: `while: ${node.output}` or `until: ${node.output}`.",
-            )
-        if not should_continue:
-            self._mark_loop_stopped(shared, node_id, "condition")
-            return False
-
-        cap = loop_caps.get(node_id)
-        if cap is None:
-            cap = resolve_loop_cap(loop_config, shared, node_id)
-            loop_caps[node_id] = cap
-
-        if loop_counts[node_id] >= cap:
-            self._mark_loop_stopped(shared, node_id, "max_iterations")
-            self._emit_loop_cap_advisory(shared, node_id, cap, until=loop_config.until_template is not None)
-            return False
-
-        return True
-
-    @staticmethod
-    def _mark_loop_stopped(shared: dict[str, Any], node_id: str, reason: str) -> None:
-        """Stamp ``loop_stopped`` on the loop node's output so JSON/MCP/CLI can read why it ended."""
-        node_output = shared.get(node_id)
-        if isinstance(node_output, dict):
-            node_output["loop_stopped"] = reason
-
-    @staticmethod
-    def _emit_loop_cap_advisory(shared: dict[str, Any], node_id: str, cap: int, *, until: bool = False) -> None:
-        """Emit a non-degrading INFO advisory when a loop stops because it hit its cap.
-
-        Mirrors the empty-input batch advisory (``batch_executor._push_batch_warnings``):
-        an ``INFO`` Diagnostic written to ``__warnings__`` surfaces in reports / CLI /
-        JSON without flipping the workflow to DEGRADED.
-
-        The wording is polarity-aware (``until``): a ``while:`` loop caps with its
-        condition still *truthy* (it never went falsy); an ``until:`` loop caps with
-        its condition still *falsy* (it never went truthy). Hard-coding the ``while``
-        phrasing for an ``until`` loop would tell the agent to make the source "go
-        falsy" — the exact polarity confusion ``until:`` exists to prevent.
-
-        Overwrite precedence (deliberate): this writes ``__warnings__[node_id]``
-        unconditionally. It is reached only on the non-error re-entry path, and the
-        failure-path writers (``mark_node_failed``) plus batch's advisory writers
-        (batch is mutually exclusive with loop) never coexist with it. The one
-        non-error writer that CAN coexist is an ``llm`` loop body emitting its own
-        INFO/WARNING advisory on the same capping iteration; in that case the cap
-        advisory intentionally WINS (it explains *why the loop stopped* — the more
-        important signal). Per-iteration ``clear_node_failure`` already pops stale
-        warnings on re-entry, so only the final iteration's advisory is at stake.
-        """
-        keyword = "until" if until else "while"
-        still_state = "falsy" if until else "truthy"
-        target_state = "truthy" if until else "falsy"
-        shared.setdefault("__warnings__", {})[node_id] = Diagnostic(
-            severity=Severity.INFO,
-            title="Loop reached max_iterations",
-            message=(
-                f"Loop node '{node_id}' stopped after reaching its max_iterations cap ({cap}) "
-                f"with its `{keyword}:` condition still {still_state}."
-            ),
-            suggestions=[
-                "Expected when capping a stop-on-condition loop. If the loop should have drained "
-                f"naturally, raise max_iterations or check that the `{keyword}:` source eventually goes {target_state}.",
-            ],
-            node_id=node_id,
-            source="runtime",
-            id="loop.max-iterations-reached",
         )
 
     def _populate_outputs(self, workflow: CompiledWorkflow, shared: dict[str, Any], last_action: str | None) -> None:
@@ -1555,12 +1549,12 @@ class WorkflowEngine:
                     # workflow_path is the synthesized "ir-hash:<md5>", never a
                     # file; None = no identity at all) has no source to
                     # re-resolve, so resume ALWAYS refuses its token. Don't
-                    # issue one — same principle as the loop/code/terminal
+                    # issue one — same principle as the code/terminal
                     # refusals in _gate_pausable. Making inline runs resumable
                     # (workflow content in the trace) is a tracked follow-up.
                     and self.workflow_path is not None
                     and not self.workflow_path.startswith("ir-hash:")
-                    and _gate_pausable(gate_exc.request, config, node, action, shared.get("__iteration__"))
+                    and _gate_pausable(gate_exc.request, config, node, action)
                 ):
                     self.trace.gate_outcome = "paused"
                     # The trailer payload (Task 171 pause record): everything the
@@ -1590,8 +1584,14 @@ class WorkflowEngine:
                 # checks its own node's _host_frame as it re-raises in turn).
                 # Batch hosts stay None here: batch-item children run under
                 # buffered collectors (descend() is never called on that path).
+                #
+                # Only for a gate from the CHILD (`not originating`): a gate at THIS
+                # level fired either before exec (7.5 approval — this visit reserved
+                # no frame; `_host_frame` still holds a PREVIOUS loop iteration's, and
+                # recording would overwrite that iteration's event, #659) or after
+                # step 16 already consumed the frame (17.7 escalation).
                 host_frame = getattr(node, "_host_frame", None)
-                if host_frame is not None:
+                if host_frame is not None and not originating:
                     record_trace(
                         config.node_id,
                         config.node_type_name,
