@@ -779,7 +779,12 @@ def _resume_indicator_line(formatted_result: dict[str, Any]) -> str | None:
     resumed_from = execution.get("resumed_from")
     if not resumed_from:
         return None
-    return format_resume_indicator(resumed_from, execution.get("resume_entry_node"), execution.get("nodes_restored", 0))
+    return format_resume_indicator(
+        resumed_from,
+        execution.get("resume_entry_node"),
+        execution.get("nodes_restored", 0),
+        execution.get("resume_entry_iteration", 1),
+    )
 
 
 def _emit_mode_indicators(formatted_result: dict[str, Any]) -> None:

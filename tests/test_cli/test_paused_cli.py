@@ -88,6 +88,7 @@ def test_paused_run_exits_4_with_token_and_gate_content(home, gate_wf):
     assert "<REDACTED>" in result.stderr
     assert "sk-super-secret" not in result.stderr
     assert f"To answer: pflow resume {token} --approve yes|no" in result.stderr
+    assert "Loop iteration" not in result.stderr  # not a loop step (the loop chain test pins presence)
     # The pre-flight warning speaks the post-171 outcome (pause, not fail —
     # "fail" stays only for --no-trace, pinned in test_approval_gate_cli).
     assert "will pause at approval gate(s) [gated]" in result.stderr
@@ -404,25 +405,61 @@ def _effects(marker: Path) -> list[str]:
     return marker.read_text(encoding="utf-8").splitlines() if marker.exists() else []
 
 
-def test_approve_yes_on_loop_gate_answers_one_iteration_then_fails_loudly(home, loop_gate):
-    """#615: `--approve yes` answers the ONE paused gate — iteration 1 runs, and
-    iteration 2 (a new action) is NOT pre-approved. Resume would restart the loop
-    at iteration 1, so iteration 2 must not issue an unhonorable token: it fails
-    (exit 1) naming `--auto-approve`."""
+def test_approve_yes_on_loop_gate_pauses_each_iteration_until_done(home, loop_gate):
+    """Task 179 (supersedes #615's fail-at-iteration-2): `--approve yes` answers the ONE
+    paused gate — that iteration runs, and the next gated iteration pauses again as a NEW
+    token naming its iteration; completed iterations never re-run. Three answers finish a
+    3-iteration loop. The removed #615 warning never prints; the generic run-start note
+    still names the step (it WILL pause again)."""
     wf, marker = loop_gate
-    token = _pause(wf, f"marker={marker}")
+    first = _runner().invoke(cli, [str(wf), f"marker={marker}"])
+    assert first.exit_code == 4, first.stderr
+    assert "   Loop iteration 1" in first.stderr
+    tokens = [_ANY_TOKEN_RE.search(first.stdout).group(1)]
     assert _effects(marker) == []
 
-    resumed = _runner().invoke(cli, ["resume", token, "--approve", "yes"])
-    assert resumed.exit_code == 1, resumed.stderr
+    for done in (1, 2):
+        paused = _runner().invoke(cli, ["resume", tokens[-1], "--approve", "yes"])
+        assert paused.exit_code == 4, paused.stderr
+        assert _effects(marker) == [f"effect {n}" for n in range(1, done + 1)]
+        assert f"   Loop iteration {done + 1}" in paused.stderr
+        assert "will pause at approval gate(s) [gated]" in paused.stderr
+        assert "answers only the first iteration" not in paused.stderr
+        tokens.append(_ANY_TOKEN_RE.search(paused.stdout).group(1))
+
+    finished = _runner().invoke(cli, ["resume", tokens[-1], "--approve", "yes"])
+    assert finished.exit_code == 0, finished.stderr
+    assert _effects(marker) == ["effect 1", "effect 2", "effect 3"]
+    assert len(set(tokens)) == 3
+    for stale in tokens:
+        refused = _runner().invoke(cli, ["resume", stale, "--approve", "yes"])
+        assert refused.exit_code == 1
+        assert "already resumed by a newer attempt" in refused.stdout + refused.stderr
+    assert _effects(marker) == ["effect 1", "effect 2", "effect 3"]
+
+
+def test_loop_gate_position_reaches_every_pause_surface(home, loop_gate):
+    """Task 179 Q6: at iteration 2 the JSON pause document, `resume list` (text + JSON) and
+    the answer-required refusal all carry the iteration — the one ``gate_request`` field."""
+    wf, marker = loop_gate
+    token = _pause(wf, f"marker={marker}")
+    paused = _runner().invoke(cli, ["resume", token, "--approve", "yes", "--output-format", "json"])
+    assert paused.exit_code == 4, paused.stderr
+    document = json.loads(paused.stdout)
+    assert (document["paused_node_id"], document["gate_request"]["iteration"]) == ("gated", 2)
+    token = document["execution_id"]
+
+    listed = _runner().invoke(cli, ["resume", "list"])
+    assert listed.exit_code == 0, listed.stderr
+    assert "approval · iteration 2" in listed.stdout
+    rows = json.loads(_runner().invoke(cli, ["resume", "list", "--output-format", "json"]).stdout)
+    assert [(row["execution_id"], row["iteration"]) for row in rows] == [(token, 2)]
+
+    unanswered = _runner().invoke(cli, ["resume", token])
+    assert unanswered.exit_code == 1
+    assert "Loop iteration 2" in unanswered.stdout + unanswered.stderr
+    assert f"pflow resume {token} --approve yes|no" in unanswered.stdout + unanswered.stderr
     assert _effects(marker) == ["effect 1"]
-    assert "Resume token" not in resumed.stdout
-    assert "Gate 'gated' approved via --approve yes" in resumed.stderr
-    assert "pre-approved via --auto-approve" not in resumed.stderr
-    # Up front: the pre-flight warning names the real outcome (fail, not pause).
-    assert "answers only the first iteration of loop step 'gated'" in resumed.stderr
-    assert "will pause at" not in resumed.stderr
-    assert "--auto-approve=gated" in resumed.stdout + resumed.stderr
 
 
 def test_dry_run_with_answer_on_loop_gate_still_names_auto_approve(home, loop_gate):
@@ -550,6 +587,99 @@ def test_escalation_pause_choose_answers_and_completes(home, esc_wf):
     assert "esc..." not in resumed.stderr  # the escalating step was restored, not re-run
 
 
+_REFORK_WF = """# Re-fork Recipe
+
+The guide's re-fork recipe: a loop step that escalates, then re-runs with the decision.
+
+## Inputs
+
+### log
+
+Per-iteration log of the escalating step.
+
+- type: string
+- required: true
+
+### tail
+
+Proof file the step after the loop appends to.
+
+- type: string
+- required: true
+
+## Steps
+
+### impl
+
+Escalates until a decision is folded in.
+
+- type: escalate-until-decided
+- decision: ${impl.result.escalation.decision ?? ""}
+- log_path: ${log}
+- loop:
+    while: ${impl.result.escalation}
+    max_iterations: 3
+- next: after
+
+### after
+
+Runs once the loop exits.
+
+- type: shell
+
+```shell command
+printf 'applied %s\\n' '${impl.result.applied}' >> '${tail}'
+```
+"""
+
+
+@pytest.fixture
+def refork_registry():
+    """Register the recipe-shaped ``EscalateUntilDecidedNode`` (same pattern as escalating_registry)."""
+    from pflow.registry import Registry
+    from tests.test_runtime.test_gate_pause import EscalateUntilDecidedNode
+
+    registry = Registry()
+    nodes = registry.load()
+    nodes["escalate-until-decided"] = {
+        "module": "tests.test_runtime.test_gate_pause",
+        "class_name": "EscalateUntilDecidedNode",
+        "docstring": EscalateUntilDecidedNode.__doc__ or "",
+        "file_path": "tests/test_runtime/test_gate_pause.py",
+        "type": "core",
+        "interface": {
+            "description": "Test node that escalates until a decision is carried in.",
+            "params": [
+                {"key": "decision", "type": "any", "description": "The previous iteration's decision"},
+                {"key": "log_path", "type": "str", "description": "Per-run log"},
+            ],
+            "inputs": [],
+            "outputs": [{"key": "result", "type": "dict", "description": "Escalation marker or applied decision"}],
+            "actions": ["default"],
+        },
+    }
+    registry.save(nodes)
+
+
+def test_refork_recipe_pauses_and_resumes_non_interactively(home, tmp_path, refork_registry):
+    """Task 179 (spec verification): the documented re-fork recipe — a loop step that
+    escalates — pauses non-interactively at iteration 1; ``--choose`` folds the answer,
+    the engine's re-entry decision runs iteration 2 with it, the loop exits, and the
+    step after the loop runs exactly once."""
+    wf = tmp_path / "refork.pflow.md"
+    wf.write_text(_REFORK_WF, encoding="utf-8")
+    log, tail = tmp_path / "impl.log", tmp_path / "tail.txt"
+
+    token = _pause(wf, f"log={log}", f"tail={tail}")
+    assert log.read_text(encoding="utf-8").splitlines() == ["decision="]
+    assert not tail.exists()
+
+    resumed = _runner().invoke(cli, ["resume", token, "--choose", "1"])
+    assert resumed.exit_code == 0, resumed.stderr
+    assert log.read_text(encoding="utf-8").splitlines() == ["decision=", "decision=left"]
+    assert tail.read_text(encoding="utf-8").splitlines() == ["applied left"]
+
+
 def test_approve_on_escalation_refuses_with_the_right_flag(home, esc_wf):
     token = _pause(esc_wf)
     result = _runner().invoke(cli, ["resume", token, "--approve", "yes"])
@@ -658,3 +788,88 @@ def test_stream_fault_pause_falls_through_to_failed(home, gate_wf, monkeypatch):
     # No dead-end affordance either: there is no file to resume from, so the
     # error document must not advertise a resume_command the loader would refuse.
     assert "resume_command" not in document
+
+
+_OLD_TRACE_THEN_GATE_WF = """# Loop Then Gate
+
+A loop step that fails at its second iteration while the flag says so, then a gated step.
+
+## Inputs
+
+### flag
+
+Fail flag file.
+
+- type: string
+- required: true
+
+## Steps
+
+### k
+
+Loops twice.
+
+- type: code
+- inputs:
+    i: ${__iteration__}
+    flag: ${flag}
+- loop:
+    while: ${k.result}
+    max_iterations: 2
+- next: gated
+
+```python code
+from pathlib import Path
+
+i: int
+flag: str
+if i == 2 and Path(flag).read_text(encoding="utf-8") == "1":
+    raise RuntimeError("injected")
+result: bool = True
+```
+
+### gated
+
+Needs approval.
+
+- type: shell
+- approval: required
+
+```shell command
+echo gated
+```
+"""
+
+
+@pytest.mark.parametrize("output_format", ["text", "json"])
+def test_pause_after_a_restarted_loop_still_says_the_loop_restarted(home, tmp_path, output_format):
+    """Gate review (agent-ux): a resume of a pre-2.8.0 trace restarts the loop at iteration 1
+    and says so — and that advisory must survive when the resumed run then PAUSES at a later
+    gate (the pause document/text used to drop every non-error diagnostic)."""
+    wf = tmp_path / "loop_then_gate.pflow.md"
+    wf.write_text(_OLD_TRACE_THEN_GATE_WF, encoding="utf-8")
+    flag = tmp_path / "flag"
+    flag.write_text("1", encoding="utf-8")
+    failed = _runner().invoke(cli, [str(wf), f"flag={flag}"])
+    assert failed.exit_code == 1, failed.stderr
+    [trace] = (home / ".pflow" / "debug").glob("workflow-trace-*.json")
+    lines = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+    exec_id = lines[0]["execution_id"]
+    # Rewrite into the pre-2.8.0 shape: no recorded loop position.
+    trace.write_text(
+        "\n".join(json.dumps({k: v for k, v in line.items() if k != "iteration"}) for line in lines) + "\n",
+        encoding="utf-8",
+    )
+    flag.write_text("0", encoding="utf-8")
+
+    paused = _runner().invoke(cli, ["resume", exec_id, "--force", "--output-format", output_format])
+    assert paused.exit_code == 4, paused.stderr
+    if output_format == "json":
+        document = json.loads(paused.stdout)
+        assert document["status"] == "paused"
+        assert document["errors"] == []
+        # The loop restarted (and, run to its cap of 2, said so too) before the gate paused.
+        assert {d["id"] for d in document["diagnostics"]} == {"resume.loop-restart", "loop.max-iterations-reached"}
+    else:
+        assert "Paused at 'gated'" in paused.stdout
+        assert "Loop step 'k' restarted at iteration 1" in paused.stderr

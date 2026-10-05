@@ -629,6 +629,9 @@ def record_trace(
         sub_workflow_events=child_trace_events,
         cached=cached,
         frame=frame,
+        # Set only between a loop node's scope entry and the pop before routing — so exactly
+        # the loop node's own events carry it (children run on their own store).
+        iteration=shared.get("__iteration__"),
     )
 
 

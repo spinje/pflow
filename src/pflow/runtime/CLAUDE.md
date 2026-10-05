@@ -106,6 +106,14 @@ version 2 (`startswith("2.")`), not an exact minor version. Automatic discovery
 can skip unreadable candidates; explicit `analyze-cache --from-trace` input
 raises a load error instead. Do not invent a universal catch-and-skip policy.
 
+Loop position (2.8.0): a loop node's events carry `iteration` (stamped from
+`__iteration__` in `engine/instrumentation.py::record_trace`; absent on every other
+event, including a looping host's child events), and so do its `gate` lines and the
+pause record's `gate_request`. A node output the trace cannot round-trip (judged on the
+author's values, never the engine's keys) carries `lossy` (`_sanitize_for_json`); resume never
+seeds it and a gate whose resume would seed it does not pause. Keep both keys opt-in:
+fixture-parity tests compare key sets.
+
 `workflow_trace._iter_workflow_traces` excludes `only_node` traces but must not
 filter `final_status`: snapshot loading and cache analysis own different status
 policies, including analysis fallback to non-successful runs.
@@ -135,11 +143,20 @@ node. Synthetic warmup cost/count treatment is canonical in `engine/CLAUDE.md`
 `load_snapshot_or_raise` selects a reusable full run for `--only` and fails loudly
 when none exists. A degraded snapshot carries a warning advisory; do not restore
 potentially partial upstream data silently. `resume_source.load_resume_source` owns resume selection,
-gate-resolution folding, and refusal checks. `seed_snapshot_into_shared` never
-seeds the target or failed-final nodes: it uses eligible events before the target
-when present, otherwise all eligible captured nodes. Derive restored-node lists
-from its returned map, not a second event scan. Restored nodes are successful for
-data lookup but relabelled not-executed by `execution_state.build_execution_steps`.
+gate-resolution folding, and refusal checks. The resume entry is a *(step,
+iteration)* pair: `resume_iteration` is the one reader of the events' `iteration`
+(`None` = no recorded position, a pre-2.8.0 trace), and `seed_snapshot_into_shared`
+never seeds the iteration about to run or failed-final nodes — it seeds eligible
+events before the target's first event at that iteration or later (so a resumed
+loop step gets its previous iteration; `--only` is iteration 1 and never sees its
+own output), otherwise all eligible captured nodes. Derive restored-node lists
+from its returned map minus the entry, not a second event scan. Gate-resolution
+lines fold onto the event of the iteration that raised them (keyless lines: the
+node's final event). Only the resume step's loop counter is restored: a hand-written
+back edge into another loop step (or into this one after an interrupted resumed
+attempt that continued past a recovered failure) restarts that loop at iteration 1. Restored nodes are
+successful for data lookup but relabelled not-executed by
+`execution_state.build_execution_steps`.
 
 `engine/engine.py::_prepare_resume` re-records restored upstream events as
 `cached=True, restored=True`, preserving even `{}` outputs. Later resumes and

@@ -1371,3 +1371,49 @@ parallel: true
     assert seqs == list(range(len(seqs))), f"run-collector seq must stay gap-free: {seqs}"
     disk = load_trace_file(collector.finalize())
     assert disk["final_status"] == "success" and [n["node_id"] for n in disk["nodes"]] == ["fanout"]
+
+
+@pytest.mark.trace_files
+def test_loop_node_events_carry_their_iteration_and_nothing_else_does(tmp_path, monkeypatch):
+    """Task 179 (trace 2.8.0): every loop-node event carries the 1-based ``iteration`` it
+    recorded — the position resume restores from. A non-loop node's event and the CHILD
+    events of a looping sub-workflow host carry no key (opt-in, absent when not a loop
+    iteration). Asserted on disk, the medium resume reads."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    child = tmp_path / "child.pflow.md"
+    child.write_text(
+        "# Child\n\nOne code step.\n\n## Outputs\n\n### n\n\nThe echoed number.\n\n- type: integer\n"
+        "- source: ${inner.result}\n\n## Steps\n\n### inner\n\nEcho a number.\n\n- type: code\n\n"
+        "```python code\nresult: int = 7\n```\n",
+        encoding="utf-8",
+    )
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {"id": "prep", "type": "shell", "params": {"command": "echo ready"}},
+            {
+                "id": "k",
+                "type": "code",
+                "params": {"code": "i: int\nresult: bool = int(i) < 3", "inputs": {"i": "${__iteration__}"}},
+                "loop": {"while": "${k.result}", "max_iterations": 5},
+            },
+            {
+                "id": "host",
+                "type": "workflow",
+                "params": {"workflow": str(child)},
+                "loop": {"until": "${host.n}", "max_iterations": 2},
+            },
+        ],
+        "edges": [{"from": "prep", "to": "k"}, {"from": "k", "to": "host"}],
+    }
+    result = WorkflowRunner().run(ir, {}, config=RunnerConfig())
+    assert result.success
+    assert result.trace is not None
+    events = [ln for ln in _read_lines(Path(result.trace.save_to_file())) if ln["kind"] == "event"]
+
+    top = [(e["node_id"], e.get("iteration")) for e in events if e.get("parent_id") is None]
+    assert top == [("prep", None), ("k", 1), ("k", 2), ("k", 3), ("host", 1)]
+    assert "iteration" not in next(e for e in events if e["node_id"] == "prep")
+    children = [e for e in events if e.get("parent_id") is not None]
+    assert [e["node_id"] for e in children] == ["inner"]
+    assert "iteration" not in children[0]

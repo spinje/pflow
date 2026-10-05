@@ -1095,6 +1095,9 @@ class GateNotInteractiveError(PflowError):
     def __init__(self, request: GateRequest, *, parallel_batch: bool = False):
         self.request = request
         self.parallel_batch = parallel_batch
+        # Task 179: set by the engine when the gate could not pause because a resume
+        # would restore ``(step, lossy entries)`` unfaithfully from the saved run.
+        self.lossy_seed: tuple[str, list[str]] | None = None
         if parallel_batch:
             cause = "it fired inside a parallel batch item, which cannot host a prompt"
         else:
@@ -1106,6 +1109,14 @@ class GateNotInteractiveError(PflowError):
         suggestions = [
             "If you are an AI agent: ask your human before continuing — this gate exists so a person reviews the action."
         ]
+        if self.lossy_seed is not None:
+            step, lossy = self.lossy_seed
+            suggestions.append(
+                f"This gate did not pause: answering it later would resume from the saved run, which cannot "
+                f"restore step '{step}' faithfully ({'; '.join(lossy)}). Answer it in this run instead — "
+                "pre-approve it or run interactively — or make that step's result JSON-native "
+                "(dict/list/str/int/float/bool/None) — e.g. `str(dt)` / `sorted(s)` in the code step."
+            )
         if self.request.kind == GATE_KIND_APPROVAL:
             suggestions.append(
                 f"With their OK, pre-approve ONLY this gate: CLI `--auto-approve={self.request.node_id}`; "
@@ -1131,8 +1142,8 @@ class GateNotInteractiveError(PflowError):
             "the workflow was submitted inline (no source file to resume from — save it and run by name/path "
             "to pause instead), the run targeted a single node with --only (its snapshot trace isn't "
             "resumable — run the full workflow to pause), or the gate is in an unsupported position "
-            "(parallel batch item, sub-workflow child, a loop step's approval after its first iteration, "
-            "or a loop-/code-node/final-step escalation)."
+            "(parallel batch item, sub-workflow child, or a code-node/final-step escalation)"
+            + (", or its resume could not restore earlier work faithfully (above)." if self.lossy_seed else ".")
         )
         return [
             Diagnostic(
@@ -1372,11 +1383,13 @@ class ResumeSupersededError(ResumeSourceError):
 
 
 class ResumeFidelityError(ResumeSourceError):
-    """A restored upstream value survives the trace only as a lossy placeholder (Task 164, Decision 5).
+    """A value resume would restore did not survive the trace unchanged (Task 164 Decision 5; Task 179).
 
-    The trace stores a genuine raw-``bytes`` value (only a ``code``/python step
-    can produce one) as ``<binary data: N bytes>``, so seeding it would restore
-    corrupt state. Refuse rather than resume with a placeholder in the store.
+    The trace stores JSON: bytes become a ``<binary data: N bytes>`` placeholder, a
+    non-string key becomes a string, a set/date/Decimal/custom object becomes its
+    ``str()``, and nested ``__`` keys are dropped. Seeding such a value would restore
+    different data than the step produced — refuse, naming where (``lossy``: the
+    trace's ``"<path>: <why>"`` entries).
     """
 
     _TITLE = "Cannot resume — unrecoverable data"
@@ -1385,17 +1398,21 @@ class ResumeFidelityError(ResumeSourceError):
         self,
         *,
         node_id: str,
-        key: str,
+        lossy: list[str],
         execution_id: str | None = None,
         trace_path: str | None = None,
     ):
+        self.lossy = lossy
         super().__init__(
-            f"Step '{node_id}' produced binary data (in '{key}') that the saved run stores only as a "
-            "placeholder, so resuming would restore corrupt data. Only a `code` step can produce this.",
+            f"Step '{node_id}' produced a value the saved run cannot restore faithfully "
+            f"({'; '.join(lossy)}), so resuming would restore different data.",
             execution_id=execution_id,
             trace_path=trace_path,
             node_id=node_id,
-            suggestions=["Re-run the workflow from the start so the binary value is regenerated."],
+            suggestions=[
+                "make the step's result JSON-native (dict/list/str/int/float/bool/None) — e.g. `str(dt)` / "
+                "`sorted(s)` in the code step — or re-run from the start"
+            ],
         )
 
 

@@ -54,8 +54,9 @@ def plan_node(node: Any, config: NodeConfig, shared: dict[str, Any]) -> NodePlan
     Task 166: on a carried loop iteration (round N>1) the node's effective inputs
     differ from its round-1 seed. ``carry_effective_config`` swaps the carried keys
     here — before resolution AND hashing — so cache key, resolution, and execution
-    stay consistent. No-op on round 1 and for non-carry nodes (so the planner, which
-    walks each loop body once at ``__iteration__ == 1``, is unaffected).
+    stay consistent. No-op on round 1 and for non-carry nodes. The planner walks a
+    loop body once, at iteration 1 — or at a resumed loop step's saved iteration,
+    where carry applies exactly as at runtime (Task 179).
     """
     config = carry_effective_config(config, shared)
     resolved_params, last_resolutions, template_errors, template_exc = _resolve_for_plan(node, config, shared)

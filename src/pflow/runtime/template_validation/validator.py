@@ -504,7 +504,7 @@ def _validate_loop_carry_literal_fallback(workflow_ir: dict[str, Any]) -> list[D
 
     A literal fallback always resolves, so on a round where the loop body omits the
     carried output the fallback resolves silently and re-seeds the carried key — the
-    loud carry guard (`_assert_carried_inputs_resolved`) never fires. That is the exact
+    loud carry guard (`assert_carried_inputs_resolved`) never fires. That is the exact
     silent stale-state failure carry exists to prevent. A coalesce between two real
     outputs (`${a ?? b}`) is fine — both are body outputs — so only a literal operand
     trips this warning.

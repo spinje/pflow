@@ -125,6 +125,9 @@ export interface GateRequest {
   question: string | null;
   options: Array<Record<string, unknown>>;
   recommendation: string | null;
+  // Task 179: the 1-based loop iteration that raised this gate (a loop step pauses at EVERY
+  // iteration — each is its own approval); null/absent for a non-loop step.
+  iteration?: number | null;
 }
 
 // GET /api/gate's 200 body: a paused run's gate, keyed by its frontier node.

@@ -1050,3 +1050,73 @@ def test_snapshot_degraded_diagnostic_builder_shares_identity_across_sources() -
     assert planner.source == "planner"
     assert runtime.context is None
     assert planner.context == {"category": "execution_failure"}
+
+
+def _write_self_referencing_loop(tmp_path: Path) -> tuple[Path, Path]:
+    """prep → k, where k accumulates ``${k.result.acc ?? "seed"}`` over 4 iterations and
+    fails at iteration 3 while the flag file says so. Returns ``(workflow, flag)``."""
+    flag = tmp_path / "k-fail"
+    flag.write_text("0", encoding="utf-8")
+    wf = tmp_path / "selfref.pflow.md"
+    wf.write_text(
+        "# Self reference\n\nA loop step reading its own previous output.\n\n## Steps\n\n"
+        "### prep\n\nUpstream step.\n\n- type: shell\n\n```shell command\nprintf ready\n```\n\n"
+        "### k\n\nAccumulate.\n\n- type: code\n- inputs:\n"
+        '    prev: ${k.result.acc ?? "seed"}\n    i: ${__iteration__}\n'
+        "- loop:\n    while: ${k.result.more}\n    max_iterations: 4\n\n"
+        "```python code\nfrom pathlib import Path\n\nprev: str\ni: int\n"
+        f'if i == 3 and Path("{flag.as_posix()}").read_text(encoding="utf-8") == "1":\n'
+        '    raise RuntimeError("injected")\n'
+        'result: dict = {"acc": f"{i}:{prev}", "more": i < 4}\n```\n',
+        encoding="utf-8",
+    )
+    return wf, flag
+
+
+def _only_k(wf: Path) -> Any:
+    result = WorkflowRunner().run(str(wf), {}, RunnerConfig(only_node="k"))
+    assert result.success, [str(d) for d in result.diagnostics]
+    return result
+
+
+@pytest.mark.trace_files
+def test_only_loop_target_never_seeds_its_own_output(tmp_path: Path) -> None:
+    """Task 179: `--only K` is the (step, iteration 1) entry — the snapshot holds K's
+    iterations 1..4, yet K runs at iteration 1 against the seed, never its own stale output."""
+    wf, _ = _write_self_referencing_loop(tmp_path)
+    full = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert full.success
+    assert full.shared_after["k"]["result"]["acc"] == "4:3:2:1:seed"
+
+    only = _only_k(wf)
+    assert only.shared_after["k"]["result"]["acc"] == "1:seed"
+    assert only.shared_after["__execution__"]["restored_nodes"] == ["prep"]
+
+
+@pytest.mark.trace_files
+def test_only_loop_target_against_a_resumed_attempt_never_seeds_its_own_output(tmp_path: Path) -> None:
+    """The ``>=`` pin (plan C1): the newest snapshot is a successful RESUMED attempt whose K
+    events are its restored iteration 2 then live 3, 4 — no iteration-1 event. ``--only K``
+    must still stop the seed at K's first event (an ``==`` slice would seed K's own
+    iteration-4 output and K would read ``4:…`` instead of the seed)."""
+    from pflow.runtime.resume_source import load_resume_source
+
+    wf, flag = _write_self_referencing_loop(tmp_path)
+    flag.write_text("1", encoding="utf-8")
+    failed = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert not failed.success
+    path = failed.trace.save_to_file()
+    flag.write_text("0", encoding="utf-8")
+    source = load_resume_source(execution_id=failed.trace.execution_id, debug_dir=path.parent)
+    resumed = WorkflowRunner().run(str(wf), {}, RunnerConfig(), resume_source=source)
+    assert resumed.success
+    assert resumed.shared_after["k"]["result"]["acc"] == "4:3:2:1:seed"  # continuation, not restart
+    assert [(e.get("restored", False), e.get("iteration")) for e in resumed.trace.events if e["node_id"] == "k"] == [
+        (True, 2),
+        (False, 3),
+        (False, 4),
+    ]
+
+    only = _only_k(wf)
+    assert only.shared_after["k"]["result"]["acc"] == "1:seed"
+    assert only.shared_after["__execution__"]["restored_nodes"] == ["prep"]

@@ -56,8 +56,11 @@ print mode. Stdout need not be a TTY, so piping workflow output must not disable
 an otherwise answerable prompt. Parallel workers inherit the no-prompt flag.
 
 Pause eligibility belongs to `runtime/engine/engine.py::_execute_node` and
-`_gate_pausable`, documented in `runtime/engine/CLAUDE.md` → Gate control flow.
-Tracing alone does not make a gate resumable. Denial, resolver failure, and durable
+`_gate_pausable`, documented in `runtime/engine/CLAUDE.md` → Gate control flow;
+loop steps pause at every iteration (resume continues at that iteration). The
+preflight mirrors `_gate_pausable`'s escalation refusals (code router, no default
+successor) and passes a positioned loop step through to the engine's re-entry
+decision. Tracing alone does not make a gate resumable. Denial, resolver failure, and durable
 pause have different result statuses; a usable token also requires persistence.
 
 `preflight_resume` owns load/staleness/entry checks and returns a side-effect
@@ -110,7 +113,8 @@ Preserve these estimation limits when changing recursion/aggregation:
   those hits. Synthetic entries are newly constructed, so flags such as approval
   must be forwarded explicitly by `_aggregate_batch_child_plans`.
 - Loops are planned once then costed using their resolved iteration cap as an
-  upper bound. Consumers gating on cost/time need `*_including_nested` totals
+  upper bound (for a loop step resumed mid-loop: the iterations still possible —
+  `_annotate_entry`). Consumers gating on cost/time need `*_including_nested` totals
   when present, not just the current level.
 
 Historical duration comes from engine-owned cache metadata; see

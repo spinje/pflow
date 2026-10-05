@@ -85,7 +85,9 @@ def run_approval_gate(config: Any, params: Any, shared: dict[str, Any], trace: A
     Sits BEFORE the start callback and the ``node.start`` trace marker, so a
     denied node never appears in the trace and no progress line is open.
     """
-    request = build_approval_request(config.node_id, config.node_type_name, params)
+    request = build_approval_request(
+        config.node_id, config.node_type_name, params, iteration=shared.get("__iteration__")
+    )
     _record_gate(trace, request, phase="pause")
     try:
         resolution = resolve_gate(request, shared)
@@ -157,7 +159,9 @@ def run_escalation_gate(config: Any, marker: dict[str, Any] | str, shared: dict[
     so ``loop:`` + carry wiring folds ``${step.result.escalation.decision}`` into
     the re-forked agent. There is no deny: the resolver returns a choice.
     """
-    request = build_escalation_request(config.node_id, config.node_type_name, marker)
+    request = build_escalation_request(
+        config.node_id, config.node_type_name, marker, iteration=shared.get("__iteration__")
+    )
     _record_gate(trace, request, phase="pause")
     try:
         resolution = resolve_gate(request, shared)
@@ -242,6 +246,7 @@ def _record_gate(
         resolution=resolution,
         resolved_via=resolved_via,
         decision=decision,
+        iteration=request.iteration,
     )
 
 

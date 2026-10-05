@@ -1021,6 +1021,23 @@ class TestGateEndpoint:
         assert "gated action" in body["gate_request"]["preview"]["command"]
         assert body["gate_request"]["preview"]["env"]["API_KEY"] == "<REDACTED>"
         assert "sk-super-secret" not in response.text, "the raw secret never reaches the browser"
+        assert body["gate_request"]["iteration"] is None  # a non-loop step: the key rides, empty (Task 179)
+
+    @pytest.mark.trace_files
+    def test_loop_pause_payload_carries_the_iteration(self, tmp_path: Path, monkeypatch) -> None:
+        """Task 179: a loop step gates at EVERY iteration, and the browser's panel names the one it is
+        approving from this payload alone — `gate_request.iteration` must survive the server's masking
+        pass-through (`masked_gate_dict`) onto the wire as a number, not be dropped as an unknown key."""
+        self._debug_dir(tmp_path, monkeypatch)
+        wf = tmp_path / "gated_loop.pflow.md"
+        wf.write_text(_LOOP_GATE_WF, encoding="utf-8")
+        run = CliRunner(mix_stderr=False).invoke(cli, [str(wf), f"marker={tmp_path / 'effects.txt'}"])
+        assert run.exit_code == 4, run.stderr
+        token = _TOKEN_RE.search(run.stdout).group(1)
+
+        body = _client().get("/api/gate", params={"run": token}).json()
+        assert body["paused_node_id"] == "gated"
+        assert body["gate_request"]["iteration"] == 1
 
     def test_unknown_run_id_is_404(self, tmp_path: Path, monkeypatch) -> None:
         self._debug_dir(tmp_path, monkeypatch)
@@ -1152,6 +1169,44 @@ exit 7
 """
 
 _TOKEN_RE = re.compile(r"Resume token: (\S+) \(exit 4\)")
+
+# Task 179: an approval-gated loop step — pauses at iteration 1 with `gate_request.iteration` set.
+_LOOP_GATE_WF = """# Gated Loop
+
+An approval-gated loop step that appends one line per approved iteration.
+
+## Inputs
+
+### marker
+
+Path of the file each iteration appends to.
+
+- type: string
+- required: true
+
+## Steps
+
+### gated
+
+Append one line per approved iteration.
+
+- type: code
+- approval: required
+- inputs:
+    iteration: ${__iteration__}
+    marker: ${marker}
+- loop:
+    while: ${gated.result}
+    max_iterations: 3
+
+```python code
+iteration: int
+marker: str
+with open(marker, "a", encoding="utf-8") as handle:
+    handle.write(f"effect {iteration}\\n")
+result: bool = iteration < 3
+```
+"""
 
 
 @pytest.mark.trace_files

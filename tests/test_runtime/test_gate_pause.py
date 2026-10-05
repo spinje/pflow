@@ -3,10 +3,10 @@
 The pause is a PROMISE: every ``paused`` stamp emits a token the resume path must
 accept. These tests pin both halves of that promise at the producer:
 
-- ``_gate_pausable`` refusals (loop / code-node / terminal escalations stay
+- ``_gate_pausable`` refusals (code-node / terminal escalations stay
   ``failed`` — ``resume_preflight._resolve_between_nodes_entry`` would bounce their
-  token, so none is ever issued; a loop approval past its first iteration stays
-  ``failed`` — resume restarts the loop at iteration 1);
+  token, so none is ever issued); an approval always pauses — a loop step's at
+  any iteration, which resume continues at (Task 179);
 - the nesting guard (a child-workflow gate never pauses the run, even when its
   node id COLLIDES with a top-level id — the reason the arm uses an explicit
   ``nested`` flag + first-seen exception tag instead of any id comparison);
@@ -16,6 +16,7 @@ accept. These tests pin both halves of that promise at the producer:
 
 from __future__ import annotations
 
+import contextlib
 import tempfile
 from pathlib import Path
 from typing import Any, ClassVar
@@ -48,6 +49,34 @@ class EscalatingNode(Node):
         return {"escalation": {"question": question, "options": [{"label": "a"}, {"label": "b"}]}}
 
     def post(self, shared: dict, prep_res: str, exec_res: dict) -> str:
+        shared["result"] = exec_res
+        return "default"
+
+
+class EscalateUntilDecidedNode(Node):
+    """Test node shaped like the guide's re-fork recipe: escalates until a decision arrives.
+
+    Interface:
+    - Params: decision: any  # The previous iteration's decision (empty on the first)
+    - Params: log_path: str  # Appends one line per run, naming the decision it saw
+    - Writes: shared["result"]: dict  # The escalation marker, or the applied decision
+    - Actions: default
+    """
+
+    def prep(self, shared: dict) -> tuple[Any, str]:
+        return self.params.get("decision"), str(self.params.get("log_path", ""))
+
+    def exec(self, prep_res: tuple[Any, str]) -> dict:
+        decision, log_path = prep_res
+        chosen = decision.get("chosen") if isinstance(decision, dict) else None
+        if log_path:
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(f"decision={chosen or ''}\n")
+        if not chosen:
+            return {"escalation": {"question": "which way?", "options": [{"label": "left"}, {"label": "right"}]}}
+        return {"escalation": None, "applied": chosen}
+
+    def post(self, shared: dict, prep_res: tuple[Any, str], exec_res: dict) -> str:
         shared["result"] = exec_res
         return "default"
 
@@ -123,6 +152,7 @@ class TestEscalationPausePromise:
         assert request["kind"] == "decision_escalation"
         assert request["question"] == "a or b?"
         assert [option["label"] for option in request["options"]] == ["a", "b"]
+        assert request["iteration"] is None  # not a loop step
         # The escalating node's own success record stands (it DID run).
         assert collector._determine_trace_status() == "paused"
 
@@ -132,13 +162,40 @@ class TestEscalationPausePromise:
         assert collector.gate_outcome == "failed"
         assert collector.pause_request is None
 
-    def test_loop_node_escalation_stays_failed(self):
-        # Loop re-entry state is engine-ephemeral — the CLI refuses loop successors.
-        collector = _run_gated(
-            _escalation_ir(successor=True, loop={"while": "${esc.result.escalation}", "max_iterations": 3})
+    @pytest.mark.trace_files
+    def test_loop_node_escalation_pauses_with_position(self, tmp_path, monkeypatch):
+        """Task 179: a loop step's escalation pauses (its continuation — another iteration
+        or the exit — is the engine's re-entry decision on resume). Iteration 2's escalation
+        pauses with its position; the loader resumes AFTER that iteration (entry 3)."""
+        from pflow.runtime.resume_source import load_resume_source
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        answers = iter([GateResolution(approved=True, resolved_via="prompt", chosen="a")])
+
+        def answer_first(request: Any, *, allow_prompt: bool = True) -> GateResolution:
+            resolution = next(answers, None)
+            if resolution is None:
+                raise GateNotInteractiveError(request)
+            return resolution
+
+        ir = _escalation_ir(successor=True, loop={"while": "${esc.result.escalation}", "max_iterations": 3})
+        collector = WorkflowTraceCollector(
+            "gated", workflow_path="gated.pflow.md", is_run_scoped=True, stream_to_disk=True
         )
-        assert collector.gate_outcome == "failed"
-        assert collector.pause_request is None
+        with pytest.raises(GateNotInteractiveError):
+            WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(
+                compile_workflow(ir, _registry_with_escalating_node()), {"__gate_resolver__": answer_first}
+            )
+        path = collector.finalize()
+        assert path is not None
+        assert collector.gate_outcome == "paused"
+        assert collector.pause_request is not None
+        assert collector.pause_request["gate_request"]["iteration"] == 2
+
+        source = load_resume_source(
+            execution_id=collector.execution_id, debug_dir=path.parent, gate_answer={"chosen": "b", "notes": None}
+        )
+        assert (source.entry_node_id, source.last_completed_node_id, source.entry_iteration) == (None, "esc", 3)
 
     def test_code_node_escalation_stays_failed(self):
         # A code node is a dynamic router — the CLI refuses `code` successors.
@@ -169,8 +226,8 @@ class TestEscalationPausePromise:
         class _Request:
             kind = "decision_escalation"
 
-        assert _gate_pausable(_Request(), _Config(), _Node(), "default", None) is True
-        assert _gate_pausable(_Request(), _Config(), _Node(), "end", None) is False
+        assert _gate_pausable(_Request(), _Config(), _Node(), "default") is True
+        assert _gate_pausable(_Request(), _Config(), _Node(), "end") is False
 
 
 class _ApproveFirstResolver:
@@ -203,21 +260,102 @@ def _loop_approval_ir() -> dict[str, Any]:
 
 
 class TestApprovalPausePromise:
-    """#615: resume restarts a loop node at iteration 1, so a loop approval is
-    honorable only on its FIRST iteration — later iterations must never issue a token."""
+    """Task 179: a loop step's approval pauses at EVERY iteration, and resume continues
+    at the gated iteration (superseding #615's first-iteration-only rule)."""
 
     def test_loop_approval_on_first_iteration_pauses(self):
         collector = _run_gated(_loop_approval_ir())
         assert collector.gate_outcome == "paused"
         assert collector.pause_request is not None
         assert collector.pause_request["paused_node_id"] == "tick"
+        assert collector.pause_request["gate_request"]["iteration"] == 1
 
-    def test_loop_approval_after_first_iteration_stays_failed(self):
-        collector = _run_gated(_loop_approval_ir(), {"__gate_resolver__": _ApproveFirstResolver(approvals=1)})
-        assert collector.gate_outcome == "failed"
-        assert collector.pause_request is None
-        # Iteration 1 really ran before iteration 2's gate refused to pause.
-        assert [event["node_id"] for event in collector.events] == ["tick"]
+    @pytest.mark.trace_files
+    def test_loop_approval_after_first_iteration_pauses_with_position(self, tmp_path, monkeypatch):
+        """Iteration 2's approval pauses with its position; the answer runs iteration 2,
+        iteration 3 pauses again as a NEW token; a third attempt finishes — iteration 1
+        never re-runs and each attempt trace is self-contained (resume-of-a-resume)."""
+        from pflow.core.exceptions import ResumeSupersededError
+        from pflow.runtime.resume_source import load_resume_source
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        debug_dir = tmp_path / ".pflow" / "debug"
+        marker = tmp_path / "effects.txt"
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {"id": "prep", "type": "shell", "params": {"command": "echo ready"}},
+                {
+                    "id": "tick",
+                    "type": "code",
+                    "params": {
+                        "code": (
+                            "i: int\nmarker: str\n"
+                            "with open(marker, 'a', encoding='utf-8') as fh:\n    fh.write(f'effect {i}\\n')\n"
+                            "result: bool = int(i) < 3"
+                        ),
+                        "inputs": {"i": "${__iteration__}", "marker": str(marker)},
+                    },
+                    "approval": "required",
+                    "loop": {"while": "${tick.result}", "max_iterations": 3},
+                },
+            ],
+            "edges": [{"from": "prep", "to": "tick"}],
+        }
+        compiled = compile_workflow(ir, _registry_with_escalating_node())
+
+        def attempt(resolver: Any, source: Any = None) -> WorkflowTraceCollector:
+            """One attempt — the source run, or a resume whose single-use answer is ``resolver``."""
+            collector = WorkflowTraceCollector(
+                "gated",
+                workflow_path="gated.pflow.md",
+                is_run_scoped=True,
+                stream_to_disk=True,
+                resumed_from=source.execution_id if source is not None else None,
+            )
+            engine = WorkflowEngine(
+                trace_collector=collector,
+                workflow_path="gated.pflow.md",
+                resume_from=source.entry_node_id if source is not None else None,
+                resume_events=source.events if source is not None else None,
+                resume_source_id=source.execution_id if source is not None else None,
+                resume_iteration=source.entry_iteration if source is not None else 1,
+            )
+            with contextlib.suppress(GateNotInteractiveError):  # a pausing attempt stops at its gate
+                engine.run(compiled, {"__gate_resolver__": resolver})
+            assert collector.finalize() is not None
+            return collector
+
+        def effects() -> list[str]:
+            return marker.read_text(encoding="utf-8").splitlines()
+
+        first = attempt(_ApproveFirstResolver(approvals=1))
+        assert first.gate_outcome == "paused"
+        assert first.pause_request is not None
+        assert first.pause_request["gate_request"]["iteration"] == 2
+        assert effects() == ["effect 1"]
+
+        source = load_resume_source(execution_id=first.execution_id, debug_dir=debug_dir, gate_answer={"approve": True})
+        assert (source.entry_node_id, source.entry_iteration) == ("tick", 2)
+        second = attempt(_ApproveFirstResolver(approvals=1), source)
+        assert second.gate_outcome == "paused"
+        assert second.pause_request is not None
+        assert second.pause_request["gate_request"]["iteration"] == 3
+        assert effects() == ["effect 1", "effect 2"]
+
+        source = load_resume_source(
+            execution_id=second.execution_id, debug_dir=debug_dir, gate_answer={"approve": True}
+        )
+        assert (source.entry_node_id, source.entry_iteration) == ("tick", 3)
+        third = attempt(_ApproveFirstResolver(approvals=1), source)
+        assert third._determine_trace_status() == "success"
+        assert effects() == ["effect 1", "effect 2", "effect 3"]
+        # Self-contained: tick's seeded iteration 2 re-recorded (restored), then iteration 3 ran.
+        ticks = [(e.get("restored", False), e["iteration"]) for e in third.events if e["node_id"] == "tick"]
+        assert ticks == [(True, 2), (False, 3)]
+        assert [e["node_id"] for e in third.events if e.get("restored")] == ["prep", "tick"]
+        with pytest.raises(ResumeSupersededError):
+            load_resume_source(execution_id=second.execution_id, debug_dir=debug_dir, gate_answer={"approve": True})
 
 
 class TestNestingGuard:
@@ -537,3 +675,280 @@ class TestOnlyPausePromise:
         _, exc = self._run_only_gate()
         suggestions = " ".join(exc.to_diagnostics()[0].suggestions)
         assert "--only" in suggestions
+
+
+@pytest.mark.trace_files
+def test_answered_loop_escalation_then_failure_resumes_with_the_recorded_decision(tmp_path, monkeypatch):
+    """D2b (1), real producer (Task 179): K escalates at iteration 1 (answered at the prompt),
+    then fails at iteration 2. The answer folds onto iteration 1's event — the one the
+    resume seeds — so the resume neither false-refuses nor loses the decision, and the
+    carried decision iteration 2 receives equals an uninterrupted run's."""
+    from pflow.runtime.resume_source import load_resume_source
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    log = tmp_path / "decisions.txt"
+    flag = tmp_path / "fail"
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "k",
+                "type": "code",
+                "params": {
+                    "code": (
+                        "from pathlib import Path\n"
+                        "i: int\ndecision: str\n"
+                        f"with open({str(log)!r}, 'a', encoding='utf-8') as fh:\n    fh.write(decision + '\\n')\n"
+                        f"if i == 2 and Path({str(flag)!r}).exists():\n    raise RuntimeError('injected')\n"
+                        "result: dict = {'escalation': {'question': 'pick?'} if i == 1 else None, 'more': i < 2}"
+                    ),
+                    "inputs": {"i": "${__iteration__}", "decision": "none-yet"},
+                },
+                "loop": {
+                    "carry": {"decision": "${k.result.escalation.decision.chosen}"},
+                    "while": "${k.result.more}",
+                    "max_iterations": 3,
+                },
+            }
+        ],
+        "edges": [],
+    }
+    compiled = compile_workflow(ir, _registry_with_escalating_node())
+
+    def chooser(request: Any, *, allow_prompt: bool = True) -> GateResolution:
+        return GateResolution(approved=True, resolved_via="prompt", chosen="A")
+
+    def run(resolver: Any, source: Any = None) -> WorkflowTraceCollector:
+        collector = WorkflowTraceCollector(
+            "esc-loop", workflow_path="esc-loop.pflow.md", is_run_scoped=True, stream_to_disk=True
+        )
+        engine = WorkflowEngine(
+            trace_collector=collector,
+            workflow_path="esc-loop.pflow.md",
+            resume_from=source.entry_node_id if source is not None else None,
+            resume_events=source.events if source is not None else None,
+            resume_source_id=source.execution_id if source is not None else None,
+            resume_iteration=source.entry_iteration if source is not None else 1,
+        )
+        engine.run(compiled, {"__gate_resolver__": resolver})
+        assert collector.finalize() is not None
+        return collector
+
+    run(chooser)
+    uninterrupted = log.read_text(encoding="utf-8").splitlines()
+    assert uninterrupted == ["none-yet", "A"]
+    log.unlink()
+    for trace in (tmp_path / ".pflow" / "debug").glob("*"):
+        trace.unlink()
+
+    flag.write_text("1", encoding="utf-8")
+    failed = run(chooser)
+    assert failed._determine_trace_status() == "failed"
+    flag.unlink()
+    source = load_resume_source(execution_id=failed.execution_id, debug_dir=tmp_path / ".pflow" / "debug")
+    assert (source.entry_node_id, source.entry_iteration) == ("k", 2)
+
+    def no_prompt(request: Any, *, allow_prompt: bool = True) -> GateResolution:
+        raise AssertionError(f"iteration 1's escalation must not be asked again: {request}")
+
+    resumed = run(no_prompt, source)
+    assert resumed._determine_trace_status() == "success"
+    assert log.read_text(encoding="utf-8").splitlines() == ["none-yet", "A", "A"]
+    restored_k = next(e for e in resumed.events if e["node_id"] == "k" and e.get("restored"))
+    assert restored_k["node_output"]["result"]["escalation"]["decision"] == {"chosen": "A", "notes": None}
+
+
+def _pause_loop_escalation_then_resume_after(tmp_path: Path, loop: dict[str, Any]) -> dict[str, Any]:
+    """Pause a looping escalation at iteration 1 (no resolver), answer it through the
+    loader, resume AFTER it on the engine; return the resumed attempt's shared store."""
+    from pflow.runtime.resume_source import load_resume_source
+
+    ir = _escalation_ir(successor=True, loop=loop)
+    registry = _registry_with_escalating_node()
+    collector = WorkflowTraceCollector("gated", workflow_path="gated.pflow.md", is_run_scoped=True, stream_to_disk=True)
+    with pytest.raises(GateNotInteractiveError):
+        WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(
+            compile_workflow(ir, registry), {}
+        )
+    path = collector.finalize()
+    assert path is not None
+    assert collector.gate_outcome == "paused"
+    source = load_resume_source(
+        execution_id=collector.execution_id, debug_dir=path.parent, gate_answer={"chosen": "a", "notes": None}
+    )
+    assert (source.entry_node_id, source.last_completed_node_id, source.entry_iteration) == (None, "esc", 2)
+
+    shared: dict[str, Any] = {"__gate_resolver__": _ApproveFirstResolver(approvals=0)}
+    WorkflowEngine(
+        workflow_path="gated.pflow.md",
+        resume_after="esc",
+        resume_events=source.events,
+        resume_source_id=source.execution_id,
+        resume_iteration=source.entry_iteration,
+    ).run(compile_workflow(ir, registry), shared)
+    return shared
+
+
+@pytest.mark.trace_files
+class TestResumeAfterLoopStep:
+    """Task 179 D3: an answered loop escalation resumes AFTER the iteration that raised it —
+    the engine makes the re-entry decision the walk would have made (``should_reenter``)."""
+
+    def test_falsy_condition_exits_to_the_successor_without_rerunning_the_step(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        shared = _pause_loop_escalation_then_resume_after(
+            tmp_path, {"until": "${esc.result.escalation.decision}", "max_iterations": 3}
+        )
+        execution = shared["__execution__"]
+        assert execution["completed_nodes"] == ["after"]  # esc did not run again
+        assert execution["resume_entry_node"] == "after"
+        assert execution["restored_nodes"] == ["esc"]  # its decided output stands
+        assert shared["esc"]["loop_stopped"] == "condition"
+        assert shared["esc"]["result"]["escalation"]["decision"] == {"chosen": "a", "notes": None}
+        assert shared["after"]["stdout"].strip() == "after"
+
+    def test_decision_sees_the_completed_iteration(self, tmp_path, monkeypatch):
+        """P2 review (convergent): like the walk, the after-K decision reads the completed
+        iteration as ``${__iteration__}`` — absent, ``while: ${__iteration__}`` would read
+        falsy and exit early. Here it re-enters: iteration 2 runs and escalates again."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        with pytest.raises(GateNotInteractiveError) as exc_info:
+            _pause_loop_escalation_then_resume_after(tmp_path, {"while": "${__iteration__}", "max_iterations": 3})
+        assert (exc_info.value.request.node_id, exc_info.value.request.iteration) == ("esc", 2)
+
+    def test_template_cap_resolves_against_the_completed_iteration(self, tmp_path, monkeypatch):
+        """The cap half of the same review finding: ``max_iterations: ${__iteration__}``
+        resolves to the completed iteration (1), as in the walk — not an unresolved template."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        shared = _pause_loop_escalation_then_resume_after(
+            tmp_path, {"while": "${esc.result.escalation}", "max_iterations": "${__iteration__}"}
+        )
+        assert shared["__execution__"]["completed_nodes"] == ["after"]
+        assert shared["esc"]["loop_stopped"] == "max_iterations"
+
+    def test_condition_still_true_at_the_cap_exits_with_the_cap_advisory(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        shared = _pause_loop_escalation_then_resume_after(
+            tmp_path, {"while": "${esc.result.escalation}", "max_iterations": 1}
+        )
+        execution = shared["__execution__"]
+        assert execution["completed_nodes"] == ["after"]
+        assert execution["resume_entry_node"] == "after"
+        assert shared["esc"]["loop_stopped"] == "max_iterations"
+        assert shared["__warnings__"]["esc"].id == "loop.max-iterations-reached"
+
+
+_LOOP = {"while": "${esc.result.escalation}", "max_iterations": 3}
+_CODE_ESCALATION = {
+    "ir_version": "0.1.0",
+    "nodes": [
+        {"id": "esc", "type": "code", "params": {"code": "result: dict = {'escalation': 'a or b?'}"}},
+        {"id": "after", "type": "shell", "params": {"command": "echo after"}},
+    ],
+    "edges": [{"from": "esc", "to": "after"}],
+}
+
+
+@pytest.mark.parametrize(
+    ("ir", "pauses"),
+    [
+        (_escalation_ir(successor=True), True),
+        (_escalation_ir(successor=True, loop=_LOOP), True),  # Task 179: a loop step pauses too
+        (_CODE_ESCALATION, False),  # dynamic router
+        (_escalation_ir(successor=False), False),  # final step
+        (_escalation_ir(successor=False, loop=_LOOP), False),  # final loop step (ruling (b))
+    ],
+    ids=["mid-graph", "loop", "code-router", "final-step", "final-loop-step"],
+)
+def test_escalation_pause_mirrors_the_preflight(ir, pauses):
+    """Pause = promise, both directions: the producer pauses an escalation exactly when the
+    preflight would accept its between-nodes token (an iteration-1 escalation resumes AFTER
+    it at iteration 2). ``action == "end"`` is unit-pinned above (no IR shape produces it)."""
+    from pflow.core.exceptions import ResumeNotResumableError
+    from pflow.execution.result import ResolvedWorkflow
+    from pflow.execution.resume_preflight import _resolve_between_nodes_entry
+    from pflow.runtime.resume_source import ResumeSource
+
+    collector = _run_gated(ir)
+    assert (collector.gate_outcome == "paused") is pauses
+
+    is_loop = "loop" in ir["nodes"][0]
+    source = ResumeSource(
+        path=Path("/x/t.json"),
+        workflow_path="/x/wf.pflow.md",
+        execution_id="e1",
+        entry_node_id=None,
+        last_completed_node_id="esc",
+        events=[],
+        inputs=None,
+        content_hash=None,
+        paused_node_id="esc",
+        gate_request={"kind": "decision_escalation"},
+        entry_iteration=2 if is_loop else None,
+    )
+    resolved = ResolvedWorkflow(ir=ir, source="file", file_path="/x/wf.pflow.md")
+    if pauses:
+        _resolve_between_nodes_entry(resolved, source)
+    else:
+        with pytest.raises(ResumeNotResumableError):
+            _resolve_between_nodes_entry(resolved, source)
+
+
+@pytest.mark.trace_files
+def test_approval_after_a_recovered_failure_resumes_at_the_gated_iteration(tmp_path, monkeypatch):
+    """P2 review (feature-interactions C1): K fails at iteration 3, its on-error handler H
+    routes back to K, and K's approval pauses at iteration 4. The resume must run the
+    iteration the human approved (4, with H's output in the store) — not re-run the
+    recovered failure at 3."""
+    from pflow.runtime.resume_source import load_resume_source
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "k",
+                "type": "code",
+                "approval": "required",
+                "params": {
+                    "code": "i: int\nif int(i) == 3:\n    raise RuntimeError('boom')\nresult: dict = {'more': int(i) < 5}",
+                    "inputs": {"i": "${__iteration__}"},
+                },
+                "loop": {"while": "${k.result.more}", "max_iterations": 5},
+            },
+            {"id": "h", "type": "shell", "params": {"command": "echo handled"}},
+        ],
+        # The back edge carries an explicit action (the validator's backward-edge rule).
+        "edges": [{"from": "k", "to": "h", "action": "error"}, {"from": "h", "to": "k", "action": "default"}],
+    }
+    compiled = compile_workflow(ir, _registry_with_escalating_node())
+
+    def run(resolver: Any, source: Any = None) -> WorkflowTraceCollector:
+        collector = WorkflowTraceCollector("bk", workflow_path="bk.pflow.md", is_run_scoped=True, stream_to_disk=True)
+        engine = WorkflowEngine(
+            trace_collector=collector,
+            workflow_path="bk.pflow.md",
+            resume_from=source.entry_node_id if source is not None else None,
+            resume_events=source.events if source is not None else None,
+            resume_source_id=source.execution_id if source is not None else None,
+            resume_iteration=source.entry_iteration if source is not None else 1,
+        )
+        with contextlib.suppress(GateNotInteractiveError):
+            engine.run(compiled, {"__gate_resolver__": resolver})
+        assert collector.finalize() is not None
+        return collector
+
+    first = run(_ApproveFirstResolver(approvals=3))
+    assert first.pause_request is not None
+    assert first.pause_request["gate_request"]["iteration"] == 4
+    source = load_resume_source(
+        execution_id=first.execution_id, debug_dir=tmp_path / ".pflow" / "debug", gate_answer={"approve": True}
+    )
+    assert (source.entry_node_id, source.entry_iteration) == ("k", 4)
+
+    resumed = run(_ApproveFirstResolver(approvals=1), source)
+    live = [(e["node_id"], e.get("iteration")) for e in resumed.events if not e.get("restored")]
+    assert live == [("k", 4)]  # the approved iteration ran; 3 was not re-run
+    assert resumed.pause_request is not None
+    assert resumed.pause_request["gate_request"]["iteration"] == 5
+    assert [e["node_id"] for e in resumed.events if e.get("restored")] == ["h"]  # H's output was in the store

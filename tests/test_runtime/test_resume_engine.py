@@ -22,6 +22,7 @@ import pytest
 
 from pflow.core.exceptions import InvalidRequestError
 from pflow.core.trace_io import load_trace_file
+from pflow.execution.formatters.plan_formatter import format_plan_text
 from pflow.execution.formatters.success_formatter import (
     format_execution_success,
     format_resume_indicator,
@@ -135,13 +136,23 @@ def test_resume_reenters_at_failed_node_and_skips_upstream(tmp_path, flaky_step2
     assert result.shared_after["step3"]["stdout"] == EXPECTED_STDOUT
 
 
-def test_engine_rejects_resume_from_with_only_node() -> None:
+@pytest.mark.parametrize(
+    "targets",
+    [
+        {"resume_from": "a", "only_node": "b"},
+        {"resume_after": "a", "only_node": "b"},
+        {"resume_from": "a", "resume_after": "b"},
+    ],
+)
+def test_engine_rejects_more_than_one_entry_target(targets: dict[str, str]) -> None:
     with pytest.raises(ValueError, match="mutually exclusive"):
-        WorkflowEngine(resume_from="a", only_node="b")
+        WorkflowEngine(**targets)
 
 
 def test_runner_rejects_unresolved_entry_node(tmp_path) -> None:
-    """A between-nodes source (entry None) must be resolved by the CLI before run()."""
+    """A between-nodes source without a proven loop position (entry None, ``entry_iteration``
+    < 2 — here a non-loop step) must be resolved by the CLI before run(); only a positioned
+    loop step resumes AFTER itself in the engine (Task 179)."""
     source = ResumeSource(
         path=tmp_path / "t.json",
         workflow_path=str(tmp_path / "wf.pflow.md"),
@@ -514,6 +525,11 @@ class TestFormatResumeIndicator:
     def test_zero_restored_still_announces_mode(self) -> None:
         assert format_resume_indicator("abc-123", "deploy", 0) == "  ⤷ Resumed from abc-123 at 'deploy'"
 
+    def test_loop_entry_past_its_first_iteration_names_it(self) -> None:
+        line = format_resume_indicator("abc-123", "k", 1, 3)
+        assert line == "  ⤷ Resumed from abc-123 at 'k' (iteration 3) — 1 upstream step restored"
+        assert "(iteration" not in format_resume_indicator("abc-123", "k", 1, 1)
+
 
 # --- Branch scenario ----------------------------------------------------------
 
@@ -735,21 +751,19 @@ def test_resume_at_a_sub_workflow_host_reruns_the_whole_host(tmp_path) -> None:
     assert resumed.shared_after["post"]["stdout"] == "post inner-ok"
 
 
-def test_loop_k_restarts_at_iteration_one(tmp_path) -> None:
-    """Decision 9 pin: a resumed loop-node K restarts at iteration 1 — loop state
-    (``loop_counts``/``__iteration__``) is engine-ephemeral, never traced or seeded."""
+def _write_loop_failing_at_three(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """prep → k, where k (``while`` true, cap 5) appends its iteration to a file and fails
+    at iteration 3 while the flag file says so. Returns ``(workflow, iterations, flag)``."""
     iter_file = tmp_path / "iterations"
     fail_flag = tmp_path / "k-fail"
     fail_flag.write_text("1", encoding="utf-8")
-    iter_file_literal = iter_file.as_posix()
-    fail_flag_literal = fail_flag.as_posix()
     wf = tmp_path / "loop.pflow.md"
     wf.write_text(
         textwrap.dedent(
             f"""\
             # Loop Resume
 
-            A loop step that fails on its first run and resumes from scratch.
+            A loop step that fails at its third iteration.
 
             ## Steps
 
@@ -771,15 +785,15 @@ def test_loop_k_restarts_at_iteration_one(tmp_path) -> None:
             - inputs: {{ iteration: ${{__iteration__}} }}
             - loop:
                 while: ${{k.result}}
-                max_iterations: 3
+                max_iterations: 5
 
             ```python code
             iteration: int
             from pathlib import Path
 
-            with Path("{iter_file_literal}").open("a", encoding="utf-8") as fh:
+            with Path("{iter_file.as_posix()}").open("a", encoding="utf-8") as fh:
                 fh.write(f"{{iteration}}\\n")
-            if Path("{fail_flag_literal}").read_text(encoding="utf-8").strip() == "1":
+            if iteration == 3 and Path("{fail_flag.as_posix()}").read_text(encoding="utf-8").strip() == "1":
                 raise RuntimeError("injected loop failure")
             result: bool = True
             ```
@@ -787,21 +801,240 @@ def test_loop_k_restarts_at_iteration_one(tmp_path) -> None:
         ),
         encoding="utf-8",
     )
+    return wf, iter_file, fail_flag
 
+
+def _iterations(iter_file: Path) -> list[str]:
+    return iter_file.read_text(encoding="utf-8").splitlines()
+
+
+def test_loop_k_resumes_at_the_failed_iteration(tmp_path) -> None:
+    """Task 179 pin (replaces Task 164's restart-at-1 pin): a loop step K failing at
+    iteration 3 of 5 resumes AT iteration 3 — iterations 1-2 never re-fire. Fails
+    mid-loop by construction: restart would append ``1, 2`` again."""
+    wf, iter_file, fail_flag = _write_loop_failing_at_three(tmp_path)
     run1 = WorkflowRunner().run(str(wf), {}, RunnerConfig())
     assert not run1.success, [str(d) for d in run1.diagnostics]
     p1 = run1.trace.save_to_file()
-    assert iter_file.read_text(encoding="utf-8").splitlines() == ["1"], "run 1 was supposed to fail on iteration 1"
+    assert _iterations(iter_file) == ["1", "2", "3"]
 
     fail_flag.write_text("0", encoding="utf-8")
     source = load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
-    assert source.entry_node_id == "k"
+    assert (source.entry_node_id, source.entry_iteration) == ("k", 3)
+    plan = WorkflowRunner().plan(str(wf), {}, RunnerConfig(), resume_source=source)
+    assert "Resuming from 'k' (iteration 3): 1 upstream step restored" in format_plan_text(plan)
     result = _resume(wf, source)
 
     assert result.success, [str(d) for d in result.diagnostics]
-    assert result.shared_after["__execution__"]["restored_nodes"] == ["prep"]
-    # The resume's iterations are 1,2,3 (restart), never 2,3 (continuation).
-    assert iter_file.read_text(encoding="utf-8").splitlines() == ["1", "1", "2", "3"]
+    assert _iterations(iter_file) == ["1", "2", "3", "3", "4", "5"]
+    formatted = format_execution_success(result.shared_after, resolve_workflow(str(wf)).ir, result.metrics)
+    assert formatted["execution"]["resume_entry_iteration"] == 3
+    assert "⤷ Resumed from" in format_success_as_text(formatted)
+    assert "at 'k' (iteration 3) — 1 upstream step restored" in format_success_as_text(formatted)
+    execution = result.shared_after["__execution__"]
+    assert execution["restored_nodes"] == ["prep"]  # K is seeded with iteration 2 but RUNS — never "restored"
+    assert execution["resume_entry_node"] == "k"
+    assert result.shared_after["k"]["loop_stopped"] == "max_iterations"
+    # No loop-restart advisory: this trace recorded K's position.
+    assert "__resume_loop_restart__" not in result.shared_after["__warnings__"]
+    assert "k" in result.shared_after["__warnings__"]  # the same medium carries the cap advisory
+
+
+def test_trace_without_loop_position_restarts_the_loop_and_says_so(tmp_path) -> None:
+    """D7: a saved run that predates loop position (2.7.0 — no ``iteration`` on events)
+    cannot say where K stopped, so K restarts at iteration 1 with an INFO advisory — in
+    the run AND in its ``--dry-run`` — never a guess."""
+    wf, iter_file, fail_flag = _write_loop_failing_at_three(tmp_path)
+    run1 = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert not run1.success
+    p1 = run1.trace.save_to_file()
+    # Rewrite the real trace into the pre-2.8.0 shape: same lines, no position.
+    lines = [json.loads(line) for line in p1.read_text(encoding="utf-8").splitlines()]
+    assert [ln["iteration"] for ln in lines if ln.get("node_id") == "k" and ln["kind"] == "event"] == [1, 2, 3]
+    old = [{k: v for k, v in ln.items() if k != "iteration"} for ln in lines]
+    old = [{**ln, "format_version": "2.7.0"} if ln["kind"] == "meta" else ln for ln in old]
+    p1.write_text("\n".join(json.dumps(ln) for ln in old) + "\n", encoding="utf-8")
+
+    fail_flag.write_text("0", encoding="utf-8")
+    source = load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
+    assert (source.entry_node_id, source.entry_iteration) == ("k", None)
+
+    plan = WorkflowRunner().plan(str(wf), {}, RunnerConfig(), resume_source=source)
+    planned = [d for d in plan.diagnostics if d.id == "resume.loop-restart"]
+    assert [(d.severity.value, d.node_id, d.source) for d in planned] == [("info", "k", "planner")]
+    assert plan.entries[0].loop_iterations == 5  # restart: the whole cap is ahead
+
+    result = _resume(wf, source)
+    assert result.success, [str(d) for d in result.diagnostics]
+    assert _iterations(iter_file) == ["1", "2", "3", "1", "2", "3", "4", "5"]
+    advisory = result.shared_after["__warnings__"]["__resume_loop_restart__"]
+    assert (advisory.severity.value, advisory.node_id, advisory.id) == ("info", "k", "resume.loop-restart")
+    assert "the saved run recorded no loop position for this step" in advisory.message
+    assert result.status.value == "success"  # INFO: the restored data is not degraded
+
+
+def test_step_given_loop_since_the_run_restarts_and_says_why_truthfully(tmp_path) -> None:
+    """Falsifier S2: a 2.8.0 trace whose step had no ``loop:`` (added since, resumed with
+    ``--force``) also records no position — the advisory's reason must hold for that cause too,
+    not claim the run predates loop position."""
+    wf = tmp_path / "edited.pflow.md"
+    flag = tmp_path / "fail"
+    flag.write_text("1", encoding="utf-8")
+    body = (
+        "# Edited\n\nA step that later gains a loop.\n\n## Steps\n\n### k\n\nCount.\n\n- type: code\n"
+        "- inputs:\n    flag: {flag}\n{loop}\n```python code\nfrom pathlib import Path\n\nflag: str\n"
+        "if Path(flag).read_text(encoding='utf-8') == '1':\n    raise RuntimeError('boom')\nresult: bool = False\n```\n"
+    )
+    wf.write_text(body.format(flag=flag.as_posix(), loop=""), encoding="utf-8")
+    failed = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert not failed.success
+    trace = failed.trace.save_to_file()
+    loop = "- loop:\n    while: ${k.result}\n    max_iterations: 3\n"
+    wf.write_text(body.format(flag=flag.as_posix(), loop=loop), encoding="utf-8")
+    flag.write_text("0", encoding="utf-8")
+
+    source = load_resume_source(execution_id=failed.trace.execution_id, debug_dir=trace.parent)
+    assert (source.entry_node_id, source.entry_iteration) == ("k", None)
+    result = _resume(wf, source)
+    assert result.success, [str(d) for d in result.diagnostics]
+    advisory = result.shared_after["__warnings__"]["__resume_loop_restart__"]
+    assert "recorded no loop position for this step" in advisory.message
+    assert "or the step had no `loop:` then" in advisory.message
+
+
+def _write_carry_tournament(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A looping sub-workflow host carrying survivors round to round (Task 166's shape);
+    its child judge fails at round 3 while the flag file says so. Returns
+    ``(workflow, rounds log, fail flag)``."""
+    log_path = tmp_path / "rounds.jsonl"
+    fail_flag = tmp_path / "judge-fail"
+    fail_flag.write_text("0", encoding="utf-8")
+    child = tmp_path / "judge-round.pflow.md"
+    child.write_text(
+        textwrap.dedent(
+            f"""\
+            # Judge Round
+
+            Drop the first contender each round.
+
+            ## Inputs
+
+            ### contenders
+
+            Current contenders.
+
+            - type: array
+
+            ## Outputs
+
+            ### survivors
+
+            Survivors for the next round.
+
+            - type: array
+            - source: ${{judge.result.survivors}}
+
+            ### more
+
+            Whether another round is needed.
+
+            - type: boolean
+            - source: ${{judge.result.more}}
+
+            ## Steps
+
+            ### judge
+
+            Log the round's input, then keep all but the first contender.
+
+            - type: code
+            - inputs:
+                contenders: ${{contenders}}
+
+            ```python code
+            import json
+            from pathlib import Path
+
+            contenders: list
+            with Path("{log_path.as_posix()}").open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(contenders) + "\\n")
+            if len(contenders) == 3 and Path("{fail_flag.as_posix()}").read_text(encoding="utf-8").strip() == "1":
+                raise RuntimeError("injected judge failure")
+            survivors = contenders[1:]
+            result: dict = {{"survivors": survivors, "more": len(survivors) > 1}}
+            ```
+            """
+        ),
+        encoding="utf-8",
+    )
+    outer = tmp_path / "tournament.pflow.md"
+    outer.write_text(
+        textwrap.dedent(
+            f"""\
+            # Tournament
+
+            Elimination rounds over a looping sub-workflow.
+
+            ## Steps
+
+            ### run-rounds
+
+            Run elimination rounds.
+
+            - type: workflow
+            - workflow: {child.as_posix()}
+            - inputs:
+                contenders: ["ada", "beck", "cy", "dee", "eve"]
+            - loop:
+                carry:
+                  contenders: ${{run-rounds.survivors}}
+                while: ${{run-rounds.more}}
+                max_iterations: 10
+            """
+        ),
+        encoding="utf-8",
+    )
+    return outer, log_path, fail_flag
+
+
+def _rounds(log_path: Path) -> list[list[str]]:
+    return [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_resumed_carry_loop_matches_an_uninterrupted_run(tmp_path) -> None:
+    """Carry fidelity (Task 179): the contenders carried into the resumed round 3 — and
+    every later round, and where the loop stops — equal an uninterrupted run's."""
+    clean_dir, broken_dir = tmp_path / "clean", tmp_path / "broken"
+    clean_dir.mkdir()
+    broken_dir.mkdir()
+
+    wf, log_path, _ = _write_carry_tournament(clean_dir)
+    clean = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert clean.success, [str(d) for d in clean.diagnostics]
+    uninterrupted = _rounds(log_path)
+    assert uninterrupted == [
+        ["ada", "beck", "cy", "dee", "eve"],
+        ["beck", "cy", "dee", "eve"],
+        ["cy", "dee", "eve"],
+        ["dee", "eve"],
+    ]
+
+    wf, log_path, fail_flag = _write_carry_tournament(broken_dir)
+    fail_flag.write_text("1", encoding="utf-8")
+    run1 = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert not run1.success
+    p1 = run1.trace.save_to_file()
+    assert _rounds(log_path) == uninterrupted[:3]
+
+    fail_flag.write_text("0", encoding="utf-8")
+    source = load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
+    assert (source.entry_node_id, source.entry_iteration) == ("run-rounds", 3)
+    resumed = _resume(wf, source)
+    assert resumed.success, [str(d) for d in resumed.diagnostics]
+
+    assert _rounds(log_path)[3:] == uninterrupted[2:]  # round 3 re-runs with round 2's survivors, then round 4
+    assert resumed.shared_after["run-rounds"]["survivors"] == clean.shared_after["run-rounds"]["survivors"] == ["eve"]
+    assert resumed.shared_after["run-rounds"]["loop_stopped"] == clean.shared_after["run-rounds"]["loop_stopped"]
 
 
 def test_both_primary_and_fallback_fail_resumes_at_the_primary_e2e(tmp_path) -> None:

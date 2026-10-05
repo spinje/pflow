@@ -28,6 +28,23 @@ const APPROVAL: GateInfo = {
     question: null,
     options: [],
     recommendation: null,
+    iteration: null, // a non-loop step — the wire always carries the key (core/gate.py)
+  },
+};
+
+// Task 179: an approval gate raised by a LOOP step at its second iteration.
+const LOOP_APPROVAL: GateInfo = {
+  paused_node_id: "gated",
+  gate_kind: "action_approval",
+  gate_request: {
+    node_id: "gated",
+    node_type: "code",
+    kind: "action_approval",
+    preview: { iteration: 2 },
+    question: null,
+    options: [],
+    recommendation: null,
+    iteration: 2,
   },
 };
 
@@ -69,6 +86,23 @@ describe("GateCallout — approval", () => {
     await waitFor(() => expect(resumeRun).toHaveBeenCalledWith({ run: "r1", approve: "yes" }));
     // 200 → the new attempt pins (the parent's selectRun — the single pin path).
     await waitFor(() => expect(onPinRun).toHaveBeenCalledWith("attempt-2"));
+  });
+
+  it("the eyebrow names the loop iteration for a loop gate — and nothing for a non-loop gate (Task 179)", async () => {
+    // A loop gate pauses at EVERY iteration (plan Q6: all pause surfaces show the position or none);
+    // the browser's home for it is the eyebrow — no badge, no colour, the same muted mono line.
+    vi.mocked(fetchGate).mockResolvedValue(LOOP_APPROVAL);
+    render(<GateCallout run="r1" onPinRun={vi.fn()} />);
+    expect(await screen.findByText("code · gated · iteration 2")).toBeTruthy();
+    cleanup();
+
+    // Absence pair (same medium): a non-loop gate's eyebrow ends at the node id — no trailing
+    // "iteration" for the null the wire carries.
+    vi.mocked(fetchGate).mockResolvedValue(APPROVAL);
+    render(<GateCallout run="r1" onPinRun={vi.fn()} />);
+    const eyebrow = await screen.findByText("shell · deploy");
+    expect(eyebrow.textContent).toBe("shell · deploy");
+    expect(screen.queryByText(/iteration/)).toBeNull();
   });
 
   it("Deny sends approve: 'no' — a clean human no, not a failure", async () => {

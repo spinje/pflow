@@ -467,17 +467,6 @@ def _prepare_gate_resolver(
                 err=True,
             )
         unapproved = [gate_id for gate_id in gated if gate_id not in fully_answered]
-        # Resume's `--approve yes` on a LOOP step covers iteration 1 only, and later
-        # iterations cannot pause (`_gate_pausable`) — so they fail: warn with that verb.
-        answered_loop = approval_answer[0] if approval_answer and approval_answer[0] in unapproved else None
-        if answered_loop and not can_prompt(output_controller):
-            click.echo(
-                f"Warning: --approve yes answers only the first iteration of loop step '{answered_loop}'; "
-                f"later iterations fail in this non-interactive run unless pre-approved "
-                f"(--auto-approve={answered_loop}).",
-                err=True,
-            )
-        unapproved = [gate_id for gate_id in unapproved if gate_id != answered_loop]
         if unapproved and not can_prompt(output_controller):
             flags = " ".join(f"--auto-approve={gate_id}" for gate_id in unapproved)
             # A non-interactive gate pauses durably — EXCEPT when the
@@ -501,9 +490,11 @@ def _fully_answered_gate_ids(ctx: click.Context, nodes: list[dict[str, Any]]) ->
     warning and the ``--dry-run`` footer omit these, and only these.
 
     ``--auto-approve`` always qualifies. Resume's single-use ``--approve`` answer
-    qualifies unless it is a "yes" on a looping step: that step's later
-    iterations are new actions the answer does not cover (#615). A "no" ends
-    the run at the gate, so it always qualifies.
+    covers ONE gate occurrence, so it qualifies unless it is a "yes" on a looping
+    step: that step can raise the gate again at its next iteration (a new action —
+    the run pauses there again, Task 179), so the step still belongs in the
+    "will pause at" note and the ``--dry-run`` ⏸ footer. A "no" ends the run at
+    the gate, so it always qualifies.
     """
     answered = frozenset(ctx.obj.get("auto_approve") or ())
     answer = ctx.obj.get("approval_answer")
@@ -659,9 +650,14 @@ def _display_paused_result(result: Any, output_format: str) -> None:
     data (a calling process must be able to capture it). The gate CONTENT goes
     to stderr (like ``_maybe_echo_resume_hint``, so it survives ``-p``): an
     agent must be able to compose the answer from this output alone, without a
-    blind resume round-trip.
+    blind resume round-trip. Non-error diagnostics the run produced before the
+    pause (e.g. a resumed loop's ``resume.loop-restart`` advisory) are kept — a
+    pause carries no error, but what happened on the way to it still matters.
     """
+    from pflow.execution.formatters.success_formatter import partition_surfaced_diagnostics
     from pflow.execution.gate_prompt import format_gate_lines, format_resume_answer_command
+
+    surfaced = [d for d in result.diagnostics if d.severity in {Severity.WARNING, Severity.INFO}]
 
     pause = result.trace.pause_request or {}
     node_id = pause.get("paused_node_id")
@@ -687,7 +683,7 @@ def _display_paused_result(result: Any, output_format: str) -> None:
             "gate_request": masked_request,
             "resume_command": resume_command,
             "errors": [],
-            "diagnostics": [],
+            "diagnostics": [diagnostic.to_dict() for diagnostic in surfaced],
         }
         click.echo(json.dumps(document, indent=2, default=str))
         return
@@ -698,6 +694,16 @@ def _display_paused_result(result: Any, output_format: str) -> None:
     for line in format_gate_lines(gate_request):
         click.echo(f"   {line}", err=True)
     click.echo("", err=True)
+    warnings_list, advisories = partition_surfaced_diagnostics(surfaced)
+    for heading, block in (
+        ("⚠️ Warnings:", warnings_list),
+        ("\N{INFORMATION SOURCE}\N{VARIATION SELECTOR-16} Advisories:", advisories),
+    ):
+        if block:
+            click.echo(heading, err=True)
+            for diagnostic in block:
+                click.echo(format_diagnostic(diagnostic), err=True)
+            click.echo("", err=True)
     click.echo(f"To answer: {resume_command}", err=True)
 
 

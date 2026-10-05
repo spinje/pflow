@@ -87,6 +87,35 @@ gate resolution). Companion consolidation: the guard scope and the seeder now sh
 (`_seedable_final_events` — final events before the entry, minus failed), closing the
 guard-scans-a-superset drift where a superseded loop iteration's contents could refuse a resume.
 
+**Amended 2026-10 (Task 179): a loop step's position is part of the checkpoint.** Loop-node events
+carry `iteration` (trace 2.8.0), and the resume entry is a *(step, iteration)* pair derived by ONE
+reader, `resume_source.resume_iteration`: a failed iteration nothing recovered re-runs; otherwise
+the next iteration (a recovered failure that looped back counts as passed); no recorded position
+(`None`, a pre-2.8.0 trace) restarts the loop at iteration 1 with an advisory — never a guess. The
+seed scope is everything that completed before that iteration began (`_seedable_final_events` slices
+at the entry's first event with `iteration >= N`), so the entry's earlier iterations restore like
+any upstream work and `--only` is the same rule at iteration 1. At-least-once (Decision 4) narrows
+from "iterations 1..N re-fire" to "iteration N re-fires". A resume AFTER a loop step's completed
+iteration (an answered escalation, a kill before the re-entry decision) is honoured by the engine
+making the decision the walk would have made — `engine.continue_after_step` → `loop_control.
+should_reenter`, shared with the dry-run planner — never by a preflight mirror; the preflight
+passes a positioned loop step through and gives a substituted successor its own position. The
+`GateRequest` payload (ADR-0009) gains `iteration` — the iteration that raised the gate, display-only
+for every pause surface — and is additive-only from here; gate lines carry it too, so a recorded
+escalation decision folds onto the event of the iteration that raised it (lines without the key keep
+the final-event pairing). That rewrites the 2026-07-04 "last resolution pairs with its final event"
+rule, which held only while a loop step could never be a resume entry. Supersedes Task 164's "a
+resumed loop step restarts at iteration 1" stance and #615's iteration-1-only pause rule. Rejected:
+a trailer-only position (a failure has no pause record; resume-of-a-resume would need chain reads),
+counting same-node events (fragile under #659-class overwrites), and a separate loop-state seed
+channel (a second derivation beside the one the guards scan). Known limit: only the resume step's
+loop counter is restored, so a hand-written back edge into a loop step restarts that step at
+iteration 1 when the pause is at a different step, or when a resumed attempt that continued after a
+recovered failure is itself killed. A node output the trace cannot round-trip unchanged (a
+non-string key, a dropped nested key, bytes, or a value that falls to `str()` — judged on what the
+author's code produced) is marked `lossy` on its event and never seeded by resume — the loader
+refuses naming the place — and a gate whose resume would seed one stays `failed` instead of pausing.
+
 ## Considered options
 
 - **Dedicated snapshot store (ADR-0002's reserved escape hatch)** — rejected. ADR-0002 built

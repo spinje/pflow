@@ -75,6 +75,7 @@ vi.mock("@xyflow/react", async (importOriginal) => {
 });
 
 import { ApiError, fetchGate, fetchGraph, fetchRunNode, fetchRuns, fetchSource, resumeRun, runWorkflow } from "../api/client";
+import { subscribe } from "../api/events";
 import type { RunHandlers } from "../api/events";
 import type { GateInfo } from "../types";
 import { layoutGraph } from "../graph/layout";
@@ -1590,6 +1591,47 @@ describe("GraphView — approval bridge (Task 176)", () => {
     await waitFor(() => expect(new URLSearchParams(window.location.search).get("run")).toBe("attempt-2"));
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
     expect(screen.queryByLabelText("run status: paused")).toBeNull();
+  });
+
+  it("a loop gate chains pause after pause with Approve alone: the pinned second attempt's paused trailer re-shows the panel at its iteration (Task 179)", async () => {
+    // The second-pause chain nothing covered before: Approve pins the NEW attempt (selectRun → URL +
+    // re-subscribe on that run id), the paused banner clears, and when the new attempt's trailer
+    // arrives `paused` the panel remounts at the ⏸ node reading the NEXT iteration from /api/gate —
+    // no manual reload, no stale round-1 panel. Dropping the onPinRun pin or the eyebrow's iteration
+    // fails this test. (selectRun's gateDismissed re-arm is NOT reachable here: Approve needs the
+    // panel open, and re-opening it already clears the dismissal — mutation-checked.)
+    const gateFor = (iteration: number): GateInfo => ({
+      ...PAUSED_GATE,
+      gate_request: { ...PAUSED_GATE.gate_request, node_type: "code", preview: { iteration }, iteration },
+    });
+    vi.mocked(fetchGraph).mockResolvedValue(GRAPH);
+    vi.mocked(fetchGate).mockImplementation(async (run: string) => gateFor(run === "r1" ? 1 : 2));
+    window.history.replaceState({}, "", "/?workflow=demo&run=r1");
+    render(<GraphView workflow="demo" onBack={() => {}} />);
+    await waitFor(() => expect(screen.getByText("say hi")).toBeTruthy());
+    await waitFor(() => expect(live.handlers).not.toBeNull());
+    act(() => (live.handlers as unknown as RunHandlers).runSnapshot([], pausedBanner, false, false));
+
+    // Round 1: the eyebrow names the iteration; the human approves.
+    expect(await screen.findByText("code · greet · iteration 1")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(resumeRun).toHaveBeenCalledWith({ run: "r1", approve: "yes" }));
+
+    // The pin: URL + a fresh subscription on the answered attempt; the round-1 panel is gone.
+    await waitFor(() => expect(new URLSearchParams(window.location.search).get("run")).toBe("attempt-2"));
+    await waitFor(() => expect(vi.mocked(subscribe).mock.lastCall?.[2]).toBe("attempt-2"));
+    expect(screen.queryByText(/iteration 1/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+
+    // Round 2: the new attempt's trailer arrives paused on the same frontier node → the panel
+    // re-shows, fetched for the NEW token, reading iteration 2.
+    act(() =>
+      (live.handlers as unknown as RunHandlers).runSnapshot([], { ...pausedBanner, execution_id: "attempt-2" }, false, false),
+    );
+    expect(await screen.findByText("code · greet · iteration 2")).toBeTruthy();
+    expect(fetchGate).toHaveBeenLastCalledWith("attempt-2");
+    expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
+    expect(screen.getByLabelText("run status: paused")).toBeTruthy();
   });
 
   it("shows the Resume control for a pinned FAILED run — never for paused (the GateCallout owns that)", async () => {

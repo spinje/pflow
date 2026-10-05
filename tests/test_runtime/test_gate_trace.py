@@ -351,3 +351,192 @@ class TestGateTraceEvents:
         assert kinds_for_agent.index("event") < kinds_for_agent.index("gate")
         trace = load_trace_file(collector._stream_path)
         assert trace["final_status"] == "success"
+
+
+class _ApproveFirst:
+    """Approves the first ``approvals`` gates, then answers like a non-TTY run."""
+
+    def __init__(self, approvals: int) -> None:
+        self.remaining = approvals
+
+    def __call__(self, request, *, allow_prompt):
+        from pflow.core.exceptions import GateNotInteractiveError
+
+        if self.remaining > 0:
+            self.remaining -= 1
+            return GateResolution(approved=True, resolved_via="flag")
+        raise GateNotInteractiveError(request)
+
+
+def _run_streamed_until_gate_stop(ir: dict[str, Any], shared: dict[str, Any], tmp_path: Path) -> WorkflowTraceCollector:
+    """Run ``ir`` on a real streamed collector, expecting a non-interactive gate stop."""
+    from pflow.core.exceptions import GateNotInteractiveError
+
+    collector = WorkflowTraceCollector(
+        "gated", workflow_path=str(tmp_path / "gated.pflow.md"), is_run_scoped=True, stream_to_disk=True
+    )
+    compiled = compile_workflow(ir, Registry())
+    with pytest.raises(GateNotInteractiveError):
+        WorkflowEngine(trace_collector=collector, workflow_path="gated.pflow.md").run(compiled, shared)
+    collector.finalize()
+    return collector
+
+
+def _write_child(tmp_path: Path, name: str, output_block: str, code: str) -> Path:
+    child = tmp_path / f"{name}.pflow.md"
+    child.write_text(
+        f"# Child\n\nOne code step whose output the host exposes.\n\n## Outputs\n\n{output_block}\n\n"
+        "## Steps\n\n### emit\n\nEmit the output.\n\n- type: code\n\n"
+        f"```python code\n{code}\n```\n",
+        encoding="utf-8",
+    )
+    return child
+
+
+@pytest.mark.trace_files
+class TestHostFrameRecordedOnlyForChildGates:
+    """#659 (Task 179 D1): the gate arm records a sub-workflow host's event only for a
+    gate that came from its CHILD. A gate at the host's own level never reserved a frame
+    this visit (7.5) or already consumed it (17.7) — recording there wrote a stale copy.
+    The child-gate half is pinned by the two ``…does_not_orphan_trace`` tests above."""
+
+    def test_looping_gated_host_keeps_first_iteration_event(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        child = _write_child(
+            tmp_path,
+            "loop-child",
+            "### more\n\nAlways more.\n\n- type: boolean\n- source: ${emit.result.more}",
+            'result: dict = {"more": True}',
+        )
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "host",
+                    "type": "workflow",
+                    "params": {"workflow": str(child)},
+                    "approval": "required",
+                    "loop": {"while": "${host.more}", "max_iterations": 3},
+                }
+            ],
+            "edges": [],
+        }
+        # Iteration 1 approved and ran; iteration 2's approval stops the run before exec.
+        collector = _run_streamed_until_gate_stop(ir, {"__gate_resolver__": _ApproveFirst(1)}, tmp_path)
+
+        assert [e["node_id"] for e in collector.events if e["node_id"] == "host"] == ["host"]
+        lines = _read_lines(collector._stream_path)
+        host_lines = [ln for ln in lines if ln["kind"] == "event" and ln["node_id"] == "host"]
+        assert len(host_lines) == 1
+        host = host_lines[0]
+        assert host["iteration"] == 1
+        # Iteration 1's real record survives: its child ran under it.
+        child_lines = [ln for ln in lines if ln["kind"] == "event" and ln.get("parent_id") == host["id"]]
+        assert [ln["node_id"] for ln in child_lines] == ["emit"]
+        nodes = load_trace_file(collector._stream_path)["nodes"]
+        assert [(n["node_id"], n.get("iteration")) for n in nodes] == [("host", 1)]
+        assert [c["node_id"] for c in nodes[0]["sub_workflow_events"]] == ["emit"]
+
+    def test_host_own_escalation_records_host_once(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        child = _write_child(
+            tmp_path,
+            "escalating-child",
+            "### result\n\nAn undecided escalation.\n\n- type: object\n- source: ${emit.result.payload}",
+            # Nested one level down so the CHILD step does not escalate itself — only the
+            # host's exposed ``result`` carries the marker.
+            "result: dict = {'payload': {'escalation': {'question': 'a or b?'}}}",
+        )
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "host", "type": "workflow", "params": {"workflow": str(child)}}],
+            "edges": [],
+        }
+        # No resolver: the host's own escalation (17.7, after step 16 recorded it) stops the run.
+        collector = _run_streamed_until_gate_stop(ir, {}, tmp_path)
+
+        assert [e["node_id"] for e in collector.events] == ["emit", "host"]
+        nodes = load_trace_file(collector._stream_path)["nodes"]
+        assert [n["node_id"] for n in nodes] == ["host"]
+        assert nodes[0]["node_output"]["result"]["escalation"]["question"] == "a or b?"
+
+
+@pytest.mark.trace_files
+class TestGateIterationRecorded:
+    """Task 179: a gate raised by a loop step records the iteration that raised it — on
+    the ``GateRequest`` (every pause surface) and on both gate lines (the resolution
+    fold's pairing key). A non-loop gate records none."""
+
+    @staticmethod
+    def _gate_lines(collector: WorkflowTraceCollector) -> list[dict[str, Any]]:
+        return [ln for ln in _read_lines(collector._stream_path) if ln["kind"] == "gate"]
+
+    def test_loop_approval_lines_carry_the_iteration(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "tick",
+                    "type": "code",
+                    "params": {"code": "i: int\nresult: bool = int(i) < 3", "inputs": {"i": "${__iteration__}"}},
+                    "approval": "required",
+                    "loop": {"while": "${tick.result}", "max_iterations": 3},
+                }
+            ],
+            "edges": [],
+        }
+        collector = _run_streamed_until_gate_stop(ir, {"__gate_resolver__": _ApproveFirst(1)}, tmp_path)
+        lines = self._gate_lines(collector)
+        assert [(ln["phase"], ln.get("resolution"), ln["iteration"]) for ln in lines] == [
+            ("pause", None, 1),
+            ("resolution", "approved", 1),
+            ("pause", None, 2),
+            ("resolution", "non_interactive", 2),
+        ]
+        assert [ln["request"]["iteration"] for ln in lines if ln["phase"] == "pause"] == [1, 2]
+
+    def test_non_loop_approval_lines_carry_no_iteration(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        collector, _ = _run_streamed(_gated_ir(), _approver, tmp_path)
+        lines = self._gate_lines(collector)
+        assert [ln["phase"] for ln in lines] == ["pause", "resolution"]
+        assert all("iteration" not in ln for ln in lines)
+        # The payload states it explicitly (JSON-native null), beside its other fields.
+        assert lines[0]["request"]["node_id"] == "b"
+        assert lines[0]["request"]["iteration"] is None
+
+    def test_loop_escalation_lines_carry_the_iteration(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "agent",
+                    "type": "code",
+                    "params": {
+                        "code": "i: int\nresult: dict = {'escalation': {'question': f'q{i}?'}, 'go': int(i) < 2}",
+                        "inputs": {"i": "${__iteration__}"},
+                    },
+                    "loop": {"while": "${agent.result.go}", "max_iterations": 3},
+                }
+            ],
+            "edges": [],
+        }
+
+        def chooser(request, *, allow_prompt):
+            return GateResolution(approved=True, resolved_via="prompt", chosen="a")
+
+        collector, _ = _run_streamed(ir, chooser, tmp_path)
+        lines = self._gate_lines(collector)
+        assert [(ln["phase"], ln["iteration"]) for ln in lines] == [
+            ("pause", 1),
+            ("resolution", 1),
+            ("pause", 2),
+            ("resolution", 2),
+        ]
+        # The iteration that raised each gate, matched to the question it asked.
+        assert [(ln["request"]["question"], ln["request"]["iteration"]) for ln in lines if ln["phase"] == "pause"] == [
+            ("q1?", 1),
+            ("q2?", 2),
+        ]

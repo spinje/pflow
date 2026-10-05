@@ -16,8 +16,10 @@ One builder, every configuration:
   (via ``__gate_prompt_allowed__``) — auto-approve still works, prompting never does.
 
 ``format_gate_lines`` renders a gate's CONTENT as plain lines from the
-``GateRequest.to_dict()`` payload — the one render shape shared by the blocking
-prompt, the durable-pause output, and resume's answer-required error (Task 171).
+``GateRequest.to_dict()`` payload — the one render shape shared by the durable-pause
+output (CLI and MCP) and resume's answer-required error (Task 171). The blocking
+prompt renders its own header from the live ``GateRequest`` and shares the preview
+and option helpers below; both name a loop step's iteration (Task 179).
 
 Ctrl-C at a prompt: click raises ``Abort`` (an ``Exception`` subclass the engine
 would archive as a node failure) — converted to ``KeyboardInterrupt`` so it rides
@@ -116,9 +118,14 @@ def _echo_flag_approved(request: GateRequest, output_controller: OutputControlle
         return
     output_controller.prepare_for_prompt()
     click.echo(
-        click.style(f"✓ Gate '{request.node_id}' {how}", fg="green"),
+        click.style(f"✓ Gate '{request.node_id}'{_iteration_suffix(request)} {how}", fg="green"),
         err=True,
     )
+
+
+def _iteration_suffix(request: GateRequest) -> str:
+    """`` — iteration N`` for a gate raised by a loop step, else empty."""
+    return f" — iteration {request.iteration}" if request.iteration is not None else ""
 
 
 def _prompt(request: GateRequest, output_controller: OutputController) -> GateResolution:
@@ -134,7 +141,9 @@ def _prompt(request: GateRequest, output_controller: OutputController) -> GateRe
 
 
 def _prompt_approval(request: GateRequest) -> GateResolution:
-    click.echo(f"\n⏸  Approval required: {request.node_id} ({request.node_type})\n", err=True)
+    click.echo(
+        f"\n⏸  Approval required: {request.node_id} ({request.node_type}){_iteration_suffix(request)}\n", err=True
+    )
     for line in _format_preview(request.preview):
         click.echo(f"   {line}", err=True)
     if request.preview:
@@ -144,7 +153,7 @@ def _prompt_approval(request: GateRequest) -> GateResolution:
 
 
 def _prompt_escalation(request: GateRequest) -> GateResolution:
-    click.echo(f"\n⏸  Escalation from {request.node_id}:", err=True)
+    click.echo(f"\n⏸  Escalation from {request.node_id}{_iteration_suffix(request)}:", err=True)
     if request.question:
         click.echo(f"   {request.question}", err=True)
     click.echo("", err=True)
@@ -207,17 +216,20 @@ def format_resume_answer_command(execution_id: str, gate_request: dict[str, Any]
 def format_gate_lines(gate_request: dict[str, Any]) -> list[str]:
     """A gate's content as plain display lines, from the ``GateRequest.to_dict()`` payload.
 
-    Task 171: ONE render shape across the blocking prompt, the durable-pause
-    output, and resume's answer-required error — an agent must be able to
-    compose the answer from these lines alone (no blind round-trip). Approval:
-    the secret-masked param preview. Escalation: the question + numbered
-    options with the recommendation marked (``--choose N`` maps to exactly the
-    labels shown). Operates on the dict payload because pause consumers read it
-    from the trace trailer, not a live ``GateRequest``.
+    Task 171: ONE render shape across the durable-pause output (CLI and MCP) and
+    resume's answer-required error — an agent must be able to compose the answer
+    from these lines alone (no blind round-trip). A gate raised by a loop step
+    leads with ``Loop iteration N`` (Task 179: answering it runs that iteration;
+    the next gated iteration pauses again). Approval: the secret-masked param
+    preview. Escalation: the question + numbered options with the recommendation
+    marked (``--choose N`` maps to exactly the labels shown). Operates on the dict
+    payload because pause consumers read it from the trace trailer, not a live
+    ``GateRequest``.
     """
+    iteration = gate_request.get("iteration")
+    lines: list[str] = [f"Loop iteration {iteration}"] if isinstance(iteration, int) else []
     if gate_request.get("kind") == GATE_KIND_APPROVAL:
-        return _format_preview(gate_request.get("preview") or {})
-    lines: list[str] = []
+        return [*lines, *_format_preview(gate_request.get("preview") or {})]
     question = gate_request.get("question")
     if question:
         lines.append(str(question))

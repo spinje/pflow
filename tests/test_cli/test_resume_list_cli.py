@@ -138,6 +138,7 @@ def test_paused_run_appears_with_kind_correct_footer(home, gate_wf):
     assert "list_demo" in out
     assert "gated" in out
     assert "approval" in out
+    assert "· iteration" not in out  # not a loop step (test_paused_cli pins the loop row)
     assert "TOKEN" in out and "AGE" in out  # the column header row
     assert "To answer: pflow resume <TOKEN> --approve yes|no" in out
     # No escalation rows → no --choose template line.
@@ -169,6 +170,7 @@ def test_json_shape_and_empty_state(home, gate_wf):
     assert entry["execution_id"] == token
     assert entry["paused_node_id"] == "gated"
     assert entry["gate_kind"] == "action_approval"
+    assert entry["iteration"] is None
     assert entry["workflow_name"] == "list_demo"
     assert entry["resume_command"] == f"pflow resume {token} --approve yes|no"
     assert entry["paused_at"]  # the trailer end_time made it through

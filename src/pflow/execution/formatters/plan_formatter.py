@@ -36,6 +36,7 @@ def format_plan_json(plan: Plan) -> dict[str, Any]:
             "entry_node": plan.resume.entry_node,
             "restored_nodes": list(plan.resume.restored_nodes),
             "execution_id": plan.resume.execution_id,
+            "entry_iteration": plan.resume.entry_iteration,
         }
     return result
 
@@ -47,8 +48,9 @@ def _resume_header_line(plan: Plan) -> str | None:
     count = len(plan.resume.restored_nodes)
     noun = "step" if count == 1 else "steps"
     src = f" from {plan.resume.execution_id}" if plan.resume.execution_id else ""
+    at = f" (iteration {plan.resume.entry_iteration})" if plan.resume.entry_iteration > 1 else ""
     return (
-        f"Resuming from '{plan.resume.entry_node}': {count} upstream {noun} restored{src} "
+        f"Resuming from '{plan.resume.entry_node}'{at}: {count} upstream {noun} restored{src} "
         f"(plan + cost cover this step onward)."
     )
 

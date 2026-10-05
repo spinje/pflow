@@ -37,8 +37,23 @@ logger = logging.getLogger(__name__)
 # additive) adds ``resumed_from`` to the meta line (attempt-chain lineage) and ``restored: true`` on
 # cached-status events a resumed run re-recorded from its source trace. 2.7.0 (Task 171, additive)
 # adds the durable gate pause: ``final_status: "paused"`` plus ``paused_node_id`` and ``gate_request``
-# on the ``run.complete`` trailer. Consumers gate on ``startswith("2.")``; old traces remain readable.
-TRACE_FORMAT_VERSION = "2.7.0"
+# on the ``run.complete`` trailer. 2.8.0 (Task 179, additive) records loop position: ``iteration`` on
+# every loop-node event and on its ``gate`` lines, and inside ``gate_request``; and ``lossy`` on an event
+# (and batch item) whose ``node_output`` the trace could not store unchanged — resume never seeds it.
+# Consumers gate on ``startswith("2.")``; old traces remain readable.
+TRACE_FORMAT_VERSION = "2.8.0"
+
+# Keys the ENGINE writes into a node's output namespace, which the trace drops on purpose
+# (`_sanitize_for_json`): dropping them loses nothing the author produced, so no `lossy` mark.
+_ENGINE_OUTPUT_KEYS = frozenset({
+    "__pflow_stats__",
+    "__pflow_warnings__",
+    "__trace_collector__",
+    "_debug_context",
+    "_batch_trace",
+})
+# A batch host's error record keeps the raw exception beside its `error` message string.
+_BATCH_ERROR_EXCEPTION = re.compile(r"errors\[\d+\]\.exception")
 
 
 def format_trace_filename(workflow_path: str | None, workflow_name: str, timestamp: str) -> str:
@@ -635,6 +650,7 @@ class WorkflowTraceCollector:
         resolution: str | None = None,
         resolved_via: str | None = None,
         decision: dict[str, Any] | None = None,
+        iteration: int | None = None,
     ) -> None:
         """Task 125: stream one ``gate`` line (``phase="pause"`` carrying the
         GateRequest payload, or ``phase="resolution"`` carrying the verdict).
@@ -646,6 +662,10 @@ class WorkflowTraceCollector:
         ``--only``. The reconstruct reader ignores the kind
         (``trace_io._partition_trace_lines``); Task 171 reads gate lines with
         its own explicit reader.
+
+        ``iteration`` (2.8.0) is the loop iteration that raised the gate, written on BOTH
+        phases when set: ``resume_source._apply_gate_resolutions`` pairs a decision with the
+        event of that iteration, not the node's final event.
         """
         if resolution == "denied":
             self.gate_outcome = "denied"
@@ -662,9 +682,11 @@ class WorkflowTraceCollector:
             line["resolved_via"] = resolved_via
         if decision is not None:
             line["decision"] = decision
+        if iteration is not None:
+            line["iteration"] = iteration
         self._flush_line(line)
 
-    def record_node_execution(
+    def record_node_execution(  # noqa: C901 — a flat run of independent opt-in field stamps, no nesting
         self,
         node_id: str,
         node_type: str,
@@ -680,6 +702,8 @@ class WorkflowTraceCollector:
         cached: bool = False,
         restored: bool = False,
         frame: _HostFrame | None = None,
+        iteration: int | None = None,
+        lossy: list[str] | None = None,
     ) -> None:
         """Record detailed node execution data.
 
@@ -703,6 +727,12 @@ class WorkflowTraceCollector:
                 ``cached=True``: ``status: "cached"`` keeps every cost/UI
                 consumer correct with zero change; ``restored: true`` is the
                 honest marker on top. Excluded from ``nodes_executed``.
+            iteration: 2.8.0 — the loop node's 1-based iteration this event records;
+                ``None`` (key omitted) for every non-loop event, so a keyless event
+                means "not a loop iteration" or "recorded before 2.8.0".
+            lossy: 2.8.0 — where ``node_output`` lost what the node produced
+                (``_sanitize_for_json``); set from the sanitizer, or carried by a
+                re-recorded event. Key omitted when nothing was lost.
         """
         event: dict[str, Any] = {
             "node_id": node_id,
@@ -713,6 +743,8 @@ class WorkflowTraceCollector:
         }
         if restored:
             event["restored"] = True
+        if iteration is not None:
+            event["iteration"] = iteration
 
         if error:
             event["error"] = error
@@ -724,7 +756,11 @@ class WorkflowTraceCollector:
         # real output was ``{}`` must survive re-record so a SECOND resume seeds ``{}`` rather
         # than absent — a downstream coalesce distinguishes those (Task 164 §C step 4).
         if node_output or (restored and node_output is not None):
-            event["node_output"] = self._sanitize_for_json(node_output)
+            found: list[str] = []
+            event["node_output"] = self._sanitize_for_json(node_output, found)
+            lossy = lossy or found or None
+        if lossy:
+            event["lossy"] = lossy
         if mutations:
             event["mutations"] = mutations
         if batch_items:
@@ -1299,14 +1335,26 @@ class WorkflowTraceCollector:
             calls.append(call)
         return calls
 
-    def _sanitize_for_json(self, data: Any) -> Any:
+    def _sanitize_for_json(self, data: Any, lossy: list[str] | None = None, path: str = "") -> Any:
         """Make data JSON-serializable. No truncation — just hygiene.
 
         Filters internal keys (__ prefixed except __metrics__)
         and replaces binary data with a placeholder.
 
+        ``lossy`` (Task 179, a node output only): collects every place the trace
+        cannot round-trip what the AUTHOR's code produced, as ``"<path>: <why>"`` —
+        a non-string key (``json`` turns it into a string), a dropped key below the
+        top level, or at the top level unless the engine owns it (``_ENGINE_OUTPUT_KEYS``), bytes (the
+        placeholder), and a value that would fall to ``json.dumps(default=str)``
+        (set, date, Decimal, Path, custom objects). Tuple→list is not lossy, nor are
+        engine-written values (``_ENGINE_OUTPUT_KEYS``; a batch host's
+        ``errors[i].exception``).
+        Resume refuses to seed a marked event (``resume_source._guard_seed_scope``).
+
         Args:
             data: Data to sanitize
+            lossy: Accumulator for lossy places, or ``None`` to skip detection
+            path: Dotted path of ``data`` within the node output
 
         Returns:
             Sanitized data suitable for JSON serialization
@@ -1314,19 +1362,37 @@ class WorkflowTraceCollector:
         if isinstance(data, dict):
             result = {}
             for key, value in data.items():
+                child = f"{path}.{key}" if path else str(key)
+                if lossy is not None and not isinstance(key, str):
+                    lossy.append(f"{child}: non-string key ({type(key).__name__})")
                 # Skip internal keys
-                if isinstance(key, str) and key.startswith("__") and key not in ("__metrics__",):
+                dropped = (isinstance(key, str) and key.startswith("__") and key not in ("__metrics__",)) or key in (
+                    "__trace_collector__",
+                    "_debug_context",
+                    "_batch_trace",
+                )
+                if dropped:
+                    if lossy is not None and (path or key not in _ENGINE_OUTPUT_KEYS):
+                        lossy.append(f"{child}: key dropped by the trace")
                     continue
-                if key in ("__trace_collector__", "_debug_context", "_batch_trace"):
-                    continue
-                result[key] = self._sanitize_for_json(value)
+                result[key] = self._sanitize_for_json(value, lossy, child)
             return result
         elif isinstance(data, bytes):
+            if lossy is not None:
+                lossy.append(f"{path}: bytes")
             return f"<binary data: {len(data)} bytes>"
         elif isinstance(data, (list, tuple)):
-            return [self._sanitize_for_json(item) for item in data]
-        else:
-            return data
+            return [self._sanitize_for_json(item, lossy, f"{path}[{i}]") for i, item in enumerate(data)]
+        elif (
+            lossy is not None
+            and data is not None
+            and not isinstance(data, (str, int, float, bool))
+            # Engine-written, not the author's: a batch host's error record `exception`
+            # (`batch_executor._build_batch_error`); its `error` string carries the message.
+            and not (isinstance(data, BaseException) and _BATCH_ERROR_EXCEPTION.fullmatch(path))
+        ):
+            lossy.append(f"{path}: {type(data).__name__}")
+        return data
 
     def _sanitize_batch_items(self, batch_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Sanitize batch item trace data. Items are built by _capture_item_trace
@@ -1335,7 +1401,10 @@ class WorkflowTraceCollector:
         for item in batch_items:
             clean_item = dict(item)
             if "node_output" in clean_item:
-                clean_item["node_output"] = self._sanitize_for_json(clean_item["node_output"])
+                found: list[str] = []
+                clean_item["node_output"] = self._sanitize_for_json(clean_item["node_output"], found)
+                if found:
+                    clean_item["lossy"] = found
             if "template_resolutions" in clean_item:
                 clean_item["template_resolutions"] = self._sanitize_for_json(clean_item["template_resolutions"])
             # Recurse into nested events (sub-workflow batch items)

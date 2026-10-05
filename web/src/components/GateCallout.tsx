@@ -97,6 +97,7 @@ export function GateCallout({
     <div className="gate">
       <p className="gate-eyebrow">
         {req.node_type} · {req.node_id}
+        {typeof req.iteration === "number" && ` · iteration ${req.iteration}`}
       </p>
       {req.kind === "action_approval" ? (
         <>
