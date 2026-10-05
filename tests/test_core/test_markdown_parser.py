@@ -1065,7 +1065,7 @@ class TestYAMLParamParsing:
     # structure — a reserved name raised "Duplicate section", any other H1/H2
     # silently truncated the value, an H3 raised "Invalid entity ID", a fence
     # swallowed the rest of the file.
-    @pytest.mark.parametrize("header", ["|", "|-", "| # keep markdown"])
+    @pytest.mark.parametrize("header", ["|", "|-", "|2", "| # keep markdown"])
     @pytest.mark.parametrize(
         "structural_line",
         ["## Steps", "## Output format", "# Top heading", "### Subsection", "```", "~~~"],
@@ -1127,8 +1127,15 @@ class TestYAMLParamParsing:
     @pytest.mark.parametrize(
         "item_lines",
         [
-            ["- command: echo first"],  # a plain item: YAML would read the heading as a comment
-            ["- command: |", "    echo first"],  # shallower than the scalar's content column
+            # a plain item: YAML would read an indented heading as a comment
+            ["- command: echo first", "  ### second"],
+            # shallower than the scalar's content column, which YAML sets by the first line...
+            ["- command: |", "    echo first", "  ### second"],
+            # ...or by the indentation indicator, relative to the key's own column
+            ["- command: echo first", "- stdin: |2", "   ### second"],
+            ["- command: echo first", "-   stdin: |", "    ### second"],
+            # a sibling key ends the scalar; deeper lines after it are no longer scalar content
+            ["- command: |", "    echo first", "  timeout: 5", "    ### second"],
         ],
     )
     def test_heading_outside_block_scalar_content_stays_structural(self, item_lines: list[str]) -> None:
@@ -1137,14 +1144,13 @@ class TestYAMLParamParsing:
         losing the next step."""
         content = "\n".join([
             "# Test", "", "A test.", "", "## Steps", "", "### first", "", "First step.", "",
-            "- type: shell", *item_lines, "  ### second", "", "Second step.", "",
+            "- type: shell", *item_lines, "", "Second step.", "",
             "- type: shell", "- command: echo second", "",
         ])  # fmt: skip
-        nodes = parse_markdown(content).ir["nodes"]
-        assert [(n["id"], n["params"]) for n in nodes] == [
-            ("first", {"command": "echo first"}),
-            ("second", {"command": "echo second"}),
-        ]
+        first, second = parse_markdown(content).ir["nodes"]
+        assert first["id"] == "first"
+        assert first["params"]["command"].strip() == "echo first"
+        assert (second["id"], second["params"]) == ("second", {"command": "echo second"})
 
 
 # ===========================================================================
