@@ -1588,9 +1588,9 @@ def test_node_retry_lifecycle_raises_backend_translated_error(monkeypatch) -> No
         def continuation_options(self, previous: AgentResult, options: dict[str, Any]) -> dict[str, Any] | None:
             return None
 
-        def translate_error(self, exc: Exception, options: dict[str, Any]) -> Exception:
+        def translate_error(self, exc: Exception, options: dict[str, Any]) -> PflowError:
             self.translate_calls += 1
-            return ValueError(f"translated: {exc}")
+            return NodeError(f"translated: {exc}")
 
         def build_warning_context(self, options: dict[str, Any], result: AgentResult) -> dict[str, Any]:
             return {}
@@ -1601,7 +1601,7 @@ def test_node_retry_lifecycle_raises_backend_translated_error(monkeypatch) -> No
     node.wait = 0
     node.params = {"backend": "claude", "prompt": "do work"}
 
-    with pytest.raises(ValueError, match="translated: provider unavailable"):
+    with pytest.raises(NodeError, match="translated: provider unavailable"):
         node.run({})
 
     assert backend.run_calls == 2
@@ -1681,8 +1681,8 @@ def test_schema_retry_keeps_prior_result_for_retriable_error() -> None:
         def continuation_options(self, previous: AgentResult, options: dict[str, Any]) -> dict[str, Any]:
             return options.copy()
 
-        def translate_error(self, exc: Exception, options: dict[str, Any]) -> Exception:
-            return ValueError("temporary provider failure")
+        def translate_error(self, exc: Exception, options: dict[str, Any]) -> PflowError:
+            return NodeError("temporary provider failure")
 
         def build_warning_context(self, options: dict[str, Any], result: AgentResult) -> dict[str, Any]:
             return {"backend": "test", "backend_display": "Test backend"}

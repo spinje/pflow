@@ -21,15 +21,14 @@ from __future__ import annotations
 import ast
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+import requests
 from click.testing import CliRunner
 
 import pflow.nodes
 from pflow.cli.main import main
-from pflow.core.diagnostic import exception_to_diagnostics
-from pflow.core.diagnostic_render import format_diagnostic
-from pflow.core.exceptions import NodeError
 
 NODES_DIR = Path(pflow.nodes.__file__).parent
 VANILLA = frozenset({"Exception", "ValueError", "TypeError", "RuntimeError"})
@@ -51,8 +50,7 @@ def _vanilla_constructions() -> set[tuple[str, str, str, int]]:
     found: set[tuple[str, str, str, int]] = set()
     for path in sorted(NODES_DIR.rglob("*.py")):
         rel = path.relative_to(NODES_DIR).as_posix()
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        _scan(tree, rel, "<module>", found)
+        _scan(ast.parse(path.read_text(encoding="utf-8")), rel, "<module>", found)
     return found
 
 
@@ -79,6 +77,23 @@ def test_node_code_constructs_no_vanilla_exceptions() -> None:
         + "\nOnly an exception that never escapes the node (a stdlib hook protocol caught locally) "
         "may be added to ALLOWLIST, with its reason."
     )
+
+
+def test_scanner_detects_every_construction_form() -> None:
+    """The ratchet is only as good as its scanner: each form it advertises is caught."""
+    source = (
+        "def prep():\n    raise ValueError('missing')\n"
+        "def check(x):\n    try:\n        int(x)\n        raise TypeError\n    except TypeError:\n        pass\n"
+        "def translate_error(exc):\n    return RuntimeError(str(exc))\n"
+        "def fine():\n    raise NodeError('ok', param='x')\n"
+    )
+    found: set[tuple[str, str, str, int]] = set()
+    _scan(ast.parse(source), "x.py", "<module>", found)
+    assert {(function, name) for _, function, name, _ in found} == {
+        ("prep", "ValueError"),
+        ("check", "TypeError"),
+        ("translate_error", "RuntimeError"),
+    }
 
 
 def test_allowlist_has_no_stale_entries() -> None:
@@ -129,12 +144,22 @@ def test_param_error_reaches_the_author_as_a_validation_error(
     assert "Type:" not in output
 
 
-def test_translated_runtime_failure_is_an_execution_failure() -> None:
-    """Without a param, NodeError is an execution failure — still no ``Type:`` line."""
-    [diagnostic] = exception_to_diagnostics(NodeError("Could not connect to http://127.0.0.1:1."))
-    assert diagnostic.title == "Execution Failed"
-    assert diagnostic.context == {"category": "execution_failure"}
-    assert "Type:" not in format_diagnostic(diagnostic)
+def test_translated_runtime_failure_reaches_the_author_as_an_execution_failure(tmp_path: Path) -> None:
+    """A failure the node translated (no param at fault) stays an execution failure."""
+    body = "### fetch\n\nFetch.\n\n- type: http\n- url: http://service.invalid/data\n"
+    with (
+        patch("requests.request", side_effect=requests.ConnectionError("refused")),
+        patch("pflow.core.node.time.sleep"),
+    ):
+        result = CliRunner(mix_stderr=False).invoke(main, ["--output-format", "json", str(_write(tmp_path, body))])
+
+    assert result.exit_code != 0
+    [error] = json.loads(result.stdout)["errors"]
+    assert error["title"] == "Execution Failed"
+    assert error["context"] == {"category": "execution_failure"}
+    assert error["node_id"] == "fetch"
+    assert error["message"].startswith("Could not connect to http://service.invalid/data.")
+    assert "exception_type" not in error
 
 
 def test_param_error_on_one_batch_item_does_not_abort_a_continue_batch(tmp_path: Path) -> None:
