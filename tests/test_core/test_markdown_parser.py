@@ -1124,6 +1124,14 @@ class TestYAMLParamParsing:
             parse_markdown(content + "## Steps\n")
         assert exc_info.value.line == 20
 
+    def test_block_scalar_column_counts_only_spaces(self) -> None:
+        """As in YAML, a leading non-breaking space is content, not indentation."""
+        content = "\n".join([
+            "# Test", "", "A test.", "", "## Steps", "", "### run", "", "Runs a thing.", "",
+            "- type: shell", "- command: cat", "- stdin: |", "   \u00a0text", "   ## Notes", "",
+        ])  # fmt: skip
+        assert parse_markdown(content).ir["nodes"][0]["params"]["stdin"] == "\u00a0text\n## Notes"
+
     @pytest.mark.parametrize(
         "item_lines",
         [

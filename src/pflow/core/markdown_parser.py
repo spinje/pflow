@@ -355,13 +355,15 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
         # column) is content even when it looks like a heading or a fence. The
         # first shallower line ends the scalar, as in YAML, and gets the normal
         # checks below — the item itself may still continue (a sibling key).
+        # Only ASCII spaces indent, as in YAML (a leading NBSP is content).
         if yaml_block_key_column is not None:
-            indent = len(line) - len(line.lstrip())
-            if not yaml_block_indent and line.strip() and indent > yaml_block_key_column:
+            indent = len(line) - len(line.lstrip(" "))
+            is_blank = indent == len(line)
+            if not yaml_block_indent and not is_blank and indent > yaml_block_key_column:
                 # YAML auto-detects the column from the first content line and the
-                # whitespace-only lines before it (all of this item's lines so far).
+                # blank lines before it (all of this item's lines so far).
                 yaml_block_indent = max([indent, *(len(blank) for blank in yaml_current_item_lines[1:])])
-            if line.strip() == "" or (yaml_block_indent and indent >= yaml_block_indent):
+            if is_blank or (yaml_block_indent and indent >= yaml_block_indent):
                 yaml_current_item_lines.append(line)
                 continue
             yaml_block_key_column = None
