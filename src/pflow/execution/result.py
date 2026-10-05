@@ -226,6 +226,8 @@ class ResumePlanInfo:
     entry_node: str
     restored_nodes: list[str]
     execution_id: str
+    # Task 179: the loop iteration the entry runs at (1 for a non-loop entry).
+    entry_iteration: int = 1
 
 
 @dataclass(frozen=True)

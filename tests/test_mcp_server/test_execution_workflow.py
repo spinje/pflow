@@ -325,3 +325,36 @@ class TestExecuteWorkflowPaused:
         # Identity cross-check: the text's execution_id IS this trace's run id.
         exec_id = next(line.split(": ", 1)[1] for line in text.splitlines() if line.startswith("execution_id: "))
         assert _json.loads(lines[0])["execution_id"] == exec_id
+
+    @pytest.mark.trace_files
+    def test_mcp_loop_pause_then_cli_resumes_each_iteration(self, tmp_path, monkeypatch):
+        """Task 179: an MCP run pauses a gated loop at iteration 1 and says so in its ``Gate:``
+        block; the token is a CLI resume token (MCP has no resume tool), and each CLI answer
+        runs one iteration and pauses again until the loop finishes — effects exactly once."""
+        import re
+        from pathlib import Path as _Path
+
+        from click.testing import CliRunner
+
+        from pflow.cli.main import cli
+        from tests.test_cli.test_paused_cli import _LOOP_GATE_WF
+
+        monkeypatch.setattr(_Path, "home", lambda: tmp_path)
+        workflow_path = tmp_path / "gated_loop.pflow.md"
+        workflow_path.write_text(_LOOP_GATE_WF, encoding="utf-8")
+        marker = tmp_path / "effects.txt"
+
+        text = ExecutionService.execute_workflow(str(workflow_path), {"marker": str(marker)})
+        assert "status: paused" in text
+        assert "Gate:\n  Loop iteration 1\n" in text
+        token = next(line.split(": ", 1)[1] for line in text.splitlines() if line.startswith("execution_id: "))
+        assert f"resume_command: pflow resume {token} --approve yes|no" in text
+
+        exit_codes = []
+        for _ in range(3):
+            resumed = CliRunner(mix_stderr=False).invoke(cli, ["resume", token, "--approve", "yes"])
+            exit_codes.append(resumed.exit_code)
+            match = re.search(r"Resume token: (\S+)", resumed.stdout)
+            token = match.group(1) if match else ""
+        assert exit_codes == [4, 4, 0], resumed.stderr
+        assert marker.read_text(encoding="utf-8").splitlines() == ["effect 1", "effect 2", "effect 3"]

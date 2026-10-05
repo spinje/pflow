@@ -88,6 +88,7 @@ def test_paused_run_exits_4_with_token_and_gate_content(home, gate_wf):
     assert "<REDACTED>" in result.stderr
     assert "sk-super-secret" not in result.stderr
     assert f"To answer: pflow resume {token} --approve yes|no" in result.stderr
+    assert "Loop iteration" not in result.stderr  # not a loop step (the loop chain test pins presence)
     # The pre-flight warning speaks the post-171 outcome (pause, not fail —
     # "fail" stays only for --no-trace, pinned in test_approval_gate_cli).
     assert "will pause at approval gate(s) [gated]" in result.stderr
@@ -406,19 +407,25 @@ def _effects(marker: Path) -> list[str]:
 
 def test_approve_yes_on_loop_gate_pauses_each_iteration_until_done(home, loop_gate):
     """Task 179 (supersedes #615's fail-at-iteration-2): `--approve yes` answers the ONE
-    paused gate — that iteration runs, and the next gated iteration pauses again as a
-    NEW token; completed iterations never re-run. Three answers finish a 3-iteration loop."""
+    paused gate — that iteration runs, and the next gated iteration pauses again as a NEW
+    token naming its iteration; completed iterations never re-run. Three answers finish a
+    3-iteration loop. The removed #615 warning never prints; the generic run-start note
+    still names the step (it WILL pause again)."""
     wf, marker = loop_gate
-    tokens = [_pause(wf, f"marker={marker}")]
+    first = _runner().invoke(cli, [str(wf), f"marker={marker}"])
+    assert first.exit_code == 4, first.stderr
+    assert "   Loop iteration 1" in first.stderr
+    tokens = [_ANY_TOKEN_RE.search(first.stdout).group(1)]
     assert _effects(marker) == []
 
     for done in (1, 2):
         paused = _runner().invoke(cli, ["resume", tokens[-1], "--approve", "yes"])
         assert paused.exit_code == 4, paused.stderr
         assert _effects(marker) == [f"effect {n}" for n in range(1, done + 1)]
-        match = _ANY_TOKEN_RE.search(paused.stdout)
-        assert match, paused.stdout
-        tokens.append(match.group(1))
+        assert f"   Loop iteration {done + 1}" in paused.stderr
+        assert "will pause at approval gate(s) [gated]" in paused.stderr
+        assert "answers only the first iteration" not in paused.stderr
+        tokens.append(_ANY_TOKEN_RE.search(paused.stdout).group(1))
 
     finished = _runner().invoke(cli, ["resume", tokens[-1], "--approve", "yes"])
     assert finished.exit_code == 0, finished.stderr
@@ -429,6 +436,30 @@ def test_approve_yes_on_loop_gate_pauses_each_iteration_until_done(home, loop_ga
         assert refused.exit_code == 1
         assert "already resumed by a newer attempt" in refused.stdout + refused.stderr
     assert _effects(marker) == ["effect 1", "effect 2", "effect 3"]
+
+
+def test_loop_gate_position_reaches_every_pause_surface(home, loop_gate):
+    """Task 179 Q6: at iteration 2 the JSON pause document, `resume list` (text + JSON) and
+    the answer-required refusal all carry the iteration — the one ``gate_request`` field."""
+    wf, marker = loop_gate
+    token = _pause(wf, f"marker={marker}")
+    paused = _runner().invoke(cli, ["resume", token, "--approve", "yes", "--output-format", "json"])
+    assert paused.exit_code == 4, paused.stderr
+    document = json.loads(paused.stdout)
+    assert (document["paused_node_id"], document["gate_request"]["iteration"]) == ("gated", 2)
+    token = document["execution_id"]
+
+    listed = _runner().invoke(cli, ["resume", "list"])
+    assert listed.exit_code == 0, listed.stderr
+    assert "approval · iteration 2" in listed.stdout
+    rows = json.loads(_runner().invoke(cli, ["resume", "list", "--output-format", "json"]).stdout)
+    assert [(row["execution_id"], row["iteration"]) for row in rows] == [(token, 2)]
+
+    unanswered = _runner().invoke(cli, ["resume", token])
+    assert unanswered.exit_code == 1
+    assert "Loop iteration 2" in unanswered.stdout + unanswered.stderr
+    assert f"pflow resume {token} --approve yes|no" in unanswered.stdout + unanswered.stderr
+    assert _effects(marker) == ["effect 1"]
 
 
 def test_dry_run_with_answer_on_loop_gate_still_names_auto_approve(home, loop_gate):

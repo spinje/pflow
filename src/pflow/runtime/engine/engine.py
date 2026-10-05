@@ -1033,11 +1033,12 @@ class WorkflowEngine:
                 entry_node, workflow.node_configs[step], shared, loop_counts, loop_caps, source_id=self.resume_source_id
             )
         # Engine-only keys, stamped here per the node_state pattern — never added
-        # to new_execution_state(). The display/JSON surface reads all three.
+        # to new_execution_state(). The display/JSON surface reads all four.
         # Restored = seeded AND not run in this attempt (a resumed loop step runs on).
         shared["__execution__"]["restored_nodes"] = [nid for nid in final if nid != entry_node.node_id]
         shared["__execution__"]["resumed_from"] = self.resume_source_id
         shared["__execution__"]["resume_entry_node"] = entry_node.node_id
+        shared["__execution__"]["resume_entry_iteration"] = iteration if entry_node.node_id == step else 1
         # Decision 6: re-record each SEEDED node's final event into THIS attempt's
         # trace so it is self-contained — resume-of-a-resume and later --only runs
         # seed from the newest attempt alone. cached=True supplies status "cached"

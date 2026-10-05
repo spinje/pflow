@@ -22,6 +22,7 @@ import pytest
 
 from pflow.core.exceptions import InvalidRequestError
 from pflow.core.trace_io import load_trace_file
+from pflow.execution.formatters.plan_formatter import format_plan_text
 from pflow.execution.formatters.success_formatter import (
     format_execution_success,
     format_resume_indicator,
@@ -522,6 +523,11 @@ class TestFormatResumeIndicator:
     def test_zero_restored_still_announces_mode(self) -> None:
         assert format_resume_indicator("abc-123", "deploy", 0) == "  ⤷ Resumed from abc-123 at 'deploy'"
 
+    def test_loop_entry_past_its_first_iteration_names_it(self) -> None:
+        line = format_resume_indicator("abc-123", "k", 1, 3)
+        assert line == "  ⤷ Resumed from abc-123 at 'k' (iteration 3) — 1 upstream step restored"
+        assert "(iteration" not in format_resume_indicator("abc-123", "k", 1, 1)
+
 
 # --- Branch scenario ----------------------------------------------------------
 
@@ -813,10 +819,16 @@ def test_loop_k_resumes_at_the_failed_iteration(tmp_path) -> None:
     fail_flag.write_text("0", encoding="utf-8")
     source = load_resume_source(execution_id=run1.trace.execution_id, debug_dir=p1.parent)
     assert (source.entry_node_id, source.entry_iteration) == ("k", 3)
+    plan = WorkflowRunner().plan(str(wf), {}, RunnerConfig(), resume_source=source)
+    assert "Resuming from 'k' (iteration 3): 1 upstream step restored" in format_plan_text(plan)
     result = _resume(wf, source)
 
     assert result.success, [str(d) for d in result.diagnostics]
     assert _iterations(iter_file) == ["1", "2", "3", "3", "4", "5"]
+    formatted = format_execution_success(result.shared_after, resolve_workflow(str(wf)).ir, result.metrics)
+    assert formatted["execution"]["resume_entry_iteration"] == 3
+    assert "⤷ Resumed from" in format_success_as_text(formatted)
+    assert "at 'k' (iteration 3) — 1 upstream step restored" in format_success_as_text(formatted)
     execution = result.shared_after["__execution__"]
     assert execution["restored_nodes"] == ["prep"]  # K is seeded with iteration 2 but RUNS — never "restored"
     assert execution["resume_entry_node"] == "k"

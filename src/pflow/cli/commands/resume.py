@@ -113,8 +113,9 @@ def _approval_answer(
     re-fires in the resume run and the answer resolves THAT one occurrence
     (``build_gate_resolver``): "yes" writes an honest approved resolution line;
     "no" → ``GateDenied`` → the EXISTING denied machinery (denied attempt trace,
-    exit 3) — which also CONSUMES the token. A looping step's later iterations
-    are new actions the answer does not cover (``--auto-approve`` does).
+    exit 3) — which also CONSUMES the token. A looping step's next iteration is a
+    new action the answer does not cover: it pauses again with its own token
+    (Task 179), unless ``--auto-approve`` pre-approves every iteration.
     """
     if approve is None or source.paused_node_id is None:
         return None
@@ -435,6 +436,7 @@ def resume_list(output_format: str) -> None:
                 "workflow_path": run.workflow_path,
                 "paused_node_id": run.paused_node_id,
                 "gate_kind": run.gate_kind,
+                "iteration": run.iteration,
                 "paused_at": run.paused_at,
                 "path": str(run.path),
                 "resume_command": format_resume_answer_command(run.execution_id, {"kind": run.gate_kind}),
@@ -454,7 +456,7 @@ def resume_list(output_format: str) -> None:
             run.execution_id,
             run.workflow_name or "?",
             run.paused_node_id,
-            _gate_kind_label(run.gate_kind),
+            _gate_kind_label(run.gate_kind) + (f" · iteration {run.iteration}" if run.iteration is not None else ""),
             _age_of(run.paused_at),
         )
         for run in runs

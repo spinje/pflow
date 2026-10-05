@@ -936,7 +936,9 @@ class PausedRun:
 
     ``gate_kind`` is ``gate_request["kind"]`` (the payload stays the one source
     of truth — the row carries only what the list renders); ``paused_at`` is the
-    trailer's ``end_time`` ISO string (the moment the run finalized paused).
+    trailer's ``end_time`` ISO string (the moment the run finalized paused);
+    ``iteration`` is ``gate_request["iteration"]`` — the loop iteration that raised
+    the gate (``None`` for a non-loop step; Task 179).
     """
 
     execution_id: str
@@ -946,6 +948,7 @@ class PausedRun:
     gate_kind: str | None
     paused_at: str | None
     path: Path
+    iteration: int | None = None
 
 
 def _scan_tail_for_trailer(tail: bytes) -> tuple[dict[str, Any] | None, bool]:
@@ -1037,6 +1040,7 @@ def list_paused_runs(debug_dir: Path | None = None) -> list[PausedRun]:
         if execution_id and _find_consuming_attempt(debug_dir, workflow_path, execution_id) is not None:
             continue
         gate_kind = gate_request.get("kind")
+        iteration = gate_request.get("iteration")
         paused_at = trailer.get("end_time")
         workflow_name = meta.get("workflow_name")
         pending.append(
@@ -1048,6 +1052,7 @@ def list_paused_runs(debug_dir: Path | None = None) -> list[PausedRun]:
                 gate_kind=gate_kind if isinstance(gate_kind, str) else None,
                 paused_at=paused_at if isinstance(paused_at, str) else None,
                 path=trace_file,
+                iteration=iteration if isinstance(iteration, int) else None,
             )
         )
     return pending

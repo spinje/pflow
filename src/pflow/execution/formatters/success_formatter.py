@@ -134,6 +134,7 @@ def format_execution_success(
                     execution_dict["resumed_from"] = resumed_from_val
                     execution_dict["nodes_restored"] = len(exec_state.get("restored_nodes", []))
                     execution_dict["resume_entry_node"] = exec_state.get("resume_entry_node")
+                    execution_dict["resume_entry_iteration"] = exec_state.get("resume_entry_iteration", 1)
 
                 # Aggregate cache stats
                 cache_hit_count = sum(1 for s in steps if s.get("cached"))
@@ -534,7 +535,9 @@ def format_only_indicator(only_node: str, nodes_skipped: int) -> str:
     return f"  ⤷ Ran only '{only_node}' (--only)"
 
 
-def format_resume_indicator(resumed_from: str, entry_node: str | None, nodes_restored: int) -> str:
+def format_resume_indicator(
+    resumed_from: str, entry_node: str | None, nodes_restored: int, entry_iteration: int = 1
+) -> str:
     """Format the resume mode confirmation line (Task 164).
 
     Single source of truth at parity with ``format_only_indicator`` — same
@@ -548,9 +551,12 @@ def format_resume_indicator(resumed_from: str, entry_node: str | None, nodes_res
     Wording mirrors the ``--only`` line's semantics: restored upstream steps
     were NOT executed this run — their outputs were seeded from the source
     attempt's trace. The shorter no-restored form (K was the first step) still
-    announces the mode.
+    announces the mode. A loop step resumed past its first iteration names the
+    iteration it continues at (Task 179): ``at 'k' (iteration 3)``.
     """
     at_clause = f" at '{entry_node}'" if entry_node else ""
+    if entry_node and entry_iteration > 1:
+        at_clause += f" (iteration {entry_iteration})"
     if nodes_restored > 0:
         noun = "step" if nodes_restored == 1 else "steps"
         return f"  ⤷ Resumed from {resumed_from}{at_clause} — {nodes_restored} upstream {noun} restored"
@@ -624,7 +630,10 @@ def _append_execution_steps(lines: list[str], execution: dict[str, Any]) -> None
     if resumed_from:
         lines.append(
             format_resume_indicator(
-                resumed_from, execution.get("resume_entry_node"), execution.get("nodes_restored", 0)
+                resumed_from,
+                execution.get("resume_entry_node"),
+                execution.get("nodes_restored", 0),
+                execution.get("resume_entry_iteration", 1),
             )
         )
 

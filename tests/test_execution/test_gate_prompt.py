@@ -117,8 +117,8 @@ class TestApprovalAnswer:
     """Resume's single-use ``approval_answer`` — `pflow resume <id> --approve yes|no` (Task 171, #615)."""
 
     def test_yes_answers_exactly_one_occurrence(self, capsys):
-        # #615: a looping gate's next iteration is a new action — the answer must
-        # not become a standing approval for the id.
+        # A looping gate's next iteration is a new action — the answer must not
+        # become a standing approval for the id (it pauses again, Task 179).
         resolver = build_gate_resolver(frozenset(), _FakeOC(stdin_tty=False), approval_answer=("notify", True))
         assert resolver(_approval("notify")) == GateResolution(approved=True, resolved_via="flag")
         assert "Gate 'notify' approved via --approve yes" in capsys.readouterr().err
@@ -296,6 +296,20 @@ class TestPausedGateRendering:
     surfaces render the SAME content shape as the blocking prompt, from the
     GateRequest.to_dict() payload (what the trace trailer carries)."""
 
+    def test_loop_gate_leads_with_its_iteration(self):
+        """Task 179: one rule serves every pause surface (CLI stderr, MCP ``Gate:`` block,
+        the answer-required error) — a loop step's gate leads with ``Loop iteration N``."""
+        from dataclasses import replace
+
+        from pflow.execution.gate_prompt import format_gate_lines
+
+        approval = replace(_approval(command="deploy"), iteration=2).to_dict()
+        assert format_gate_lines(approval)[:2] == ["Loop iteration 2", "command:  deploy"]
+        escalation = replace(_escalation(question="which?"), iteration=3).to_dict()
+        assert format_gate_lines(escalation)[:2] == ["Loop iteration 3", "which?"]
+        # A non-loop gate (iteration None) has no such line.
+        assert format_gate_lines(_approval(command="deploy").to_dict()) == ["command:  deploy"]
+
     def test_approval_lines_mask_secrets(self):
         from pflow.execution.gate_prompt import format_gate_lines
 
@@ -331,3 +345,27 @@ class TestPausedGateRendering:
         assert approval == "pflow resume tok-1 --approve yes|no"
         escalation = format_resume_answer_command("tok-2", _escalation(question="q?").to_dict())
         assert escalation == 'pflow resume tok-2 --choose "<answer or option number>"'
+
+
+class TestLoopIterationInPromptHeaders:
+    """Task 179: the blocking prompt and the flag echo render their own header from the
+    live request — a loop step's names the iteration, a non-loop step's does not."""
+
+    def test_approval_prompt_and_flag_echo_name_the_iteration(self, monkeypatch, capsys):
+        from dataclasses import replace
+
+        monkeypatch.setattr(click, "confirm", lambda *a, **k: True)
+        build_gate_resolver(frozenset(), _FakeOC())(replace(_approval(), iteration=2))
+        build_gate_resolver(frozenset({"notify"}), _FakeOC())(replace(_approval(), iteration=3))
+        build_gate_resolver(frozenset(), _FakeOC())(_approval())
+        err = capsys.readouterr().err
+        assert "Approval required: notify (ShellNode) — iteration 2" in err
+        assert "Gate 'notify' — iteration 3 pre-approved via --auto-approve=notify" in err
+        assert "Approval required: notify (ShellNode)\n" in err  # the non-loop header, no suffix
+
+    def test_escalation_prompt_names_the_iteration(self, monkeypatch, capsys):
+        from dataclasses import replace
+
+        monkeypatch.setattr(click, "prompt", lambda *a, **k: "x")
+        build_gate_resolver(frozenset(), _FakeOC())(replace(_escalation(question="q?"), iteration=2))
+        assert "Escalation from agent-step — iteration 2:" in capsys.readouterr().err

@@ -49,9 +49,9 @@ same way shows a Resume button (same confirmation rules as below).
 
 Behavior worth knowing:
 
-- **Nothing re-runs.** Upstream steps are restored from the paused trace. An approved gate's step runs for the first time (approval gates fire *before* the step, so there is no side-effect re-fire risk and no confirmation prompt). An answered escalation continues at the **next** step with the decision folded into the completed step's result (`${step.result.escalation.decision.chosen}`) — the agent step is never re-paid.
+- **Nothing re-runs.** Upstream steps are restored from the paused trace. An approved gate's step runs for the first time (approval gates fire *before* the step, so there is no side-effect re-fire risk and no confirmation prompt). An answered escalation continues **after** the escalating step with the decision folded into its result (`${step.result.escalation.decision.chosen}`) — the agent step is never re-paid. "After" is the next step, or for a loop step whatever its loop decides: its next iteration (which reads the decision) or its exit.
 - **A token is consumed by its answer.** The resumed attempt supersedes the paused run; a second answer refuses and names the newer attempt. Each later gate in the same workflow pauses again as a **new** token.
-- **An answer covers one gate, once.** `--approve yes` approves the paused gate only — it is not a standing approval for that step. A paused **loop** step runs its first iteration on the answer; its later iterations are new actions that cannot pause (see below) and fail unless you also pass `--auto-approve <step>`.
+- **An answer covers one gate, once.** `--approve yes` approves the paused gate only — it is not a standing approval for that step. A paused **loop** step runs the paused iteration on the answer; its next iteration is a new action that pauses again with a new token (the pause output names it: `Loop iteration 2`). Pass `--auto-approve <step>` to approve every remaining iteration at once.
 - **Resuming without an answer flag refuses** and shows the pending question with the exact command; `--approve`/`--choose` on a run that is not paused refuses too.
 - The **edited-workflow refusal** and `--force` (below) apply to paused resumes the same as failed ones. Input overrides (`KEY=VALUE`) work the same way.
 
@@ -67,7 +67,7 @@ Everything not overridden is reused from the inputs the failed run used.
 
 ## Re-running the failed step may repeat its side effects (at-least-once)
 
-The failed step runs **again** from the start. If it already partly side-effected before failing — an http POST that sent but timed out on the response, an mcp tool that created a resource, a shell command that wrote a file — resuming re-fires it. This is at-least-once execution of the failed step.
+The failed step runs **again** from the start (for a loop step: the failed iteration, not the whole loop). If it already partly side-effected before failing — an http POST that sent but timed out on the response, an mcp tool that created a resource, a shell command that wrote a file — resuming re-fires it. This is at-least-once execution of the failed step.
 
 - An **idempotent** failed step (an `llm` step) resumes silently — re-running is safe.
 - A **side-effecting** failed step (`shell` / `code` / `agent` / file operations / `mcp`; `http` too — even reads touch external systems):
@@ -79,16 +79,16 @@ The failed step runs **again** from the start. If it already partly side-effecte
 ## Other behavior worth knowing
 
 - **Edited workflow → refusal.** If the workflow file changed since the original run, resume refuses — the restored upstream outputs may no longer match the current steps. Re-run from the start, or `--force` to resume anyway.
-- **Loop steps restart at iteration 1.** Loop iteration position is not part of the saved run, so a resumed loop step begins its loop again. That is why a gated loop step pauses only on its first iteration: a pause at a later iteration could never be resumed where it stopped, so without pre-approval it fails (exit 1) instead of issuing a token.
+- **Loop steps continue where they stopped.** A paused or failed loop step resumes at the iteration where it stopped; completed iterations never re-run, and carry, condition, and cap behave exactly as in an uninterrupted run. Each later gated iteration pauses again as a new token. Saved runs that predate loop position restart the loop at iteration 1 and say so (an info advisory, also in `--dry-run`).
 - **Downstream approval gates re-prompt.** Resume does not inherit prior approvals — each execution is a new action. `--auto-approve <step>` still works.
 - **Top-level granularity.** A failure *inside* a sub-workflow re-runs the **whole** sub-workflow step — restoration works only at the top level of the parent workflow. The cross-run cache softens the cost of re-running its inner steps.
-- **Interrupted (Ctrl+C / crash) runs** are resumable too: killed mid-step → resumes at that step; killed while a step was failing (or before its error handler started) → resumes at that failing step; killed between successful steps → resumes at the next step **only when it is unambiguous** (a single non-branching successor; a dynamic `code` router or a branch refuses). Crashed before the first step → nothing to resume.
+- **Interrupted (Ctrl+C / crash) runs** are resumable too: killed mid-step → resumes at that step; killed while a step was failing (or before its error handler started) → resumes at that failing step; killed between successful steps → resumes at the next step **only when it is unambiguous** (a single non-branching successor; a dynamic `code` router or a branch refuses). After a loop step's completed iteration, resume makes the loop's own decision — another iteration or the exit. Crashed before the first step → nothing to resume.
 - **Inline / piped workflows are not resumable** — there is no workflow file to load again. Save the workflow to a file and re-run it so future failures can be resumed.
 - **Prefer resume-by-execution-id from a different directory.** A workflow *path* resolves relative to your current directory; the execution id is location-independent.
 
 ### Restored `${node.prompt}` / `${node.system}` caveat
 
-Like `--only`, resume restores upstream outputs from the saved run, and the saved run does not keep an LLM step's rendered `prompt`/`system` values. A downstream step referencing `${upstream_llm.prompt}` or `${upstream_llm.system}` will therefore not see them on resume. No common pattern depends on this; avoid it in workflows you expect to resume.
+Like `--only`, resume restores upstream outputs from the saved run, and the saved run does not keep an LLM step's rendered `prompt`/`system` values. A downstream step referencing `${upstream_llm.prompt}` or `${upstream_llm.system}` will therefore not see them on resume — and an `llm` loop step that carries its own `prompt`/`system` into the next iteration fails loudly at the resumed iteration (the carry guard names the missing field). No common pattern depends on this; avoid it in workflows you expect to resume.
 
 ### `analyze-cache` on a resumed trace
 

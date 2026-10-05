@@ -569,7 +569,10 @@ def _resolve_walk_start(
             entry_node = after
         restored = [nid for nid in final if nid != entry_node.node_id]
         info = ResumePlanInfo(
-            entry_node=entry_node.node_id, restored_nodes=restored, execution_id=resume_source_id or ""
+            entry_node=entry_node.node_id,
+            restored_nodes=restored,
+            execution_id=resume_source_id or "",
+            entry_iteration=iteration,
         )
         return entry_node, info, iteration
     if this_only is None:

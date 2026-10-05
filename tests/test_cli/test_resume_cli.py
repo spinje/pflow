@@ -547,6 +547,7 @@ def test_dry_run_json_carries_resume_block(home, shell_wf):
         "entry_node": "step2",
         "restored_nodes": ["step1"],
         "execution_id": exec_id,
+        "entry_iteration": 1,
     }
 
 
