@@ -1060,6 +1060,108 @@ class TestYAMLParamParsing:
         assert "Focus on key findings" in batch["items"][0]["prompt"]
         assert batch["items"][1]["prompt"] == "Extract action items"
 
+    # A `- key: |` value is opaque to fence and heading detection, exactly like a
+    # fenced block's content (#521, #389): before, these lines were read as
+    # structure — a reserved name raised "Duplicate section", any other H1/H2
+    # silently truncated the value, an H3 raised "Invalid entity ID", a fence
+    # swallowed the rest of the file.
+    @pytest.mark.parametrize("header", ["|", "|-", "|2", "| # keep markdown"])
+    @pytest.mark.parametrize(
+        "structural_line",
+        ["## Steps", "## Output format", "# Top heading", "### Subsection", "```", "~~~"],
+    )
+    def test_block_scalar_is_opaque_to_fences_and_headings(self, header: str, structural_line: str) -> None:
+        literal = _md(f"""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### run
+
+            Runs a thing.
+
+            - type: shell
+            - command: {header}
+                echo start
+                {structural_line}
+
+                echo done
+            - timeout: 5
+        """)
+        node = parse_markdown(literal).ir["nodes"][0]
+        assert node["params"] == {"command": f"echo start\n{structural_line}\n\necho done", "timeout": 5}
+
+    def test_column_zero_structure_still_ends_a_block_scalar(self) -> None:
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### first
+
+            First step.
+
+            - type: shell
+            - command: |
+                echo a
+            ### second
+
+            Second step.
+
+            - type: shell
+            - command: echo b
+        """)
+        nodes = parse_markdown(content).ir["nodes"]
+        assert [(n["id"], n["params"]) for n in nodes] == [
+            ("first", {"command": "echo a"}),
+            ("second", {"command": "echo b"}),
+        ]
+        with pytest.raises(MarkdownParseError, match=r"Duplicate '## Steps' section") as exc_info:
+            parse_markdown(content + "## Steps\n")
+        assert exc_info.value.line == 20
+
+    def test_block_scalar_column_counts_only_spaces(self) -> None:
+        """As in YAML, a leading non-breaking space is content, not indentation."""
+        content = "\n".join([
+            "# Test", "", "A test.", "", "## Steps", "", "### run", "", "Runs a thing.", "",
+            "- type: shell", "- command: cat", "- stdin: |", "   \u00a0text", "   ## Notes", "",
+        ])  # fmt: skip
+        assert parse_markdown(content).ir["nodes"][0]["params"]["stdin"] == "\u00a0text\n## Notes"
+
+    @pytest.mark.parametrize(
+        "item_lines",
+        [
+            # a plain item: YAML would read an indented heading as a comment
+            ["- command: echo first", "  ### second"],
+            # shallower than the scalar's content column, which YAML sets by the first line...
+            ["- command: |", "    echo first", "  ### second"],
+            # ...or by the indentation indicator, relative to the key's own column
+            ["- command: echo first", "- stdin: |2", "   ### second"],
+            ["- command: echo first", "-   stdin: |", "    ### second"],
+            # a sibling key ends the scalar; deeper lines after it are no longer scalar content
+            ["- command: |", "    echo first", "  timeout: 5", "    ### second"],
+            # a whitespace-only line deeper than the first content line sets the column
+            ["- command: echo first", "- stdin: |", " " * 6, "    ### second"],
+        ],
+    )
+    def test_heading_outside_block_scalar_content_stays_structural(self, item_lines: list[str]) -> None:
+        """Only lines YAML keeps as block-scalar content are opaque — anything
+        else claimed for the item would be dropped as a YAML comment, silently
+        losing the next step."""
+        content = "\n".join([
+            "# Test", "", "A test.", "", "## Steps", "", "### first", "", "First step.", "",
+            "- type: shell", *item_lines, "", "Second step.", "",
+            "- type: shell", "- command: echo second", "",
+        ])  # fmt: skip
+        first, second = parse_markdown(content).ir["nodes"]
+        assert first["id"] == "first"
+        assert first["params"]["command"].strip() == "echo first"
+        assert (second["id"], second["params"]) == ("second", {"command": "echo second"})
+
 
 # ===========================================================================
 # 5. Code block parsing

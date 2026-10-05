@@ -87,6 +87,10 @@ _YAML_NULL = frozenset({"null", "Null", "NULL", "~"})
 # Regex for single-line YAML item: "- key: value" with optional leading whitespace
 _YAML_ITEM_RE = re.compile(r"^\s*-\s+(\S+?):\s*(.*)$")
 
+# A YAML block scalar header — the value part of "- key: |" / "- key: >-": chomping and
+# indentation indicators (group 1 = the explicit indentation digit), optional comment.
+_BLOCK_SCALAR_HEADER_RE = re.compile(r"[|>][-+]?([1-9])?[-+]?(?:\s+#.*)?")
+
 # Regex for numeric values — matches integers and floats (with required dot for floats).
 # Must NOT match "inf", "nan", "infinity" etc. (Python's float() accepts these but YAML
 # treats them as strings). More permissive than PyYAML for scientific notation: "1.5e10"
@@ -312,11 +316,16 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
     yaml_current_item_lines: list[str] = []
     yaml_current_item_start_line = 0
     yaml_indent_level = 0  # The column where content after '- ' starts
+    # An open `- key: |` / `>` block scalar: its key's column (None = none open) and its
+    # content column (0 until known — from the indentation indicator, else auto-detected).
+    yaml_block_key_column: int | None = None
+    yaml_block_indent = 0
     steps_section_found = False
 
     def _flush_yaml_item() -> None:
         """Flush the current YAML item to the current entity."""
         nonlocal in_yaml_continuation, yaml_current_item_lines, yaml_current_item_start_line
+        nonlocal yaml_block_key_column, yaml_block_indent
         # Trailing blank lines were collected speculatively during continuation —
         # they're only meaningful between content lines of a multi-line item.
         # Stripping keeps single-line items on the _coerce_yaml_scalar fast path
@@ -333,12 +342,34 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
         yaml_current_item_lines = []
         yaml_current_item_start_line = 0
         in_yaml_continuation = False
+        yaml_block_key_column = None
+        yaml_block_indent = 0
 
     for line_idx in range(body_start, total_lines):
         line = lines[line_idx]
         line_num = line_idx + 1  # 1-based
 
-        # --- Code fence boundaries (highest priority) ---
+        # --- Block scalar content (highest priority) ---
+        # A `- key: |` / `>` value is opaque text, exactly like a fenced block's
+        # content: a line YAML keeps in the scalar (blank, or at/past its content
+        # column) is content even when it looks like a heading or a fence. The
+        # first shallower line ends the scalar, as in YAML, and gets the normal
+        # checks below — the item itself may still continue (a sibling key).
+        # Only ASCII spaces indent, as in YAML (a leading NBSP is content).
+        if yaml_block_key_column is not None:
+            indent = len(line) - len(line.lstrip(" "))
+            is_blank = indent == len(line)
+            if not yaml_block_indent and not is_blank and indent > yaml_block_key_column:
+                # YAML auto-detects the column from the first content line and the
+                # blank lines before it (all of this item's lines so far).
+                yaml_block_indent = max([indent, *(len(blank) for blank in yaml_current_item_lines[1:])])
+            if is_blank or (yaml_block_indent and indent >= yaml_block_indent):
+                yaml_current_item_lines.append(line)
+                continue
+            yaml_block_key_column = None
+            yaml_block_indent = 0
+
+        # --- Code fence boundaries ---
         if _is_code_fence(line):
             if in_code_block:
                 if _is_closing_fence(line, code_fence_pattern):
@@ -520,6 +551,12 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
                 # The continuation indent level is the column after "- "
                 yaml_indent_level = leading_spaces + 2
                 in_yaml_continuation = True
+                item_match = _YAML_ITEM_RE.match(line)
+                header = _BLOCK_SCALAR_HEADER_RE.fullmatch(item_match.group(2).strip()) if item_match else None
+                if item_match and header:
+                    yaml_block_key_column = item_match.start(1)
+                    if header.group(1):
+                        yaml_block_indent = yaml_block_key_column + int(header.group(1))
                 continue
 
             # Blank line outside YAML continuation — ignored.
