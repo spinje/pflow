@@ -127,7 +127,7 @@ class TestOutputTemplateValidation:
             "outputs": {
                 "out1": {"source": "${missing1.data}"},
                 "out2": {"source": "${missing2.data}"},
-                "out3": {"source": "${node1.data}"},  # Valid
+                "out3": {"source": "${node1.response}"},  # Valid
             },
         }
 

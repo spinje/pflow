@@ -518,7 +518,8 @@ class WorkflowValidator:
 
         Ensures output source fields reference existing node IDs or declared
         workflow input names. Supports plain references (node.key), template
-        references (${node.key}), and bracket access (${data[0]}).
+        references (${node.key}), and bracket access (${data[0]}). The node-output
+        fields after a root are template validation's Pass 5.
 
         Args:
             workflow_ir: Workflow to validate
@@ -575,22 +576,19 @@ class WorkflowValidator:
                 diagnostics.append(
                     WorkflowValidator._build_node_not_found_diagnostic(output_name, node_id, valid_sources)
                 )
-                continue
-
-            # Note: Output key validation skipped in v1
-            # We don't have reliable node output metadata at validation time
-            # This could be added in future versions when registry has full interface specs
 
         return diagnostics
 
     @staticmethod
     def _validate_template_in_source(output_name: str, source: str, valid_sources: set[str]) -> list[Diagnostic]:
-        """Validate the references of a templated output source (parsed as written).
+        """Validate the references of a templated output source, parsed as the runtime
+        resolves it (a bare ``a.x[${i}]`` reads as ``${a.x[${i}]}``).
 
         Each Reference root — a dynamic index's inner references included — must be
         a node ID or a declared workflow input; "Did you mean?" suggestions for typos.
-        A malformed ``${`` is the Issue pass's to report. A source with no expression
-        at all (``$${a.x}``, prose) would resolve to literal text: an ERROR (R3).
+        Their fields are Pass 5's (``iter_output_source_operands``). A malformed ``${``
+        is the Issue pass's to report. A source with no expression at all
+        (``$${a.x}``, prose) would resolve to literal text: an ERROR (R3).
 
         Args:
             output_name: Name of output being validated
@@ -600,7 +598,9 @@ class WorkflowValidator:
         Returns:
             Validation diagnostics (empty if valid)
         """
-        template = parse(source)
+        from pflow.runtime.output_resolver import normalize_output_source
+
+        template = parse(normalize_output_source(source))
         if not template.expressions:
             if template.issues:
                 return []
