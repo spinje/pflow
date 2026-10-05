@@ -546,3 +546,14 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   assumes that). If NO → P4 complete; next is pre-PR: merge `origin/main` (48a9d426+, see 01:50 entry), re-gate, then
   the completion gate (code-mode deep-review via the P1–P3 implementer + `review-falsifier` launched by me), then
   `make test-all-local`, `verify.sh`, `create-task-review`, `create-pr`.
+
+## [2026-10-06 02:25] task-orchestrator (Opus) — main merged (decision-independent); checkpoint handed up
+- Did: merged `origin/main` @ 48a9d426 (#704) → `12ed3e96`, no conflicts. Read #704's deltas on my surface: the
+  `test_resume_engine.py`/`test_resume_cli.py` fixture strings (output source now `${step1.stdout.nope}` shape) and
+  `test_plan_drift.py` (`${back-to-parent.final}`); none of this task's new test workflows relies on a typo'd output
+  field reaching the engine (the merged suite is green, which would fail at validation otherwise).
+- Verified on the merged result: `make check` exit 0; `make test-all-local` 10343 passed, 2 skipped, 0 failed.
+- Checkpoint page drafted: `scratchpads/task-179/checkpoint-656/index.html` (+ `shots/`), 0 shots stale vs the latest
+  ruling and current code (no `web/`/`ui/` change since the shots were taken at P4's tree, committed as e10ba5cc).
+- PARKED — resume point unchanged from the 02:10 entry (ruling YES → P4b on the P4 Fable implementer; NO → completion
+  gate). `verify.sh` runs at the completion gate.
