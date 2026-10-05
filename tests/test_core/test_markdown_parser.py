@@ -1065,11 +1065,12 @@ class TestYAMLParamParsing:
     # structure — a reserved name raised "Duplicate section", any other H1/H2
     # silently truncated the value, an H3 raised "Invalid entity ID", a fence
     # swallowed the rest of the file.
+    @pytest.mark.parametrize("header", ["|", "|-", "| # keep markdown"])
     @pytest.mark.parametrize(
         "structural_line",
-        ["## Steps", "## Output format", "# Top heading", "### Subsection", "```"],
+        ["## Steps", "## Output format", "# Top heading", "### Subsection", "```", "~~~"],
     )
-    def test_block_scalar_is_opaque_to_fences_and_headings(self, structural_line: str) -> None:
+    def test_block_scalar_is_opaque_to_fences_and_headings(self, header: str, structural_line: str) -> None:
         literal = _md(f"""\
             # Test
 
@@ -1082,7 +1083,7 @@ class TestYAMLParamParsing:
             Runs a thing.
 
             - type: shell
-            - command: |
+            - command: {header}
                 echo start
                 {structural_line}
 
@@ -1123,28 +1124,27 @@ class TestYAMLParamParsing:
             parse_markdown(content + "## Steps\n")
         assert exc_info.value.line == 20
 
-    def test_indented_fence_under_an_item_belongs_to_the_item(self) -> None:
-        """Indentation decides membership for every line kind: a fence indented
-        under a `- key:` item is part of that item's YAML, not a code block."""
-        content = _md("""\
-            # Test
-
-            A test.
-
-            ## Steps
-
-            ### run
-
-            Runs a thing.
-
-            - type: shell
-
-              ```shell command
-              echo hi
-              ```
-        """)
-        with pytest.raises(MarkdownParseError, match="YAML syntax error"):
-            parse_markdown(content)
+    @pytest.mark.parametrize(
+        "item_lines",
+        [
+            ["- command: echo first"],  # a plain item: YAML would read the heading as a comment
+            ["- command: |", "    echo first"],  # shallower than the scalar's content column
+        ],
+    )
+    def test_heading_outside_block_scalar_content_stays_structural(self, item_lines: list[str]) -> None:
+        """Only lines YAML keeps as block-scalar content are opaque — anything
+        else claimed for the item would be dropped as a YAML comment, silently
+        losing the next step."""
+        content = "\n".join([
+            "# Test", "", "A test.", "", "## Steps", "", "### first", "", "First step.", "",
+            "- type: shell", *item_lines, "  ### second", "", "Second step.", "",
+            "- type: shell", "- command: echo second", "",
+        ])  # fmt: skip
+        nodes = parse_markdown(content).ir["nodes"]
+        assert [(n["id"], n["params"]) for n in nodes] == [
+            ("first", {"command": "echo first"}),
+            ("second", {"command": "echo second"}),
+        ]
 
 
 # ===========================================================================

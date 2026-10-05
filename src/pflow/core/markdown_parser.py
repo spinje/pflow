@@ -87,6 +87,10 @@ _YAML_NULL = frozenset({"null", "Null", "NULL", "~"})
 # Regex for single-line YAML item: "- key: value" with optional leading whitespace
 _YAML_ITEM_RE = re.compile(r"^\s*-\s+(\S+?):\s*(.*)$")
 
+# A YAML block scalar header — the value part of "- key: |" / "- key: >-" (chomping and
+# indentation indicators, optional trailing comment).
+_BLOCK_SCALAR_HEADER_RE = re.compile(r"[|>][-+0-9]*(\s+#.*)?")
+
 # Regex for numeric values — matches integers and floats (with required dot for floats).
 # Must NOT match "inf", "nan", "infinity" etc. (Python's float() accepts these but YAML
 # treats them as strings). More permissive than PyYAML for scientific notation: "1.5e10"
@@ -312,11 +316,14 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
     yaml_current_item_lines: list[str] = []
     yaml_current_item_start_line = 0
     yaml_indent_level = 0  # The column where content after '- ' starts
+    yaml_block_scalar = False  # The current item's value is a `|` / `>` block scalar
+    yaml_block_indent = 0  # That scalar's content column (0 until its first content line)
     steps_section_found = False
 
     def _flush_yaml_item() -> None:
         """Flush the current YAML item to the current entity."""
         nonlocal in_yaml_continuation, yaml_current_item_lines, yaml_current_item_start_line
+        nonlocal yaml_block_scalar, yaml_block_indent
         # Trailing blank lines were collected speculatively during continuation —
         # they're only meaningful between content lines of a multi-line item.
         # Stripping keeps single-line items on the _coerce_yaml_scalar fast path
@@ -333,22 +340,26 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
         yaml_current_item_lines = []
         yaml_current_item_start_line = 0
         in_yaml_continuation = False
+        yaml_block_scalar = False
+        yaml_block_indent = 0
 
     for line_idx in range(body_start, total_lines):
         line = lines[line_idx]
         line_num = line_idx + 1  # 1-based
 
-        # --- Multi-line YAML item continuation (highest priority) ---
-        # A blank line, or one indented at/past the open `- key:` item's content
-        # column, belongs to that item's value — so a `- key: |` block scalar is
-        # opaque to fence and heading detection, as a fenced block's content is.
-        # Blank lines are kept so block scalars with blank-line separators
-        # round-trip through yaml.safe_load; _flush_yaml_item strips trailing ones.
-        if in_yaml_continuation:
-            if line.strip() == "" or len(line) - len(line.lstrip()) >= yaml_indent_level:
+        # --- Block scalar content (highest priority) ---
+        # A `- key: |` / `>` value is opaque text, exactly like a fenced block's
+        # content: a line YAML keeps in the scalar (blank, or indented at/past the
+        # scalar's content column) is content even when it looks like a heading or
+        # a fence. A less-indented line ends the scalar in YAML, so it gets the
+        # normal checks below.
+        if yaml_block_scalar:
+            indent = len(line) - len(line.lstrip())
+            if not yaml_block_indent and line.strip() and indent > yaml_indent_level:
+                yaml_block_indent = indent  # YAML: content sits deeper than the key
+            if line.strip() == "" or (yaml_block_indent and indent >= yaml_block_indent):
                 yaml_current_item_lines.append(line)
                 continue
-            _flush_yaml_item()
 
         # --- Code fence boundaries ---
         if _is_code_fence(line):
@@ -507,6 +518,21 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
 
         # --- Inside an entity: YAML params, prose ---
         if current_entity is not None:
+            # YAML continuation tracking
+            #
+            # A line continues the current multi-line item if it is blank OR
+            # indented at/past the bullet's content column. Blank lines are
+            # preserved so `|`/`>` block scalars containing blank-line separators
+            # (per YAML semantics) round-trip correctly through yaml.safe_load.
+            # Trailing blanks are stripped by _flush_yaml_item.
+            if in_yaml_continuation:
+                content_start = len(line) - len(line.lstrip())
+                if line.strip() == "" or content_start >= yaml_indent_level:
+                    yaml_current_item_lines.append(line)
+                    continue
+                # Not a continuation — flush and fall through
+                _flush_yaml_item()
+
             # New YAML item: line starts with "- " (with optional leading whitespace)
             yaml_match = re.match(r"^(\s*)- (.+)$", line)
             if yaml_match:
@@ -517,9 +543,13 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
                 # The continuation indent level is the column after "- "
                 yaml_indent_level = leading_spaces + 2
                 in_yaml_continuation = True
+                item_match = _YAML_ITEM_RE.match(line)
+                yaml_block_scalar = bool(item_match and _BLOCK_SCALAR_HEADER_RE.fullmatch(item_match.group(2).strip()))
                 continue
 
             # Blank line outside YAML continuation — ignored.
+            # Blank lines during continuation are consumed by the continuation
+            # branch above (preserving them inside multi-line block scalars).
             if stripped == "":
                 continue
 
