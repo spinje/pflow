@@ -317,8 +317,7 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
     yaml_current_item_start_line = 0
     yaml_indent_level = 0  # The column where content after '- ' starts
     # An open `- key: |` / `>` block scalar: its key's column (None = none open) and its
-    # content column (0 until known — YAML takes it from the indentation indicator, else
-    # from the first content line, which must sit deeper than the key).
+    # content column (0 until known — from the indentation indicator, else auto-detected).
     yaml_block_key_column: int | None = None
     yaml_block_indent = 0
     steps_section_found = False
@@ -359,7 +358,9 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
         if yaml_block_key_column is not None:
             indent = len(line) - len(line.lstrip())
             if not yaml_block_indent and line.strip() and indent > yaml_block_key_column:
-                yaml_block_indent = indent
+                # YAML auto-detects the column from the first content line and the
+                # whitespace-only lines before it (all of this item's lines so far).
+                yaml_block_indent = max([indent, *(len(blank) for blank in yaml_current_item_lines[1:])])
             if line.strip() == "" or (yaml_block_indent and indent >= yaml_block_indent):
                 yaml_current_item_lines.append(line)
                 continue

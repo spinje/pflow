@@ -1136,6 +1136,8 @@ class TestYAMLParamParsing:
             ["- command: echo first", "-   stdin: |", "    ### second"],
             # a sibling key ends the scalar; deeper lines after it are no longer scalar content
             ["- command: |", "    echo first", "  timeout: 5", "    ### second"],
+            # a whitespace-only line deeper than the first content line sets the column
+            ["- command: echo first", "- stdin: |", " " * 6, "    ### second"],
         ],
     )
     def test_heading_outside_block_scalar_content_stays_structural(self, item_lines: list[str]) -> None:
