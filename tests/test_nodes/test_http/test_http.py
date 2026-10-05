@@ -1,7 +1,7 @@
 """Tests for the HTTP node covering all 21 criteria from the specification.
 
 Test Coverage Summary (21 criteria):
-1. ✅ Missing url parameter → ValueError raised
+1. ✅ Missing url parameter → NodeError raised
 2. ✅ GET request without body → method set to GET
 3. ✅ POST request with body → method set to POST
 4. ✅ Bearer token auth → Authorization header added
@@ -12,8 +12,8 @@ Test Coverage Summary (21 criteria):
 9. ✅ 200 status → default action
 10. ✅ 404 status → error action
 11. ✅ 500 status → error action
-12. ✅ Timeout exception → ValueError raised
-13. ✅ Connection error → ValueError raised
+12. ✅ Timeout exception → NodeError raised
+13. ✅ Connection error → NodeError raised
 14. ✅ Parameter fallback params → default used
 15. ✅ exec_fallback timeout → actionable message
 16. ✅ exec_fallback 401 → HTTP error (not exception)
@@ -47,20 +47,21 @@ import pytest
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import RequestException, Timeout
 
+from pflow.core.exceptions import NodeError
 from pflow.nodes.http import HttpNode
 
 
 class TestHttpNode:
     """Test suite for HttpNode covering all specification criteria."""
 
-    # Test Criteria 1: Missing url parameter → ValueError raised
+    # Test Criteria 1: Missing url parameter → NodeError raised
     def test_missing_url_raises_error(self):
-        """Test that missing URL raises ValueError with helpful message."""
+        """Test that missing URL raises NodeError with helpful message."""
         node = HttpNode()
         node.set_params({})  # No url in params
         shared = {}
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(NodeError) as exc_info:
             node.run(shared)
 
         assert "HTTP node requires 'url' parameter" in str(exc_info.value)
@@ -294,9 +295,9 @@ class TestHttpNode:
             assert shared["response"] == "Internal Server Error"
             assert shared["error"] == "HTTP 500"
 
-    # Test Criteria 12: Timeout exception → ValueError raised
-    def test_timeout_raises_value_error(self):
-        """Test that timeout exception raises ValueError with actionable message."""
+    # Test Criteria 12: Timeout exception → NodeError raised
+    def test_timeout_raises_node_error(self):
+        """Test that timeout exception raises NodeError with actionable message."""
         with patch("requests.request") as mock_request:
             mock_request.side_effect = Timeout("Request timed out")
 
@@ -304,17 +305,17 @@ class TestHttpNode:
             node.set_params({"url": "https://api.example.com/slow", "timeout": 5})
             shared = {}
 
-            with pytest.raises(ValueError) as exc_info:
+            with pytest.raises(NodeError) as exc_info:
                 node.run(shared)
 
             error_msg = str(exc_info.value)
             assert "timed out after 5 seconds" in error_msg
-            assert "--timeout=60" in error_msg
+            assert "- timeout: 60" in error_msg
             assert "check if the service is responding" in error_msg
 
-    # Test Criteria 13: Connection error → ValueError raised
-    def test_connection_error_raises_value_error(self):
-        """Test that connection error raises ValueError with helpful message."""
+    # Test Criteria 13: Connection error → NodeError raised
+    def test_connection_error_raises_node_error(self):
+        """Test that connection error raises NodeError with helpful message."""
         with patch("requests.request") as mock_request:
             mock_request.side_effect = RequestsConnectionError("Connection refused")
 
@@ -322,7 +323,7 @@ class TestHttpNode:
             node.set_params({"url": "https://api.example.com/offline"})
             shared = {}
 
-            with pytest.raises(ValueError) as exc_info:
+            with pytest.raises(NodeError) as exc_info:
                 node.run(shared)
 
             error_msg = str(exc_info.value)
@@ -362,12 +363,12 @@ class TestHttpNode:
         prep_res = {"url": "https://api.example.com/slow", "timeout": 10}
         exc = Timeout("Connection timed out")
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(NodeError) as exc_info:
             node.exec_fallback(prep_res, exc)
 
         error_msg = str(exc_info.value)
         assert "timed out after 10 seconds" in error_msg
-        assert "Try increasing timeout with --timeout=60" in error_msg
+        assert "Increase the step's timeout (e.g. `- timeout: 60`)" in error_msg
 
     # Test Criteria 17: exec_fallback 401 → auth suggestion
     # NOTE: This is actually for HTTP status codes, not exceptions
@@ -652,7 +653,7 @@ class TestHttpNode:
             node.set_params({"url": "https://api.example.com/always-fails"})
             shared = {}
 
-            with pytest.raises(ValueError) as exc_info:
+            with pytest.raises(NodeError) as exc_info:
                 node.run(shared)
 
             # Verify it was called 3 times
@@ -694,7 +695,7 @@ class TestHttpNode:
             node.set_params({"url": "https://api.example.com/error"})
             shared = {}
 
-            with pytest.raises(ValueError) as exc_info:
+            with pytest.raises(NodeError) as exc_info:
                 node.run(shared)
 
             error_msg = str(exc_info.value)
@@ -709,7 +710,7 @@ class TestHttpNode:
             node.set_params({"url": "https://api.example.com/unexpected"})
             shared = {}
 
-            with pytest.raises(ValueError) as exc_info:
+            with pytest.raises(NodeError) as exc_info:
                 node.run(shared)
 
             error_msg = str(exc_info.value)
@@ -726,39 +727,39 @@ class TestHttpNode:
         })
         shared = {}
 
-        # Should raise ValueError when both are provided
-        with pytest.raises(ValueError, match="Cannot specify both auth_token and api_key"):
+        # Should raise NodeError when both are provided
+        with pytest.raises(NodeError, match="Cannot specify both auth_token and api_key"):
             node.prep(shared)
 
     def test_invalid_method_raises_error(self):
-        """Test that invalid HTTP method raises ValueError."""
+        """Test that invalid HTTP method raises NodeError."""
         node = HttpNode()
         node.set_params({"url": "https://api.example.com/test", "method": "INVALID"})
         shared = {}
 
-        with pytest.raises(ValueError, match="Invalid HTTP method 'INVALID'"):
+        with pytest.raises(NodeError, match="Invalid HTTP method 'INVALID'"):
             node.prep(shared)
 
     def test_invalid_timeout_raises_error(self):
-        """Test that invalid timeout values raise ValueError."""
+        """Test that invalid timeout values raise NodeError."""
         node = HttpNode()
 
         # Negative timeout
         node.set_params({"url": "https://api.example.com/test", "timeout": -5})
         shared = {}
-        with pytest.raises(ValueError, match="Timeout must be a positive integer"):
+        with pytest.raises(NodeError, match="Timeout must be a positive integer"):
             node.prep(shared)
 
         # Zero timeout
         node.set_params({"url": "https://api.example.com/test", "timeout": 0})
         shared = {}
-        with pytest.raises(ValueError, match="Timeout must be a positive integer"):
+        with pytest.raises(NodeError, match="Timeout must be a positive integer"):
             node.prep(shared)
 
         # Non-integer timeout
         node.set_params({"url": "https://api.example.com/test", "timeout": "not_a_number"})
         shared = {}
-        with pytest.raises(ValueError, match="Timeout must be a positive integer"):
+        with pytest.raises(NodeError, match="Timeout must be a positive integer"):
             node.prep(shared)
 
     def test_headers_are_copied_not_mutated(self):

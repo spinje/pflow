@@ -193,6 +193,41 @@ class ReportGenerationError(PflowError):
         ]
 
 
+class NodeError(PflowError):
+    """A step failed in a way its author can act on — what node code raises.
+
+    Pass ``param`` when a step param is missing or invalid: the fix is in the
+    workflow file, so the diagnostic is a validation error naming that param.
+    Omit it for a runtime failure the node translated for the author (a refused
+    connection, a timed-out agent): an execution failure. Put the fix in the
+    message — batch item errors and sub-workflow failures carry only ``str(exc)``.
+
+    Keeps ``retriable = True`` for the batch reason ``AgentValidationError``
+    documents: a non-retriable error aborts a whole batch, even under
+    ``error_handling: continue``. The ratchet keeping vanilla exceptions out of
+    node code is ``tests/test_nodes/test_node_exception_types.py``.
+    """
+
+    def __init__(self, message: str, *, param: str | None = None) -> None:
+        self.param = param
+        super().__init__(message)
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        if self.param is None:
+            title, context = "Execution Failed", {"category": "execution_failure"}
+        else:
+            title, context = "Validation Error", {"category": "validation", "param": self.param}
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title=title,
+                source="runtime",
+                context=context,
+            )
+        ]
+
+
 class LLMCallError(PflowError):
     """Raised by the LLM adapter for provider errors.
 

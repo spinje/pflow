@@ -16,7 +16,13 @@ from referencing.exceptions import Unresolvable
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 from pflow.core.cache_ttl import is_cache_ttl_supported_by_provider, parse_cache_ttl
-from pflow.core.exceptions import LLMCallError, LLMResponseParseError, LLMTransientError, UnsupportedCacheTTLError
+from pflow.core.exceptions import (
+    LLMCallError,
+    LLMResponseParseError,
+    LLMTransientError,
+    NodeError,
+    UnsupportedCacheTTLError,
+)
 from pflow.core.llm_capabilities import get_min_cache_tokens
 from pflow.core.llm_client import Attachment, TraceHook, complete
 from pflow.core.llm_providers import detect_provider
@@ -789,13 +795,15 @@ def _build_attachments_from_images(images: Any) -> list[Attachment]:
     attachments: list[Attachment] = []
     for img in images:
         if not isinstance(img, str):
-            raise TypeError(f"Image must be a string (URL or path), got: {type(img).__name__}")
+            raise NodeError(f"Image must be a string (URL or path), got: {type(img).__name__}", param="images")
         if img.startswith(("http://", "https://")):
             attachments.append(Attachment(kind="image_url", value=img))
             continue
         path = Path(img)
         if not path.exists():
-            raise ValueError(f"Image file not found: {img}\nPlease ensure the file exists at the specified path.")
+            raise NodeError(
+                f"Image file not found: {img}\nPlease ensure the file exists at the specified path.", param="images"
+            )
         attachments.append(Attachment(kind="image_path", value=str(path)))
     return attachments
 
@@ -1038,9 +1046,9 @@ class LLMNode(Node):
         try:
             timeout = float(timeout)
         except (TypeError, ValueError):
-            raise ValueError(f"Timeout must be a positive number, got {timeout!r}") from None
+            raise NodeError(f"Timeout must be a positive number, got {timeout!r}", param="timeout") from None
         if timeout <= 0:
-            raise ValueError(f"Timeout must be a positive number, got {timeout}")
+            raise NodeError(f"Timeout must be a positive number, got {timeout}", param="timeout")
         return timeout
 
     @staticmethod
@@ -1089,10 +1097,11 @@ class LLMNode(Node):
         prompt = self.params.get("prompt")
 
         if not prompt:
-            raise ValueError(
+            raise NodeError(
                 "LLM node requires 'prompt' parameter. "
                 "Use template syntax like '- prompt: ${previous_node.output}' "
-                "to wire data from other nodes."
+                "to wire data from other nodes.",
+                param="prompt",
             )
 
         # System prompt from params
@@ -1116,7 +1125,10 @@ class LLMNode(Node):
         valid_efforts = {*EFFORT_RATIOS.keys(), "none"}
         if reasoning_effort and reasoning_effort.lower() not in valid_efforts:
             valid_list = ", ".join(sorted(valid_efforts))
-            raise ValueError(f"Invalid reasoning_effort: '{reasoning_effort}'. Must be one of: {valid_list}")
+            raise NodeError(
+                f"Invalid reasoning_effort: '{reasoning_effort}'. Must be one of: {valid_list}",
+                param="reasoning_effort",
+            )
 
         # Model is required. The compiler injects ``model`` for every LLM
         # node (compilation/compiler.py: it either reads the user's value,
@@ -1128,11 +1140,12 @@ class LLMNode(Node):
         # of silently substituting a hardcoded default.
         model = self.params.get("model")
         if not model:
-            raise ValueError(
+            raise NodeError(
                 "LLM node requires a 'model' parameter. The compiler injects this from "
                 "the workflow YAML, settings.default_model, or auto-detected provider keys; "
                 "if you are calling LLMNode directly (e.g. in a unit test), set "
-                "'model' explicitly via node.set_params({'model': '<provider>/<model>'})."
+                "'model' explicitly via node.set_params({'model': '<provider>/<model>'}).",
+                param="model",
             )
 
         # Validate the effective (already template-resolved) authored schema in

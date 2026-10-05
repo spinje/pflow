@@ -7,6 +7,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
+from pflow.core.exceptions import NodeError, PflowError
 from pflow.nodes.agent.backend import AgentResult
 from pflow.nodes.agent.exceptions import AgentValidationError
 from pflow.nodes.agent.schema_validation import (
@@ -383,36 +384,36 @@ class ClaudeBackend:
         else:
             logger.warning("No response text received from Claude Code")
 
-    def translate_error(self, exc: Exception, options: dict[str, Any]) -> Exception:
+    def translate_error(self, exc: Exception, options: dict[str, Any]) -> PflowError:
         error_msg = str(exc)
         exc_type = type(exc).__name__
         logger.error("Claude Code execution failed: %s", error_msg, exc_info=exc)
         if (CLINotFoundError is not None and isinstance(exc, CLINotFoundError)) or "CLINotFoundError" in exc_type:
-            return ValueError(
+            return NodeError(
                 "Claude Code CLI not installed. Install with: npm install -g @anthropic-ai/claude-code\n"
                 f"Original error: {error_msg}"
             )
         if (CLIConnectionError is not None and isinstance(exc, CLIConnectionError)) or "CLIConnectionError" in exc_type:
-            return ValueError(
+            return NodeError(
                 "Failed to connect to Claude Code. Check health with: claude doctor\n"
                 f"{self._auth_failure_guidance(bool(options.get('use_api_key')))}\n"
                 f"Original error: {error_msg}"
             )
         if (ProcessError is not None and isinstance(exc, ProcessError)) or "ProcessError" in exc_type:
-            return ValueError(
+            return NodeError(
                 f"Claude Code process failed (exit code {getattr(exc, 'exit_code', 'unknown')})\nError output: {getattr(exc, 'stderr', '')}\nOriginal error: {error_msg}"
             )
         if isinstance(exc, asyncio.TimeoutError):
-            return ValueError(
+            return NodeError(
                 f"Claude Code execution timed out after {options.get('timeout', 300)} seconds. The task may be too complex or the system may be slow. Consider increasing timeout or breaking the task into smaller parts."
             )
         if "rate limit" in error_msg.lower() or "429" in error_msg:
-            return ValueError(
+            return NodeError(
                 f"Claude API rate limit exceeded. Please wait a moment and try again.\nOriginal error: {error_msg}"
             )
         if self._is_auth_error(exc):
-            return ValueError(self._auth_failure_guidance(bool(options.get("use_api_key"))))
-        return ValueError(f"Claude Code execution failed after {self.max_retries} attempts: {error_msg}")
+            return NodeError(self._auth_failure_guidance(bool(options.get("use_api_key"))))
+        return NodeError(f"Claude Code execution failed after {self.max_retries} attempts: {error_msg}")
 
     @staticmethod
     def _enrich_error_result_exception(
@@ -440,7 +441,7 @@ class ClaudeBackend:
             detail = f"{detail}: {result_text}"
         if api_error_status is not None:
             detail = f"{detail} [api_error_status={api_error_status}]"
-        return RuntimeError(detail) if detail != str(exc) else None
+        return NodeError(detail) if detail != str(exc) else None
 
     @staticmethod
     def _is_auth_error(exc: Exception) -> bool:

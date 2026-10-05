@@ -84,7 +84,7 @@ def validate_schema_retries(value: Any) -> int:
 
     Shared by ``AgentNode.prep`` and the static validator so ``--validate-only``
     rejects an out-of-range value the same way runtime ``prep`` does. Raises
-    ``ValueError`` on a non-integer or out-of-range value.
+    ``AgentValidationError`` on a non-integer or out-of-range value.
     """
     if value is None:
         return 1
@@ -104,7 +104,7 @@ def validate_claude_sandbox(sandbox: Any) -> dict | None:
 
     Claude's sandbox is an SDK ``SandboxSettings`` dict — NOT a codex string
     mode. Known keys are type-checked; unknown keys pass through for SDK
-    forward-compatibility. Raises ``TypeError`` on a wrong-shaped value.
+    forward-compatibility. Raises ``AgentValidationError`` on a wrong-shaped value.
     """
     if not sandbox:
         return None
@@ -128,11 +128,11 @@ def validate_claude_max_turns(max_turns: Any) -> int:
         return 50
     try:
         turns = int(max_turns)
-        if turns < 1 or turns > 100:
-            raise ValueError
-        return turns
     except (ValueError, TypeError):
-        raise AgentValidationError(f"Invalid max_turns: {max_turns}. Must be integer between 1 and 100.") from None
+        turns = 0  # unparseable: rejected below like any out-of-range value
+    if not 1 <= turns <= 100:
+        raise AgentValidationError(f"Invalid max_turns: {max_turns}. Must be integer between 1 and 100.")
+    return turns
 
 
 def validate_claude_max_thinking_tokens(max_thinking_tokens: Any) -> int:
@@ -141,13 +141,13 @@ def validate_claude_max_thinking_tokens(max_thinking_tokens: Any) -> int:
         return 8000
     try:
         tokens = int(max_thinking_tokens)
-        if tokens < 1000 or tokens > 100000:
-            raise ValueError
-        return tokens
     except (ValueError, TypeError):
+        tokens = 0  # unparseable: rejected below like any out-of-range value
+    if not 1000 <= tokens <= 100000:
         raise AgentValidationError(
             f"Invalid max_thinking_tokens: {max_thinking_tokens}. Must be integer between 1000 and 100000."
-        ) from None
+        )
+    return tokens
 
 
 def validate_claude_tool_list(value: Any, param_name: str) -> list | None:

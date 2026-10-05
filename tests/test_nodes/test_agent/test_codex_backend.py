@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 import pflow.nodes.agent.codex_backend as codex_module
+from pflow.core.exceptions import NodeError
 from pflow.nodes.agent.agent_node import AgentNode
 from pflow.nodes.agent.backend import AgentResult
 from pflow.nodes.agent.codex_backend import (
@@ -1086,7 +1087,7 @@ class TestCodexErrors:
             CodexBackend().run("test", _options(tmp_path))
 
         translated = CodexBackend().translate_error(exc_info.value, _options(tmp_path))
-        assert isinstance(translated, ValueError)
+        assert isinstance(translated, NodeError)
         assert "exit code 2" in str(translated)
         assert secret not in str(translated)
         assert secret not in caplog.text
@@ -1108,7 +1109,7 @@ class TestCodexErrors:
 
         translated = CodexBackend().translate_error(exc, _options(tmp_path, timeout=45))
 
-        assert isinstance(translated, ValueError)
+        assert isinstance(translated, NodeError)
         assert "timed out after 45 seconds" in str(translated)
 
     def test_schema_retry_timeout_does_not_log_prompt_or_config(
@@ -1174,7 +1175,7 @@ class TestCodexErrors:
 
         translated = CodexBackend().translate_error(exc, _options(tmp_path))
 
-        assert isinstance(translated, ValueError)
+        assert isinstance(translated, NodeError)
         assert not isinstance(translated, CodexNonRetriableError)
         assert incidental_text not in str(translated)
 

@@ -15,6 +15,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from pflow.core.exceptions import NodeError
 from pflow.core.node import Node
 from pflow.runtime.cache import MemoizationCache
 from pflow.runtime.engine.instrumentation import (
@@ -371,7 +372,7 @@ class TestErrorHandling:
 
         engine = WorkflowEngine(metrics_collector=metrics)
 
-        with pytest.raises(ValueError, match="does not exist"):
+        with pytest.raises(NodeError, match="does not exist"):
             engine.run(workflow, shared)
 
         # Verify metrics were recorded despite error
@@ -406,7 +407,7 @@ class TestErrorHandling:
 
         engine = WorkflowEngine(trace_collector=trace)
 
-        with pytest.raises(ValueError, match="does not exist"):
+        with pytest.raises(NodeError, match="does not exist"):
             engine.run(workflow, shared)
 
         # Verify trace was recorded with error information

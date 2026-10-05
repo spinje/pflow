@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from pflow.core.exceptions import NodeError
 from pflow.nodes.shell.shell import ShellNode
 
 
@@ -315,7 +316,7 @@ class TestShellNodeConfiguration:
         # node = ShellNode()
         shared = {}
 
-        with pytest.raises(ValueError, match="Working directory does not exist"):
+        with pytest.raises(NodeError, match="Working directory does not exist"):
             run_shell_node(shared, command="pwd", cwd="/this/directory/does/not/exist/123456")
 
     def test_custom_environment_variables(self):
@@ -361,13 +362,13 @@ class TestShellNodeConfiguration:
         # node = ShellNode()
         shared = {}
 
-        with pytest.raises(ValueError, match="Invalid timeout value"):
+        with pytest.raises(NodeError, match="Invalid timeout value"):
             run_shell_node(shared, command="echo test", timeout=0)
 
-        with pytest.raises(ValueError, match="Invalid timeout value"):
+        with pytest.raises(NodeError, match="Invalid timeout value"):
             run_shell_node(shared, command="echo test", timeout=-5)
 
-        with pytest.raises(ValueError, match="Invalid timeout value"):
+        with pytest.raises(NodeError, match="Invalid timeout value"):
             run_shell_node(shared, command="echo test", timeout="not a number")
 
 
@@ -379,7 +380,7 @@ class TestShellNodeSecurity:
         # node = ShellNode()
         shared = {}
 
-        with pytest.raises(ValueError, match="Dangerous command pattern detected"):
+        with pytest.raises(NodeError, match="Dangerous command pattern detected"):
             run_shell_node(shared, command="rm -rf /")
 
     def test_rm_rf_root_wildcard_is_blocked(self):
@@ -387,7 +388,7 @@ class TestShellNodeSecurity:
         # node = ShellNode()
         shared = {}
 
-        with pytest.raises(ValueError, match="Dangerous command pattern detected"):
+        with pytest.raises(NodeError, match="Dangerous command pattern detected"):
             run_shell_node(shared, command="rm -rf /*")
 
     def test_fork_bomb_is_blocked(self):
@@ -395,7 +396,7 @@ class TestShellNodeSecurity:
         # node = ShellNode()
         shared = {}
 
-        with pytest.raises(ValueError, match="Dangerous command pattern detected"):
+        with pytest.raises(NodeError, match="Dangerous command pattern detected"):
             run_shell_node(shared, command=":(){ :|:& };:")
 
     def test_dd_to_device_is_blocked(self):
@@ -403,7 +404,7 @@ class TestShellNodeSecurity:
         # node = ShellNode()
         shared = {}
 
-        with pytest.raises(ValueError, match="Dangerous command pattern detected"):
+        with pytest.raises(NodeError, match="Dangerous command pattern detected"):
             run_shell_node(shared, command="dd if=/dev/zero of=/dev/sda")
 
     def test_normal_rm_command_works(self):
@@ -425,10 +426,10 @@ class TestShellNodeSecurity:
         # node = ShellNode()
         shared = {}
 
-        with pytest.raises(ValueError, match="Dangerous command pattern detected"):
+        with pytest.raises(NodeError, match="Dangerous command pattern detected"):
             run_shell_node(shared, command="RM -RF /")
 
-        with pytest.raises(ValueError, match="Dangerous command pattern detected"):
+        with pytest.raises(NodeError, match="Dangerous command pattern detected"):
             run_shell_node(shared, command="Rm -Rf /")
 
 
@@ -578,10 +579,10 @@ class TestShellNodeEdgeCases:
         # node = ShellNode()
         shared = {}
 
-        with pytest.raises(ValueError, match="Missing required 'command' parameter"):
+        with pytest.raises(NodeError, match="Missing required 'command' parameter"):
             run_shell_node(shared, command="")
 
-        with pytest.raises(ValueError, match="Missing required 'command' parameter"):
+        with pytest.raises(NodeError, match="Missing required 'command' parameter"):
             run_shell_node(shared)  # No command at all
 
     def test_very_long_output(self):

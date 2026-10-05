@@ -32,9 +32,9 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any
 
+from pflow.core.exceptions import NodeError
 from pflow.core.node import Node
 from pflow.core.types import PYTHON_ALIASES_AT_S1
-from pflow.nodes.file.exceptions import NonRetriableError
 from pflow.nodes.python.output_capture import capture_output
 
 logger = logging.getLogger(__name__)
@@ -370,14 +370,8 @@ def extract_code_assigned_names(code: str) -> set[str]:
 # The reverse mapping requires PYTHON_ALIASES_AT_S1 to be injective — if a
 # future edit maps two Python names to the same S1 name (e.g. both ``int32``
 # and ``int`` to ``integer``), the reverse dict silently keeps only one and
-# display diverges. The module-load assertion catches this drift at import
-# time rather than at the point of a confusing error message.
+# display diverges. ``test_python_to_s1_canonical_is_injective`` pins this.
 _S1_TO_PYTHON_DISPLAY: dict[str, str] = {v: k for k, v in _PYTHON_TO_S1_CANONICAL.items()}
-if len(_S1_TO_PYTHON_DISPLAY) != len(_PYTHON_TO_S1_CANONICAL):
-    raise RuntimeError(
-        "PYTHON_ALIASES_AT_S1 must be injective — two Python names map to the same S1 type. "
-        "The reverse map used for diagnostic display would silently drop entries."
-    )
 
 
 def s1_type_to_python_display(type_str: str) -> str:
@@ -510,18 +504,20 @@ def _check_annotation_vocabulary(code: str, annotations: dict[str, str]) -> None
             if not isinstance(node, ast.Name):
                 continue
             if node.id == "any":
-                raise NonRetriableError(
+                raise NodeError(
                     f"Invalid type annotation for '{var_name}': 'any' (lowercase).\n\n"
                     "Use 'Any' (capitalized) in Python code blocks. "
                     "pflow auto-injects `typing.Any` — no import needed.\n"
                     f"  {var_name}: Any\n\n"
                     "Note: lowercase 'any' is the legal spelling in `## Inputs` / `## Outputs` "
-                    "sections (e.g., `- type: any`), but Python annotations must use 'Any' (capitalized)."
+                    "sections (e.g., `- type: any`), but Python annotations must use 'Any' (capitalized).",
+                    param="code",
                 )
             if node.id in _REJECTED_ANNOTATION_NAMES and node.id not in imported:
-                raise NonRetriableError(
+                raise NodeError(
                     f"Invalid type annotation for '{var_name}': '{node.id}' is not defined.\n\n"
-                    f"{_suggest_for_nameerror(node.id)}"
+                    f"{_suggest_for_nameerror(node.id)}",
+                    param="code",
                 )
 
 
@@ -636,9 +632,8 @@ class PythonCodeNode(Node):
         Returns a prep dict consumed by exec().
 
         Raises:
-            ValueError: Missing/invalid code or timeout, missing annotations.
+            NodeError: Missing/invalid code, timeout, inputs, or annotations.
             SyntaxError: If the code string is not valid Python.
-            TypeError: If an input value does not match its declared type.
         """
         code = self._validate_code()
         timeout = self._validate_timeout()
@@ -660,9 +655,10 @@ class PythonCodeNode(Node):
         has_next = "next" in annotations
 
         if not has_result and not has_next:
-            raise ValueError(
+            raise NodeError(
                 "Code must declare result type annotation (result: <type> = ...) "
-                "or next type annotation (next: str = ...) for routing"
+                "or next type annotation (next: str = ...) for routing",
+                param="code",
             )
 
         # Validate next annotation type if present
@@ -670,8 +666,9 @@ class PythonCodeNode(Node):
             next_type_str = annotations["next"]
             next_outer_type = _get_outer_type(next_type_str)
             if next_outer_type is not None and next_outer_type is not str:
-                raise ValueError(
-                    f"'next' must be annotated as str, got {next_type_str}\n\nExample: next: str = \"target-node-id\""
+                raise NodeError(
+                    f"'next' must be annotated as str, got {next_type_str}\n\nExample: next: str = \"target-node-id\"",
+                    param="code",
                 )
 
         # Validate input types against annotations
@@ -724,21 +721,16 @@ class PythonCodeNode(Node):
         stdout = namespace.pop("__stdout__", "")
         stderr = namespace.pop("__stderr__", "")
 
-        # Extract result if declared
         has_result = prep_res["has_result"]
-
-        if has_result:
-            if "result" not in namespace:
-                raise ValueError("Code must set 'result' variable. Add: result = <your_value>")
-            result_value = namespace["result"]
-        else:
-            result_value = None
-
         exec_result: dict[str, Any] = {
-            "result": result_value,
+            "result": namespace.get("result") if has_result else None,
             "stdout": stdout,
             "stderr": stderr,
         }
+        if has_result and "result" not in namespace:
+            # A deterministic code bug, not worth a retry: route it like exec_fallback's error dict.
+            exec_result["error"] = "Code must set 'result' variable. Add: result = <your_value>"
+            return exec_result
 
         # Capture next variable if user code set it (for routing)
         if "next" in namespace:
@@ -857,11 +849,12 @@ class PythonCodeNode(Node):
         """Extract and validate the code parameter."""
         code = self.params.get("code")
         if not isinstance(code, str) or not code.strip():
-            raise ValueError(
+            raise NodeError(
                 "Missing required 'code' parameter\n\n"
                 "Provide a Python code string with type-annotated inputs and result.\n"
                 "Example:\n"
-                '  "code": "data: list\\nresult: list = data[:10]"'
+                '  "code": "data: list\\nresult: list = data[:10]"',
+                param="code",
             )
         return code
 
@@ -871,16 +864,16 @@ class PythonCodeNode(Node):
         try:
             timeout = float(timeout)
         except (TypeError, ValueError):
-            raise ValueError(f"Timeout must be a positive number, got {timeout!r}") from None
+            raise NodeError(f"Timeout must be a positive number, got {timeout!r}", param="timeout") from None
         if timeout <= 0:
-            raise ValueError(f"Timeout must be a positive number, got {timeout}")
+            raise NodeError(f"Timeout must be a positive number, got {timeout}", param="timeout")
         return timeout
 
     def _validate_inputs(self) -> dict[str, Any]:
         """Extract and validate the inputs parameter."""
         inputs = self.params.get("inputs", {})
         if not isinstance(inputs, dict):
-            raise TypeError(f"'inputs' parameter must be a dict, got {type(inputs).__name__}")
+            raise NodeError(f"'inputs' parameter must be a dict, got {type(inputs).__name__}", param="inputs")
         return inputs
 
     @staticmethod
@@ -889,8 +882,10 @@ class PythonCodeNode(Node):
         missing = [name for name in inputs if name not in annotations]
         if missing:
             hints = [f"  {name}: <type>" for name in missing]
-            raise ValueError(
-                f"Input(s) missing type annotation in code: {', '.join(missing)}\nAdd annotations:\n" + "\n".join(hints)
+            raise NodeError(
+                f"Input(s) missing type annotation in code: {', '.join(missing)}\nAdd annotations:\n"
+                + "\n".join(hints),
+                param="code",
             )
 
     # Pattern matching type annotations accidentally written in YAML input values.
@@ -926,7 +921,7 @@ class PythonCodeNode(Node):
                 continue
             # Extract the actual value after "type = "
             actual_value = value[match.end() - 1 :]  # -1 to include the \S char
-            raise ValueError(
+            raise NodeError(
                 f"Input '{var_name}' appears to have a type annotation: \"{value}\"\n\n"
                 f"Type annotations belong in the code block, not in inputs.\n"
                 f"Write:\n"
@@ -934,7 +929,8 @@ class PythonCodeNode(Node):
                 f"      {var_name}: {actual_value}\n\n"
                 f"  ```python code\n"
                 f"  {var_name}: {annotations[var_name]}\n"
-                f"  ```"
+                f"  ```",
+                param="inputs",
             )
 
     @staticmethod
@@ -949,12 +945,13 @@ class PythonCodeNode(Node):
                 continue  # unknown type — skip check
             if not isinstance(value, expected):
                 actual = type(value).__name__
-                raise TypeError(
+                raise NodeError(
                     f"Input '{var_name}' expects {type_str} but received {actual}\n\n"
                     f"Suggestions:\n"
                     f"  - Change the type annotation to: {var_name}: {actual}\n"
                     f"  - Or convert the input value to {type_str}\n"
-                    f"  - Or use `Any` to accept any type: {var_name}: Any"
+                    f"  - Or use `Any` to accept any type: {var_name}: Any",
+                    param="inputs",
                 )
 
     @staticmethod

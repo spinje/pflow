@@ -12,6 +12,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, ClassVar
 
+from pflow.core.exceptions import NodeError
 from pflow.core.node import Node
 from pflow.core.user_errors import UserFriendlyError
 
@@ -764,26 +765,26 @@ class ShellNode(Node):
             Dictionary with command configuration
 
         Raises:
-            ValueError: If command is missing or dangerous
+            NodeError: If command, cwd, or timeout is missing or invalid
             UserFriendlyError: On Windows when no Git Bash can be resolved (ADR-0013)
         """
         # Get command from params (required)
         command = self.params.get("command")
         if not command:
-            raise ValueError("Missing required 'command' parameter")
+            raise NodeError("Missing required 'command' parameter", param="command")
 
         # Check for obviously dangerous patterns
         command_lower = command.lower()
         for pattern in self.DANGEROUS_PATTERNS:
             if pattern.lower() in command_lower:
-                raise ValueError(f"Dangerous command pattern detected: {pattern}")
+                raise NodeError(f"Dangerous command pattern detected: {pattern}", param="command")
 
         # Check for warning patterns (log but don't block unless strict mode)
         strict_mode = os.environ.get("PFLOW_SHELL_STRICT", "").lower() == "true"
         for pattern in self.WARNING_PATTERNS:
             if pattern.lower() in command_lower:
                 if strict_mode:
-                    raise ValueError(f"Command blocked in strict mode: {pattern}")
+                    raise NodeError(f"Command blocked in strict mode: {pattern}", param="command")
                 else:
                     logger.warning(
                         f"Potentially dangerous command detected: {command[:50]}...",
@@ -811,11 +812,11 @@ class ShellNode(Node):
             cwd = os.path.normpath(cwd)
 
             if not os.path.isdir(cwd):
-                raise ValueError(f"Working directory does not exist: {cwd}")
+                raise NodeError(f"Working directory does not exist: {cwd}", param="cwd")
 
         # Validate timeout
         if not isinstance(timeout, (int, float)) or timeout <= 0:
-            raise ValueError(f"Invalid timeout value: {timeout}")
+            raise NodeError(f"Invalid timeout value: {timeout}", param="timeout")
 
         # Resolve the POSIX shell on Windows (ADR-0013). Must happen in prep,
         # not exec — see _windows_bash_or_raise for why moving it breaks

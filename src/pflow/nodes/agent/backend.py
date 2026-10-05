@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from pflow.core.exceptions import PflowError
+
 
 @dataclass
 class AgentResult:
@@ -33,7 +35,7 @@ class AgentBackend(Protocol):
     def continuation_options(self, previous: AgentResult, options: dict[str, Any]) -> dict[str, Any] | None:
         """Build options for continuing a prior result, or return ``None``."""
 
-    def translate_error(self, exc: Exception, options: dict[str, Any]) -> Exception:
+    def translate_error(self, exc: Exception, options: dict[str, Any]) -> PflowError:
         """Translate a backend exception into an actionable public error."""
 
     def build_warning_context(self, options: dict[str, Any], result: AgentResult) -> dict[str, Any]:

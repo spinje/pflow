@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from pflow.core.exceptions import NodeError
 from pflow.core.trace_io import BLOB_SENTINEL
 from pflow.runtime.engine.batch_executor import _capture_item_trace
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
@@ -626,7 +627,7 @@ class TestTemplateResolutionsOnError:
 
         engine = WorkflowEngine(trace_collector=collector)
 
-        with pytest.raises(ValueError, match="does not exist"):
+        with pytest.raises(NodeError, match="does not exist"):
             engine.run(workflow, shared)
 
         # Trace event should be recorded for execution errors

@@ -2,6 +2,7 @@
 
 import pytest
 
+from pflow.core.exceptions import NodeError
 from pflow.core.llm_client import Attachment
 from pflow.nodes.llm.llm import LLMNode
 
@@ -78,7 +79,7 @@ def test_missing_file_error():
     node.set_params({"prompt": "Describe", "images": ["/nonexistent/file.jpg"], "model": "openai/gpt-4o-mini"})
     shared = {}
 
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(NodeError) as exc_info:
         node.run(shared)
 
     assert "not found" in str(exc_info.value).lower()
@@ -90,7 +91,7 @@ def test_invalid_image_type():
     node.set_params({"prompt": "Describe", "images": [123], "model": "openai/gpt-4o-mini"})  # Integer instead of string
     shared = {}
 
-    with pytest.raises(TypeError) as exc_info:
+    with pytest.raises(NodeError) as exc_info:
         node.run(shared)
 
     assert "must be a string" in str(exc_info.value).lower()

@@ -5,6 +5,7 @@ import tempfile
 
 import pytest
 
+from pflow.core.exceptions import NodeError
 from pflow.nodes.file import DeleteFileNode
 
 
@@ -74,7 +75,7 @@ class TestDeleteFileNode:
             node.set_params({"file_path": file_path})
             shared = {}  # No confirm_delete
 
-            with pytest.raises(ValueError, match="Missing required 'confirm_delete'"):
+            with pytest.raises(NodeError, match="Missing required 'confirm_delete'"):
                 node.prep(shared)
 
     def test_delete_nonexistent_file(self):
@@ -113,7 +114,7 @@ class TestDeleteFileNode:
             shared = {}  # Empty shared store
 
             # Should fail because confirm_delete must be in shared
-            with pytest.raises(ValueError, match="Missing required 'confirm_delete'"):
+            with pytest.raises(NodeError, match="Missing required 'confirm_delete'"):
                 node.prep(shared)
 
 
