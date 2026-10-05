@@ -69,9 +69,15 @@ Persist loop position in the trace, restore it on resume, and let one pausabilit
   and failure-resume; special-casing any one of them keeps a second rule alive. (Scope ruling
   pending — see Open questions Q1.)
 - **Delete what the mechanism makes obsolete, in-task** — `_gate_pausable`'s loop clauses, the
-  #615 loop warning/footer logic (`cli/commands/run.py:467-509`, `_fully_answered_gate_ids`),
-  the between-nodes-after-a-loop refusal, and the resume guides' restart language. The deletion
-  test is the acceptance bar for "simpler final code".
+  #615 loop warning/footer logic (`cli/commands/run.py:469-515`, `_fully_answered_gate_ids`),
+  the between-nodes-after-a-loop refusal (`resume_preflight.py:261-273`), and every statement of the
+  restart rule: `guide/features/resume.md:82`, `guide/features/approval.md:34, 52`,
+  `runtime/engine/CLAUDE.md` ("Approval additionally requires no loop or the loop's first iteration"),
+  `docs/reference/cli/index.mdx:90`. The deletion test is the acceptance bar for "simpler final code".
+- **The "pinned" restart test is a weak pin.** `tests/test_runtime/test_resume_engine.py:736`
+  (`test_loop_k_restarts_at_iteration_one`) fails at iteration 1, where restart and continue produce the
+  same output — it cannot distinguish the two stances and passes unchanged under (c). The replacement
+  test fails mid-loop (round ≥2) so it actually pins continuation.
 - **#659 (stale host frame overwrites a looping sub-workflow step's iteration record) is a
   prerequisite phase**, not a separate lane: resume seeds from exactly that per-iteration history.
 - **#656's "approve all remaining rounds" button is decided here, once**, in this task's UI pass:
@@ -85,14 +91,17 @@ Persist loop position in the trace, restore it on resume, and let one pausabilit
 
 ## Open questions (resolve at start — user rulings marked)
 
-- **Q1 (user) — scope.** (a) approval gates only; (b) approval + escalation (unblocks the
-  documented re-fork recipe); (c) (b) + failure-resume (changes Task 164's pinned stance and its
-  test). Recommendation: (c) — one mechanism, and only (c) lets every loop special case go.
-- **Q2 (user) — failure-resume default under (c).** Continue at iteration N always; or continue
-  unless the saved state can't be restored faithfully (LLM prompt/system stripped, binary
-  placeholders — `resume_source.py:381-388, 594-601`), in which case refuse with guidance as
-  resume already does for binaries. Recommendation: the latter — no restart flag (a second mode
-  nothing needs yet).
+- **Q1 (user) — scope. DECIDED 2026-10-05: (c).** (a) approval gates only; (b) approval + escalation
+  (unblocks the documented re-fork recipe); (c) (b) + failure-resume (changes Task 164's pinned stance
+  and its test). User ruling: *"go ahead with this"* on the recommendation (c) — one mechanism, and only
+  (c) lets every loop special case go.
+- **Q2 (user) — failure-resume default under (c). DECIDED 2026-10-05: continue unless the saved state
+  can't be restored faithfully, then refuse with guidance** (as resume already does for binary
+  placeholders, `resume_source.py:381-388, 594-601`). No restart flag (a second mode nothing needs yet).
+  Correction (refreshed 2026-10-05 against main): LLM prompt/system stripping is NOT at those lines — it
+  lives in `workflow_trace.py` (`_strip_redundant_llm_trace_fields`) and today's resume does not refuse
+  on it; the planner decides whether a stripped prompt counts as "can't restore faithfully" for a loop
+  node (it did not for Task 164's node-level resume).
 - **Q3 — where position is stored** (trace-format minor bump either way; readers accept `2.*`,
   `workflow_trace.py:164`; current `2.7.0`). (a) an `iteration` field on every loop-node event —
   self-describing, also feeds the UI overlay and the pause surfaces; (b) a loop record on the
@@ -105,7 +114,9 @@ Persist loop position in the trace, restore it on resume, and let one pausabilit
   `loop_control.py:184-186`), the visit guard (`instrumentation.py:53-82`), carry — rebuilt from
   seeded state or restored verbatim.
 - **Q6 — pause surfaces.** All four consumers of `format_resume_answer_command` show the loop
-  position, or none ("one home" rule — never a subset).
+  position, or none ("one home" rule — never a subset). Constraint: `resume list` hands the formatter
+  only `{"kind": run.gate_kind}` built from `PausedRun` (`cli/commands/resume.py:440, 471`;
+  `resume_source.py:936`) — position must thread through `PausedRun`, not be read from the trace twice.
 
 ## Dependencies
 
@@ -117,6 +128,12 @@ Persist loop position in the trace, restore it on resume, and let one pausabilit
   `plan_node`/`carry_effective_config` would overlap directly. Engine + trace-format →
   serialize.
 - **#659** — folded in as the first phase.
+- **Citation drift (refreshed 2026-10-05 against main `e402a1e6`):** every claim in this spec and the
+  investigation re-verified; none wrong. Line numbers moved: `engine.py` +12 after ~line 270 (Task 170;
+  `_gate_pausable` at `:98-132` unmoved; loop counters now `:802-846`, gate fires `:1285-1291`, gate
+  branch `:1504-1608`, `--only` loop target `:899-902`); `loop_control.py` −8 after ~130
+  (`evaluate_loop_condition` `:121-161`, template cap `:168-176`); `cli/commands/run.py` +2 (#615 warning
+  `:469-480`, `_fully_answered_gate_ids` `:499-515`). Re-verify file:line at start regardless.
 
 ## Requirements
 
