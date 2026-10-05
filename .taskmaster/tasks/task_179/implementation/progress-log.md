@@ -557,3 +557,18 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   ruling and current code (no `web/`/`ui/` change since the shots were taken at P4's tree, committed as e10ba5cc).
 - PARKED — resume point unchanged from the 02:10 entry (ruling YES → P4b on the P4 Fable implementer; NO → completion
   gate). `verify.sh` runs at the completion gate.
+
+## [2026-10-06 02:45] task-orchestrator (Opus) — #656 RULING A; main merged again; completion gate commissioned
+- [RULING] #656 checkpoint: **A — not now** (relayed by the main orchestrator under the user's session grant, quoted
+  verbatim: *"go ahead and run this session end to end"*; the embedded checkpoint collapses to the shared recommendation).
+  The ordinary Approve finishing a loop iteration by iteration is the product; P4b's design stays in the plan (§4 P4b)
+  for a later ruling. P4 is complete.
+- Deviation recorded (ORCHESTRATION → Worktree & git flow step 2 says agents in one worktree run sequentially): I ran
+  P3 and P4 in parallel on disjoint files; the predicted side effect occurred — P3's `make check` regenerated the
+  `.agents/` copy of P4's skill edit, and P3's counts included P4's in-flight test. No conflict; committed separately.
+- Merged `origin/main` @ baf2d73f (#705, `core/markdown_parser.py` + its tests — disjoint). Merged result: `make check`
+  exit 0; `make test-all-local` 10375 passed, 2 skipped, 0 failed.
+- Completion gate commissioned to the P1–P3 implementer (it holds the code; window reported healthy): code-mode
+  deep-review via the pflow fan-out (codex), per-seam targets for the dimension lenses, cross-cutting lenses over the
+  whole diff vs `origin/main`; `review-falsifier` launched by me directly, LAST, after the battery's fixes land.
+- dev servers: none.
