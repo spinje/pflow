@@ -435,6 +435,9 @@ sources) is removed rather than admitted.
   semantics BEFORE this task lands means adding them to twelve regexes — that is why they wait.
   Under the AST, tolerance is policy over Issues (which Issues are ERRORs on which surface),
   never a parse mode.
+  **DECIDED 2026-10-05 (session-10): the ruling is Task 118's decision ledger + ADR-0016** — shell
+  bodies are never templated (values bind via `inputs:`); tolerance of non-grammar `${…}` only in
+  MCP code-bearing params; `${var|json}` filter; identifier-shaped unknowns stay errors everywhere.
 - Unifying the validator's structure walk with the value walk (ADR-0006).
 - Migrating the string-helper long tail to the AST; the ~40 lexical `"${" in x` presence checks.
 - The type-compatibility matrix's *content* (only its home consolidates).

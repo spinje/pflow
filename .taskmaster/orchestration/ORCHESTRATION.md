@@ -14,7 +14,7 @@ epistemic rules live there; this file does not repeat them.
 | **Main orchestrator** | user's session | `start-orchestration` workflow | Cross-task view: pick lane + work, verify spec freshness (fix staleness itself — spec accuracy is its job; implementation detail is not), provision the worktree, launch planners/task-orchestrators with a context packet, handle handbacks/escalations, talk to the user, **merge the PR and reconcile**, keep `CURRENT-STATE.md` + its session file + the ledgers current. **Never writes plans, never reads plans, never runs deep-review — trust the agents' gates** |
 | **Task planner** | **Fable, always** (frontmatter + explicit param) | `.claude/agents/task-planner.md` | Investigate ONE task (via searchers) IN the task's worktree + write `implementation/implementation-plan.md`, **self-review it** (plan-mode `deep-review` — mandatory when the plan touches the engine or the trace format, its judgment otherwise), commit it on the feature branch, then STOP. May offer to implement small tasks itself (see Model routing) |
 | **Task orchestrator** | Opus; Fable only via explicit param with a one-line justification | `.claude/agents/task-orchestrator.md` | One task end to end in the same worktree, from the planner's plan: delegate phases → per-phase self-checks → when FULLY happy: commission the code-mode `deep-review` gate (see Review policy) → `create-task-review` → `create-pr` → minimal handback |
-| **Lane implementer** | Opus floor (DECISIONS #24) | `.claude/agents/lane-implementer.md` | ONE GitHub issue end to end in a provisioned worktree (lane B): critically evaluate → fix with tests → proportionate gate → PR → CI green → merge it itself. May delegate MECHANICAL execution to leaf subagents; never judgment |
+| **Lane implementer** | Opus floor (DECISIONS #24) | `.claude/agents/lane-implementer.md` | ONE GitHub issue end to end in a provisioned worktree (lane B): critically evaluate → fix with tests → trigger-selected gate → PR → CI green → merge it itself. May delegate MECHANICAL execution to leaf subagents; never judgment |
 | **Phase implementer** | per launch (routing table) | `.claude/agents/task-phase-implementer.md` | Implement exactly the assigned phase(s); tests as it goes; substance to the progress-log; minimal handback; stop on ambiguity |
 | **Searcher** | pinned (opus) | `pflow-codebase-searcher` | Read-only investigation, cited findings. Never the generic `Explore` or `general-purpose`. **Two channels, disambiguate by name**: the NATIVE searcher (this def, Agent tool — the default) vs the SEARCHER OFFLOAD (`workflows/search/run-searcher.pflow.md`, Codex — cross-model verification for Claude callers or capacity relief; Codex callers use it for capacity relief; offload is never the default) |
 | **Review battery** | per lens | `.claude/agents/review-*.md` via the `deep-review` skill | The pflow specialists (selection rubric in the skill + `REVIEW-PROTOCOL.md`). Plan gate + completion gate (see Review policy) |
@@ -43,7 +43,7 @@ B, pick A; between A and C, ask the user.
   do NOT become tasks. Write a GH issue if none exists (correct root cause, verified against
   code), then launch ONE **`lane-implementer`** end to end in a provisioned worktree. The stable
   agent-side protocol has ONE home in its def — critical evaluation first, escalation above
-  importance 2/5, proportionate completion gate, PR discipline, merge-it-itself after CI green
+  importance 2/5, trigger-selected completion gate, PR discipline, merge-it-itself after CI green
   (DECISIONS #4) — **don't restate it in packets**; the packet carries only
   the variables: issue #, worktree absolute path, base SHA, file-ownership list (derived from
   what else is in flight), evaluation hints (your own pick-time verification findings, so the
@@ -241,7 +241,11 @@ them**, not in up-front documents.
 
 **Never mutate shared tooling while producers are live** (the Makefile, `make check`, a
 pre-commit hook, a global MCP entry) — every running checkout reads it, so a fix lands as a
-mid-flight breakage; defer it to a quiet moment or make the change purely additive. When several
+mid-flight breakage; defer it to a quiet moment or make the change purely additive. Agent
+definitions and skills under the MAIN checkout's `.claude/` are read live — committed or not — by
+every agent the main orchestrator launches from its session (worktrees carry their own copies and
+are unaffected), so an uncommitted def edit reaches the next launch and a live agent's next skill
+load; edit them between launches and say so in the next packet. When several
 in-flight branches will inherit the same shared-tooling change, hold the LAST one idle and have
 it rebase ONCE onto final `main` rather than per sibling ship. When `main` moves under a live
 producer, send it the TEXT deltas that touch what it will author — the rebase carries the file;
@@ -347,15 +351,16 @@ implementer pays a real context-rebuild tax. The plan's agent assignment default
 
 ## Review policy (the pflow battery, two gates)
 
-The `review-*` specialists + `deep-review` skill (selection rubric, tiers, severity — in the
-skill and `REVIEW-PROTOCOL.md`). **The main orchestrator never runs deep-review and never reads
-plans — the agents own their own quality:**
+The `review-*` specialists + `deep-review` skill (trigger table, floors, severity — in the
+skill and `REVIEW-PROTOCOL.md`). **The main orchestrator never runs deep-review on a diff or a plan and
+never reads plans — the agents own their own quality; its one carve-out is the SPEC review and the
+standing dogfood pass (below), which are spec-accuracy and product work, not gate work:**
 
 - **Plan self-review — the PLAN AUTHOR's duty** (the planner; the task orchestrator only in the
   explicitly-instructed plans-and-implements exception) on its own finished plan (plan-mode
-  `deep-review`, scaled to the plan): **mandatory when the plan touches `runtime/engine/`/
-  `workflow_executor` or the trace format** — pflow's highest-risk seams; the author's judgment
-  otherwise (big/risky plans get the battery; small ones skip). The author verifies Critical
+  `deep-review`, lenses by the skill's triggers): **mandatory when the plan touches `runtime/engine/`/
+  `workflow_executor` or the trace format** — pflow's highest-risk seams; otherwise every trigger the
+  plan's phases fire (a plan firing no trigger beyond `review-plan` runs `review-plan` alone). The author verifies Critical
   findings against code itself and folds confirmed fixes in before building on the plan. (If the
   skill is unavailable in a subagent context, read `.claude/skills/deep-review/SKILL.md` and
   follow it — it is instructions + subagent launches.)
@@ -380,10 +385,11 @@ plans — the agents own their own quality:**
   gate-runner for evaluation with the rest. (In the GH-issue lane the lane implementer runs its
   own gate and handles direct falsifier launches; same when a planner implements itself.)
 - **Lane completion gate — the LANE IMPLEMENTER's own** (contract in `lane-implementer.md`):
-  lenses selected by the `deep-review` rubric, whose floors bind lanes unchanged (sensitive path ⇒
-  Full tier; `review-falsifier` whenever the diff makes a testable user-facing promise), with a
-  **floor of one when the diff changes shared tooling, CI, or a security boundary**. A one-line fix may warrant
-  none; the choice is recorded in the PR body either way. Lanes carry no task-review, so the PR
+  lenses selected by the `deep-review` trigger table, whose floors bind lanes unchanged (sensitive
+  path ⇒ the full floor; `review-falsifier` whenever the diff makes a testable user-facing promise;
+  any bug fix ⇒ `review-test-fidelity` at minimum, a one-line fix included), with a **floor of one when
+  the diff changes shared tooling, CI, or a security boundary**. Only a docs-only diff runs none; the
+  choice is recorded in the PR body either way. Lanes carry no task-review, so the PR
   body is where selection, findings, and dispositions live.
 - **Mid-task phase review** at the task orchestrator's judgment after an especially risky phase
   (engine contact, trace-format change, resume/gate semantics — anything later phases build upon):
@@ -391,6 +397,14 @@ plans — the agents own their own quality:**
   candidate phases ("triggers review"). Same ownership split as the completion gate.
 - **Focused seam/area review** on demand — when a shared pattern or a hot seam changed, regardless
   of which task did it. The main orchestrator may also commission cross-task area reviews.
+- **Lens selection is by trigger, never by diff size** (the skill's trigger table; counts are floors;
+  no numeric cap); a change spanning several seams scopes its dimension lenses per seam via the
+  fan-out's per-lens `target` while the cross-cutting lenses see the whole diff.
+- **Spec review mode** — the main orchestrator's battery over a spec before its planner (skill
+  section "Spec review mode"; direct launches; ledger + A/B/C/D dispositions, one rewrite).
+- **The standing dogfood pass** — the main orchestrator's, not diff-scoped: before every release and
+  after roughly every ten merges to `main` (skill section "The standing dogfood pass"); findings are
+  re-executed, then filed as issues serially.
 
 ## Definition of done
 
@@ -529,7 +543,8 @@ the extension and its reasoning, and it must stay cleanly revertible.
 `context/CONTEXT.md` gets new domain nouns as they crystallize (proposed in handbacks, written by
 the main orchestrator; format per `CONTEXT-FORMAT.md`). ADRs on `ADR-FORMAT.md`'s three-part bar —
 task files archive and go stale; ADRs are the durable layer. Instruction files (CLAUDE.mds, agent
-defs, skills) are updated by the task that makes them stale — the completion gate checks. Settled
+defs, skills), `pflow guide` content, and the user-facing docs under `docs/` are updated by the task
+or lane that makes them stale — the completion gate checks all three surfaces. Settled
 decisions (`DECISIONS.md` rows, ADRs, a spec's locked decision ledger) are **not re-litigated** —
 new information that contradicts one is a user escalation, not a quiet rewrite; the main
 orchestrator owns the `DECISIONS.md` write side.

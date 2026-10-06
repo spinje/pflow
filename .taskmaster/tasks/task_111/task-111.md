@@ -13,7 +13,19 @@ medium
 
 ## Roadmap
 
-next
+then
+
+> **Refreshed 2026-10-05 against main.** Unbuilt, but the problem is narrower than stated below: default
+> `fail_fast` already stops a failing batch at the first bad item (`runtime/engine/batch_executor.py:537-545`),
+> and the memo cache + `--only` make re-runs cheap. The unserved case is a cheap FIRST run of a large
+> batch that succeeds or runs with `error_handling: continue`. **The "default 3 for local files" is
+> withdrawn**: it would silently drop lenses in `workflows/review/run-review-lenses.pflow.md` (batches over
+> every lens, `max_concurrent: 12`), break `tests/test_cli/test_progress_streaming_subprocess.py:361-401`
+> (4-item batch, asserts 8 lines), and contradict the guide ("always runs all N",
+> `guide/features/batch.md:43`). Only an opt-in flag survives. Stale below: `PflowBatchNode.prep()` no
+> longer exists — the single batch entry point is `execute_batch` (`batch_executor.py:266`), and the memo
+> cache key (`instrumentation.py:196-233`) must include the limit or the slice must precede it. The MCP
+> `workflow_execute` tool also runs files and is not covered.
 
 ## Problem
 

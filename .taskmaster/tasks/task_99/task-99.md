@@ -22,6 +22,17 @@ medium
 
 next
 
+> **SPEC REWRITE REQUIRED before any planner (refreshed 2026-10-05 against main).** Unbuilt — nothing named
+> `pflow_tools` exists outside this folder. Stale: the target node is now `agent` (claude | codex; Task 177,
+> whose review already says "re-scope Task 99 to `agent`", `task_177/task-review.md:90`); `src/pflow/nodes/
+> claude/` is gone; `ExecutionService.run_workflow()` is now `execute_workflow(..., auto_approve)`
+> (`execution_service.py:268`) and can pause at approval gates; `planning/context_builder.py` is gone; the
+> Codex backend is never considered (its `config` passes `--config k=v` through unallowlisted,
+> `codex_backend.py:541-551`). The folder holds three contradicting tool shapes (two tools / one `pflow_run`
+> / server-per-workflow) — one must be chosen. Still true: `run_registry_node()` returns `str`
+> (`execution_service.py:695`); `pflow mcp serve` exposes a fixed 13 tools with no filter
+> (`mcp_server/server.py:301-325`) and no per-workflow or per-node tools.
+
 ## Details
 When invoking a Claude Code node, users should be able to specify a list of pflow nodes and/or saved workflows to expose as MCP tools:
 

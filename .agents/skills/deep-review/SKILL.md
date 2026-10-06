@@ -1,6 +1,6 @@
 ---
 name: "deep-review"
-description: "Deploy specialized review agents to find bugs that general code review misses. Handles both plan review (before implementation) and code review (after implementation). Deploys 1-8 focused agents in capacity-aware parallel batches, scaled to plan/diff complexity, each targeting a specific blindspot category."
+description: "Deploy specialized review agents to find bugs that general code review misses. Handles spec review (before planning), plan review (before implementation), code review (after implementation), and the standing dogfood pass (not diff-scoped). Every lens whose trigger fires runs — selection is by what the change DOES, never by diff size — each targeting a specific blindspot category, scoped per seam when a change spans several."
 ---
 
 # Deep Review — Specialized Multi-Agent Review
@@ -13,10 +13,12 @@ You already know the current state from the conversation. Determine which review
 
 | Context | Review type |
 |---|---|
+| A task spec is being refreshed or written ahead of its planner (main orchestrator) | **Spec review** (see "Spec review mode") |
 | You just wrote or finalized an implementation plan | **Plan review** (always includes `review-plan`) |
 | You just finished a phase, uncommitted changes exist | **Code review** (scope per ladder below) |
 | Implementation is done, PR is ready | **Code review** (full branch) |
 | User explicitly asks to review plan/code/staged | Whatever they asked for |
+| Before a release, or after roughly every ten merges to `main` (main orchestrator) | **Dogfood pass** — not diff-scoped (see "The standing dogfood pass") |
 
 **Code-mode scope.** Honor an explicit ask; otherwise check `git status --porcelain`:
 
@@ -29,24 +31,82 @@ Tell the agents the chosen scope explicitly in their prompts — per REVIEW-PROT
 (below) is empty, stop and fix the scope before launching anything: a lens over nothing returns
 clean, and that clean gets read as coverage.
 
-**Scale the battery — deploy 1-8 agents, never more.** Gauge size with the chosen scope's `--stat` diff (`git diff --stat`, `--cached --stat`, or `origin/<base>...HEAD --stat`) and the file list (for plans: estimate from the plan's phases and components touched):
+**Select by what the change DOES, never by how big it is.** Every lens whose trigger fires runs;
+relevance is the only limit, there is no numeric cap, and the counts below are **floors**. The
+fan-out merges and deduplicates, so an extra relevant lens costs a few minutes of Codex time while
+a missed one costs a lane. Gauge the scope with the chosen scope's `--stat` diff (`git diff
+--stat`, `--cached --stat`, or `origin/<base>...HEAD --stat`) and the file list only to see
+**which triggers fire** — not to pick a count.
 
-| Tier | Scope | Agents |
-|---|---|---|
-| Trivial | ≤10 changed lines, ≤3 files | 1-2 — or skip deep-review entirely |
-| Lite | ≤100 lines, ≤20 files | 2-4 |
-| Full | >100 lines, or >20 files, or multi-phase plans, or PR-ready branches | 4-6 |
-| Major | >500 lines, or >50 files, or multi-phase plans of that scale | 5-8 |
+| The change… | …runs (in addition to the floor) |
+|---|---|
+| touches any **sensitive path** — the engine (`src/pflow/runtime/engine/`), the trace format (`src/pflow/runtime/workflow_trace.py`, `src/pflow/core/trace_io.py`), shell and code node execution (`src/pflow/nodes/shell/`, `src/pflow/nodes/python/`), the MCP server surface (`src/pflow/mcp_server/`), resume/gate semantics | the **full floor** (`silent-failures`, `impact-completeness`, `feature-interactions`, `test-fidelity`, and `falsifier` by direct launch) regardless of diff size — a 5-line engine change outranks a 500-line UI change, and on these paths the falsifier runs even for a "pure refactor": "existing behavior unchanged" is itself a promise worth executing against |
+| changes **user-facing text or output shape** (errors, warnings, suggestions, CLI/JSON/report output, `pflow guide` text) | `agent-ux` + `falsifier` (falsifier: code mode only) |
+| changes a **validator** or a **runtime behavior the validator mirrors** (parse, resolve, coerce, type-check) | `validation-consistency` — on BOTH sides, always — + `falsifier` ("validate-only and run agree" is a testable promise; code mode only) |
+| changes a **shared helper, pattern, or contract with more than one consumer** (a formatter, a reserved key, a store key, a diagnostic field, a settings reader) | `impact-completeness` |
+| **deletes or consolidates** (a ratchet, a migration, folding N sites into one) | `simplicity` (any size, lanes included — emergent duplication hides in ratchets) + `spec-conformance` when a task's spec and plan exist to compare against; both code mode only |
+| touches an **error or exception path**, a guard, a fallback, an empty-result branch | `silent-failures` |
+| touches **subprocess, threads, executors, asyncio, copy semantics, shared mutable state** | `concurrency-safety` |
+| is a **bug fix** of any size | `test-fidelity` (a regression test on the exact buggy path — this floor is never waived, a one-line fix included) + `falsifier` (code mode only) |
+| crosses **batch, nested workflows, branching, caching, MCP, approval gates, or output routing** | `feature-interactions` |
+| adds or changes an **on-disk or agent-facing contract** in a plan or spec (trace field, reserved key, CLI flag, node interface, resume token shape) | `architecture-fit` (plan/spec mode only) |
+| is **docs-only** | no battery — `make check` and the docs tests are the gate; say so where the gate is recorded |
+| changes **CI, shared tooling (Makefile, pre-commit, the review fan-out), or a security boundary** | floor of one lens, never zero (`impact-completeness` or `silent-failures` by what it touches) |
 
-**Counts are ceilings, not targets.** Never deploy a specialist whose dimension the scope doesn't touch just to hit the tier's number — if only 3 dimensions are genuinely in play on a Full-tier diff, deploy 3. Size doesn't create relevance: a huge diff that never touches threading or user-facing output still gets no `review-concurrency-safety` or `review-agent-ux`, so even Major-tier reviews rarely exceed 5-6 agents in practice. When in doubt between tiers, pick the higher one.
+**Floors by mode** (the minimum when the triggers above fire nothing extra):
+- **Code mode, any non-trivial diff**: `silent-failures` + `impact-completeness` + `test-fidelity`, plus `falsifier` whenever the diff makes any user-facing promise. A genuinely one-line fix runs `test-fidelity` alone at minimum — never zero; record the choice.
+- **Plan mode**: `review-plan` always in slot 1, plus every trigger the plan's phases fire except the code-only lenses (`falsifier`, `simplicity`, `spec-conformance` — those become completion-gate lenses the plan names); engine or trace contact makes the plan battery MANDATORY (ORCHESTRATION "Review policy").
+- **Spec mode** and the **dogfood pass**: see their sections below.
 
-**Sensitive paths set a minimum of Full tier regardless of diff size** — the engine
-(`src/pflow/runtime/engine/`), the trace format (`src/pflow/runtime/workflow_trace.py`,
-`src/pflow/core/trace_io.py`), shell and code node execution (`src/pflow/nodes/shell/`,
-`src/pflow/nodes/python/`), and the MCP server surface (`src/pflow/mcp_server/`). A 5-line engine
-change outranks a 500-line UI change.
+**Scope lenses per seam when a change spans several.** A diff that touches the engine, the CLI
+renderer and the web UI is three reviews, not one: a lens over the whole thing skims each part.
+Use the fan-out's per-lens target (`{"name": …, "target": …}`) to point each **dimension lens** at
+the slice where its dimension lives — `concurrency-safety` at the executor files, `agent-ux` at the
+renderer and guide text, `validation-consistency` at the validator + the runtime twin — and run
+the same lens more than once with different targets when two seams both earn it. The
+**cross-cutting lenses** (`impact-completeness`, `feature-interactions`, `spec-conformance`,
+`simplicity`) always see the WHOLE diff: partitioning is exactly how seam bugs hide, and those
+four exist to look across seams. State the partition in the gate record so a reader can see what
+each lens actually looked at.
 
-**User-specified count.** If the invocation includes a standalone number (`3`) or range (`2-4`), it overrides the tier table: a number is an exact count, a range is floor and ceiling (relevance picks within). `review-plan` still fills slot 1 in plan mode. If the floor exceeds the genuinely relevant dimensions, fill remaining slots with the strong defaults (`review-silent-failures`, `review-impact-completeness`) and note it in the summary. Numbers inside identifiers (`task 38`) are not counts.
+**User-specified count.** If the invocation includes a standalone number (`3`) or range (`2-4`), it overrides the triggers upward only: a number is an exact count, a range is floor and ceiling (relevance picks within), and neither may go below the triggered floors — a sensitive-path diff keeps its full floor whatever the number says. `review-plan` still fills slot 1 in plan mode. If the number exceeds the triggered lenses, fill with the strong defaults (`review-silent-failures`, `review-impact-completeness`) and note it in the summary. Numbers inside identifiers (`task 38`) are not counts.
+
+## Spec review mode
+
+A task spec written ahead of its planner goes stale as a rule, and a spec battery has changed two
+task designs (Tasks 94, 170) before any plan existed — it is the cheapest review this repo runs.
+The main orchestrator commissions it as part of spec freshness (ORCHESTRATION "Roles"); its
+`review_target` says explicitly *"SPEC review, not a code-diff review: evaluate the spec at
+`<path>` against today's code — classify every claim STILL TRUE / STALE / UNVERIFIABLE, and judge
+whether a planner building from it would build the wrong thing."* Lenses: `review-architecture-fit`
+always (and `review-plan` when the spec already carries phase structure), plus `feature-interactions`, `silent-failures`, `impact-completeness`, and `agent-ux` when
+the spec changes a user-facing surface; direct launches (plan/spec lenses never go through the
+fan-out). Findings land in ONE ledger file (`scratchpads/<session>/<task>-spec-battery.md`) with a
+disposition per finding — **A** fold the accuracy correction into the spec now · **B** record a
+design gap as a "RESOLVE AT START" constraint (constraint stated, mechanism left to the planner) ·
+**C** a genuine decision goes to the user · **D** disputed, with the counter-citation — then one
+spec rewrite from the ledger. A freshness check is not a readiness verdict: citations holding and
+"would a planner build the wrong thing" are different questions, and the second needs a
+context-free reader.
+
+## The standing dogfood pass (not diff-scoped)
+
+Diff-scoped review cannot see what a new agent *experiences*: misleading suggestions,
+validate-passes-run-fails, missing commands, stale guide claims accumulate across many
+individually-reviewed PRs. The dogfood pass is one fresh-eyes Opus agent that starts exactly as a
+new user would — `uv run pflow guide`, no source reading — and walks the core loop three times with
+increasing realism (shell/code/file → http with inputs → llm + batch): author → `--validate-only` →
+run → read the trace / `pflow report` → deliberately break something and read the error → `pflow
+save` under a `dogfood-` prefix → run by name → `--only` / resume / gates where they apply. It logs
+every friction point with the verbatim command and output and a severity (BLOCKER / MISLEAD / GAP /
+PAPERCUT), tests the guide's claims one by one, and ends by removing what it created and listing
+what it left behind. **Cadence:** before every release, and after roughly every ten merges to
+`main` — both. **Spend:** paid LLM calls allowed on the cheapest configured model, capped (~10
+small calls; the one pass so far — session 10 — made 8 calls for about $0.00004). **Output:** a report the main orchestrator
+reads in full, then a verification agent re-executes each finding on `main`, checks for duplicate
+issues, and drafts issue bodies (class, executed evidence, mechanism, closing mechanism, verify at
+start, severity); the orchestrator files them serially after reading each. Never save anything
+into the user's library without the prefix; never touch saved workflows the pass did not create.
 
 **Protect your context window.** Do NOT read diffs, plans, or full files yourself — the subagents have expendable context windows. The cheap scope commands above and small targeted reads during verification (an ADR, one flagged function) are the exception, never whole diffs or plans. You only need the task ID and a one-line description to deploy.
 
@@ -86,21 +146,21 @@ cannot run or the caller must keep working in parallel. Fallback coverage is sam
 wherever you record the gate's outcome (a lane's PR body) state (a) that the pflow fan-out did not
 start, and why, (b) which lenses ran, and (c) that they share the builder's model family — that
 coverage is the FLOOR, not diversity; the main orchestrator commissions one cross-model lens for a
-sensitive-path diff (tier rule above). Never fall back to reviewing your own diff. A Codex seat
+sensitive-path diff (the sensitive-path trigger above). Never fall back to reviewing your own diff. A Codex seat
 whose sandbox cannot start pflow runs the native `.codex/agents/review-*.toml` lenses under the
 same disclosure. **Plan-mode reviews always launch directly too** — the fan-out's
 contract is code review; the fan-out default applies to code mode only.
 
 **`review-falsifier` always launches directly** (Agent tool), never through the fan-out — it
 EXECUTES the change (real workflow runs, targeted pytest) and needs the access the read-only
-fan-out never grants. Code mode only. It does not count toward the lens cap and runs **LAST** —
+fan-out never grants. Code mode only. It is not a fan-out lens and runs **LAST** —
 after the reading battery's confirmed fixes have landed, so it attacks the state that ships. Give it
 the task spec path, plus `review-spec-conformance`'s Requirement Inventory when that lens ran.
-Skip it when the diff carries no user-facing promise to falsify (pure refactors, docs, tooling).
+Skip it only when the diff carries no user-facing promise to falsify (a pure refactor with no behavior change OFF the sensitive paths, docs, tooling) — a validator change always carries one ("validate-only and run agree"), and so does any bug fix with a reproducible symptom.
 
 ## Deploy Agents (direct launch — the fallback path, and the falsifier's only path)
 
-Launch selected agents in capacity-aware parallel batches. Never exceed the runner's available child slots. Fill the available slots in one parallel launch, wait for that batch, then launch any remainder. Keep prompts minimal — the agents have detailed built-in instructions and know the pflow codebase.
+Launch selected agents in capacity-aware parallel batches (the fan-out has no lens-count limit and runs at most 12 at once, queueing the rest; direct launches never exceed the runner's available child slots). Fill the available slots in one parallel launch, wait for that batch, then launch any remainder. Keep prompts minimal — the agents have detailed built-in instructions and know the pflow codebase.
 
 Include the standing noise rule in each prompt: `uv.lock` is not a review target — a lockfile change is a signal of a dependency change, not code to critique.
 
@@ -108,7 +168,7 @@ Include the standing noise rule in each prompt: `uv.lock` is not a review target
 
 ### Selecting Specialists
 
-Pick by what the scope actually touches — every selected agent must earn its slot. The tier sets the ceiling; relevance sets the count:
+Pick by what the scope actually touches — the trigger table above decides; this table says what each lens is FOR:
 
 | Agent type | Pick when the scope involves... |
 |---|---|
@@ -121,8 +181,8 @@ Pick by what the scope actually touches — every selected agent must earn its s
 | `review-agent-ux` | New/changed user-facing output: errors, warnings, CLI results, reports |
 | `review-concurrency-safety` | Threads, executors, copy semantics, asyncio, shared mutable state |
 | `review-test-fidelity` | Substantial new test coverage, regression tests for bug fixes |
-| `review-simplicity` | Multi-phase implementations at Full tier+ (integrated code only, code mode) |
-| `review-spec-conformance` | Full-tier multi-phase implementations: does the integrated code do what the spec + plan asked, no less, no more — the reading counterpart of `review-falsifier` (integrated code only, code mode; never mid-task) |
+| `review-simplicity` | Any deletion or consolidation, lanes included, and every multi-phase implementation (integrated code only, code mode) |
+| `review-spec-conformance` | Multi-phase task implementations with a spec and plan to compare against: does the integrated code do what the spec + plan asked, no less, no more — the reading counterpart of `review-falsifier` (integrated code only, code mode; never mid-task) |
 | `review-falsifier` | The spec makes testable behavioral promises and a dev environment can run them — the only lens that EXECUTES (real workflow runs, targeted pytest). Direct launch only, code mode only |
 
 `review-plan` and `review-architecture-fit` only review plans/specs; `review-simplicity`, `review-spec-conformance` and `review-falsifier` only review integrated code — never deploy them in the wrong mode.

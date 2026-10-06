@@ -1,4 +1,4 @@
-# CURRENT-STATE.md (last verified: 2026-10-01, session-09 close — main @ 48072699)
+# CURRENT-STATE.md (last verified: 2026-10-06, session-10 close — main @ 3b342ce9)
 
 _Living state header — the ONE mandatory session-start read (~80-line budget; state + pointers
 only). Rewritten at close/park (ORCHESTRATION "Artifacts and ownership"); work done outside a
@@ -9,67 +9,82 @@ braindumps); routing: `sessions/INDEX.md`. Every claim here is a pointer to veri
 ## Process
 
 - Root `CLAUDE.md` Code Quality carries the user's governing lens VERBATIM; quote it in every packet.
-  Lane gates bind to the deep-review rubric's floors (`lane-implementer.md`).
-- Session-09's end-to-end scope grant is CLOSED — a grant never carries to the next session.
-- The user switched the orchestrator model Fable → Opus 5.5 near session-09's end.
+- Lens selection is by TRIGGER, never diff size (deep-review skill, rewritten s10 with the user); spec-review
+  mode and the standing dogfood pass are the main orchestrator's (ORCHESTRATION "Review policy").
+- `docs/` is a required stale-surface sweep for every lane/task (root CLAUDE.md:184, lane def, spec-conformance).
+- Session-10's end-to-end grant is CLOSED — a grant never carries to the next session.
 
 ## In flight
 
-- Nothing. No worktrees besides main, no open PRs, no live agents. `origin/main == main == 48072699`.
+- Nothing live. No worktrees besides main, no open PRs, no live agents. `origin/main == main == 3b342ce9`;
+  the push CI for it was in progress at close (GitHub Actions had an open incident all day — read the failing
+  step's log before calling a red run a regression).
 
-## Recently shipped (session-09, 2026-09-29 → 10-01)
+## UNCOMMITTED on main (the user is reviewing locally — DECISIONS #5: commit only on their word)
 
-- **Task 170** (one template language, PR #673; closes #630, #262) · **Task 94** (`pflow settings llm
-  models`, PR #670).
-- Lane B: #617 (#651) · #618 (#653) · #615 (#655) · #606 (#661) · #654 (#662) · #652 (#663) · #643 (#664)
-  · #658 (#667) · #657 (#668) · #650 (#671).
-- Specs written, not started: **Task 179** (durable loop position — `next`), **Task 178** (MCP SDK 2.x —
-  `then`). User-marked open questions: 179 Q1 scope, Q2 failure default; 178 Q1 client era, Q3 HTTP
-  diagnostics, Q5 server error text (show-before-code).
+- 23 paths: the deep-review skill rewrite + release skill + ORCHESTRATION + lane-implementer/task-orchestrator/
+  review-spec-conformance/review-simplicity/review-falsifier defs (+ `.codex`/`.agents` mirrors) · root
+  `CLAUDE.md:184` (`docs/`) · `context/adr/0016-118-shell-node-inputs-binding.md` (NEW, context-free-reviewed) ·
+  `context/CONTEXT.md` (Resume) · specs 99/111/118/120/121/170 · `start-orchestration.md` (interim sentence) ·
+  orchestration state files. `git status --short` is the truth; nothing here rides a PR.
+
+## Recently shipped (session-10, 2026-10-05 → 10-06)
+
+- **Task 179** (durable loop position, PR #713; closes #659; trace format 2.8.0; resume refuses lossy seeds).
+- Lane B: #678 (#704) · #521+#389 (#705) · #627 (#707, `NodeError` + ratchet).
+- Issue hygiene: 19 closed (4 verified-fixed in the morning, 15 by the KEEP-biased triage), 11 narrowing/evidence
+  comments, 26 filed (#684–#712 — dogfood + lane follow-ups). Open: 145.
 
 ## Next session, recommended order (NOT yet user-agreed)
 
-1. **#665** (lane B, destructive): `pflow save --force` deletes the saved workflow before bundling.
-2. **Task 179** (lane A, Fable planner): unblocked by 170; #659 is its phase 1; overturns Task 164's
-   restart-at-1 stance by user ruling. Engine + trace → serialize; plan-mode deep-review mandatory.
-3. Lane-B fill disjoint from 179's engine/trace seam: **#675** (batch memo cache stale — correctness)
-   · #674 (scanner skips nodes under a `pflow` dir) · #678 (output-source field check) · #660 · #669.
-4. Unblocked by 170, needs ONE user language ruling: #621 / #550 (Task 170 spec "Deferred by design"),
-   then Task 118, #648.
-5. Task 178 after 179 (178 deletes the two MCP stdio shims).
+1. **Prep commit** of the 118 spec + ADR-0016 (after the user's review), then **Task 118 planner** (lane A, Fable):
+   shell `env:` binding, bodies untemplated, `|json` filter — its trigger (#678 merged) is met.
+2. Engine seam is QUIET now → the lanes serialized behind 179 are free: **#690** (fix-then-resume refused
+   twice) · **#458** (`--only` inputs ignored, re-observed) · **#503** + `batch_executor.py:1190` (engine vanilla
+   raises; extend #627's ratchet) · **#710** · **#711**. Launch at most 3 lanes + 1 planner (host load).
+3. **Task 120** (strict input types; `next`, observed via dogfood) — small, no engine contact; pairs with #297.
+4. Lane-B fill, disjoint: **#696/#697** (security: unmasked `<X>_KEY`; `report` renders secrets) · **#685** (MCP
+   `Error: Error` + Windows smoke flake root cause) · **#684** (structured node suggestions — show-before-code)
+   · **#520/#681** (validator seam, now free) · **#706** (fan-out `target` — a QUIET moment, shared tooling).
+5. **Release v0.16.0** — ASKED THREE TIMES, NOT ANSWERED (s10). 43+ commits since v0.15.1. Do not nag; surface
+   once with the dogfood pass as the pre-release gate (release skill now requires it).
+6. Task 178 (MCP SDK 2.x; refresh its research — PyPI is at 2.3.0, research pinned 2.2.0).
 
-## Filed this session, open (re-scan at pick)
+## Decisions pending the user
 
-- #659 (→179) · #660 · #665 · #666 (`< file` routing — reconsider documented pipe-only detection) ·
-  #669 · #672 (UI, Fable) · #674–#683 (Task 170 follow-ups; #683 web TS grammar copies — Fable).
-- Candidates NOT filed (in PR bodies): `--output-format json <wf> --help` on stdout (#667); runtime
-  "Unknown model" → point at `settings llm models` (#670); CLI broken-pipe exit 1 (`| head`); symlinked
-  parent validate-vs-run disagreement (#664); code node can't signal intentional failure (#671).
-- Older carried (~85 open, not re-read): #627 · #608 · #609 · #589 · #542/#562 (trace — serialize with
-  179) · #546 · #568 · #538 · #544 · #549 · #528 · #552 · #580 · #553 · #520/#521 · #566/#567/#572/#574/
-  #575 · #601 · #602 (upstream) · #644 (p2 = Task 178).
+- **#692** product question: no command deletes a saved workflow (rec. `pflow delete <name>`).
+- **#684** render shape for node-failure suggestions (lane hands back BEFORE/AFTER first).
+- Specs 99 and 121 carry "SPEC REWRITE REQUIRED" blocks — no planner launches on them until rewritten.
+- RECURRENCE promotions applied at s10 close (ratify or revert): kill-by-PID mechanism in two defs; the interim
+  sentence in the role prompt; the `gh run list --branch` line in STANDING-KNOWLEDGE. n=3 "read the cited
+  function before writing a mechanism" → PROPOSED home: ADR-FORMAT.md review rule + create-task skill.
 
 ## Do not re-raise (declined, with the trigger that reopens each)
 
-- pr-closer / RELEASE-BLOCK / batched releases / docs-PR lane / automatic PR review / cross-task
-  knowledge base — never (DECISIONS #5/#31).
-- #624 shape 2 (pflow-managed session holder) — reopens per the trigger recorded on #624.
-- #656 UI "approve all remaining rounds" — folded into Task 179's UI pass (decided once there).
-- Retired gemini ids in `settings llm models` — documented limitation; reopens with v2 curation.
-- Shell lint, H1-as-name check, PR-title gate, searcher eval harness, `Blocked by:` field, DECISIONS
-  index split, agent-file fact checker beyond `test_agent_references.py` — triggers unchanged.
+- pr-closer / RELEASE-BLOCK / batched releases / docs-PR lane / automatic PR review / cross-task knowledge
+  base — never (DECISIONS #5/#31).
+- **#665** (`save --force` data loss) — user: *"save isnt a top tier feature right now all uses ive had myself
+  has been in a local repo"*; reopens when saved-library use becomes real (external users, or the user saves).
+- #656 approve-all button — ruled NOT BUILT with Task 179 (design in its plan §4 P4b); reopens on a user ask.
+- Task 179 final-step loop escalation pause — ruled (b); (c) via `resume_after` is its own future ruling.
+- #624 shape 2 · retired gemini ids · shell lint / H1 check / PR-title gate / searcher eval harness /
+  `Blocked by:` field / DECISIONS index split / agent-file fact checker — triggers unchanged.
+- Task 111 default-3 batch limit — WITHDRAWN (breaks the review fan-out and a shipped test); opt-in only, `then`.
 
 ## Regime facts (dated — re-measure, never inherit)
 
-- 2026-10-01: `make test` ~10.2k passed on the 170 merged result; CI ~14 jobs incl. 3 Windows;
-  `tests-windows-mcp-smoke` flaked once on an npx timeout (rerun green). Boot set: `./scripts/tasks --boot`.
+- 2026-10-06: `make test-all-local` ~10.4k on main; Task-159 baseline = 12 pre-existing drifts (#680, re-record
+  pending); a dogfood pass costs ~$0.00004 (8 calls, gemini flash-lite); 143→145 open issues.
 
 ## Watch list (non-obvious, easy to miss)
 
-- Next hot seam = engine + trace: Task 179 (`_run_inner` loop counters, `_gate_pausable`, gate branch,
-  `resume_source`/`resume_preflight`, trace schema) — serialize #542/#562/#659 and any engine lane.
-- MCP stdio shims (`core/stdio_reservation.py`; `PflowMCP.run_stdio_async` touches private
-  `_mcp_server`) and the `anyio>=4.5` dependency exist only for them — Task 178 deletes, never ports.
-- The screenshot suite now FAILS loudly when the page doesn't settle (`allow_empty` opt-in) — a red
-  screenshot run is signal, not flake. `chrome-devtools` local registration pinned `@1.10.1`.
-- `stash@{0}` (Task 125 WIP) is the user's — lanes never `git stash` (stashes are repo-wide).
+- **Resume fidelity is strict per EVENT** (179): a `datetime` beside the data a step reads blocks failure-resume
+  and stops a later gate from pausing; remedy printed. Revisit only on an observed complaint. `--only` still
+  seeds lossy values (ADR-0002's limit) — not covered.
+- Task 118 changes what `${…}` means in a shell body (ADR-0016) — the guide's `$VAR`-not-`${VAR}` rule and every
+  inline-templated shell example flip; the `env:` limits (strings, ~128 KiB, Windows case) go in the guide.
+- MCP stdio shims + `anyio>=4.5` exist only for Task 178 to delete — never port them.
+- Screenshot suite fails loudly on no-settle (`allow_empty` opt-in) — a red run is signal. `chrome-devtools` pinned `@1.10.1`.
+- `stash@{0}` (Task 125 WIP) is the user's — lanes never `git stash`.
+- Agent defs/skills in the MAIN checkout are read live by agents launched from the session (ORCHESTRATION
+  "Collision analysis") — the uncommitted set above IS what the next launch reads.

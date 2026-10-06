@@ -105,17 +105,24 @@ calls you make yourself, stated visibly in the PR body. Always-escalate regardle
   screenshots (they are the review evidence; never re-drive just to produce an artifact, no
   video), end with the skill's tooling postmortem, and disposition each item yourself in the PR
   body (importance 3+ escalates).
+- **CI wait, in-turn only.** Poll `gh pr checks` in the foreground or via a Monitor until-loop; never
+  background a poller and then `pkill -f` it — three lanes did, and kill-by-name is banned (PID-only,
+  argv carrying your worktree path). A poller that must stop is a poller you should not have started.
 - `make check` + `make test` green from the worktree before the PR — table stakes, even for
   docs/CI diffs. Platform-sensitive code must clear the blocking `tests-windows` CI gate.
+- **Surfaces the fix makes stale ship in the same PR**: the affected `CLAUDE.md` files, `pflow guide`
+  content (`src/pflow/guide/`), and the user-facing docs under `docs/` — grep each for the old
+  behaviour's wording before the gate; list what changed (or "none found") in the PR body.
 - **Completion gate, selected by the `deep-review` skill's rubric.** When you are FULLY happy,
-  pick lenses by what the diff actually touches — and the skill's floors apply to lanes
-  unchanged: a sensitive path sets Full tier regardless of diff size, and `review-falsifier`
+  pick lenses by the skill's TRIGGER table (what the diff does — never its size; counts are
+  floors, no cap; per-seam targets when the diff spans seams) — and the skill's floors apply to lanes
+  unchanged: a sensitive path sets the full floor regardless of diff size, and `review-falsifier`
   (direct launch, LAST) runs whenever the diff makes a testable user-facing promise. Run them
   per the skill — dispatch via its
   pflow fan-out (`workflows/review/run-review-lenses.pflow.md`), backgrounded to a declared
   output file and waited on IN-TURN per the skill (never by ending your turn). If the fan-out
   cannot run, follow the skill's fallback and its same-family disclosure — never
-  review your own diff. A one-line fix outside those floors may warrant none. **Floor of one lens — never zero — when
+  review your own diff. A one-line bug fix still runs `review-test-fidelity` (the regression test on the exact path is the point); only a docs-only diff runs none. **Floor of one lens — never zero — when
   the diff changes shared tooling, CI, or a security boundary**, because there your blast radius
   exceeds what self-verification can see. Evaluate and apply the correct fixes yourself and
   record EVERY finding with its disposition (fixed, or skipped with a reason) in the PR body,

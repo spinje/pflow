@@ -68,7 +68,8 @@ not yours):
    substitute and hand back for a ruling BEFORE opening the PR — the ruling supplies a safe
    recipe or approves the named substitute, and is recorded in the progress log):
    commission the **code-mode `deep-review` battery on your full branch diff** (the skill's
-   rubric picks the specialists). **You do NOT run the gate yourself (ORCHESTRATION.md → Review policy)** — hand
+   trigger table picks the specialists — by what the diff does, never its size; counts are floors;
+   scope dimension lenses per seam when the diff spans several, cross-cutting lenses see it whole). **You do NOT run the gate yourself (ORCHESTRATION.md → Review policy)** — hand
    the whole job to the implementer that built the phases (resume it — window still healthy; it
    holds the code in context) or
    to a fresh review-evaluator packeted with spec + plan + progress log. The gate-runner

@@ -79,6 +79,9 @@ re-audit — same user, empirically earned THERE; imported-not-earned here (#19)
   tree is their normal working state: never reset/unstage to "clean up"; staged ≠ about to
   commit; `git commit <pathspec>` is the safe shape; fresh `git status` at every commit and
   launch, never from memory.
+  - (s10) Tell: *"let me review changes locally before commiting"* — mid-session, with 20+ files edited
+    by me. Leave every edit visible and uncommitted, list the files grouped by purpose, and let the
+    context-free reviewer's findings land as proposals they rule on, never as applied edits.
 - **(sibling, s07) A model-swap mid-session is a REVIEW move, not capacity** — expect it on a
   design fork you already analysed; re-derive from evidence, don't defend the framing. On
   "anything to think through before I switch you?", write pending decisions + their settled
@@ -159,6 +162,10 @@ _(nothing promoted yet)_
 
 ## 6. Running the machine — recovery, runner seams
 
+- **`gh run list --branch main` is misleading** (s08, s10 — n=2) → use the unfiltered list with
+  `headSha`/`event` columns, or `gh run view <id>`; why: the `--branch` filter has returned stale or
+  unrelated runs twice while the real push run existed, and the CI-status question is asked at every
+  merge seam.
 - **Transient API death ≠ tier exhaustion → resume the SAME agent, don't replace** (s06). The
   limit-recovery rule (never resume an exhausted tier — it re-dies) does NOT apply to a "connection
   closed mid-response" drop. Check the worktree is clean/uncommitted, then SendMessage the same

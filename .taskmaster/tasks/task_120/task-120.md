@@ -21,7 +21,20 @@ low
 
 ## Roadmap
 
-then
+next
+
+> **Promoted 2026-10-05 (session-10) on OBSERVED evidence** — a fresh-eyes dogfood pass on main `90b891cb`,
+> re-verified by execution, hit this task's exact class: a `type: array` input given `topics=tea` passes
+> `--validate-only` and fails only inside the batch node ("batch items must be an array, got str" plus a stray
+> `WARNING: Cannot parse string as JSON array` from the lenient coercion at `core/param_coercion.py:189-209`),
+> while `pflow save` already knows the shape (it prints `topics='[...]'`). Two additions to the acceptance
+> criteria from that pass: (a) `--validate-only` with supplied inputs must report the same error — it never
+> calls `prepare_inputs()` today (#297's parity gap), so a check placed only there leaves "valid" standing;
+> (b) the coercion `logger.warning` lines stop reaching user output once failures become errors. NOT this
+> task: a `type: string` input holding JSON-object text reaching a `code` node as a dict — that is
+> mis-coercion at template resolution (`engine/template_resolution.py:261-263`, `auto_parse=True`), filed as
+> #686; and the lossy CLI round-trip for declared strings (`02134` → `2134`), filed as #687. Both are the same
+> "declared string not preserved" family and should land coherently with this task (read them first).
 
 ## Problem
 

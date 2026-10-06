@@ -15,6 +15,19 @@ medium
 
 next
 
+> **SPEC REWRITE REQUIRED before any planner (refreshed 2026-10-05 against main).** The problem is now
+> OBSERVED in the repo's own tests, not theorized: three real workflows are tested by hand-rolled means —
+> `tests/test_integration/test_plan_to_code_harness.py` (a skeleton that mirrors the real routing and must be
+> kept in sync by hand), `tests/test_runtime/test_worktree_creator_workflow.py` (regex + `exec` of a code
+> block), `tests/test_runtime/test_screenshot_settle_workflow.py` (one node run directly). Stale below: the
+> wrapper chain (`InstrumentedWrapper`/`MockWrapper`) no longer exists; the real interception point is the
+> memo-hit short-circuit (`runtime/engine/instrumentation.py:364` `apply_memo_hit`, called at
+> `engine.py:1233`) and the trace snapshot seeder (`resume_source.py:810-855`), which already restore recorded
+> node outputs — a separate `*.pflow-snapshots/` store would duplicate Tasks 133/164. `pflow registry run` is
+> now `pflow probe`. The node list omits `agent` (the most expensive node to mock). Tasks 106/108/133/164 are
+> all done. The 2026-06-03 braindump's smaller first slice — record/replay of `agent` nodes from the trace,
+> enough to retire the harness skeleton — is better supported by the evidence than the full mock DSL.
+
 ## Problem
 
 There is no way to automatically test a pflow workflow. A developer who builds a workflow and wants to verify it keeps working after modifications has zero tooling support. This matters because:

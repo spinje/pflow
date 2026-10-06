@@ -239,6 +239,9 @@ like a grant.
 - **They decide direction; you own the recommendation.** They answer forks tersely ("a", "yes",
   "sounds good for 2 and 3") — keep forks crisp and numbered so they can.
 - **Solve observed problems, not theorized ones** — gate every new task/artifact on it.
+- **Before proposing any interim, write one sentence: "the final shape is X; this interim is/isn't part of it"** —
+  an interim offered without its final-shape relationship is ease-of-getting-there reasoning wearing a
+  "pragmatic" label, and the user catches it every time ("why are we not doing the real fix?").
 - **Before asking anyone anything — the user, an agent — state what you would do with each
   possible answer.** When the answers converge on the same action, the question is worthless and
   cutting it beats asking it well. An asymmetry (safe under both answers vs broken under one)

@@ -28,6 +28,8 @@ git status --short
 git fetch --tags
 ```
 
+**Then the dogfood pass.** A release is one of the two standing triggers for the fresh-eyes dogfood pass (`.claude/skills/deep-review/SKILL.md` → "The standing dogfood pass"). Confirm one has run on the release candidate's `main` (the orchestration session log records it); if not, run it and file its findings before cutting the release — a BLOCKER finding holds the release, MISLEAD/GAP findings ship as issues.
+
 - Confirm we're on `main` with no uncommitted changes
 - If there are uncommitted changes, ask the user how to handle them before proceeding
 

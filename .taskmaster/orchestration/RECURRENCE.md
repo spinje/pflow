@@ -56,18 +56,43 @@ proof.
   re-gating (CI on the push to main caught it green) — the lane def's merged-result gate runs
   before the PR, not again before the merge click; recognition would add "re-check origin/main
   right before merging; if it moved, repeat the gate" | s08 | n=1
-- a subagent-authored durable doc (ADR-0015) carried a mechanism that did not exist (a "prose
-  interpolator") because I wrote it from a lens's summary instead of the code — the context-free
-  ADR review caught it; recognition would make "read the cited function before writing its
-  mechanism into an ADR/spec" a checklist line. s09: the Task 170 spec's "prose-wrap: recorded, not
-  fixed" freeze line (written from a battery summary, before the plan) was contradicted by the plan's own
-  normalizer | s08, s09 | n=2 → PROPOSED
+- a durable doc carried a mechanism written from a SUMMARY instead of the cited code — s08 ADR-0015 ("prose
+  interpolator"), s09 Task 170 spec freeze line, s10 ADR-0016 ("the code body is literal Python" — it is
+  templated; the guide line is an authoring rule); each caught by a context-free review; recognition
+  would make "read the cited function before writing its mechanism into an ADR/spec" a checklist line
+  in ADR-FORMAT.md's review rule and the create-task skill | s08, s09, s10 | n=3 → PROPOSED (promote now)
 - a lane ran `git stash push`/`pop` in a worktree and popped the USER's shared `stash@{0}` (Task 125 WIP) —
   stashes are repo-wide across worktrees; recognition would add "never `git stash`" to every implementing
-  role's def (packets carried it ad hoc after) | s09 | n=1 → PROPOSED (severity override)
-- a falsifier cleaned up its probe with `pkill -x sleep -f` (kill by NAME) — can kill the user's unrelated
-  processes; ORCHESTRATION already scopes dev-server kills to owned PIDs, the falsifier def doesn't |
-  s09 | n=1 → PROPOSED (severity override)
-- I proposed an interim (UI approve-all button) without stating the final shape or whether the interim
-  survives into it — the user asked "why are we not doing the real fix?"; recognition would make
-  "final shape is X; this interim is/isn't part of it" a required line in any interim proposal | s09 | n=1
+  role's def (packets carried it ad hoc after; no repeat in s10 under the packet line) | s09 | n=1 → PROPOSED
+  (severity override)
+- a reviewer or lane killed a process by NAME (`pkill -f`) — s09 falsifier (`sleep`), s10 falsifier
+  (`sleep 30`, machine-wide), s10 lanes #678 and #627 (their own backgrounded `gh pr checks` pollers);
+  mechanism: a backgrounded poller/sleeper the agent then has to stop; APPLIED at s10 close — PID-only +
+  "never background a poller you will need to kill" written into `review-falsifier.md` and
+  `lane-implementer.md` (trigger-point homes) | s09, s10 | n=4 → promoted (defs edited; ratify or revert)
+- ~~I proposed an interim without stating the final shape~~ — s09 UI approve-all button; s10 template
+  tolerance (option 2) for shell/code bodies that option 4 then deletes — user: *"isnt the real fix to do
+  4?"*; APPLIED at s10 close as a role-prompt sentence (start-orchestration "Working with the user") |
+  s09, s10 | n=2 → promoted (ratify or revert)
+- an issue AUDIT judged "still open" from the body alone while an owner COMMENT on the issue said the
+  symptom was fixed (#437 → PR #519) — the brief said read bodies; recognition would make "every issue
+  read is TWO calls, body + `--comments`" (already the planner rule) the rule for every agent that
+  classifies issues | s10 | n=1
+- `gh run list --branch main` returned stale/unrelated runs while the real push run existed (s08 misread
+  "no push CI"; s10 saw September runs for today's commit) — APPLIED at s10 close as a STANDING-KNOWLEDGE
+  §6 line | s08, s10 | n=2 → promoted (ratify or revert)
+- a task orchestrator ran two phase implementers IN PARALLEL in one worktree (179: P3 + P4) to shorten a
+  checkpoint wait, against ORCHESTRATION step 2; the predicted side effect occurred (one implementer's
+  `make check` regenerated the other's `.agents/` copy), no damage; recognition would add the rule to
+  `task-orchestrator.md` where the agent-assignment choice is made | s10 | n=1
+- the main orchestrator edited MAIN's copy of a task spec while a live branch owned that spec (179 #690
+  note) → the post-merge `git merge --ff-only origin/main` aborted on the local change; the branch already
+  carried the note. Recognition: once a task's worktree exists, its spec is edited ONLY on the branch
+  (or relayed to the producer) | s10 | n=1
+- `pflow-codebase-searcher` agents REFUSE to write report files (their def forbids it) while the orchestrator's
+  brief asked for one — four briefs in s10 asked, four returned inline; recognition: briefs to searchers ask
+  for an inline report, never a file | s10 | n=1
+- the main orchestrator's claim "F1 string→dict is Task 120's problem" was written into the Task 120 spec
+  from the dogfood summary and refuted by the verifier (mis-coercion at template resolution, #686) — same
+  family as the n=3 entry above but for a SPEC EVIDENCE block written from a producer's summary before the
+  verification pass | s10 | n=1

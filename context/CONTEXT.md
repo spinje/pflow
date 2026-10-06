@@ -91,8 +91,10 @@ _Avoid_: replay, restore, checkpoint.
 **Resume** — continuing a Failed, interrupted, or Paused Run as a new Attempt: every step that
 completed in the source Run is Restored, and execution re-enters where work stopped — at the
 failed step, or at the Gate (an Approval's gated step now runs; an answered Escalation continues
-after its already-completed step) — and continues to the end. The re-entered step runs
-at-least-once — its side effects may re-fire.
+after its already-completed step) — and continues to the end. A loop step re-enters at the
+Iteration where it stopped, never at 1. The re-entered step runs at-least-once — its side effects
+may re-fire; a Restore the Trace could not make faithfully (a value it coerced or dropped) refuses
+instead of continuing.
 _Avoid_: retry (in-Run, same step), replay, restart (from scratch).
 
 **Attempt** — one Run in a resume chain: the original Run plus each Resume of it. Attempts are

@@ -1,6 +1,6 @@
 ---
 name: review-simplicity
-description: "Judge whether the FINAL integrated code is as simple as it should be — the dimension a correctness reviewer misses. Catches: emergent duplication across separately-implemented segments, interfaces grown more complex than their use warrants, dead scaffolding, premature abstraction, cross-segment inconsistency, and accidental complexity that survived because each piece looked fine in isolation. Code mode, full-tier multi-phase work only."
+description: "Judge whether the FINAL integrated code is as simple as it should be — the dimension a correctness reviewer misses. Catches: emergent duplication across separately-implemented segments, interfaces grown more complex than their use warrants, dead scaffolding, premature abstraction, cross-segment inconsistency, and accidental complexity that survived because each piece looked fine in isolation. Code mode; any deletion or consolidation (lanes included) and every multi-phase implementation."
 tools: Bash, Glob, Grep, LS, Read
 model: opus
 effort: medium
