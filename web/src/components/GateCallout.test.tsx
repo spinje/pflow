@@ -301,12 +301,27 @@ describe("GateCallout — the answer never scrolls away (#714)", () => {
     expect(foot(option)).toBeNull();
   });
 
-  it("the stylesheet pins the foot (position: sticky)", () => {
-    // Read via fs (see cssOrder.test.ts for why not `?raw`); path-joined, because under jsdom
-    // the global URL is jsdom's, which node's fileURLToPath rejects.
+  // Read via fs (see cssOrder.test.ts for why not `?raw`); path-joined, because under jsdom
+  // the global URL is jsdom's, which node's fileURLToPath rejects.
+  const cssRule = (selector: string): string => {
     const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../index.css"), "utf8");
-    const rule = /\.gate-foot\s*\{([^}]*)\}/.exec(css.replace(/\/\*[\s\S]*?\*\//g, ""));
-    expect(rule, "the .gate-foot rule is missing from index.css").not.toBeNull();
-    expect(rule![1]).toMatch(/position:\s*sticky/);
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const rule = new RegExp(`(?:^|\\n)${escaped}\\s*\\{([^}]*)\\}`).exec(css.replace(/\/\*[\s\S]*?\*\//g, ""));
+    expect(rule, `the ${selector} rule is missing from index.css`).not.toBeNull();
+    return rule![1]!;
+  };
+
+  it("the stylesheet pins the foot: sticky AND a bottom inset (sticky with no inset never sticks)", () => {
+    const foot = cssRule(".gate-foot");
+    expect(foot).toMatch(/position:\s*sticky/);
+    expect(foot).toMatch(/(?:^|[;\s])bottom:\s*-?\d/);
+  });
+
+  it("the callout header's subtitle (the gated step id) ellipsizes on one line instead of pushing the ✕ out", () => {
+    const subtitle = cssRule(".node-callout-subtitle");
+    expect(subtitle).toMatch(/min-width:\s*0/);
+    expect(subtitle).toMatch(/overflow:\s*hidden/);
+    expect(subtitle).toMatch(/text-overflow:\s*ellipsis/);
+    expect(subtitle).toMatch(/white-space:\s*nowrap/);
   });
 });
