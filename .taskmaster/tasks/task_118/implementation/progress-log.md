@@ -107,3 +107,63 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
 - Deviations/surprises: none — every recommendation was taken.
 - Self-checks: the build gate the plan names (this entry) now exists; nothing else changes in the plan.
 - Next: task orchestrator launches on Part 1 (P0 + PA) from this plan.
+
+## [2026-10-07 00:40] task-planner (Fable) — builder notes (what the plan does not say)
+
+### 1. Dismissed or accepted on documentation alone — and what would show it wrong
+- **Searcher/lens facts I never re-read** (trust the citation, check the reasoning): the web scanner chains
+  (`scan.ts:129-150`, `sourceDecorate.ts` tiers, `ReadPanel.tsx:74`) and `_param_is_dynamic`'s `True` for
+  `echo ${HOME}` — wrong if a grep of `web/src` for `\$\{` finds a fifth scanner; the UI compile-only
+  preflight (`ui/server.py:1019, 1233-1237`) — wrong if `/api/run` actually calls `WorkflowValidator`;
+  `code_param_type_diagnostics` being shared by step 9 and the compiler — wrong if `compiler.py` imports
+  something else; `resume_preflight.py:158-172` content-hash refusal; the four `is_file_reference` callers
+  (lens executed `discover_dependencies` raising; I read only `file_resolver.py`); `ir_to_markdown`'s `env`
+  round-trip; YAML scalar typing (`yes`→True, `012`→10); the 31 keyword-only `TemplateConfig(` and 36
+  `split_params(` test calls; every row of §6 (two searchers read the tests; the test-fidelity lens
+  spot-checked 18 rows — the rest is their reading, not mine). Each is wrong if the file:line it cites no
+  longer shows it — re-grep before the phase that touches it.
+- **Declined findings:** a required `TemplateConfig.node_type` (one constructor; a second constructor
+  that forgets it would show me wrong — PA test 2's mutation would then pass against it); an AST meta-test
+  for "every walk consults the classification" (wrong if a new walk ships that PB test 1's table does not
+  cover); a did-you-mean on a plain `${endpont}` (deferred to Task 182 — wrong if dogfood shows agents
+  typo braced names more than bare ones); a "bound but never read" env warning (wrong if conversion
+  slips of exactly that kind show up in PC); the empty-secret `<REDACTED>` fix (shared function, #715's).
+- **Ledger/spec claims taken as read:** `set -u` fails inside `$(…)` (the spec executed it; I did not);
+  the Linux 128 KiB per-string limit and everything Windows (only CI can refute them); "no user node
+  registers as `shell`/`code`" (wrong if the registry allows a user override of a builtin name — check
+  `registry/scanner.py` when PB touches `param_mode`).
+- **One thing I verified myself that looked like a claim:** inline interpolation and `bind_env` share
+  `to_string` (`_resolve_string` → `to_string`, `templates.py:611-647`), so byte identity is by
+  construction, not by test luck.
+
+### 2. For the task orchestrator and implementers — where I expect a builder to go wrong
+- **Measure first, every phase.** P0: the four baselines by name (a difference from plan §2.5 is a
+  finding). PA: run checkpoint §4a's probe (`env: {PORT: 8080, N: ${count}}`) before touching the engine —
+  it is the bug; after the engine edit, run PA test 2's mutation (restore `:267`) and watch it go red.
+  **PC: run the instrumented suite BEFORE converting anything** — that gives the complete site list up
+  front (the inventory is a map). PB: flip `iter_node_surfaces` alone first and run `make test` to see
+  the tail of sites that survived PC; then the rest. PD: re-run checkpoint §6/§7's probes and diff
+  against the BEFORE text.
+- **PC traps:** braces (`${NAME}`) in a body are still Templates under the old semantics — split the quotes
+  instead; a suggested name that lands on `PATH`/`HOME`/`LANG` (`AMBIENT_NAMES`); single-quoted programs
+  (104 sites) — splice, never leave `$NAME` inside `'…'`; a shell step's `inputs:` is deleted only when it
+  is not a loop Carry target; the worktree-creator's Layer-0 escaping must go with the conversion.
+- **PB traps:** do not reuse data_flow's `node_refs` for the leftover scope (it is workflow-wide); the
+  Issue leading-name extraction must handle `${#}`/`${!}`/`${}` without raising; `ast.Constant.lineno` is
+  the string's start line — a leftover on a later line of a triple-quoted string needs the newline count
+  inside the constant; `validate_data_flow` returns WARNINGs too and the compiler filters ERRORs only —
+  keep ruling-2's warning out of `CompilationError`; the unread-`inputs:` warning will fire on the three
+  corpus shell steps that have `inputs:` today unless PC removed them — check before PB.
+- **PD traps:** `post()` writes the safe copy only on the two `return "error"` paths and pops it on
+  success — confirm `NamespacedSharedStore.pop` is routed (the CLAUDE.md says mixins route `pop`);
+  `_format_resolutions` must take the parent event for items without breaking the LLM/code pages.
+- **PA traps:** `EnvBindingError` needs both class attrs (`retriable = False`, `batch_fatal = False`) or
+  the batch burns retries; the E2BIG translation lives in `exec()` before the generic `except Exception`,
+  and `exec_fallback` must re-raise `PflowError` without touching the timeout path; the Interface comment
+  must not contain `, X: ` (fake-param trap).
+- **Least sure:** the equivalence harness (bound it: the 13 single-quoted example sites + worktree-creator;
+  if it balloons, hand back rather than skip); the Windows mixed-case rule (D8-2's second row may be the
+  first thing CI refutes — that is CP-2); the batch-item report refactor's blast radius on existing
+  report tests; whether the unread-`inputs:` warning is noise on real workflows (watch PZ's real runs).
+- **Phase E:** the Python side already removes chips/edges; the TS work is three small skips plus parity
+  rows — if an implementer starts restyling, stop them.
