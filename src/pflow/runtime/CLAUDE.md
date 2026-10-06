@@ -109,7 +109,10 @@ raises a load error instead. Do not invent a universal catch-and-skip policy.
 Loop position (2.8.0): a loop node's events carry `iteration` (stamped from
 `__iteration__` in `engine/instrumentation.py::record_trace`; absent on every other
 event, including a looping host's child events), and so do its `gate` lines and the
-pause record's `gate_request`. Keep the key opt-in: fixture-parity tests compare key sets.
+pause record's `gate_request`. A node output the trace cannot round-trip (judged on the
+author's values, never the engine's keys) carries `lossy` (`_sanitize_for_json`); resume never
+seeds it and a gate whose resume would seed it does not pause. Keep both keys opt-in:
+fixture-parity tests compare key sets.
 
 `workflow_trace._iter_workflow_traces` excludes `only_node` traces but must not
 filter `final_status`: snapshot loading and cache analysis own different status

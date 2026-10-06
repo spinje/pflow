@@ -1112,8 +1112,25 @@ class WorkflowEngine:
                     cached=True,
                     restored=True,
                     iteration=ev.get("iteration"),
+                    lossy=ev.get("lossy"),
                 )
         return entry.node
+
+    def _lossy_resume_seed(self, request: Any) -> tuple[str, list[str]] | None:
+        """What a resume of this pause would seed lossily — the loader's own derivation.
+
+        An approval resumes AT the gated step (at the iteration the loader will derive);
+        an escalation resumes after it, seeding the whole trace. Top-level events only,
+        as the loader reads them (``WorkflowTraceCollector._top_level_events``' rule).
+        """
+        from pflow.runtime.resume_source import lossy_seed, resume_iteration
+
+        if self.trace is None:
+            return None
+        events = [event for event in self.trace.events if event.get("parent_id") is None]
+        if request.kind == GATE_KIND_APPROVAL:
+            return lossy_seed(events, request.node_id, resume_iteration(events, request.node_id) or 1)
+        return lossy_seed(events, None)
 
     @staticmethod
     def _emit_snapshot_degraded_advisory(shared: dict[str, Any], this_only: str) -> None:
@@ -1585,6 +1602,9 @@ class WorkflowEngine:
                 # resolver BUG) falls to the else — never paused. record_gate's
                 # own gate_outcome writes ran before this raise, so this stamp
                 # always wins.
+                # Pause = promise: a token whose resume would seed a value the trace
+                # marked lossy is a token the loader refuses — stay `failed` and say why.
+                lossy: tuple[str, list[str]] | None = None
                 if isinstance(gate_exc, GateDenied):
                     self.trace.gate_outcome = "denied"
                 elif (
@@ -1610,6 +1630,7 @@ class WorkflowEngine:
                     and self.workflow_path is not None
                     and not self.workflow_path.startswith("ir-hash:")
                     and _gate_pausable(gate_exc.request, config, node, action)
+                    and not (lossy := self._lossy_resume_seed(gate_exc.request))
                 ):
                     self.trace.gate_outcome = "paused"
                     # The trailer payload (Task 171 pause record): everything the
@@ -1620,6 +1641,8 @@ class WorkflowEngine:
                     }
                 else:
                     self.trace.gate_outcome = "failed"
+                    if lossy is not None and isinstance(gate_exc, GateNotInteractiveError):
+                        gate_exc.lossy_seed = lossy
 
                 # Code-review fix: a sub-workflow HOST's own completion event is
                 # normally recorded at step 16 below, reusing the seq

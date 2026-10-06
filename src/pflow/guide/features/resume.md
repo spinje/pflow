@@ -86,6 +86,10 @@ The failed step runs **again** from the start (for a loop step: the failed itera
 - **Inline / piped workflows are not resumable** — there is no workflow file to load again. Save the workflow to a file and re-run it so future failures can be resumed.
 - **Prefer resume-by-execution-id from a different directory.** A workflow *path* resolves relative to your current directory; the execution id is location-independent.
 
+### Values the saved run cannot restore
+
+The saved run stores JSON. If a completed step's result is not JSON-native — a `code` step returning a set, a date, a `Decimal`, bytes, a dict with non-string keys, or a nested `__`-prefixed key — the saved copy differs from what the step produced, so resume **refuses** instead of continuing with different data. The error names the step and the field (e.g. `result.tally.1: non-string key (int)`). Fix: make the step's result JSON-native (`str(dt)`, `sorted(s)`, string keys) or re-run from the start. A gate whose later resume would hit this does not pause — the run fails at the gate with the reason; answer it in the same run (`--auto-approve <step>`, or interactively).
+
 ### Restored `${node.prompt}` / `${node.system}` caveat
 
 Like `--only`, resume restores upstream outputs from the saved run, and the saved run does not keep an LLM step's rendered `prompt`/`system` values. A downstream step referencing `${upstream_llm.prompt}` or `${upstream_llm.system}` will therefore not see them on resume — and an `llm` loop step that carries its own `prompt`/`system` into the next iteration fails loudly at the resumed iteration (the carry guard names the missing field). No common pattern depends on this; avoid it in workflows you expect to resume.

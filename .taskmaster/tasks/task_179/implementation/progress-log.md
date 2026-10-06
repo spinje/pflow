@@ -769,3 +769,110 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   re-run from the start"*; (4) changed pause tests listed by name. PR body sentence (user-visible changes): "a resume
   whose restored upstream value would have been silently coerced by the trace now refuses with the field named".
 - Next: resume the implementer (rotate to a fresh Opus implementer from this log tail if its window degrades).
+
+## [2026-10-06 06:10] phase-implementer (Opus) — ruling A built (lossy marker + loader refusal + producer no-pause) + targeted gate
+- Did:
+  - **Marker.** `WorkflowTraceCollector._sanitize_for_json(data, lossy=None, path="")` collects `"<path>: <why>"` for
+    (a) a non-string key → `"result.tally.1: non-string key (int)"`; (b) a dropped key, unless it is a top-level
+    engine key (`_ENGINE_OUTPUT_KEYS`: `__pflow_stats__`, `__pflow_warnings__`, `__trace_collector__`,
+    `_debug_context`, `_batch_trace`; `__metrics__` is kept, never dropped) → `"…: key dropped by the trace"`;
+    (c) bytes → `"…: bytes"`; (d) a non-JSON-native leaf → `"result.s: set"` / `date` / `Decimal` / `ValueError` …,
+    except a batch host's engine-written `errors[i].exception` (`_BATCH_ERROR_EXCEPTION`). Tuple→list is unmarked.
+    `record_node_execution` sets `event["lossy"]` only when non-empty (opt-in; fixture parity unchanged) and accepts
+    `lossy=`, so `_prepare_resume`'s re-record carries it. Batch-item events get the same marker
+    (`_sanitize_batch_items`). Only `node_output` is judged; params and template resolutions are never restored.
+  - **Loader.** `_guard_seed_scope` refuses a seedable event carrying `lossy` → `ResumeFidelityError(node_id, lossy)`.
+    The class is now the ONE message family for all four kinds (it was binary-only): "Step 'up' produced a value the
+    saved run cannot restore faithfully (result.1: non-string key (int)), so resuming would restore different data."
+    plus the ruled remedy verbatim as its suggestion. **One mechanism, with the legacy evidence gated by format:** a
+    pre-2.8.0 trace has no marker, so there the binary-placeholder scan still produces the same refusal
+    (`_predates_lossy_marker(data)`). A 2.8.0+ trace reads only the marker, so a literal placeholder-shaped string
+    there is the author's string, not a refusal. The plain scan-everywhere would false-refuse that string; dropping
+    the scan would regress pre-2.8.0 binary refusals.
+  - **Producer (W1).** The gate arm's pausable conjunct gains `not (lossy := self._lossy_resume_seed(request))`. It
+    uses `resume_source.lossy_seed(events, entry, iteration)` over `_seedable_final_events` — the loader's own
+    derivation. An approval is at `(step, resume_iteration(events, step))`; an escalation is after-step (whole
+    trace); events are top-level only, as the loader reads them. When it fires, the gate stays `failed` and
+    `GateNotInteractiveError.lossy_seed` makes its diagnostics say why: "This gate did not pause: answering it later
+    would resume from the saved run, which cannot restore step 'up' faithfully (result: bytes). Answer it in this run
+    instead — pre-approve it or run interactively — or make that step's result JSON-native …". The generic "this
+    error means …" list gains "or its resume could not restore earlier work faithfully (above)" only in that case.
+  - **Dry-run** predicts the refusal: the preflight runs the loader before planning (real run: `resume --dry-run`
+    prints the same "Cannot resume — unrecoverable data" error).
+  - **Docs.** ADR-0010 amendment (one constraint sentence); `guide/features/resume.md` new "Values the saved run
+    cannot restore" section; `runtime/CLAUDE.md` 2.8.0 paragraph; PR draft `scratchpads/task-179/pr-user-visible.md`
+    (with the ruled sentence; the "after" block is the real CLI output).
+- Changed: `src/pflow/runtime/{workflow_trace.py,resume_source.py,engine/engine.py,CLAUDE.md}`,
+  `src/pflow/core/exceptions.py` (in place: `ResumeFidelityError` generalised; `GateNotInteractiveError.lossy_seed`),
+  `src/pflow/guide/features/resume.md`, `context/adr/0010-…`; tests: new `tests/test_runtime/test_resume_lossy.py`
+  (14), `test_resume_source.py` (+1 format-gated legacy pin; `_write_trace(format_version=)`).
+- Pins (real producers, each with a JSON-native presence twin, each mutation-killed):
+  - `upstream_lossy` → `test_resume_refuses_to_seed_a_lossy_upstream_value[int-key]`.
+  - probeA (set, date, Decimal, nested int key) → `…[set-date-decimal-nested-key]`.
+  - Twin for both: `test_json_native_upstream_resumes` (shaped by the remedy: `str(dt)`, `sorted(s)`, string keys;
+    the tuple is unmarked).
+  - `lossy2` → `test_failure_resume_refuses_a_lossy_carried_iteration`; twin `…continues_a_json_native_carried_iteration`.
+  - `lossy3` / `lossy4` / `bin_gated` → `test_loop_gate_does_not_pause_when_its_resume_would_seed_a_lossy_iteration
+    [int-key|dunder-key|bytes]`; twin `…pauses_when_its_resume_seed_is_json_native`.
+  - `up_bin_gate` → `test_gate_does_not_pause_when_its_resume_would_seed_lossy_upstream`; twin `…pauses_when_…_json_native`.
+  - Provenance: `TestLossyMarkerProvenance` ×3.
+  - Mutations (counted): drop non-str-key detection → 4 failed; drop dropped-key → 1; drop bytes → 2; drop non-native
+    leaf → 1; guard ignores marker → 3; producer conjunct removed → 4; exemption back to a `.exception` suffix → 2;
+    exempt every top-level drop → 1; no engine exemption → 1; no batch-item marker → 1. Files restored from
+    snapshots each time.
+- **Preconditions:**
+  1. Marker kinds = exactly (a)–(d); no sixth kind. Within (b)/(d), two engine-written values had to be exempted per
+     the ruling: the named top-level keys, and a batch host's `errors[i].exception` (an Exception object the batch
+     framework stores beside its `error` string — found by the corpus audit below; without the exemption, any resume
+     seeding a batch step that had a failed item would have false-refused).
+  2. **Zero false refusals.** I instrumented `record_node_execution` to log every marked event and ran
+     `make test-all-local`, then restored from a snapshot. The marker fired only on genuinely author-lossy values:
+     this task's new pins, `test_sanitize_for_json_binary_data` (a test node returning bytes), and
+     `test_sanitize_for_json_system_keys` (synthetic `__private__`/`__llm_calls__` — nothing in `src/` writes
+     `__llm_calls__`, and `NamespacedSharedStore` routes `__x__` keys to the root, so they never reach a namespace).
+     The first audit pass also caught 9 batch `errors[i].exception` hits; they led to the exemption, and the re-audit
+     is clean. Examples: no tracked example exercises `pflow resume`/`--only` (the grep hits are the agent node's
+     session `resume`). All resume/`--only` tests pass unchanged.
+  3. One message family (`ResumeFidelityError`) names the step plus the path and kind, with the ruled remedy verbatim.
+  4. **No existing pause test changed.** None encoded W1 (all 10336 non-e2e tests passed unchanged after the
+     producer conjunct).
+- Targeted gate (`scratchpads/task-179/gate-review-A.md`, read in full; 3/3 lenses reported, exit 0):
+  - **Critical, convergent ×3 — the `.exception` suffix exemption swallowed author-produced exceptions** (e.g.
+    `result.exception`). FIXED: the exemption is now exactly a batch host's top-level `errors[i].exception`. Pin:
+    `test_author_exception_and_top_level_dunder_key_are_marked` + the exemption pin.
+  - **Critical, convergent ×3 — every top-level dropped key was exempt**, so a custom node's `__foo` or a child
+    workflow's declared `__foo` output was lost unmarked. Verified: `NamespacedSharedStore` reserves only `__x__`
+    keys. FIXED: only `_ENGINE_OUTPUT_KEYS` are exempt at the top level. Pins: same two tests (`__foo` marked; engine
+    keys not). Corpus re-audit clean.
+  - **Warning — batch-item events lacked the marker** (the host output was marked, so no resume bypass). FIXED:
+    `_sanitize_batch_items` marks items. Pin: `test_batch_item_events_carry_the_marker`.
+  - **Suggestion — producer-level coverage for the exemptions and batch items.** DONE (`TestLossyMarkerProvenance`).
+  - Verified-clean note (impact-completeness): **`--only` is not protected** — `load_snapshot_or_raise` /
+    `seed_snapshot_into_shared` seed marked events. Consistent with ADR-0002's recorded "binary/dunder upstream
+    degrades" limitation; outside ruling A (resume only). **Flag for your ruling** if `--only` should refuse too
+    (a one-call extension: run `_guard_seed_scope`'s marker check in `load_snapshot_or_raise`).
+- Verified: `make check` green; `make test-all-local` → **10403 passed, 2 skipped**; `verify.sh` → `summary: 75 passed,
+  12 drifted, 0 harness errors`, the same 12 names: 02-validator-errors/{03-prompt-cache-on-shell-node,
+  05-subworkflow-references-parent-chunk}, 03-analyze-cache-modes/{05-trace-from-trace, 06-no-trace-autoload,
+  07-autoload-prefers-success, 08-autoload-failed-only, 09-autoload-rejected-names-file},
+  04-warning-catalog/{03-cache.invalid-on-non-llm, 09d-cache.prewarm-disabled-below-min,
+  09e-cache.conditional-warmup-recommended}, 10-live-recordings/03-gemini-translation,
+  12-real-world-lyrics-generator/04-guide-auto-detect. Real surface (`scratchpads/task-179/realA/`, non-TTY,
+  isolated HOME): `upstream_lossy` resume and `--dry-run` both print the refusal; `up_bin_gate` fails at the gate with
+  the "did not pause" reason (exit 1, no token).
+- Deviations/surprises: (1) the batch `errors[i].exception` engine value, found by the corpus audit, not by the
+  ruling text — exempted under the ruling's "never engine-written" clause. (2) The run-start "will pause at approval
+  gate(s)" warning can be untrue when the W1 conjunct then keeps the gate `failed`. It cannot be known before the
+  upstream ran; the gate error says why. Left as is. (3) `--only` gap (above).
+- Next: hand back.
+
+## [2026-10-06 06:20] task-orchestrator (Opus) — ruling A built; verified; dispositions
+- Verified (my runs): `make check` exit 0; `make test-all-local` 10403 passed, 2 skipped. Read the 06:10 entry.
+- Dispositions: (1) batch `errors[i].exception` exemption — ACCEPTED: engine-written (the batch executor stores the raw
+  exception), inside the ruling's "never engine-written" clause, not a sixth kind; narrowed to that exact path after the
+  gate's Critical. (2) `--only` still seeds marked events — OUT OF SCOPE, decided here (importance 2, status quo):
+  ruling A covered resume; `--only` is not widened by this task (its seed is iteration 1, byte-for-byte unchanged) and
+  carries ADR-0002's own degraded-snapshot limitation; proposed upward as a follow-up ("`--only` refuses/advises on a
+  lossy snapshot"). (3) The run-start "will pause at approval gate(s)" note can be untrue when a gate stays failed for
+  a lossy seed — ACCEPTED: unknowable before the upstream step runs; the gate error states the real reason.
+- Next: commit; "fully happy?"; falsifier re-run on C1/W1 + lossy repros + probeA; close-out.

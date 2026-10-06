@@ -78,11 +78,12 @@ def _write_trace(
     gate_lines: list[dict[str, Any]] | None = None,
     paused_node_id: str | None = None,
     gate_request: dict[str, Any] | None = None,
+    format_version: str = "2.5.0",
 ) -> Path:
     """Write a synthetic resume-source trace the loader can discover, returning its path."""
     debug_dir.mkdir(parents=True, exist_ok=True)
     data: dict[str, Any] = {
-        "format_version": "2.5.0",
+        "format_version": format_version,
         "execution_id": execution_id,
         "workflow_name": name,
         "workflow_path": workflow_path,
@@ -684,6 +685,31 @@ def test_binary_placeholder_in_seed_scope_refused(tmp_path: Path) -> None:
     with pytest.raises(ResumeFidelityError) as excinfo:
         load_resume_source(workflow_path=WF, debug_dir=tmp_path)
     assert excinfo.value.node_id == "makebytes"
+
+
+def test_lossy_marker_refuses_and_a_bare_placeholder_string_does_not_since_2_8_0(tmp_path: Path) -> None:
+    """Task 179: a 2.8.0 trace marks every lossy event, so the guard reads the marker; a string
+    that merely looks like a binary placeholder is the author's string there (the placeholder scan
+    is the evidence only for traces that predate the marker — the test above)."""
+    _write_trace(
+        tmp_path / "plain",
+        execution_id="looks-like-bytes",
+        timestamp="20260101-000000",
+        format_version="2.8.0",
+        nodes=[_node("text", output={"data": "<binary data: 42 bytes>"}), _node("k", status="failed", output={})],
+    )
+    assert load_resume_source(workflow_path=WF, debug_dir=tmp_path / "plain").entry_node_id == "k"
+    marked = {**_node("makebytes", output={"data": "<binary data: 42 bytes>"}), "lossy": ["data: bytes"]}
+    _write_trace(
+        tmp_path / "marked",
+        execution_id="marked-bytes",
+        timestamp="20260101-000000",
+        format_version="2.8.0",
+        nodes=[marked, _node("k", status="failed", output={})],
+    )
+    with pytest.raises(ResumeFidelityError) as excinfo:
+        load_resume_source(workflow_path=WF, debug_dir=tmp_path / "marked")
+    assert (excinfo.value.node_id, excinfo.value.lossy) == ("makebytes", ["data: bytes"])
 
 
 def test_binary_placeholder_in_unseeded_failed_node_is_ignored(tmp_path: Path) -> None:

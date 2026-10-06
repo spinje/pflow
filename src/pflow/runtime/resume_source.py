@@ -352,6 +352,22 @@ def _seedable_final_events(
     return {nid: ev for nid, ev in final_events_by_node(scope).items() if ev.get("status") != "failed"}
 
 
+def lossy_seed(
+    events: list[dict[str, Any]], entry_node_id: str | None, entry_iteration: int = 1
+) -> tuple[str, list[str]] | None:
+    """The first event a resume entering at *(step, iteration)* would seed although the trace
+    marked it ``lossy`` — ``(node_id, lossy entries)`` — or ``None``.
+
+    The engine's pause decision asks this BEFORE issuing a token (pause = promise): the same
+    seed derivation the loader's ``_guard_seed_scope`` refuses on, never a mirror of it.
+    """
+    for node_id, event in _seedable_final_events(events, entry_node_id, entry_iteration).items():
+        lossy = event.get("lossy")
+        if lossy:
+            return node_id, [str(entry) for entry in lossy]
+    return None
+
+
 def _apply_gate_resolutions(path: Path, events: list[dict[str, Any]]) -> None:
     """Fold recorded escalation decisions back into the frozen event markers (in place).
 
@@ -615,21 +631,50 @@ def resume_iteration(events: list[dict[str, Any]], node_id: str | None) -> int |
     return iteration if final.get("status") == "failed" and not recovered else iteration + 1
 
 
-def _guard_seed_scope(scope: Iterable[dict[str, Any]], execution_id: str, path: Path) -> None:
-    """Refuse if any node resume would SEED carries undecided escalation (Decision 8) or lossy binary (Decision 5).
+def _predates_lossy_marker(data: dict[str, Any]) -> bool:
+    """Whether the trace predates the ``lossy`` event marker (2.8.0).
+
+    Such a trace can only say "this value was bytes" through the placeholder string
+    itself, so the guard scans for it; a 2.8.0+ trace marks every lossy event, and a
+    literal placeholder-shaped string there is just a string.
+    """
+    version = str(data.get("format_version") or "")
+    parts = version.split(".")
+    try:
+        return (int(parts[0]), int(parts[1])) < (2, 8)
+    except (IndexError, ValueError):
+        return True
+
+
+def _guard_seed_scope(
+    scope: Iterable[dict[str, Any]], execution_id: str, path: Path, *, legacy_placeholders: bool = False
+) -> None:
+    """Refuse if any node resume would SEED carries a lossy value (Decision 5) or an undecided escalation (Decision 8).
 
     ``scope`` is the ``_seedable_final_events`` values — exactly what seeding
-    restores. Escalation markers were already folded with their recorded
+    restores. Lossy = the event's ``lossy`` marker (Task 179, written by the
+    collector's sanitizer); a pre-2.8.0 trace has no marker, so there
+    (``legacy_placeholders``) a binary placeholder string is the only evidence. Escalation markers were already folded with their recorded
     decisions (``_apply_gate_resolutions``), so an undecided marker here means
     the run genuinely never resolved it (e.g. killed between the node's event
     and the gate resolution) — never a resolved-but-frozen fidelity artifact.
     """
     for event in scope:
-        output = event.get("node_output")
-        if not isinstance(output, dict):
-            continue
         node_id = event.get("node_id")
         node_id_str = node_id if isinstance(node_id, str) else None
+        output = event.get("node_output")
+        lossy = event.get("lossy")
+        if not lossy and legacy_placeholders and isinstance(output, dict):
+            lossy = [f"{key}: bytes" for key, value in output.items() if _contains_binary_placeholder(value)]
+        if lossy:
+            raise ResumeFidelityError(
+                node_id=str(node_id_str or "?"),
+                lossy=[str(entry) for entry in lossy],
+                execution_id=execution_id,
+                trace_path=str(path),
+            )
+        if not isinstance(output, dict):
+            continue
         result = output.get("result")
         if isinstance(result, dict):
             escalation = result.get("escalation")
@@ -648,14 +693,6 @@ def _guard_seed_scope(scope: Iterable[dict[str, Any]], execution_id: str, path: 
                     trace_path=str(path),
                     node_id=node_id_str,
                     suggestions=["Re-run the workflow and resolve the escalation."],
-                )
-        for key, value in output.items():
-            if _contains_binary_placeholder(value):
-                raise ResumeFidelityError(
-                    node_id=str(node_id_str or "?"),
-                    key=str(key),
-                    execution_id=execution_id,
-                    trace_path=str(path),
                 )
 
 
@@ -844,7 +881,7 @@ def load_resume_source(
     _apply_gate_resolutions(path, events)
     seedable = _seedable_final_events(events, entry_node_id, entry_iteration or 1)
     paused_node_id, gate_request = _apply_paused_answer(path, data, seedable, gate_answer, source_execution_id)
-    _guard_seed_scope(seedable.values(), source_execution_id, path)
+    _guard_seed_scope(seedable.values(), source_execution_id, path, legacy_placeholders=_predates_lossy_marker(data))
 
     return ResumeSource(
         path=path,
