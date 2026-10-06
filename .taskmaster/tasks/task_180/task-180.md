@@ -32,7 +32,7 @@ $ uv run pflow resume <run> --force      # succeeds
 ```
 
 - The trace stores exactly one whole-workflow hash (`execution/runner.py:204` → the meta line's
-  `content_hash`); `execution/resume_preflight.py:158-173` `_check_content_hash` compares it. The
+  `content_hash`); `execution/resume_preflight.py:161-192` `_check_content_hash` compares it. The
   trace carries no per-step identity, so preflight cannot know that only `save` changed. (The
   engine has one — a per-node `config_hash` for the memo cache,
   `runtime/engine/instrumentation.py:141-192`, computed at `plan_node.py:64` — it is just never
