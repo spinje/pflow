@@ -10,7 +10,11 @@ agents, MCP, and the web UI's ordinary Approve button.
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-10-06
 
 ## Priority
 
