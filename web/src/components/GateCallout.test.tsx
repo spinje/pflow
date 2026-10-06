@@ -317,6 +317,12 @@ describe("GateCallout — the answer never scrolls away (#714)", () => {
     expect(foot).toMatch(/(?:^|[;\s])bottom:\s*-?\d/);
   });
 
+  it("errors in the foot scroll in their own capped box, so a long diagnostic never covers the step", () => {
+    const errors = cssRule(".gate-foot .gate-errors");
+    expect(errors).toMatch(/max-height:\s*\d/);
+    expect(errors).toMatch(/overflow-y:\s*auto/);
+  });
+
   it("the callout header's subtitle (the gated step id) ellipsizes on one line instead of pushing the ✕ out", () => {
     const subtitle = cssRule(".node-callout-subtitle");
     expect(subtitle).toMatch(/min-width:\s*0/);

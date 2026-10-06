@@ -2620,6 +2620,12 @@ button.say-affordance {
   background: var(--bg-raised);
   border-top: 1px solid var(--border);
 }
+/* Errors in the foot scroll in their own box (the .gate-preview-value cap): a long diagnostic
+   would otherwise grow the pinned foot until it covers the step being answered. */
+.gate-foot .gate-errors {
+  max-height: 96px;
+  overflow-y: auto;
+}
 /* The action row: Deny/Approve, Cancel/Resume-anyway, ↻ Resume — right-aligned like a dialog. */
 .gate-actions {
   display: flex;
