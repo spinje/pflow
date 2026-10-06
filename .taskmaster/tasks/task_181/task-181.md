@@ -88,7 +88,7 @@ next
   `${…}` on their own (`web/src/utils/format.ts` `REF_PATTERN`, `web/src/graph/sourceDecorate.ts`, `web/src/utils/batchItems.ts` — #683).
 - **What depends on References found in such a param today** and changes when only `|json`
   forms count: forward-reference and undefined-input checks (`core/workflow/data_flow.py:317,
-  343`), the unused-input ERROR (`core/workflow/validator.py:555-600` — an unconverted
+  343`), the unused-input ERROR (`runtime/template_validation/validator.py:555-612` — an unconverted
   `'${selector}'` would produce a misleading "unused input 'selector'"), graph data edges and
   canvas chips (`core/workflow/graph/scope.py:33`), and the memo key (the param moves from
   template to static params — one cache miss). Execution order is unaffected (edges only). The
