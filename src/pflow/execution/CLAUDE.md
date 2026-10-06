@@ -64,9 +64,17 @@ decision. Tracing alone does not make a gate resumable. Denial, resolver failure
 pause have different result statuses; a usable token also requires persistence.
 
 `preflight_resume` owns load/staleness/entry checks and returns a side-effect
-refusal for the caller to enforce. Dry-run still checks stale workflow identity
-but must not require side-effect confirmation. Callers own settings-env injection
-and compilation; preflight does neither.
+refusal for the caller to enforce. The verdict skips a failed entry only on
+proof it never started on any visit the resume re-runs — no top-level
+`node.start` at or after the entry's re-run point
+(`resume_source.entry_never_started`, cut by the seed slice's own
+`_resumes_from`) — so it relies on the engine writing `node.start` before any
+node code runs. A `workflow` K never gets the skip: a batched host writes no
+`node.start` (Task 180 closes that and drops the carve-out). The stale refusal
+reuses the verdict to say that `--force` would re-fire a started side-effecting
+entry. Dry-run still checks stale workflow identity but must not require
+side-effect confirmation. Callers own settings-env injection and compilation;
+preflight does neither.
 
 ## Dry-Run Planner
 

@@ -73,12 +73,13 @@ The failed step runs **again** from the start (for a loop step: the failed itera
 - A **side-effecting** failed step (`shell` / `code` / `agent` / file operations / `mcp`; `http` too — even reads touch external systems):
   - At a terminal, resume asks for confirmation before re-running the step (default No).
   - **For AI agents** (no terminal): resume **refuses with a clear error** rather than silently repeating the side effect. Confirm with your human that re-running the step is safe, then re-run with `--force`.
+- A failed step that **never started** — it failed resolving its `${...}` templates (a typo, a missing field) before it ran — resumes without confirmation: nothing fired. A batch step whose item failed that way had already started (earlier items ran), so it still asks, and a sub-workflow (`workflow`) step always asks.
 
 `--force` bypasses this confirmation **and** the edited-workflow check below.
 
 ## Other behavior worth knowing
 
-- **Edited workflow → refusal.** If the workflow file changed since the original run, resume refuses — the restored upstream outputs may no longer match the current steps. Re-run from the start, or `--force` to resume anyway.
+- **Edited workflow → refusal.** If the workflow file changed since the original run, resume refuses: restored steps keep their saved outputs, so an edit to them would not take effect. The refusal names the restored steps and where resume continues — if you changed only the failed step or later steps, `--force` resumes; otherwise re-run from the start. Because `--force` also skips the side-effect confirmation, the refusal says so when the failed step already started and may re-fire.
 - **Loop steps continue where they stopped.** A paused or failed loop step resumes at the iteration where it stopped; completed iterations never re-run, and carry, condition, and cap behave exactly as in an uninterrupted run. Each later gated iteration pauses again as a new token. Saved runs that predate loop position restart the loop at iteration 1 and say so (an info advisory, also in `--dry-run`).
 - **Downstream approval gates re-prompt.** Resume does not inherit prior approvals — each execution is a new action. `--auto-approve <step>` still works.
 - **Top-level granularity.** A failure *inside* a sub-workflow re-runs the **whole** sub-workflow step — restoration works only at the top level of the parent workflow. The cross-run cache softens the cost of re-running its inner steps.

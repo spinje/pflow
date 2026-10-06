@@ -274,6 +274,251 @@ def _run_to_failure_llm(wf: Path) -> str:
     return match.group(1)
 
 
+# --- A side-effecting K that never started (#690) -----------------------------
+
+# `produce`'s result shape is dynamic, so the `markdwn` typo passes validation and `save`
+# fails template resolution — before its node.start, so it never ran.
+_TYPO_WF = """# Typo Demo
+
+A side-effecting step with a template typo.
+
+## Steps
+
+### produce
+
+Produce markdown.
+
+- type: code
+
+```python code
+result: dict = {{"markdown": "# hi"}}
+```
+
+### save
+
+Save it.
+
+- type: write-file
+- file_path: {out}
+- content: ${{produce.result.markdwn}}
+"""
+
+
+def _run_hint(args: list[str]) -> tuple[Any, str]:
+    result = _runner().invoke(cli, args)
+    assert result.exit_code == 1, result.stderr
+    match = _HINT_RE.search(result.stderr)
+    assert match, result.stderr
+    return result, match.group(1)
+
+
+def test_fix_then_resume_of_a_step_that_never_started(home, tmp_path):
+    """The issue's loop end to end: no side-effect confirmation for a K that never began, and the
+    edited-workflow refusal names the restored step without a re-fire warning."""
+    out = tmp_path / "out.txt"
+    wf = tmp_path / "typo.pflow.md"
+    wf.write_text(_TYPO_WF.format(out=out), encoding="utf-8")
+    _, exec_id = _run_hint([str(wf)])
+
+    # Unedited, non-TTY, no --force: K re-runs (and fails again on the same typo).
+    rerun, newer_id = _run_hint(["resume", exec_id])
+    assert "Resume needs confirmation" not in rerun.stdout + rerun.stderr
+    assert "Template Resolution Failed" in rerun.stderr
+    assert newer_id != exec_id
+
+    wf.write_text(wf.read_text(encoding="utf-8").replace("markdwn", "markdown"), encoding="utf-8")
+    stale = _runner().invoke(cli, ["resume", newer_id])
+    assert stale.exit_code == 1
+    combined = stale.stdout + stale.stderr
+    assert "Resume restores the saved output of 'produce' and resumes at 'save'" in combined
+    assert "If you changed only 'save' or later steps, pass --force to resume." in combined
+    assert "fire again" not in combined
+
+    forced = _runner().invoke(cli, ["resume", newer_id, "--force"])
+    assert forced.exit_code == 0, forced.stderr
+    assert out.read_text(encoding="utf-8").strip() == "# hi"
+
+
+# A batch K resolves each ITEM's templates inside the batch, after K's node.start — item [1]
+# fails template resolution after item [0]'s side effect fired.
+_BATCH_TYPO_WF = """# Batch Typo Demo
+
+A batch whose second item fails template resolution.
+
+## Steps
+
+### produce
+
+Items.
+
+- type: code
+
+```python code
+result: list = [{{"v": "a"}}, {{"w": "b"}}]
+```
+
+### each
+
+Append each item's value.
+
+- type: shell
+- batch:
+    items: ${{produce.result}}
+    error_handling: fail_fast
+
+```shell command
+echo "${{item.v}}" >> {out}
+```
+"""
+
+
+def test_batch_step_failing_template_resolution_still_needs_confirmation(home, tmp_path):
+    """The template-failure error text is no proof K never ran: a batch item's template failure
+    lands after earlier items fired. Only the missing node.start is — and a batch K has one."""
+    out = tmp_path / "items.txt"
+    wf = tmp_path / "batch.pflow.md"
+    wf.write_text(_BATCH_TYPO_WF.format(out=out), encoding="utf-8")
+    first, exec_id = _run_hint([str(wf)])
+    assert "Template Resolution Failed" in first.stderr
+    assert out.read_text(encoding="utf-8").split() == ["a"]  # item [0] fired
+
+    result = _runner().invoke(cli, ["resume", exec_id])
+    assert result.exit_code == 1
+    assert "Resume needs confirmation" in result.stdout + result.stderr
+    assert out.read_text(encoding="utf-8").split() == ["a"]  # nothing re-fired
+
+
+# `save` fires and fails on visit 1; its on-error back edge re-runs `router`, which now yields
+# nothing, so visit 2 fails resolving its template before starting. Resume re-runs `save` from its
+# FIRST visit (visit 1's upstream state is what gets restored), so it began.
+_BACK_EDGE_WF = """# Back Edge Demo
+
+A side-effecting step re-entered by an on-error back edge.
+
+## Steps
+
+### router
+
+Visit 1 yields a value; later visits yield nothing.
+
+- type: code
+- cache: false
+- next: save
+
+```python code
+import os
+first = not os.path.exists({marker!r})
+open({marker!r}, "a").close()
+result: dict = {{"p": "x"}} if first else {{}}
+```
+
+### save
+
+Append to the ledger, then fail.
+
+- type: shell
+- on-error: router
+
+```shell command
+echo "fired ${{router.result.p}}" >> {out}; exit 1
+```
+"""
+
+
+def test_step_that_began_on_an_earlier_visit_still_needs_confirmation(home, tmp_path):
+    out = tmp_path / "ledger.txt"
+    wf = tmp_path / "back-edge.pflow.md"
+    wf.write_text(_BACK_EDGE_WF.format(marker=str(tmp_path / "marker"), out=out), encoding="utf-8")
+    first, exec_id = _run_hint([str(wf)])
+    assert "Template Resolution Failed" in first.stderr  # the LAST visit failed before starting
+    assert out.read_text(encoding="utf-8").splitlines() == ["fired x"]  # visit 1 fired
+
+    result = _runner().invoke(cli, ["resume", exec_id])
+    assert result.exit_code == 1
+    assert "Resuming re-runs step 'save' (a shell step)" in result.stdout + result.stderr
+    assert out.read_text(encoding="utf-8").splitlines() == ["fired x"]  # nothing re-fired
+
+
+# A batched sub-workflow host never writes a top-level node.start (the engine skips begin_node
+# for WorkflowExecutor; batch items never descend), so its missing start proves nothing.
+_BATCH_CHILD_WF = """# Ledger Child
+
+Append the tag to a ledger.
+
+## Inputs
+
+### tag
+
+The tag.
+
+- type: string
+
+## Outputs
+
+### out
+
+The output.
+
+- source: ${{fire.stdout}}
+
+## Steps
+
+### fire
+
+Append.
+
+- type: shell
+
+```shell command
+echo "fired ${{tag}}" >> {out}
+```
+"""
+
+_BATCH_HOST_WF = """# Batched Host
+
+A batched sub-workflow host; item [1] fails template resolution after item [0] fired.
+
+## Steps
+
+### produce
+
+Items.
+
+- type: code
+
+```python code
+result: list = [{{"t": "a"}}, {{"x": "b"}}]
+```
+
+### host
+
+Run the child per item.
+
+- type: workflow
+- workflow: {child}
+- inputs:
+    tag: ${{item.t}}
+- batch:
+    items: ${{produce.result}}
+    error_handling: fail_fast
+"""
+
+
+def test_batched_sub_workflow_host_still_needs_confirmation(home, tmp_path):
+    out = tmp_path / "ledger.txt"
+    child = tmp_path / "child.pflow.md"
+    child.write_text(_BATCH_CHILD_WF.format(out=out), encoding="utf-8")
+    wf = tmp_path / "host.pflow.md"
+    wf.write_text(_BATCH_HOST_WF.format(child=child.as_posix()), encoding="utf-8")
+    _, exec_id = _run_hint([str(wf)])
+    assert out.read_text(encoding="utf-8").splitlines() == ["fired a"]  # item [0]'s child fired
+
+    result = _runner().invoke(cli, ["resume", exec_id])
+    assert result.exit_code == 1
+    assert "Resuming re-runs step 'host' (a workflow step)" in result.stdout + result.stderr
+    assert out.read_text(encoding="utf-8").splitlines() == ["fired a"]  # nothing re-fired
+
+
 # --- Stale-workflow gate (§E step 3) -----------------------------------------
 
 
@@ -284,7 +529,10 @@ def test_stale_hash_refusal_after_edit(home, shell_wf):
     assert result.exit_code == 1
     combined = result.stdout + result.stderr
     assert "edited since the original run" in combined
-    assert "--force" in combined
+    assert "Resume restores the saved output of 'step1' and resumes at 'step2'" in combined
+    # step2 (shell) started in the source run, and --force also waives its side-effect
+    # confirmation — the stale refusal is the only place the agent can learn that (#690).
+    assert "--force also re-runs 'step2' (a shell step that already started" in combined
 
 
 def test_stale_hash_force_override_runs(home, shell_wf):
@@ -881,20 +1129,13 @@ def _write_looping_host(tmp_path: Path) -> tuple[Path, Path]:
     return wf, log
 
 
-def test_killed_between_loop_iterations_continues_with_the_engine_decision_e2e(home, tmp_path):
-    """Task 179 D3 + review-fold W1, through the real CLI: a run killed after a looping
-    ``workflow`` host's iteration 2 (the host emits no ``node.start``, so a kill inside an
-    iteration looks the same) loads as ``(None, host)`` at iteration 3. The preflight passes it
-    through but still asks to confirm the side-effecting step that may re-run (the host, by
-    its registry type); ``--force`` resumes, and the engine re-enters at iteration 3 with
-    iteration 2's carried survivors — rounds 1-2 never re-run."""
-    wf, log = _write_looping_host(tmp_path)
+def _kill_looping_host_after_iteration_2(home: Path, wf: Path, log: Path) -> tuple[str, list[Any]]:
+    """Run the looping host to completion, then cut its real trace right after the host's
+    iteration-2 event (no trailer → incomplete) and the log to match. Returns ``(exec id, all rounds)``."""
     full = _runner().invoke(cli, [str(wf)])
     assert full.exit_code == 0, full.stderr
     rounds = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
     assert len(rounds) == 4
-
-    # Cut the real trace right after the host's iteration-2 event (no trailer → incomplete).
     [trace] = (home / ".pflow" / "debug").glob("workflow-trace-*.json")
     lines = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
     cut = next(
@@ -904,7 +1145,33 @@ def test_killed_between_loop_iterations_continues_with_the_engine_decision_e2e(h
     )
     trace.write_text("\n".join(json.dumps(line) for line in lines[: cut + 1]) + "\n", encoding="utf-8")
     log.write_text("".join(json.dumps(r) + "\n" for r in rounds[:2]), encoding="utf-8")
-    exec_id = lines[0]["execution_id"]
+    return str(lines[0]["execution_id"]), rounds
+
+
+def test_stale_refusal_names_a_between_iterations_loop_step_as_the_resume_point(home, tmp_path):
+    """#690: killed between iterations, the loop step CONTINUES (its next iteration) — the stale
+    refusal must not call it restored-and-frozen, and must say --force re-fires it."""
+    wf, log = _write_looping_host(tmp_path)
+    exec_id, _ = _kill_looping_host_after_iteration_2(home, wf, log)
+    wf.write_text(wf.read_text(encoding="utf-8").replace("Announce the survivor.", "Name the survivor."), "utf-8")
+
+    refused = _runner().invoke(cli, ["resume", exec_id])
+    assert refused.exit_code == 1
+    combined = refused.stdout + refused.stderr
+    assert "Resume restores no earlier steps and resumes at 'rounds' (iteration 3)." in combined
+    assert "Its iterations before 3 are restored too, so an edit to 'rounds' applies from iteration 3 on." in combined
+    assert "--force also re-runs 'rounds' (a workflow step that already started" in combined
+
+
+def test_killed_between_loop_iterations_continues_with_the_engine_decision_e2e(home, tmp_path):
+    """Task 179 D3 + review-fold W1, through the real CLI: a run killed after a looping
+    ``workflow`` host's iteration 2 (the host emits no ``node.start``, so a kill inside an
+    iteration looks the same) loads as ``(None, host)`` at iteration 3. The preflight passes it
+    through but still asks to confirm the side-effecting step that may re-run (the host, by
+    its registry type); ``--force`` resumes, and the engine re-enters at iteration 3 with
+    iteration 2's carried survivors — rounds 1-2 never re-run."""
+    wf, log = _write_looping_host(tmp_path)
+    exec_id, rounds = _kill_looping_host_after_iteration_2(home, wf, log)
 
     refused = _runner().invoke(cli, ["resume", exec_id])
     assert refused.exit_code == 1
