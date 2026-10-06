@@ -395,3 +395,31 @@ class TestLossyMarkerProvenance:
         )
         items = collector.events[0]["batch_items"]
         assert [item.get("lossy") for item in items] == [["result.1: non-string key (int)"], None]
+
+
+@pytest.mark.parametrize(("produce", "pauses"), [("result: bytes = b'\\x00'", False), ("result: str = 'AA=='", True)])
+def test_escalation_pause_judges_the_whole_trace_seed(tmp_path, produce, pauses) -> None:
+    """The producer's after-step shape: an answered escalation resumes AFTER the escalating step,
+    seeding the whole trace (the loader's `entry=None` slice) — so lossy upstream output keeps an
+    escalation from pausing too; a JSON-native twin pauses."""
+    from pflow.runtime import compile_workflow
+    from pflow.runtime.engine import WorkflowEngine
+    from pflow.runtime.workflow_trace import WorkflowTraceCollector
+    from tests.test_runtime.test_gate_pause import _registry_with_escalating_node
+
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {"id": "up", "type": "code", "params": {"code": produce}},
+            {"id": "esc", "type": "escalating-node", "params": {"question": "a or b?"}},
+            {"id": "after", "type": "shell", "params": {"command": "echo after"}},
+        ],
+        "edges": [{"from": "up", "to": "esc"}, {"from": "esc", "to": "after"}],
+    }
+    collector = WorkflowTraceCollector("esc", workflow_path="esc.pflow.md", is_run_scoped=True)
+    with pytest.raises(GateNotInteractiveError) as exc_info:
+        WorkflowEngine(trace_collector=collector, workflow_path="esc.pflow.md").run(
+            compile_workflow(ir, _registry_with_escalating_node()), {}
+        )
+    assert collector.gate_outcome == ("paused" if pauses else "failed")
+    assert exc_info.value.lossy_seed == (None if pauses else ("up", ["result: bytes"]))

@@ -876,3 +876,39 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   lossy snapshot"). (3) The run-start "will pause at approval gate(s)" note can be untrue when a gate stays failed for
   a lossy seed — ACCEPTED: unknowable before the upstream step runs; the gate error states the real reason.
 - Next: commit; "fully happy?"; falsifier re-run on C1/W1 + lossy repros + probeA; close-out.
+
+## [2026-10-06 06:40] phase-implementer (Opus) — "FULLY happy?" self-check (ruling-A build)
+- Did: re-traced every path that writes an event's `node_output`. All of them pass the marker check BEFORE the
+  `json.dumps(default=str)` write: `record_node_execution` (leaf, cached, api-warning, exception arm, gate-arm host
+  record — all via `record_trace`; child-collector events of sub-workflows the same way); `_prepare_resume`'s
+  re-record (output is already JSON, `lossy` carried by kwarg; seeded events are never marked anyway, because the
+  guard refused them); batch items (`_sanitize_batch_items`); `mark_last_event_failed` re-flushes the same dict. A
+  non-dict output is wrapped as `{"value": …}` by `record_trace`, so it is judged too.
+- Exemption list re-checked: `__metrics__` is kept (never dropped). `__pflow_stats__`/`__pflow_warnings__` are written
+  to memo-history dicts and stripped from the live output by `apply_memo_hit`, so their exemption is defensive.
+  `_debug_context`/`_batch_trace`/`__trace_collector__` are root-store keys. Exempt at the top level only;
+  `errors[i].exception` only at the top level. The corpus audit stands.
+- Producer seed derivation at an escalation (after-step) pause: `lossy_seed(events, None)` = the loader's `entry=None`
+  whole-trace slice. The loader guards that slice BEFORE the preflight swaps in the successor, and the engine's after-K
+  re-entry seeds the same set. Approval: `resume_iteration` over the same in-memory top-level events the loader
+  reconstructs. Consistent.
+- Loose end found and FIXED: the escalation half of the producer conjunct had no pin (mutating it to `return None`
+  failed nothing). Added `test_resume_lossy.py::test_escalation_pause_judges_the_whole_trace_seed[bytes|json-native]`
+  (lossy upstream → escalation stays `failed` with `lossy_seed == ("up", ["result: bytes"])`; JSON-native twin
+  pauses). Mutation `return None` → 1 failed; restored.
+- Accepted, not changed (noting so they are not re-derived): (1) str/int enum values serialize natively as their value
+  (not via `default=str`), so they are unmarked per the ruling's (d) and restore as plain `str`/`int` (equal to the
+  enum). (2) A dict with tuple keys is marked, but `json.dumps` raises on it, which disables trace streaming — a
+  pre-existing persistence fault, with no resume source either way. (3) Nested `events` inside batch items
+  (`_capture_item_trace`) are sanitized without the marker. They are never seeded, and the host output carries the
+  marker.
+- Verified: `make check` green; `make test` → 10353 passed, 0 failed.
+- Next: hand back.
+
+## [2026-10-06 06:50] task-orchestrator (Opus) — ruling-A self-check closed
+- Self-check (06:40): one loose end fixed (escalation half of the producer check had no test → pinned). Disposition of
+  the implementer's accepted items: str/int Enum values written as their plain value — classified in the ruled
+  tuple→list family (a subclass collapsed to its JSON base type; compares equal), not a sixth marked kind; flagged
+  upward in the handback for visibility. Tuple-keyed dicts (marked; already break streaming — pre-existing) and events
+  nested in batch items (never seeded) — accepted.
+- Next: commit; falsifier re-run (C1/W1 + lossy repros + probeA).
