@@ -219,7 +219,7 @@ def _shell_env_warnings(node_id: str, env: dict[Any, Any], env_path: str) -> Ite
                 Severity.WARNING,
                 node_id,
                 f"Step '{node_id}': env {name} is the YAML boolean {word} and binds as the text {value}.",
-                [f'Quote it ("{word}") if the command compares text.'],
+                ["Quote the value if the command compares text."],
                 f"{env_path}.{name}",
             )
 

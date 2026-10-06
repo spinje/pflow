@@ -265,6 +265,9 @@ class TestBindingFailures:
     def test_an_unbindable_value_under_ignore_errors_and_retry(
         self, value: str, expected: str, attempts: list[str]
     ) -> None:
+        """Runner-level evidence with trace streaming OFF (conftest default). Through the real CLI the
+        lone-surrogate row is currently masked: the trace writer re-raises a ``UnicodeEncodeError``
+        (``workflow_trace._flush_line`` catches only ``OSError``) — pre-existing, a filed follow-up."""
         step = _shell({"V": "${x}"}, retry={"max": 3})
         step["params"]["ignore_errors"] = True
         ir = _ir(step, inputs={"x": _input("string")})
@@ -343,17 +346,34 @@ class TestNamesAgreeEverywhere:
         failed = _run(whole)
         assert any(d.message.startswith(sentence) for d in failed.errors), [d.message for d in failed.errors]
 
-    @pytest.mark.parametrize(("yaml_key", "written"), [("1", "1"), ("true", "true"), ("null", "null")])
-    def test_a_non_text_yaml_key_is_named_as_written(self, tmp_path: Path, yaml_key: str, written: str) -> None:
+    @pytest.mark.parametrize(
+        ("yaml_key", "written", "fix"),
+        [
+            (
+                "1",
+                "1",
+                'Use letters, digits and underscores, not starting with a digit — e.g. VAR_1 — and read it as "$VAR_1" in the command.',
+            ),
+            ("YES", "true", "YAML read this key as a boolean, not text: quote the key so it stays the name you wrote."),
+            ("NULL", "null", "YAML read this key as a null, not text: quote the key so it stays the name you wrote."),
+        ],
+    )
+    def test_a_non_text_yaml_key_is_named_and_fixed(
+        self, tmp_path: Path, yaml_key: str, written: str, fix: str
+    ) -> None:
         errors, _ = _validate(str(_names_markdown(tmp_path, f"    {yaml_key}: v\n")))
-        assert [(e.message, e.context["path"]) for e in errors] == [
-            (f"Step 's': env name '{written}' cannot be read as a shell variable.", f"nodes[id=s].params.env.{written}")
+        assert [(e.message, e.context["path"], e.suggestions) for e in errors] == [
+            (
+                f"Step 's': env name '{written}' cannot be read as a shell variable.",
+                f"nodes[id=s].params.env.{written}",
+                [fix],
+            )
         ]
-        assert errors[0].suggestions == [
-            "Use letters, digits and underscores, not starting with a digit — "
-            f"e.g. {'VAR_1' if written == '1' else written.upper()} — and read it as "
-            f'"${"VAR_1" if written == "1" else written.upper()}" in the command.'
-        ]
+
+    def test_a_quoted_yaml_word_key_is_a_valid_name(self, tmp_path: Path) -> None:
+        """The fix above works: quoted, `"NULL"` is text and binds."""
+        errors, warnings = _validate(str(_names_markdown(tmp_path, '    "NULL": v\n')))
+        assert (errors, warnings) == ([], [])
 
     def test_a_literal_non_map(self) -> None:
         errors, _ = _validate(_ir(_shell(["A=1"])))
@@ -449,7 +469,7 @@ class TestWarningsDoNotRefuse:
         assert [(w.message, w.suggestions) for w in warnings] == [
             (
                 "Step 's': env DEBUG is the YAML boolean true and binds as the text True.",
-                ['Quote it ("true") if the command compares text.'],
+                ["Quote the value if the command compares text."],
             )
         ]
         assert _stdout(_run(ir)) == "True"

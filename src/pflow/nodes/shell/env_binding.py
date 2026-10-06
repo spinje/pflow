@@ -95,14 +95,7 @@ def env_problems(env: object) -> list[EnvProblem]:
     for key, value in env.items():
         name = _as_written(key)
         if not isinstance(key, str) or not _SHELL_NAME.fullmatch(key):
-            problems.append(
-                EnvProblem(
-                    name,
-                    f"env name '{name}' cannot be read as a shell variable.",
-                    "Use letters, digits and underscores, not starting with a digit — "
-                    f'e.g. {_suggest_name(name)} — and read it as "${_suggest_name(name)}" in the command.',
-                )
-            )
+            problems.append(EnvProblem(name, f"env name '{name}' cannot be read as a shell variable.", _name_fix(key)))
             continue
         if (other := first_spelling.setdefault(key.upper(), key)) != key:
             problems.append(
@@ -190,6 +183,18 @@ def _value_problem(name: str, text: str) -> EnvProblem | None:
 
 def _stdin_fix(name: str) -> str:
     return f"Pass that value through stdin instead (`- stdin: ${{…}}`, read it with cat) and remove {name} from env:."
+
+
+def _name_fix(key: object) -> str:
+    if key is None or isinstance(key, bool):
+        # The key was a YAML word (null, yes, off, …) — its spelling is lost, so never suggest one back.
+        kind = "null" if key is None else "boolean"
+        return f"YAML read this key as a {kind}, not text: quote the key so it stays the name you wrote."
+    suggestion = _suggest_name(_as_written(key))
+    return (
+        "Use letters, digits and underscores, not starting with a digit — "
+        f'e.g. {suggestion} — and read it as "${suggestion}" in the command.'
+    )
 
 
 def _as_written(key: object) -> str:

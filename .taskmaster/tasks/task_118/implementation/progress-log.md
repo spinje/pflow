@@ -422,3 +422,65 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   carries it to the PR body.
 - Gate after the ruling: `make check` green; `make test` 10460 passed / 0 failed.
 - Next: orchestrator commits; falsifier last.
+
+## [2026-10-07 01:20] implementer I1 (Opus) — gate — falsifier (evaluated on `cba59617`)
+- Did: evaluated `implementation/gate-part1-falsifier.md` (direct-launch `review-falsifier`, real CLI, no Critical).
+  Checked each finding against the code before acting, following the orchestrator's steer.
+- Findings and dispositions:
+  - **W1 — a lone surrogate never reaches the user as the ruled message. Not fixed in Part 1 (steer
+    confirmed).**
+    - Verified: `runtime/workflow_trace.py:999-1016` `_flush_line` catches only `OSError`, although its docstring
+      promises never to mask a real node error. `core/trace_io.py:116` does a strict `value.encode("utf-8")`.
+    - So `prep()` raises the right `EnvBindingError`, then `record_trace` re-raises a `UnicodeEncodeError` over
+      it. This is pre-existing: the same text in any param crashed the writer before Part 1. Part 1 does not
+      widen it, and the command is still never spawned.
+    - Added a docstring on `test_an_unbindable_value_under_ignore_errors_and_retry`: runner-level evidence with
+      trace streaming off, and the CLI path is currently masked by this trace-writer defect.
+    - **Follow-up for the orchestrator to file.** Repro: upstream `printf '%s' '{"s":"cut \ud800"}'`; next shell
+      step `ignore_errors: true`, `env: {DATA: ${up.stdout.s}}`. Observed: `'utf-8' codec can't encode
+      character '\ud800'…`, and the JSON error has no `node_id`. Fix site: `_flush_line` (catch encode errors
+      too, or encode with `surrogatepass`/`backslashreplace` in `trace_io`).
+  - **W2 — literal YAML numbers are reinterpreted silently (`1.10`→`1.1`, `0755`→`493`). Guide sentence only;
+    the warning extension is a follow-up.**
+    - Guide (`env:` section) now says: "`VERSION: 1.10` binds `1.1`, `MODE: 0755` binds `493` — quote a value
+      whose exact text matters (`VERSION: "1.10"`)."
+    - Real run: `env: {VERSION: 1.10, MODE: 0755}` printed `1.1 493`.
+    - A numeric-literal warning needs the source text, which the IR does not carry. Follow-up for Task 120 /
+      Part 2.
+  - **S1 — YAML-word keys give a looping fix; the boolean warning mis-advises. Fixed. [Importance-1 deltas to
+    ruled text, per the orchestrator.]**
+    - (a) For a key YAML read as null or a boolean (`NULL:`, `YES:`, `OFF:`), the name error's fix is now "YAML
+      read this key as a {null|boolean}, not text: quote the key so it stays the name you wrote." It no longer
+      suggests `NULL`/`TRUE` back. New helper `_name_fix` in `env_binding.py`; number keys keep the ruled
+      `VAR_1` fix. The first sentence is unchanged (ruled §4b; the author's spelling is lost in YAML parsing).
+    - (b) The literal-boolean warning's fix `Quote it ("true") …` became "Quote the value if the command compares
+      text." (for `YESV: yes` it advised changing `yes` to `true`).
+    - Tests: the unit test `test_a_yaml_word_key_is_told_to_quote_not_given_a_yaml_word_back`; the integration
+      test `test_a_non_text_yaml_key_is_named_and_fixed` now covers `1`, `YES` and `NULL` from real markdown
+      (fixes asserted exactly); `test_a_quoted_yaml_word_key_is_a_valid_name` shows the fix works (`"NULL": v`
+      validates clean); the boolean-warning assertion was updated.
+  - **O1 — a sub-workflow `inputs:` boundary re-serializes. Guide made true; pre-existing (#686/Task 120).** The
+    "first passes through an `inputs:` map" clause now lists the step's own, a loop carry, and a sub-workflow's
+    inputs.
+  - **O2 — CLI `key=value` inference types values before binding. Guide made true.** Added "a `key=value` given on
+    the command line is typed first (`007` → `7`)"; verified `infer_type('007')` → `7`.
+    - **Follow-up observation:** a declared `type: string` input still receives the inferred type
+      (`v=007` → `7`, `v=true` → `True`) — `cli/param_parsing.py:9-46`. Pre-existing; for Task 120.
+- Changed: `src/pflow/nodes/shell/env_binding.py`, `src/pflow/core/workflow/validator.py`,
+  `src/pflow/guide/nodes/shell.md`, `tests/test_nodes/test_shell/test_env_binding.py`,
+  `tests/test_integration/test_shell_env_binding.py`.
+- Verified: `make check` green; `make test` **10461 passed / 0 failed**.
+- Deviations/surprises: none beyond the two ruled-text deltas above, which the orchestrator authorized
+  (importance 1). The checkpoint file is not edited; it stays the record of what was ruled.
+- Next: orchestrator commits.
+
+## [2026-10-07 01:30] task orchestrator (Opus) — Part 1 gate closed; spec Status → in progress; PR next
+- Did: verified I1's falsifier dispositions (01:20 entry) and committed them with the falsifier report
+  (`implementation/gate-part1-falsifier.md`); spec `## Status` → `in progress` (plan §4.0: Part 1 is not task
+  completion; no task-review until Part 2 — a stated exception ruled in the plan and the launch packet).
+- Gate record: reading battery 8/8 lenses via the converted fan-out (00:45) + `review-falsifier` direct, last
+  (01:20). Every finding dispositioned; none open. Follow-ups carried to the hand-back/PR body: trace writer masks a
+  node error on unencodable text (W1); numeric-literal warning in `env:` (W2 → Task 120/Part 2); a declared
+  `type: string` CLI input is still type-inferred (O2 → Task 120); stdin's strict UTF-8 encode falls to the
+  exit -2 path (00:45 option c).
+- Next: merge origin/main, `make check` + `make test-all-local` on the merged result, `create-pr`.

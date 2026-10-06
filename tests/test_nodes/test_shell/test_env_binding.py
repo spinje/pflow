@@ -78,8 +78,6 @@ class TestBindEnv:
             ("", "", "VALUE"),
             ("c-i", "c-i", "C_I"),
             (1, "1", "VAR_1"),  # YAML `1:`
-            (True, "true", "TRUE"),  # YAML `true:`
-            (None, "null", "NULL"),  # YAML `null:`
         ],
     )
     def test_a_name_sh_cannot_read_is_refused_naming_it(self, name: Any, written: str, suggestion: str) -> None:
@@ -88,6 +86,18 @@ class TestBindEnv:
         assert str(exc_info.value) == (
             f"env name '{written}' cannot be read as a shell variable. Use letters, digits and underscores, "
             f'not starting with a digit — e.g. {suggestion} — and read it as "${suggestion}" in the command.'
+        )
+
+    @pytest.mark.parametrize(("key", "written", "kind"), [(True, "true", "boolean"), (None, "null", "null")])
+    def test_a_yaml_word_key_is_told_to_quote_not_given_a_yaml_word_back(
+        self, key: Any, written: str, kind: str
+    ) -> None:
+        """`NULL:` / `YES:` / `OFF:` parse as null/booleans; suggesting `NULL`/`TRUE` would loop."""
+        with pytest.raises(EnvBindingError) as exc_info:
+            bind_env({key: "v"})
+        assert str(exc_info.value) == (
+            f"env name '{written}' cannot be read as a shell variable. "
+            f"YAML read this key as a {kind}, not text: quote the key so it stays the name you wrote."
         )
 
     def test_a_suggested_name_never_lands_on_an_ambient_variable(self) -> None:
