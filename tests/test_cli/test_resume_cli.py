@@ -408,7 +408,7 @@ Visit 1 yields a value; later visits yield nothing.
 ```python code
 import os
 first = not os.path.exists({marker!r})
-open({marker!r}, "a").close()
+open({marker!r}, "a", encoding="utf-8").close()
 result: dict = {{"p": "x"}} if first else {{}}
 ```
 
