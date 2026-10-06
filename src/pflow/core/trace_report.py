@@ -25,6 +25,7 @@ from pflow.core.metrics import (
     unavailable_models_to_counts,
 )
 from pflow.core.node_type_display import node_type_tag
+from pflow.core.security_utils import is_sensitive_parameter, redact_sensitive
 from pflow.core.templates import TemplateResolver
 from pflow.core.trace_io import load_trace_file
 from pflow.core.trace_tree import TraceTree, batch_item_cost, event_cost
@@ -83,7 +84,7 @@ def _extract_item_label(item: dict[str, Any]) -> str | None:
     Priority order:
     1. If item["item"] is a string, use it directly
     2. If item["item"] is a dict, look for name/title/label keys
-    3. Fall back to first short string value (< 80 chars, not a URL/path)
+    3. Fall back to first short string value (< 80 chars, not a URL/path) under a non-sensitive key
     4. Return None if nothing works
     """
     data = item.get("item")
@@ -100,7 +101,9 @@ def _extract_item_label(item: dict[str, Any]) -> str | None:
             if isinstance(val, str) and val.strip():
                 return val.strip()
         # Fall back to first short string value that isn't a URL or path
-        for val in data.values():
+        for key, val in data.items():
+            if is_sensitive_parameter(str(key)):
+                continue
             if isinstance(val, str) and val.strip() and len(val) < 80 and "://" not in val and not val.startswith("/"):
                 return val.strip()
 
@@ -1124,7 +1127,7 @@ def _format_node_output(event: dict[str, Any], lines: list[str]) -> None:
                 lines.append(heading)
                 lines.append("")
                 if isinstance(val, (dict, list)):
-                    lines.append(f"```json\n{json.dumps(val, indent=2, default=str)}\n```")
+                    lines.append(f"```json\n{json.dumps(redact_sensitive(val), indent=2, default=str)}\n```")
                 elif val is not None and str(val).strip():
                     lines.append(str(val))
                 lines.append("")
@@ -1149,9 +1152,9 @@ def _format_remaining_node_output(output: dict[str, Any], lines: list[str]) -> N
         shown_keys.update({"errors", "count", "success_count", "error_count", "batch_metadata"})
         if output.get("results") == []:
             shown_keys.add("results")
-    remaining = {
+    remaining = redact_sensitive({
         k: v for k, v in output.items() if k not in shown_keys and not (isinstance(k, str) and k.startswith("_"))
-    }
+    })
     if remaining:
         lines.append("## Output")
         lines.append("")
@@ -1326,7 +1329,7 @@ def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
 
     # Code/other nodes: resolved input variables
     if "inputs" in resolutions:
-        resolved_inputs = resolutions["inputs"].get("resolved", {})
+        resolved_inputs = redact_sensitive(resolutions["inputs"].get("resolved", {}))
         if resolved_inputs:
             lines.extend(["## Inputs", ""])
             if isinstance(resolved_inputs, dict):
@@ -1337,7 +1340,7 @@ def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
         shown.add("inputs")
 
     # Catch-all: any remaining template resolutions
-    remaining = {k: v.get("resolved", v) for k, v in resolutions.items() if k not in shown}
+    remaining = redact_sensitive({k: v.get("resolved", v) for k, v in resolutions.items() if k not in shown})
     if remaining:
         lines.extend(["## Resolved Parameters", ""])
         lines.append(f"```json\n{json.dumps(remaining, indent=2, default=str)}\n```")

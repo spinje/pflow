@@ -209,6 +209,9 @@ Redaction uses whole-word sensitive-name matching plus explicitly supplied keys.
 Use `security_utils` instead of substring matching. Arbitrary secrets embedded in
 values may remain visible; this is not universal secret detection.
 Value-level scanning was deliberately deferred in #183; verify an observed leak before broadening this contract.
+Traces store resolved values raw for resume; a reader that displays trace content calls
+`redact_sensitive` (`trace_report.py`, `ui/run_node.py`). `settings.env` is masked whole by
+value (`SettingsManager.list_env`), never by name — `KEY`-suffixed provider names miss the rule.
 
 ## Other local constraints
 

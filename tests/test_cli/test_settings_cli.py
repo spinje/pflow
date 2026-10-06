@@ -322,39 +322,28 @@ class TestShowCommand:
         assert "pas***" in result.output
         assert "tok***" in result.output
 
-    def test_show_does_not_mask_non_sensitive_vars(self, runner: CliRunner, isolated_settings: Path) -> None:
-        """Test that non-sensitive env vars are not masked."""
-        # Setup: Add non-sensitive var
+    def test_show_masks_every_env_value_regardless_of_name(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """settings.env is the credential store: show masks every value, like list-env (#696).
+
+        FAL_KEY / STRIPE_KEY are real provider-key names that the word-aware workflow-param rule
+        (is_sensitive_parameter) does not flag — a name-based mask printed them in full.
+        """
+        runner.invoke(settings, ["set-env", "FAL_KEY", "FAKEVALUE-FAL-0000:abcd"])
+        runner.invoke(settings, ["set-env", "STRIPE_KEY", "FAKEVALUE-STRIPE-0000"])
         runner.invoke(settings, ["set-env", "log_level", "debug"])
-        runner.invoke(settings, ["set-env", "timeout", "30"])
+        runner.invoke(settings, ["llm", "set-default", "gpt-5.2"])
 
-        # Run show command
         result = runner.invoke(settings, ["show"])
 
-        # Assert: Full values are visible
-        assert '"log_level": "debug"' in result.output
-        assert '"timeout": "30"' in result.output
-
-    def test_show_mixed_sensitive_and_non_sensitive(self, runner: CliRunner, isolated_settings: Path) -> None:
-        """Test show with both sensitive and non-sensitive vars."""
-        # Setup: Add mix of vars
-        runner.invoke(settings, ["set-env", "api_key", "key123456"])
-        runner.invoke(settings, ["set-env", "debug_mode", "true"])
-        runner.invoke(settings, ["set-env", "password", "pass123456"])
-        runner.invoke(settings, ["set-env", "timeout", "60"])
-
-        # Run show command
-        result = runner.invoke(settings, ["show"])
-
-        # Assert: Sensitive masked
-        assert "key123456" not in result.output
-        assert "pass123456" not in result.output
-        assert "key***" in result.output
-        assert "pas***" in result.output
-
-        # Assert: Non-sensitive visible
-        assert '"debug_mode": "true"' in result.output
-        assert '"timeout": "60"' in result.output
+        assert result.exit_code == 0
+        assert "FAKEVALUE-FAL" not in result.output
+        assert "FAKEVALUE-STRIPE" not in result.output
+        assert '"debug"' not in result.output
+        # Presence: every key is listed with the same mask list-env uses, and other sections are untouched
+        assert '"FAL_KEY": "FAK***"' in result.output
+        assert '"STRIPE_KEY": "FAK***"' in result.output
+        assert '"log_level": "deb***"' in result.output
+        assert '"default_model": "openai/gpt-5.2"' in result.output
 
     def test_show_with_empty_env(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test show with no environment variables."""
@@ -406,28 +395,6 @@ class TestShowCommand:
         assert result.exit_code == 0
         assert "Settings file:" in result.output
         assert str(isolated_settings) in result.output
-
-    def test_show_masks_various_sensitive_keywords(self, runner: CliRunner, isolated_settings: Path) -> None:
-        """Test masking for various sensitive keyword patterns."""
-        # Setup: Add vars with different sensitive keywords
-        runner.invoke(settings, ["set-env", "access_token", "access123"])
-        runner.invoke(settings, ["set-env", "auth_token", "auth456"])
-        runner.invoke(settings, ["set-env", "client_secret", "secret789"])
-        runner.invoke(settings, ["set-env", "private_key", "key012"])
-
-        # Run show command
-        result = runner.invoke(settings, ["show"])
-
-        # Assert: All masked
-        assert "access123" not in result.output
-        assert "auth456" not in result.output
-        assert "secret789" not in result.output
-        assert "key012" not in result.output
-
-        assert "acc***" in result.output
-        assert "aut***" in result.output
-        assert "sec***" in result.output
-        assert "key***" in result.output
 
     def test_show_json_structure_valid(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test that show outputs valid JSON structure."""
@@ -497,11 +464,9 @@ class TestShowCommand:
         json_output = output[json_start:json_end]
         parsed = json.loads(json_output)
 
-        # Assert: Sensitive masked (first 3 chars + ***)
+        # Assert: every env value masked (first 3 chars + ***)
         assert parsed["env"]["api_key"] == "你好1***"
-
-        # Assert: Non-sensitive visible
-        assert parsed["env"]["config"] == "🌍test"
+        assert parsed["env"]["config"] == "🌍te***"
 
 
 # ============================================================================

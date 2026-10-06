@@ -2429,6 +2429,79 @@ class TestFormatCost:
         assert _format_cost(0.0) == "$0.0000"
 
 
+# --- secret redaction (#697) ---
+
+
+class TestReportRedactsSensitiveNamedValues:
+    """The trace stores resolved values RAW so resume can restore them; ``pflow report`` is a display
+    reader, so it redacts sensitive-named keys — and keeps every other value (#697)."""
+
+    RAW_VALUE = "FAKE-SECRET-K-999"
+
+    def test_node_files_redact_secrets_in_inputs_params_and_output(self, tmp_path: Path) -> None:
+        code = _make_event(
+            node_id="measure",
+            node_type="PythonCodeNode",
+            template_resolutions={
+                "inputs": {
+                    "template": {"api_token": "${api_token}", "region": "${region}"},
+                    "resolved": {"api_token": self.RAW_VALUE, "region": "eu-west-1"},
+                }
+            },
+            node_output={"result": {"token": self.RAW_VALUE, "kind": "fake"}, "api_key": self.RAW_VALUE, "rows": 3},
+        )
+        shell = _make_event(
+            node_id="echo",
+            node_type="ShellNode",
+            template_resolutions={
+                "env": {
+                    "template": {"AUTH_TOKEN": "${api_token}", "REGION": "${region}"},
+                    "resolved": {"AUTH_TOKEN": self.RAW_VALUE, "REGION": "eu-west-1"},
+                }
+            },
+        )
+        trace_file = tmp_path / "trace.json"
+        write_trace_jsonl(trace_file, _make_trace(nodes=[code, shell]))
+        trace_bytes = trace_file.read_bytes()
+
+        report_dir = generate_report(trace_file, str(tmp_path / "report"))
+
+        assert report_dir is not None
+        measure = (report_dir / "01-measure.md").read_text(encoding="utf-8")
+        echo = (report_dir / "02-echo.md").read_text(encoding="utf-8")
+        assert self.RAW_VALUE not in measure + echo
+        # ## Inputs
+        assert '"api_token": "<REDACTED>"' in measure
+        assert '"region": "eu-west-1"' in measure
+        # ## Result and ## Output
+        assert '"token": "<REDACTED>"' in measure
+        assert '"kind": "fake"' in measure
+        assert '"api_key": "<REDACTED>"' in measure
+        assert '"rows": 3' in measure
+        # ## Resolved Parameters (nested under the param name)
+        assert '"AUTH_TOKEN": "<REDACTED>"' in echo
+        assert '"REGION": "eu-west-1"' in echo
+        # The trace itself stays raw and byte-identical — resume and --only read it, not the report
+        assert trace_file.read_bytes() == trace_bytes
+        assert self.RAW_VALUE in trace_bytes.decode("utf-8")
+
+    def test_batch_item_label_never_uses_a_sensitive_named_value(self, tmp_path: Path) -> None:
+        batch = _make_event(
+            node_id="per-city",
+            batch_items=[{"index": 0, "item": {"token": "sek123", "city": "Oslo"}, "success": True, "duration_ms": 5}],
+        )
+        trace_file = tmp_path / "trace.json"
+        write_trace_jsonl(trace_file, _make_trace(nodes=[batch]))
+
+        report_dir = generate_report(trace_file, str(tmp_path / "report"))
+
+        assert report_dir is not None
+        assert (report_dir / "01-per-city" / "item-0-oslo.md").exists()
+        rendered = [str(path) for path in report_dir.rglob("*")]
+        rendered += [path.read_text(encoding="utf-8") for path in report_dir.rglob("*.md")]
+        assert not any("sek123" in text for text in rendered)
+
+
 # --- _extract_item_label() ---
 
 

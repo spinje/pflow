@@ -24,7 +24,7 @@ from typing import Any
 
 from pflow.core.llm_usage import input_token_total
 from pflow.core.node_type_display import node_type_tag
-from pflow.core.security_utils import is_sensitive_parameter
+from pflow.core.security_utils import redact_sensitive
 from pflow.core.trace_io import BLOB_SENTINEL, substitute_refs
 from pflow.core.trace_tree import event_cost
 from pflow.ui.run_tailer import discover_live_trace, scan_traces
@@ -86,7 +86,7 @@ def read_run_inputs(workflow_key: str, run_id: str | None) -> dict[str, str] | N
             # re-type to the STRING "None" on re-run — a silent change from the original null. Omitting
             # lets it re-resolve to its default, consistent with the form's blank-omission policy.
             continue
-        if _redact({name: value}) != {name: value}:
+        if redact_sensitive({name: value}) != {name: value}:
             # A secret at ANY depth (the top-level name, or a nested key inside an object/list input) →
             # omit, so it re-resolves from settings/env instead of shipping to the browser. Reuses the one
             # recursive key-name redactor; a changed value means it contained a sensitive-named key.
@@ -177,7 +177,7 @@ def _io_detail(path: Path, ref: dict[str, Any], port: str) -> dict[str, Any] | N
     shares the bare name keyspace — without the guard, a sub-workflow ``url`` input would render the
     TOP-LEVEL ``url``'s value. The direct keyed lookup bypasses the ``ancestor_path`` discriminator
     ``_ref_matches`` gives a regular ref, so restore it explicitly. Redaction wraps the value under its
-    PORT NAME (``_redact({name: value})``) so a sensitive-NAMED port (``api_key``) is redacted — the bare
+    PORT NAME (``redact_sensitive({name: value})``) so a sensitive-NAMED port (``api_key``) is redacted — the bare
     value alone has no key to match. Absent (sub-workflow, an input not in ``meta.inputs``, OR no
     ``json_output`` — a text-mode or failed run) → ``None`` (the panel shows "no recorded value")."""
     if ref.get("ancestor_path"):
@@ -196,7 +196,7 @@ def _io_detail(path: Path, ref: dict[str, Any], port: str) -> dict[str, Any] | N
         value = substitute_refs(inputs[name], _blob_map(lines))
         if _contains_blob_sentinel(value):
             return None
-        return _io_shape("input", input_payload=_redact({name: value}), output=None)
+        return _io_shape("input", input_payload=redact_sensitive({name: value}), output=None)
     # port == "out"
     trailer = _line_of_kind(lines, "run.complete") or {}
     json_output = trailer.get("json_output")
@@ -206,7 +206,7 @@ def _io_detail(path: Path, ref: dict[str, Any], port: str) -> dict[str, Any] | N
     value = substitute_refs(result[name], _blob_map(lines))
     if _contains_blob_sentinel(value):
         return None
-    return _io_shape("output", input_payload={}, output=_redact({name: value})[name])
+    return _io_shape("output", input_payload={}, output=redact_sensitive({name: value})[name])
 
 
 def _io_shape(node_type: str, *, input_payload: dict[str, Any], output: Any) -> dict[str, Any]:
@@ -283,8 +283,8 @@ def _project(event: dict[str, Any]) -> dict[str, Any]:
         "cost_usd": event_cost(event),
         "tokens": _tokens(llm_call) if isinstance(llm_call, dict) else None,
         "error": event.get("error"),
-        "input": _redact(input_payload),
-        "output": _redact(_output(event)),
+        "input": redact_sensitive(input_payload),
+        "output": redact_sensitive(_output(event)),
     }
 
 
@@ -317,24 +317,6 @@ def _tokens(llm_call: dict[str, Any]) -> dict[str, int]:
     total_in, cache_read = input_token_total(llm_call)
     tokens_out = llm_call.get("output_tokens", llm_call.get("completion_tokens", 0)) or 0
     return {"input": total_in, "output": tokens_out, "cache_read": cache_read}
-
-
-def _redact(obj: Any) -> Any:
-    """Recursively redact secrets by KEY name (``is_sensitive_parameter``), descending every nested dict and
-    list — so a nested ``headers.Authorization`` or a list-of-dicts secret is caught, not just a top-level
-    key. The trace stores RAW resolved secrets (review-C1 Critical), so this is the panel's only redaction.
-    Unlike ``security_utils.sanitize_parameters`` it does NOT truncate long strings — the panel must show the
-    full realized command/prompt. Residual (accepted, Option 1): a secret embedded inside a free-text STRING
-    leaf (``llm_prompt`` / a string ``node_output`` — no key to match) — the same boundary as ``pflow
-    report`` + the on-disk trace, over loopback to the user's own data."""
-    if isinstance(obj, dict):
-        return {
-            key: "<REDACTED>" if isinstance(key, str) and is_sensitive_parameter(key) else _redact(value)
-            for key, value in obj.items()
-        }
-    if isinstance(obj, list):
-        return [_redact(item) for item in obj]
-    return obj
 
 
 def _contains_blob_sentinel(obj: Any) -> bool:

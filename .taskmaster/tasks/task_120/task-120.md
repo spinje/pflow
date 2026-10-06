@@ -30,11 +30,19 @@ next
 > while `pflow save` already knows the shape (it prints `topics='[...]'`). Two additions to the acceptance
 > criteria from that pass: (a) `--validate-only` with supplied inputs must report the same error — it never
 > calls `prepare_inputs()` today (#297's parity gap), so a check placed only there leaves "valid" standing;
-> (b) the coercion `logger.warning` lines stop reaching user output once failures become errors. NOT this
-> task: a `type: string` input holding JSON-object text reaching a `code` node as a dict — that is
-> mis-coercion at template resolution (`engine/template_resolution.py:261-263`, `auto_parse=True`), filed as
-> #686; and the lossy CLI round-trip for declared strings (`02134` → `2134`), filed as #687. Both are the same
-> "declared string not preserved" family and should land coherently with this task (read them first).
+> (b) the coercion `logger.warning` lines stop reaching user output once failures become errors.
+
+> **Scope widened 2026-10-06 (user ruling) — #686 and #687 are part of this task.** One rule is designed
+> once: *a declared input type is honoured at every boundary the value crosses.* Three observed breaks of it:
+> (1) a `type: array` input accepts `tea` and fails later inside the batch node (this task's original case);
+> (2) #686 — a `type: string` input holding JSON-object text reaches a `code` node as a dict (auto-parse at
+> template resolution, `runtime/engine/template_resolution.py:261-263` — **engine contact**, so plan-mode
+> deep-review is mandatory and the build serializes behind Task 118, which edits the same file);
+> (3) #687 — a `type: string` CLI value is type-inferred then stringified back (`02134` → `2134`).
+> Read both issues in full (body + comments) before planning. Task 118 answers the neighbouring question —
+> what a non-string value becomes when bound into a shell step's `env:` — and builds first; this task's rule
+> must agree with it. The rest of this spec predates the widening and Task 154: it needs a rewrite before a
+> planner is launched on it.
 
 ## Problem
 
