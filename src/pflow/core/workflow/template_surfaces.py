@@ -17,6 +17,16 @@ from pflow.core.templates import Template, parse
 
 SurfaceKind = typing.Literal["param", "batch_items", "loop", "carry", "output_source", "cache_var", "cache_prose"]
 
+# (node type, param) pairs whose values bind as text — see ``binds_as_text``.
+_BINDS_AS_TEXT: frozenset[tuple[str, str]] = frozenset({("shell", "env")})
+
+
+def binds_as_text(node_type: str | None, key: str) -> bool:
+    """A Template param whose values bind as text: its leaves are never JSON-parsed
+    (``shell.env``). The consumer-keyed half of the parse decision — Task 120 adds the
+    source-keyed half beside it (#686); replace, do not grow, when it does."""
+    return (node_type, key) in _BINDS_AS_TEXT
+
 
 @dataclass(frozen=True, slots=True)
 class TemplateSurface:

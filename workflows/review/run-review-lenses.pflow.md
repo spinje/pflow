@@ -41,12 +41,12 @@ Optional override: path of the repo or worktree to review. **Leave empty to auto
 Compute the effective working directory once, up front. If `cwd` was passed, use it (resolved to absolute); otherwise auto-detect the git top-level of the directory pflow was invoked from. Relative `cwd` values resolve against the invocation dir, never the workflow file — so a fixed `../..` can't anchor to the repo root; this node removes that dependency and makes the default work from any subdirectory of a checkout. A bad explicit override fails loudly here (cd fails → non-zero exit).
 
 - type: shell
-- inputs:
-    cwd_override: ${cwd}
+- env:
+    CWD_OVERRIDE: ${cwd}
 
 ```shell command
-if [ -n "${cwd_override}" ]; then
-  cd "${cwd_override}" && pwd
+if [ -n "$CWD_OVERRIDE" ]; then
+  cd "$CWD_OVERRIDE" && pwd
 else
   git rev-parse --show-toplevel 2>/dev/null || pwd
 fi

@@ -160,6 +160,84 @@ def code_param_type_diagnostics(node_id: str, params: dict[str, Any]) -> list[Di
     ]
 
 
+def shell_env_diagnostics(node_id: str, params: dict[str, Any]) -> list[Diagnostic]:
+    """Check a shell step's literal ``env:`` map: ERRORs for what cannot bind, WARNINGs for traps.
+
+    Shared by step 9 of ``WorkflowValidator.validate`` and the compiler (ERRORs only).
+    A whole-templated ``env: ${x}`` is checked when the step runs (``bind_env`` in ``prep()``).
+    """
+    env = params.get("env")
+    if isinstance(env, str) and TemplateResolver.has_templates(env):
+        return []
+    from pflow.nodes.shell.env_binding import env_problems
+
+    env_path = f"nodes[id={node_id}].params.env"
+    diagnostics = [
+        _shell_env_diagnostic(
+            Severity.ERROR,
+            node_id,
+            f"Step '{node_id}': {problem.message}",
+            [problem.fix] if problem.fix else [],
+            env_path if problem.name is None else f"{env_path}.{problem.name}",
+        )
+        for problem in env_problems(env)
+    ]
+    if isinstance(env, dict):
+        diagnostics.extend(_shell_env_warnings(node_id, env, env_path))
+    return diagnostics
+
+
+def _shell_env_warnings(node_id: str, env: dict[Any, Any], env_path: str) -> Iterator[Diagnostic]:
+    """A name the shell itself relies on (once per name, any case); a literal YAML boolean."""
+    from pflow.nodes.shell.env_binding import SHELL_OWNED
+
+    warned: set[str] = set()
+    for name, value in env.items():
+        if not isinstance(name, str):
+            continue
+        canonical = name.upper()
+        if (consequence := SHELL_OWNED.get(canonical)) and canonical not in warned:
+            warned.add(canonical)
+            spelled = "" if name == canonical else f", which on Windows is {canonical} (names ignore case there)"
+            fix = f"To pass data, use another name — e.g. TOOL_{canonical}."
+            if canonical == "PATH":
+                fix = (
+                    'To add a directory, leave PATH out of env: and extend it in the command: export PATH="/opt/bin:$PATH" '
+                    f"(env: values are not shell-expanded). {fix}"
+                )
+            yield _shell_env_diagnostic(
+                Severity.WARNING,
+                node_id,
+                f"Step '{node_id}' sets {name} in env:{spelled}, replacing the {canonical} the command inherits "
+                f"— {consequence}.",
+                [fix],
+                f"{env_path}.{name}",
+            )
+        if isinstance(value, bool):
+            word = "true" if value else "false"
+            yield _shell_env_diagnostic(
+                Severity.WARNING,
+                node_id,
+                f"Step '{node_id}': env {name} is the YAML boolean {word} and binds as the text {value}.",
+                [f'Quote it ("{word}") if the command compares text.'],
+                f"{env_path}.{name}",
+            )
+
+
+def _shell_env_diagnostic(
+    severity: Severity, node_id: str, message: str, suggestions: list[str], path: str
+) -> Diagnostic:
+    return Diagnostic(
+        severity=severity,
+        source="validator",
+        title="Validation Error" if severity is Severity.ERROR else "Validation Warning",
+        node_id=node_id,
+        message=message,
+        suggestions=suggestions,
+        context={"category": "validation", "path": path},
+    )
+
+
 class WorkflowValidator:
     """Orchestrates all workflow validation checks.
 
@@ -836,6 +914,8 @@ class WorkflowValidator:
                 diagnostics.extend(WorkflowValidator._validate_agent_params(node_id, params))
             elif node_type == "code":
                 diagnostics.extend(code_param_type_diagnostics(node_id, params))
+            elif node_type == "shell":
+                diagnostics.extend(shell_env_diagnostics(node_id, params))
             elif node_type == "llm":
                 diagnostics.extend(WorkflowValidator._validate_llm_output_schema(node_id, params))
                 llm_diags, display_model, provider_name, forms = WorkflowValidator._validate_llm_model_id_lite(

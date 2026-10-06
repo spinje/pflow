@@ -1,0 +1,11 @@
+Executing workflow (3 nodes):
+  process_title...
+    transform... ✓ 0.0s
+  process_title... ✓ 0.0s
+  process_body...
+    transform... ✓ 0.0s
+  process_body... ✓ 0.0s
+  combine... ✓ 0.0s
+
+✓ Workflow completed in 0.075s
+Workflow trace saved: /var/folders/2f/n1_2xwj17z36v7758t4zx6900000gn/T/tmp.lHmVxkdyh2/.pflow/debug/workflow-trace-dd920eb0-document-processor-20261006-230323-741561.json

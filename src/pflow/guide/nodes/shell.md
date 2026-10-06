@@ -41,6 +41,30 @@ mkdir -p ${output_dir}/images && curl -s ${api_url}/items?limit=${limit}
 ```
 ````
 
+### Environment variables (`env:`)
+
+Bind values in `- env:` and read them in the command as shell variables. A bound value is data: quotes, `$`, backticks and newlines in it are never interpreted by the shell.
+
+````markdown
+### fetch-item
+
+Fetches one page of items from the API.
+
+- type: shell
+- env:
+    ENDPOINT: ${endpoint}
+    LIMIT: ${limit}
+
+```shell command
+curl -s "https://api.example.com/$ENDPOINT?limit=$LIMIT"
+```
+````
+
+- **Names**: UPPER_SNAKE, chosen for the content (`ISSUE_BODY`, not `X`) — letters, digits and underscores, not starting with a digit. Always double-quote the reference: `"$ISSUE_BODY"`. Names the shell itself relies on (`PATH`, `HOME`, `IFS`, …) get a validation warning.
+- **Every value binds as text** — exactly the text `${x}` produces inside a string: a number `3`, a boolean `True`/`False`, null empty, an object or array as JSON (`{"a": 1}`). A string arrives unchanged, JSON-looking or not. Literal YAML values follow the same rule: `DEBUG: true` binds `True` — quote it (`"true"`) when the command compares text.
+- **Large values go through `stdin:`**: the environment has an operating-system size limit (about 1 MB for everything together on macOS). A value over it, or one containing a NUL byte, fails before the command starts.
+- **Masking follows the name**: approval previews and the web UI hide a value whose name contains a credential word (`TOKEN`, `SECRET`, `PASSWORD`, `AUTH`, `CREDENTIAL`, `API_KEY`). Name secrets that way, and keep those words out of ordinary data — `TOKEN_LIMIT: "5"` shows as `<REDACTED>`, so an approver cannot see it.
+
 ### Testing Shell Pipelines
 
 **Testing shell pipelines independently:**

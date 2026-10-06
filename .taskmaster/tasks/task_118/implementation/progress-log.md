@@ -167,3 +167,167 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   report tests; whether the unread-`inputs:` warning is noise on real workflows (watch PZ's real runs).
 - **Phase E:** the Python side already removes chips/edges; the TS work is three small skips plus parity
   rows — if an implementer starts restyling, stop them.
+
+## [2026-10-06 23:05] implementer I1 (Opus) — P0 baseline (head 0177dd4c = b2cd92e3 + origin/main ebf7cab2 + planner notes)
+- Did: ran the four baselines before any edit; hand-captured `examples/nested/document-processor.pflow.md`.
+- Changed: `implementation/baseline/` (new): `document-processor.{command.txt, output.json, stderr.txt, trace.jsonl}`.
+- Verified (executed, this worktree, macOS):
+  - `make test` → **10354 passed, 0 failed** (exit 0, 33 s). Failing set: empty.
+  - `inventory.py` → **428 templated bodies in 128 files** (= §2.5). Per-area rows identical to §2.5 (examples 39/20
+    + 1 python-dict, workflows 2, guide 8+2, docs 3, `src` MCP resources 16, task_159 6, tests 237/34/35/18, code 1+2+1).
+  - `task_159/baseline/verify.sh` → **75 pass / 12 drift / 0 harness errors**; drift set identical to §2.5 by name
+    (02/03, 02/05, 03/05..09, 04/03, 04/09d, 04/09e, 10/03, 12/04-guide-auto-detect).
+  - `task_170/.../capture.py --check` → **29 examples, 1 differing** (`error-handling/typo-on-failed-node` — the
+    `workflow.name` key) (= §2.5).
+  - `document-processor` (fresh HOME, fresh cwd, `title=Hello World`, `body=it's a body`): exit 0; workflow
+    `result` = `IT'S A BODY` (process_body's — confirms TF C1: the templated step never reaches the result), so
+    the trace is stored too; `combine`'s `node_output.stdout` = `Title: HELLO WORLD\nBody: IT'S A BODY`.
+- Deviations/surprises: (1) inventory **shape** counts differ from §2.5 while every total matches: plain 220 (§2.5:
+  190), dotted 134 (131), dotted-hyphenated 37 (35), single-quoted 105 (104); coalesce/index/`$${`/batch/inputs/env
+  identical. Not main moving (the per-area totals are equal) — the shape lines count sites with *at least one* such
+  reference across every corpus incl. history, so the §2.5 figures were likely taken from a different run/subset;
+  not load-bearing for PA, flagged for PC (which uses the shapes). (2) P0 named only command + output for the hand
+  capture; I also stored the trace, because the JSON output cannot show the converted step's result.
+- Self-checks: n/a (no code). test-reflect: not applicable to P0.
+- Next: PA — §4a probe before the engine edit.
+
+## [2026-10-06 23:25] implementer I1 (Opus) — PA `env:` is a working channel (Part 1)
+- Did: D2 binding module, D3 E2BIG translation, D4 static checks (step 9 + compiler), the engine edit
+  (`binds_as_text` → `parses_leaves`, `TemplateConfig.node_type`), Interface line, the two tooling workflows
+  (exactly the PA edit — diff is 4 lines each), guide section, three CLAUDE.md lines, the coercion-doc sentence,
+  PA tests 1–11. [RULING, orchestrator, importance 1] PA's Files line names `ParamMode`/`param_mode`; D1 says
+  Part 1 ships `binds_as_text` only → **shipped `binds_as_text` only** (no caller for `param_mode` until Part 2).
+- Changed: `nodes/shell/env_binding.py` (new); `nodes/shell/shell.py` (prep binds, exec merges + E2BIG,
+  `exec_fallback` re-raises `PflowError`, `_env_key` for the Windows env, Interface line);
+  `core/workflow/template_surfaces.py` (`binds_as_text`); `runtime/engine/{types.py, template_resolution.py}`;
+  `runtime/compilation/compiler.py`; `core/workflow/validator.py` (`shell_env_diagnostics` + step-9 branch);
+  `workflows/{search/run-searcher, review/run-review-lenses}.pflow.md`; `guide/nodes/shell.md`;
+  `{nodes, core/workflow, runtime/engine}/CLAUDE.md`; `architecture/core-concepts/data-type-coercion.md`;
+  tests: `tests/test_nodes/test_shell/test_env_binding.py` (44), `tests/test_integration/test_shell_env_binding.py`
+  (53), 4 `shell_env` rows (8 items) in `test_template_parity.py`.
+- Verified (executed, macOS):
+  - Gate: `make check` green; `make test` **10459 passed / 0 failed** (P0: 10354 → +105, all new; failing set
+    still empty); `make test-e2e` 52 passed / 2 skipped. `verify.sh` drift set identical to P0 by name (75/12/0);
+    `12-…/04-guide-auto-detect` (already drifting) now also shows the new guide section + Interface line — explained.
+    `capture.py --check` 29 / 1 differing (= P0).
+  - Measure first: §4a probe BEFORE the edit reproduced the checkpoint text (`✓ Workflow is valid`, then
+    `Command failed with exit code -2: expected str, bytes or os.PathLike object, not int`).
+  - **Mutation (PA test 2):** restored `auto_parse=isinstance(template, (dict, list))` at the resolver →
+    exactly 3 red: `TestJsonLookingTextStaysText::test_bound_directly_from_upstream`, `…as_a_batch_item`,
+    `test_template_parity …[shell_env_compact_json_string]`; restored from a byte copy (`cmp` clean). Extra
+    seam mutations, all restored by byte copy: dropping `node_type=` in the compiler → the same 3 red (the
+    `""` default cannot hide a forgotten pass); `exec_fallback` swallowing `PflowError` → 3 red (E2BIG rows +
+    the fallback unit); `EnvBindingError.retriable` removed → 4 red (continue-batch prep count, E2BIG spawn
+    count, the attribute pin).
+  - Real surface, checkpoint §4 AFTER (`uv run pflow`, worktree):
+    - 4a `env: {PORT: 8080, N: "${count}"}` count=3 → valid; run prints `port=8080 n=3`.
+      `env: {DEBUG: true}` → valid + `⚠ [show] Step 'show': env DEBUG is the YAML boolean true and binds as
+      the text True.` / `→ Quote it ("true") if the command compares text.`; run prints `debug=True`.
+    - 4b `{my-var: hello}` → validate-only and run both: `Error 1: Validation Error` / `Step 'show': env name
+      'my-var' cannot be read as a shell variable.` / `At: node 'show', nodes[id=show].params.env.my-var` /
+      `→ Use letters, digits and underscores, not starting with a digit — e.g. MY_VAR — and read it as
+      "$MY_VAR" in the command.` (= ruled text).
+    - 4c `{Path: a, PATH: b}` → `Step 'show': env names 'Path' and 'PATH' differ only by case — on Windows they
+      are one variable.` / `At: …params.env` / `→ Keep one of them.` plus ONE clobber warning (see deviations).
+    - 4d `{PATH: /opt/bin}` → valid + the ruled warning and fix verbatim; run completes with the warning.
+    - 4e literal `[A=1]` → `Step 'show': env must be a map of NAME: value — got a list.`; whole-templated
+      `env: "${up.result}"` resolving to `"A=1"` → run: `env must be a map of NAME: value — got a str.`
+    - 4f NUL (from an upstream code step) → `Error: Validation Error` / ruled NUL text verbatim / `At: node
+      'show'`. 1.2 MB upstream value under `ignore_errors: true` → `The command could not start: … (largest:
+      BODY 1.2 MB bound in env:, the command 27 bytes). Pass large values through stdin instead and remove them
+      from env: — on macOS the limit is about 1 MB for everything together.` — the run fails (not swallowed).
+  - Searcher offload, converted workflow, two real runs (effort=low, trivial prompt), both `success`:
+    without `cwd` → trace `resolve-cwd` env `{'CWD_OVERRIDE': ''}`, stdout
+    `/Users/andfal/projects/pflow-worktrees/feat-task-118-shell-env-binding`, answer names that root;
+    `cwd=/Users/andfal/projects/pflow` → env `{'CWD_OVERRIDE': '/Users/andfal/projects/pflow'}`, stdout and
+    answer `/Users/andfal/projects/pflow`. `run-review-lenses` validated only (its real run is Part 1's gate).
+  | Assumed / unverified: every Windows leg (D8-1..4, the win32 merge in real Git Bash) — CI only; the Linux
+  per-value refusal at 200 KB (D8-4 linux leg asserts it; ubuntu CI confirms).
+- Deviations/surprises:
+  1. `env_problems` returns `list[EnvProblem]` (frozen dataclass: `name`, `message`, `fix`) instead of D2's
+     `list[tuple[str | None, str]]` — the ruled text has the fix as a separate `→` line at validation but inside
+     the sentence at run time (batch errors carry only `str(exc)`), so the fix had to travel separately.
+     `EnvProblem.sentence()` is the run-time form. Importance 1.
+  2. Compiler: `_reject_non_string_code` renamed `_reject_static_param_errors` and now dispatches code AND
+     shell (ERRORs only) — one site instead of a second sibling; no external references existed.
+  3. 4e run-time text is `env must be a map of NAME: value — got a str.`, not the checkpoint's
+     `…; ${cfg.env} resolved to a str.` — the node sees only the resolved value, never the template text;
+     naming it would need engine plumbing for one message. The `At: node 'show'` line carries the location.
+  4. 4d: the checkpoint gave the full text for PATH and only per-name phrases for the rest. Built as
+     `Step 'X' sets NAME in env:, replacing the NAME the command inherits — <consequence>.` + `→ To pass data,
+     use another name — e.g. TOOL_NAME.`; a lower-case spelling adds `, which on Windows is PATH (names ignore
+     case there)` (on POSIX `path` is its own variable — the warning would otherwise be false there). Warned once
+     per canonical name (the first real run of 4c showed one warning per spelling — noise; deduped + pinned).
+  5. Dropped `node_type` from the diagnostics' context: the renderer printed an extra `Node type: shell` line the
+     ruled layout does not have.
+  6. `AMBIENT_NAMES` (D2) got its caller now: an invalid name's suggestion that lands on an ambient name gets
+     `_VALUE` (`bash-env` → `BASH_ENV_VALUE`), so it does not ship caller-less.
+  7. The E2BIG message names a Linux limit ("one value can be at most 128 KB") — checkpoint §4f says only the
+     current platform's limit is named; the figure is the kernel's `MAX_ARG_STRLEN` hypothesis, confirmed only
+     when ubuntu CI's D8-4 leg passes. Windows names no limit (no branch, per D3).
+  8. **Expect `tests-windows` to show D8-4** as either a pass (bound, or a translated refusal) or a red
+     assertion whose message carries the observed outcome (a non-E2BIG OSError → today's `-2` path). A pass on
+     win32 emits a `D8Observation` warning into the pytest warnings summary, so the outcome is in the CI log
+     either way. A D8-1..3 red is CP-2, not to be worked around.
+  9. Scratchpad: the session scratchpad dir is shared (a probe file vanished mid-run) — my scratch moved to
+     `scratchpad/i1-t118/`; no effect on deliverables.
+  10. `docs/reference/nodes/shell.mdx` still reads "Additional environment variables" — PF's surface, untouched.
+- Self-checks: fully-happy pass run before handback — doubts raised and fixed: the 4c double warning (deduped,
+  test added), the stray `Node type:` line (removed), `AMBIENT_NAMES` without a caller (given one). Remaining
+  honest doubt: D8-2's Windows leg greps `env` output for `^path=` case-insensitively — if MSYS exports both a
+  `PATH` and the authored `Path`, that leg goes red, which is exactly the CP-2 signal it exists to give.
+  test-reflect: **left for the orchestrator to direct** (not run).
+- Next: Part 1 close-out (task orchestrator). Hand-back note carried from the plan: converting the two tooling
+  workflows changes their content hash — a paused/failed run of either started before the merge resumes only
+  with `pflow resume --force`.
+
+## [2026-10-06 23:50] implementer I1 (Opus) — PA self-checks (directed): test-reflect + "fully happy?"
+- Did: applied `.claude/commands/test-reflect.md` to PA's tests (`test_env_binding.py`, `test_shell_env_binding.py`,
+  the `shell_env` parity rows); answered the fully-happy question below.
+- Changed: the three test files only (no `src/` change).
+- Verified: `make check` green; `make test` **10458 passed / 0 failed** (10459 − 2 parity items + 1 control test).
+  New mutations, each restored from a byte copy (`cmp` clean), counted reds: **M1** binding moved from `prep()` into
+  `exec()` → 4 failed (the two unbindable-value rows, the whole-name row, the continue batch); **M3** `bind_env`
+  drops `None` values instead of binding them empty → 4 failed. Before the deepening, M3 passed every integration
+  row (`""` from an unbound variable equals `""` from an empty one).
+- Self-checks: **test-reflect (directed):**
+  - DEEPENED `TestBindingFailures._assert_failed_before_spawn`. **Fake-pass found:**
+    `"exit_code" not in shared_after.get("s", {})` was vacuous, because a failed step's namespace is gone (the record
+    moves to `__failures__`). It now reads `__failures__["s"]` and asserts `category == "exception"` and no
+    `exit_code` in its `data`. A new control, `test_a_command_failure_records_its_exit_code_in_the_same_record`
+    (`exit 3` → `("shell_failure", 3)`), shows that same record can carry an exit code.
+  - DEEPENED the one-attempt count. The fixture went from `prep_calls` to `attempts`, which spies both `prep()` and
+    `exec()`. `prep()` is never retried by `Node._exec`, so a prep-only count could not fail on retry; `exec()`
+    is the retried, spawning phase. The rows assert `["prep"]` (no exec). The continue batch asserts
+    `["prep","exec","prep","prep","exec"]` (item 1 is never spawned even with `max_retries: 3`) plus
+    `status is DEGRADED`. The `if item` filter on `results` was removed (results hold successes only).
+  - DEEPENED `TestEveryValueBinds` (literal / input / upstream / unset optional). The command now also prints
+    `env | grep -c "^V="`, and each row expects `<text>|1`, so a value bound as empty is told apart from one
+    never bound (M3).
+  - DEEPENED D8-2's first leg with a control spawn. Without a PATH binding, the inherited sentinel must appear in
+    the child's PATH line, so the win32 "sentinel absent" assertion is no longer free. Sentinel and marker are
+    now real directories, so no layer can drop them as dangling. The win32 leg can fail: one-line count, marker
+    presence, sentinel absence, plus the `grep` spawn needs the support paths. D8-1, D8-3 and D8-4 already
+    paired absence with presence (`stdout == value` beside "marker not created"; D8-4's `exit_code != -2`
+    beside an exact outcome per branch).
+  - DEEPENED `test_a_quoted_or_templated_value_does_not_warn`. It now pairs in-test with a literal boolean in the
+    same map and asserts the only warning is `env.LITERAL`; before, it relied on a sibling test for the medium.
+  - DELETED the `retriable` / `batch_fatal` attribute pins in the node unit test (renamed
+    `test_the_error_renders_as_a_validation_error_on_env`, which keeps the title/param pin). Behaviour through the
+    engine already kills both (PA mutation B: 3 behavioural reds), so the pins only restated the implementation.
+  - DELETED parity row `shell_env_object`. It duplicated the non-string archetype (`shell_env_non_string`) and the
+    integration value table; the plan's three rows remain.
+  - Kept as is, checked: the validate-only/run pairs. The `_validate(...)[0] == []` halves are agreement checks,
+    not shipped-ness evidence (validation passed before this task too). The run halves, the compiler
+    `wrapped_diagnostics` equality, and the `${cfg}` run-time sentence are the discriminating parts. Also kept:
+    memo-key (presence via the cache-hit count), injection (stdout == value beside marker absence), and the JSON
+    rows (PA mutation).
+  **Fully happy?** Yes for macOS/Linux behaviour; the honest loose ends are all on Windows, and the plan already
+  routes them:
+  1. D8-4 on win32 may be red (a non-E2BIG OSError → today's `-2` path) until the branch is written from CI.
+  2. D8-2 may show MSYS exporting both spellings. That is CP-2 by design.
+  3. Several integration tests (memo `COUNTER`, injection `cwd`) pass a Windows path through `env:`, so they share
+     D8-1's fate on `tests-windows`. If D8-1 is red, expect them red too; that is the same root cause, not
+     separate bugs.
+  4. The Linux 128 KB wording in the E2BIG message is confirmed only by ubuntu CI's D8-4 leg.
+- Next: orchestrator commits; completion gate.

@@ -44,6 +44,7 @@ this sense.
 |---|---|
 | Lifecycle/retry primitives | `src/pflow/core/node.py` |
 | Shell and HTTP behavior | `shell/shell.py`, `http/http.py` |
+| Shell `env:` binding (names, value → text, the OS size refusal) | `shell/env_binding.py` — `prep()` binds, so every entry path binds alike; the validator and compiler reuse `env_problems` |
 | LLM invocation and schema handling | `llm/llm.py`, `llm/schema_validation.py` |
 | File operations | `file/` (one implementation per operation) |
 | Python code execution and next-action routing | `python/python_code.py:PythonCodeNode` |
