@@ -331,3 +331,19 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
      separate bugs.
   4. The Linux 128 KB wording in the E2BIG message is confirmed only by ubuntu CI's D8-4 leg.
 - Next: orchestrator commits; completion gate.
+
+## [2026-10-07 00:05] task orchestrator (Opus) — Part 1 phase work committed; completion gate commissioned
+- Did: verified I1's handbacks independently (`make check` green, `make test` 10458 passed); accepted PA deviations
+  1–10 as logged (the 4e run-time text delta goes in the PR body); committed `ea34cfb5`; `make test-all-local` →
+  10510 passed / 2 skipped.
+- Gate (code mode, `origin/main...HEAD`), lenses by the deep-review trigger table: sensitive paths (engine,
+  `nodes/shell/`) ⇒ `silent-failures`, `impact-completeness`, `feature-interactions`, `test-fidelity`; validator +
+  runtime twin ⇒ `validation-consistency`; new messages + guide ⇒ `agent-ux`; subprocess env ⇒
+  `concurrency-safety`; **plus `review-simplicity`** — a deliberate addition to the plan's Part 1 list (the plan
+  deferred it to Part 2): Part 1 merges alone and Task 120 inherits `env_binding.py` before Part 2 exists, so its
+  final-code simplicity is reviewed now (counts are floors). `spec-conformance` stays with Part 2 (never mid-task).
+  Dimension lenses scoped per seam; cross-cutting lenses see the whole diff. Gate-runner: I1 (holds the code).
+  Dispatch through the CONVERTED `run-review-lenses.pflow.md` with an explicit `cwd` override — that run is the
+  spec's required real exercise of the fan-out. `review-falsifier` launched by me directly, LAST, after the
+  reading battery's fixes land.
+- Next: I1 runs the fan-out, evaluates, fixes, logs every disposition.
