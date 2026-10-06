@@ -439,6 +439,72 @@ def test_step_that_began_on_an_earlier_visit_still_needs_confirmation(home, tmp_
     assert out.read_text(encoding="utf-8").splitlines() == ["fired x"]  # nothing re-fired
 
 
+# `k` fires in the first run; `m` (gated) fails and its back edge re-runs `x`, which now yields
+# nothing, so `k` fails before starting. In the approved attempt `k` was RESTORED (a re-record with
+# no node.start, standing for the first run's execution) — resuming that attempt re-runs `k` from
+# the restored visit, so it began.
+_RESTORED_ENTRY_WF = """# Restored Entry Demo
+
+A side-effecting step restored by a resumed attempt, then re-entered by a back edge.
+
+## Steps
+
+### x
+
+The first run yields a value; later runs yield nothing.
+
+- type: code
+- cache: false
+- next: k
+
+```python code
+import os
+first = not os.path.exists({marker!r})
+open({marker!r}, "a", encoding="utf-8").close()
+result: dict = {{"p": "a"}} if first else {{}}
+```
+
+### k
+
+Fire the side effect.
+
+- type: shell
+
+```shell command
+echo "K fired ${{x.result.p}}" >> {out}
+```
+
+### m
+
+A gated step that fails and retries via x.
+
+- type: shell
+- approval: required
+- on-error: x
+
+```shell command
+exit 1
+```
+"""
+
+
+def test_entry_restored_by_a_resumed_attempt_still_needs_confirmation(home, tmp_path):
+    out = tmp_path / "ledger.txt"
+    wf = tmp_path / "restored.pflow.md"
+    wf.write_text(_RESTORED_ENTRY_WF.format(marker=str(tmp_path / "marker"), out=out), encoding="utf-8")
+    paused = _runner().invoke(cli, [str(wf)])
+    assert paused.exit_code == 4, paused.stderr
+    token = re.search(r"Resume token: (\S+)", paused.stdout + paused.stderr)
+    assert token, paused.stdout + paused.stderr
+    _, attempt_id = _run_hint(["resume", token.group(1), "--approve", "yes"])
+    assert out.read_text(encoding="utf-8").splitlines() == ["K fired a"]  # k fired once, in the first run
+
+    result = _runner().invoke(cli, ["resume", attempt_id])
+    assert result.exit_code == 1
+    assert "Resuming re-runs step 'k' (a shell step)" in result.stdout + result.stderr
+    assert out.read_text(encoding="utf-8").splitlines() == ["K fired a"]  # nothing re-fired
+
+
 # A batched sub-workflow host never writes a top-level node.start (the engine skips begin_node
 # for WorkflowExecutor; batch items never descend), so its missing start proves nothing.
 _BATCH_CHILD_WF = """# Ledger Child

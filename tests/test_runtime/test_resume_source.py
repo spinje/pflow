@@ -1160,6 +1160,22 @@ def test_an_earlier_visit_that_began_is_re_run_too(tmp_path: Path) -> None:
     assert entry_never_started(_raw_source(tmp_path, lines)) is False
 
 
+def test_a_restored_visit_of_the_entry_is_no_proof(tmp_path: Path) -> None:
+    """Re-falsification: in a resumed attempt the entry's restored re-record (it ran and fired in
+    the earlier attempt) has no node.start either. A back edge then fails the entry again before
+    starting; the next resume re-runs from the restored visit, so the entry began."""
+    lines = [
+        _event("x", 0, "cached", restored=True),
+        _event("k", 1, "cached", restored=True),
+        _start("m", 2),
+        _event("m", 2, "failed"),
+        _start("x", 3),
+        _event("x", 3, "success"),
+        _event("k", 4, "failed"),
+    ]
+    assert entry_never_started(_raw_source(tmp_path, lines, entry="k")) is False
+
+
 def test_a_trace_predating_node_start_proves_nothing(tmp_path: Path) -> None:
     """`node.start` and the meta `content_hash` arrived together (Task 173): no hash, no markers."""
     assert entry_never_started(_raw_source(tmp_path, [_event("save", 1, "failed")], content_hash=None)) is False
@@ -1176,6 +1192,7 @@ def test_a_child_start_with_the_same_id_never_pairs_with_a_top_level_event(tmp_p
         ([_event("save", 1, "failed")], None),  # between-nodes source: no entry to prove anything about
         ([_start("produce", 0), _event("produce", 0, "success")], "save"),  # entry never recorded
         ([{"kind": "event", "node_id": "save", "parent_id": None, "status": "failed"}], "save"),  # no id
+        ([_event("save", 1, "cached")], "save"),  # a cache hit stands for an earlier execution
     ],
 )
 def test_anything_short_of_proof_reads_as_started(

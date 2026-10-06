@@ -382,33 +382,45 @@ def entry_never_started(source: ResumeSource) -> bool:
 
     ``begin_node`` flushes a top-level ``node.start`` before a step's prep/exec, and the step's
     terminal ``event`` reuses that line's ``id``; a failure raised earlier (template resolution, a
-    loop-carry error) records its ``event`` with no ``node.start``. The resume re-runs from the
+    loop-carry error) records a FAILED ``event`` with no ``node.start``. The resume re-runs from the
     entry's first event at ``entry_iteration`` or later (``_resumes_from``, the seed slice's own
-    cut) — so that event must be unpaired AND no later ``node.start`` of the entry may follow (a
-    re-entered visit that began). Traces without ``content_hash`` predate ``node.start`` (both
-    arrived with Task 173) and prove nothing. Anything short of the proof reads as started.
+    cut), so from there on every line of the entry must be exactly that: a failed, unpaired event.
+    A ``node.start`` (a visit that began) or any other event — a ``restored`` re-record or a cache
+    hit, which stand for a run that executed earlier, also unpaired — is no proof. Traces without
+    ``content_hash`` predate ``node.start`` (both arrived with Task 173) and prove nothing either.
     """
     entry = source.entry_node_id
     if entry is None or source.content_hash is None:
         return False
-    first_iteration = source.entry_iteration or 1
-    started_ids: set[int] = set()
-    cut: dict[str, Any] | None = None
     try:
-        for line in _iter_raw_trace_lines(source.path):
-            if line.get("parent_id") is not None or line.get("node_id") != entry:
-                continue
-            if line.get("kind") == "node.start":
-                if cut is not None:
-                    return False
-                if isinstance(line.get("id"), int):
-                    started_ids.add(line["id"])
-            elif line.get("kind") == "event" and cut is None and _resumes_from(line, entry, first_iteration):
-                cut = line
+        lines = [
+            line
+            for line in _iter_raw_trace_lines(source.path)
+            if line.get("parent_id") is None
+            and line.get("node_id") == entry
+            and line.get("kind") in ("node.start", "event")
+        ]
     except (OSError, ValueError):
         return False
-    cut_id = cut.get("id") if cut is not None else None
-    return isinstance(cut_id, int) and cut_id not in started_ids
+    first_iteration = source.entry_iteration or 1
+    cut = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if line.get("kind") == "event" and _resumes_from(line, entry, first_iteration)
+        ),
+        None,
+    )
+    if cut is None:
+        return False
+    started_ids = {line.get("id") for line in lines[:cut] if line.get("kind") == "node.start"}
+    return all(
+        line.get("kind") == "event"
+        and line.get("status") == "failed"
+        and isinstance(line.get("id"), int)
+        and line["id"] not in started_ids
+        for line in lines[cut:]
+    )
 
 
 def _apply_gate_resolutions(path: Path, events: list[dict[str, Any]]) -> None:
