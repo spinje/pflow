@@ -20,13 +20,11 @@ braindumps); routing: `sessions/INDEX.md`. Every claim here is a pointer to veri
   the push CI for it was in progress at close (GitHub Actions had an open incident all day — read the failing
   step's log before calling a red run a regression).
 
-## UNCOMMITTED on main (the user is reviewing locally — DECISIONS #5: commit only on their word)
+## Committed by the user
 
-- 23 paths: the deep-review skill rewrite + release skill + ORCHESTRATION + lane-implementer/task-orchestrator/
-  review-spec-conformance/review-simplicity/review-falsifier defs (+ `.codex`/`.agents` mirrors) · root
-  `CLAUDE.md:184` (`docs/`) · `context/adr/0016-118-shell-node-inputs-binding.md` (NEW, context-free-reviewed) ·
-  `context/CONTEXT.md` (Resume) · specs 99/111/118/120/121/170 · `start-orchestration.md` (interim sentence) ·
-  orchestration state files. `git status --short` is the truth; nothing here rides a PR.
+- The session-10 doc set (skill rewrite, defs, CLAUDE.md, ADR-0016, specs, state files) landed as the user's own
+  commit `0d935987` "docs: session 10 docs". The 118 spec + ADR-0016 are therefore on main — the next session's
+  118 planner needs NO prep commit, only a push check (`git status -sb` vs `origin/main`).
 
 ## Recently shipped (session-10, 2026-10-05 → 10-06)
 
@@ -37,7 +35,7 @@ braindumps); routing: `sessions/INDEX.md`. Every claim here is a pointer to veri
 
 ## Next session, recommended order (NOT yet user-agreed)
 
-1. **Prep commit** of the 118 spec + ADR-0016 (after the user's review), then **Task 118 planner** (lane A, Fable):
+1. **Task 118 planner** (lane A, Fable; spec + ADR-0016 committed in `0d935987`):
    shell `env:` binding, bodies untemplated, `|json` filter — its trigger (#678 merged) is met.
 2. Engine seam is QUIET now → the lanes serialized behind 179 are free: **#690** (fix-then-resume refused
    twice) · **#458** (`--only` inputs ignored, re-observed) · **#503** + `batch_executor.py:1190` (engine vanilla
@@ -46,6 +44,10 @@ braindumps); routing: `sessions/INDEX.md`. Every claim here is a pointer to veri
 4. Lane-B fill, disjoint: **#696/#697** (security: unmasked `<X>_KEY`; `report` renders secrets) · **#685** (MCP
    `Error: Error` + Windows smoke flake root cause) · **#684** (structured node suggestions — show-before-code)
    · **#520/#681** (validator seam, now free) · **#706** (fan-out `target` — a QUIET moment, shared tooling).
+   · **#714 then #656** (web UI, Fable, screenshots before ship): #714 pins Approve/Deny out of the gate panel's
+   scroll; #656 (REOPENED by the user post-close) adds "iteration N of M" + "Approve all remaining" — the limit
+   needs a `GateRequest` field from `runtime/engine/gate.py` → engine contact, route as a small task or a scoped
+   engine exception (precedent #615).
 5. **Release v0.16.0** — ASKED THREE TIMES, NOT ANSWERED (s10). 43+ commits since v0.15.1. Do not nag; surface
    once with the dogfood pass as the pre-release gate (release skill now requires it).
 6. Task 178 (MCP SDK 2.x; refresh its research — PyPI is at 2.3.0, research pinned 2.2.0).
@@ -65,7 +67,6 @@ braindumps); routing: `sessions/INDEX.md`. Every claim here is a pointer to veri
   base — never (DECISIONS #5/#31).
 - **#665** (`save --force` data loss) — user: *"save isnt a top tier feature right now all uses ive had myself
   has been in a local repo"*; reopens when saved-library use becomes real (external users, or the user saves).
-- #656 approve-all button — ruled NOT BUILT with Task 179 (design in its plan §4 P4b); reopens on a user ask.
 - Task 179 final-step loop escalation pause — ruled (b); (c) via `resume_after` is its own future ruling.
 - #624 shape 2 · retired gemini ids · shell lint / H1 check / PR-title gate / searcher eval harness /
   `Blocked by:` field / DECISIONS index split / agent-file fact checker — triggers unchanged.
@@ -87,4 +88,4 @@ braindumps); routing: `sessions/INDEX.md`. Every claim here is a pointer to veri
 - Screenshot suite fails loudly on no-settle (`allow_empty` opt-in) — a red run is signal. `chrome-devtools` pinned `@1.10.1`.
 - `stash@{0}` (Task 125 WIP) is the user's — lanes never `git stash`.
 - Agent defs/skills in the MAIN checkout are read live by agents launched from the session (ORCHESTRATION
-  "Collision analysis") — the uncommitted set above IS what the next launch reads.
+  "Collision analysis") — committed or not.

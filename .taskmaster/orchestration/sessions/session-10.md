@@ -433,3 +433,20 @@ _Tacit residue only — rulings, ships and board state live above, in CURRENT-ST
 - ASSUMPTION: the kill-by-name fix in the two defs is the right HOME (trigger-point); ratification pending.
 - NEEDS VERIFICATION: #92 item 2 (array-typed MCP param not JSON-parsing a string) end to end against a real
   server; #685's "cleanup exception replaces the TimeoutError" hypothesis (Windows only).
+
+## [2026-10-06, after close] User reviewed the #656 checkpoint page → [RULING] *"yes go ahead, file the issues and then update the relevant docs"*
+
+- User, on the published page: *"it seems like the button is only visible if you scroll down, also im not sure I
+  undertstand why we dont want an accept all button?"* + *"did we file this?"* (the long-id layout note). OWNED:
+  (1) the checkpoint's own screenshot showed Approve/Deny hidden below the gate panel's scroll fold and I published
+  it without calling it a headline-flow bug; (2) I left the layout note as "file if you want" and never asked;
+  (3) my "not now" ruling, collapsed under the grant, rested on three weak reasons — the third ("the panel doesn't
+  show the limit") argued for showing the limit, not against the button. The user's lens caught it on first read.
+  Lesson shape (same family as the interim rule): a checkpoint collapsed under a grant still gets SHOWN to the user
+  at the next contact, and a "side note" in a producer's page that makes the primary action invisible is not a
+  side note.
+- Filed **#714** (gate panel: buttons below the fold; long id crowds the header; ships first). REOPENED **#656**
+  with the wider scope (iteration "of N" / "of up to N" + "Approve all remaining"; the limit needs a `GateRequest`
+  field from the engine's gate builder → engine contact). Docs updated: 179 spec (outcome line), 179 task-review
+  (ruling reversed, pointer), CURRENT-STATE (struck from "do not re-raise", added to the next-session fill).
+  The user had already committed the session doc set as `0d935987`; these four edits are uncommitted.

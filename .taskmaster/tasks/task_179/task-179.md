@@ -89,6 +89,9 @@ Persist loop position in the trace, restore it on resume, and let one pausabilit
 - **#656's "approve all remaining rounds" button is decided here, once**, in this task's UI pass:
   with per-round pause working, the ordinary Approve finishes a gated loop; the convenience is
   built only if the user still wants it after seeing the per-round flow (show-before-code).
+  **Outcome:** ruled "not built" at the checkpoint under a session grant, then REVERSED by the user on
+  seeing the page (2026-10-06) — the button, plus showing the loop's limit ("iteration 1 of 3"), is #656
+  reopened; it ships after #714 (the gate panel's Approve/Deny below the scroll fold).
 - The user's governing lens, verbatim: *"We should prioritize simplicity of the FINAL code, not
   how easy it is to get there. When in doubt we should ask ourselves whats the right solution that
   the top 10% of codebases similar to this one would implement, have we considered it yet? What

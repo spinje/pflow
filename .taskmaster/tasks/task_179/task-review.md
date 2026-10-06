@@ -2,7 +2,7 @@
 
 ## Metadata
 - Implemented 2026-10-05 → 2026-10-06 on `feat/task-179-durable-loop-position`. Planner: Fable. Orchestrator: Opus. P1–P3 and every gate-fix round: one Opus implementer. P4 (web): Fable.
-- Closes #659. #656 was folded in here and ruled **not built**. Supersedes #615's iteration-1-only pause rule (PR #655). Trace format **2.7.0 → 2.8.0**.
+- Closes #659. #656 was folded in here; its button was not built (ruling later reversed — #656 reopened). Supersedes #615's iteration-1-only pause rule (PR #655). Trace format **2.7.0 → 2.8.0**.
 - The journey (rulings verbatim, gate dispositions, mutation evidence, real-surface transcripts) is in `implementation/progress-log.md`. The design rationale is in `implementation/implementation-plan.md` §3 and in ADR-0010's Task-179 amendment.
 
 ## Read First — the load-bearing block
@@ -36,7 +36,7 @@ The plan's P1–P4 shipped as written. These deviations carry the knowledge:
   - **Pre-2.8.0 traces** keep the binary-placeholder scan (`_predates_lossy_marker`).
   - **User-visible:** a resume whose restored upstream value would have been silently coerced now refuses with the field named, for non-loop resumes too.
   - **Deliberate strictness (ruled; falsifier round 2 confirmed it by execution):** the refusal is per EVENT, not per field read. A `datetime` stamped beside the data a downstream step actually reads still blocks failure-resume, and keeps a later gate from pausing; on `main` those runs resumed. The remedy is printed (make the result JSON-native). Option (a), refusing only when a marked path is actually referenced, was considered and not built. It would need reference tracking across carry and templates, which is a second analysis beside the seed derivation. Revisit only on an observed user complaint.
-- **Not built, by ruling:** #656's "approve all remaining iterations" button. Its design stays in plan §4 P4b; note that `max_iterations` is not on the wire.
+- **Not built in this task:** #656's "approve all remaining iterations" button. The checkpoint ruling ("not now") was reversed by the user after the merge: #656 is reopened as the button + the loop's limit in the gate ("iteration 1 of 3" / "of up to 3"), shipping after #714 (Approve/Deny below the gate panel's scroll fold — visible in this task's own checkpoint screenshots). The design is plan §4 P4b; the limit is not on the wire yet — it must be added to `GateRequest` at the engine's gate builder (`runtime/engine/gate.py`), which is engine contact.
 - **Not built, by ruling:** a final-step loop escalation still cannot pause (ruling (b)); `approval.md` says the re-fork recipe needs a step after the loop.
 - `_fully_answered_gate_ids` was KEPT. It states answer-vs-occurrence multiplicity, which continuation makes more true, not less.
 
