@@ -88,7 +88,7 @@ The failed step runs **again** from the start (for a loop step: the failed itera
 
 ### Values the saved run cannot restore
 
-The saved run stores JSON. If a completed step's result is not JSON-native — a `code` step returning a set, a date, a `Decimal`, bytes, a dict with non-string keys, or a nested `__`-prefixed key — the saved copy differs from what the step produced, so resume **refuses** instead of continuing with different data. The error names the step and the field (e.g. `result.tally.1: non-string key (int)`). Fix: make the step's result JSON-native (`str(dt)`, `sorted(s)`, string keys) or re-run from the start. A gate whose later resume would hit this does not pause — the run fails at the gate with the reason; answer it in the same run (`--auto-approve <step>`, or interactively).
+The saved run stores JSON. If a completed step's result is not JSON-native — a `code` step returning a set, a date, a `Decimal`, bytes, a dict with non-string keys, or a nested `__`-prefixed key — the saved copy differs from what the step produced, so resume **refuses** instead of continuing with different data — even when nothing downstream reads that field (e.g. a `datetime` stamped beside the data). The error names the step and the field (e.g. `result.tally.1: non-string key (int)`). Fix: make the step's result JSON-native (`str(dt)`, `sorted(s)`, string keys) or re-run from the start. A gate whose later resume would hit this does not pause — the run fails at the gate with the reason; answer it in the same run (`--auto-approve <step>`, or interactively).
 
 ### Restored `${node.prompt}` / `${node.system}` caveat
 

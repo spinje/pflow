@@ -38,8 +38,9 @@ logger = logging.getLogger(__name__)
 # cached-status events a resumed run re-recorded from its source trace. 2.7.0 (Task 171, additive)
 # adds the durable gate pause: ``final_status: "paused"`` plus ``paused_node_id`` and ``gate_request``
 # on the ``run.complete`` trailer. 2.8.0 (Task 179, additive) records loop position: ``iteration`` on
-# every loop-node event and on its ``gate`` lines, and inside ``gate_request``. Consumers gate on
-# ``startswith("2.")``; old traces remain readable.
+# every loop-node event and on its ``gate`` lines, and inside ``gate_request``; and ``lossy`` on an event
+# (and batch item) whose ``node_output`` the trace could not store unchanged — resume never seeds it.
+# Consumers gate on ``startswith("2.")``; old traces remain readable.
 TRACE_FORMAT_VERSION = "2.8.0"
 
 # Keys the ENGINE writes into a node's output namespace, which the trace drops on purpose

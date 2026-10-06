@@ -87,7 +87,7 @@ The failed run prints the exact command to use (`To resume from the failed step:
 | `--dry-run` | Preview the resumed tail's cost and cache plan (from the failed step onward) without running |
 | `KEY=VALUE` | Override the original run's inputs |
 
-The failed step runs again from the start (a loop step: its failed iteration — completed iterations are restored), so if it already partly side-effected (an HTTP POST that sent but timed out on the response), resuming re-fires it — at-least-once execution. A side-effecting step (`shell`/`code`/`agent`/file-ops/`mcp`) asks for confirmation at a terminal and refuses for non-interactive agents unless you pass `--force`; an idempotent `llm` step resumes silently. See [`pflow guide resume`](/reference/cli/guide) for the full behavior (loop continuation, gate re-prompting, top-level granularity, interrupted-run handling).
+The failed step runs again from the start (a loop step: its failed iteration — completed iterations are restored), so if it already partly side-effected (an HTTP POST that sent but timed out on the response), resuming re-fires it — at-least-once execution. A side-effecting step (`shell`/`code`/`agent`/file-ops/`mcp`) asks for confirmation at a terminal and refuses for non-interactive agents unless you pass `--force`; an idempotent `llm` step resumes silently. Resume also refuses when a step it would restore returned a non-JSON-native result (a set, date, `Decimal`, bytes, non-string keys) — make that result JSON-native (`str(dt)`, `sorted(s)`) or re-run from the start. See [`pflow guide resume`](/reference/cli/guide) for the full behavior (loop continuation, gate re-prompting, top-level granularity, interrupted-run handling).
 
 ## Answer a paused gate
 

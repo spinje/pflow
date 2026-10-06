@@ -912,3 +912,39 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   upward in the handback for visibility. Tuple-keyed dicts (marked; already break streaming — pre-existing) and events
   nested in batch items (never seeded) — accepted.
 - Next: commit; falsifier re-run (C1/W1 + lossy repros + probeA).
+
+## [2026-10-06 07:10] phase-implementer (Opus) — falsifier round 2 recorded; final doc/comment pass
+- Falsifier round 2 @ 979bf3be (relayed by the orchestrator): all 14 attacks HOLD (repros, exemptions,
+  overwrite-in-later-iteration, resume-of-a-resume, sub-workflow declared vs inner, batch).
+  - **W1** — a lossy value anywhere in an upstream result, even a field nothing reads (e.g. a `datetime` stamped
+    beside the data; repros `scratchpads/task-179/falsifier/r2/{date_unread,shape_date}.pflow.md`), now blocks
+    failure-resume and keeps a later gate from pausing, where main resumed. **Disposition: ruled consequence** (the
+    05:20 ruling accepted "needlessly strict" cases with an actionable remedy). Now stated plainly where authors look
+    (below).
+  - **S1** — the dry-run / run-start note promises a pause that may not happen. **Accepted:** unknowable before
+    execution (same as the orchestrator's 06:20 item 3); the gate error states the real reason.
+- Did (docs/comment only):
+  - `guide/features/resume.md` "Values the saved run cannot restore": the refusal applies "even when nothing
+    downstream reads that field (e.g. a `datetime` stamped beside the data)".
+  - `guide/features/approval.md` Rules: new bullet — a gate after a step whose result isn't JSON-native won't pause
+    durably; make the result JSON-native (`str(dt)`, `sorted(s)`) or answer the gate in the same run.
+  - `docs/reference/cli/index.mdx` resume section: one sentence on the refusal plus the remedy.
+  - `workflow_trace.py` `TRACE_FORMAT_VERSION` history comment names 2.8.0's `lossy` event / batch-item marker.
+- Verified: `make check` green; `make test` → 10353 passed, 0 failed; `verify.sh` → `summary: 75 passed, 12 drifted,
+  0 harness errors`, the same 12: 02-validator-errors/{03-prompt-cache-on-shell-node,
+  05-subworkflow-references-parent-chunk}, 03-analyze-cache-modes/{05-trace-from-trace, 06-no-trace-autoload,
+  07-autoload-prefers-success, 08-autoload-failed-only, 09-autoload-rejected-names-file},
+  04-warning-catalog/{03-cache.invalid-on-non-llm, 09d-cache.prewarm-disabled-below-min,
+  09e-cache.conditional-warmup-recommended}, 10-live-recordings/03-gemini-translation,
+  12-real-world-lyrics-generator/04-guide-auto-detect.
+- Next: hand back.
+
+## [2026-10-06 07:20] task-orchestrator (Opus) — close-out
+- Falsifier round 2 (14/14 held) and its W1 disposition are in the 07:10 entry; the task-review records the per-event
+  strictness as ruled. Deletion-ledger grep (the acceptance bar), run on the final tree: `grep -rnE
+  "_loop_should_reenter|_mark_loop_stopped|_emit_loop_cap_advisory|answers only the first iteration|answered_loop|iteration == 1|loop_config is None or|engine-ephemeral|begins its loop again|loop restart" src docs`
+  → no hits; presence: `resume.md:82` "Loop steps continue where they stopped…", `approval.md:34`,
+  `loop_control.should_reenter`, `resume_source.resume_iteration`, `gate_prompt` `Loop iteration N`.
+- `verify.sh` (07:10): 75/12, the same 12 names as `origin/main`'s own (5 verified on a pristine export at 03:40).
+- Spec `## Status` → done, `## Completed` 2026-10-06; `task-review.md` written. Next: merge `origin/main` if moved,
+  re-gate, `create-pr`.

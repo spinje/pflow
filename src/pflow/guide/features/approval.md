@@ -33,6 +33,7 @@ Rules:
 - **Not on batch steps** — rejected at validation (the preview could not show resolved `${item}` values). Gate the step before or after the batch instead.
 - **Loop steps prompt every iteration** — each iteration is a new action. Without a terminal, each gated iteration **pauses** with its own token (the pause output names it: `Loop iteration 2`); answering runs that iteration, and the loop continues where it stopped — completed iterations never re-run. The browser answer panel's Approve answers one iteration the same way, and the next iteration pauses again in the panel. To let a gated loop run unattended, pre-approve it: `--auto-approve=<step>` (on resume: `--approve yes --auto-approve <step>`).
 - **Cached steps never prompt** — a cache hit performs no action, so there is nothing to approve.
+- **A gate after a step whose result isn't JSON-native won't pause durably** — the saved run can't restore that result (a set, date, `Decimal`, bytes, non-string keys), so the run fails at the gate instead of issuing a token resume would refuse. Make the step's result JSON-native (`str(dt)`, `sorted(s)`), or answer the gate in the same run (`--auto-approve=<step>`, or interactively).
 - Works on `workflow` steps (gates the whole sub-workflow; the preview is its inputs) and on steps **inside** sub-workflows.
 
 ## If you are an AI agent operating a gated workflow
