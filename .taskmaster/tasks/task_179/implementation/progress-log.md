@@ -713,3 +713,44 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
 - Follow-ups: #2 (`loop_stopped` not restored) and #3 (dry-run footer wording) filed by the main orchestrator; #1
   (all loop counters) stays the documented known limit.
 - Next: resume the implementer to build A + targeted gate re-run; then falsifier re-run on C1/W1 + lossy repros.
+
+## [2026-10-06 04:55] phase-implementer (Opus) — ruling A: STOPPED at fail-closed precondition 1 (a fourth lossy transformation)
+- Did: before writing any code, audited every transformation a node's `node_output` goes through on its way into the
+  trace (`WorkflowTraceCollector._sanitize_for_json`, `_flush_line`, `trace_io.intern_event_leaves`, the LLM strip).
+  No code changed (tree as at `a2aec33c`).
+- **Found: a fourth lossy transformation (precondition 1 → STOP).** `_flush_line` serializes with
+  `json.dumps(payload, default=str)` (`workflow_trace.py:992`). Any non-JSON-native leaf in a node output is silently
+  replaced by its `str()`. Real-surface proof (`scratchpads/task-179/probeA/`, a `code` step returning
+  `{"s": {1, 2}, "dt": date(2026,1,2), "dec": Decimal("1.5"), "t": (1, 2), "nested": {2: "x"}}`): the on-disk event
+  holds `{"s": "{1, 2}", "dt": "2026-01-02", "dec": "1.5", "t": [1, 2], "nested": {"2": "x"}}`. So a set, date,
+  Decimal, Path or custom object restores on resume / `--only` as a STRING. That is the same silent-divergence class
+  as C1, and a marker limited to (a)/(b)/(c) would leave it open. (The non-string-key case (a) is in fact also
+  done by this same `json.dumps` step, not by `_sanitize_for_json`.)
+- **Also found (a fifth, same family):** `_sanitize_for_json` drops two NON-dunder keys at every dict depth,
+  `_debug_context` and `_batch_trace` (`workflow_trace.py:1335`; a node output is only meant to be stripped of them
+  at the top level, where the engine's shared-store keys live). A `code` step returning
+  `{"_batch_trace": …}` loses that key silently. Not covered by (b), which is defined as `__`-prefixed.
+- Not counted (already ruled): the LLM `prompt`/`system` strip (`_strip_redundant_llm_trace_fields`) — Q2 settled it
+  as the loud carry guard's job, not a loader refusal.
+- For (b) false positives (precondition 2, checked ahead): engine-owned `__` keys do appear in node namespaces —
+  `__metrics__` (kept by the sanitizer), and `__pflow_stats__`/`__pflow_warnings__` (written to memo-history
+  outputs, stripped from the live store by `apply_memo_hit`). So the marker for (b) must exempt engine-owned keys or
+  it refuses legitimate resumes. That's an implementation detail, but it needs pinning.
+- What I need (ruling): widen A's marker definition to "anything the trace cannot round-trip". That covers a
+  non-string key, a dropped key (`__`-prefixed outside the engine's own, or the two named internal keys inside a
+  node output), bytes, and a non-JSON-native leaf that falls to `str()`. Tuple→list stays unmarked. My
+  recommendation: yes. It is ONE check (does this leaf/key survive `json` unchanged?), placed in `_sanitize_for_json`
+  so it sees every leaf before `default=str`. The marker/guard/producer design is otherwise unchanged. Alternative:
+  build A exactly as scoped and record the `str()` coercion as a known limit, which leaves a documented silent-wrong-
+  data path beside a refusal that claims to close that class.
+- Next: await the ruling; nothing to commit.
+
+## [2026-10-06 05:05] task-orchestrator (Opus) — PARKED: precondition 1 tripped (fourth lossy transformation)
+- The implementer stopped before building (04:55 entry): (4) `_flush_line`'s `json.dumps(..., default=str)`
+  (`workflow_trace.py:992`) stringifies every non-JSON-native leaf (set, date, Decimal, Path, custom objects) —
+  executed proof in `scratchpads/task-179/probeA/`; non-str key coercion (a) also happens there, not in the sanitizer;
+  (5) `_debug_context`/`_batch_trace` keys are dropped at any depth. Engine-owned `__` keys (`__metrics__`,
+  `__pflow_stats__`, `__pflow_warnings__`) must be exempt from (b) or legitimate resumes refuse.
+- Handed up per the ruling's fail-closed rule. **Exact resume point:** head after this commit (code unchanged since
+  a2aec33c); on the scope ruling → resume the implementer (a9aaea04…) with the 04:55 options, then the targeted gate,
+  falsifier re-run, close-out as in the 04:35 entry.
