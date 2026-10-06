@@ -70,7 +70,7 @@ Investigation revealed the following about pflow's current validation:
 | Template path existence (`${node.output}`) | ✅ | `template_validator.py` |
 | Template type compatibility | ✅ | `core/templates.py::is_type_compatible` (Task 84; template flow, not literal values) |
 | Nested template paths (`${node.result.data}`) | ✅ | `template_validator.py` |
-| Shell command type safety | ✅ | `template_validator.py` |
+| Shell command type safety | ✅ → removed by Task 118 | the dict/list block on a templated `command` (Pass 7) retires when shell bodies stop being templates; values bind through `env:` as text (ADR-0016) |
 
 ### What is NOT Validated Today
 
