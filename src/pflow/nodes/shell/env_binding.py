@@ -80,10 +80,11 @@ class EnvProblem:
 
 
 def env_problems(env: object) -> list[EnvProblem]:
-    """Why ``env`` cannot bind: not a map, a name sh cannot read, a case collision, a NUL.
+    """Why ``env`` cannot bind: not a map, a name sh cannot read, a case collision, a value
+    whose text holds a NUL or cannot be encoded.
 
-    ``None`` means no ``env:`` and has no problems. String values are checked as
-    written; a non-string value is checked after ``bind_env`` converts it.
+    ``None`` means no ``env:`` and has no problems. Each value is checked as the text it
+    binds as (``to_string``), so a literal object holding a bad string is caught statically.
     """
     if env is None:
         return []
@@ -111,7 +112,7 @@ def env_problems(env: object) -> list[EnvProblem]:
                     "Keep one of them.",
                 )
             )
-        if isinstance(value, str) and (problem := _value_problem(key, value)):
+        if problem := _value_problem(key, to_string(value)):
             problems.append(problem)
     return problems
 
@@ -126,13 +127,7 @@ def bind_env(env: object) -> dict[str, str]:
         raise EnvBindingError(problems[0].sentence())
     if not isinstance(env, dict):  # None: no env: (env_problems rejected every other non-map)
         return {}
-    bound: dict[str, str] = {}
-    for name, value in env.items():
-        text = to_string(value)
-        if problem := _value_problem(name, text):
-            raise EnvBindingError(problem.sentence())
-        bound[name] = text
-    return bound
+    return {name: to_string(value) for name, value in env.items()}
 
 
 def merge_env(inherited: Mapping[str, str], bound: Mapping[str, str], *, ignore_case: bool) -> dict[str, str]:
@@ -187,7 +182,8 @@ def _value_problem(name: str, text: str) -> EnvProblem | None:
                 name,
                 f"The value bound to {name} in env: contains a character the operating system cannot put "
                 "in an environment variable.",
-                _stdin_fix(name),
+                f"Repair the invalid Unicode in the upstream value before binding {name} — "
+                "passing the same text through stdin fails too.",
             )
     return None
 

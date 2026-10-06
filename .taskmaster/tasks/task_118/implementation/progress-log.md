@@ -347,3 +347,78 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   spec's required real exercise of the fan-out. `review-falsifier` launched by me directly, LAST, after the
   reading battery's fixes land.
 - Next: I1 runs the fan-out, evaluates, fixes, logs every disposition.
+
+## [2026-10-07 00:45] implementer I1 (Opus) — Part 1 completion gate (code mode): fan-out run, evaluated, fixes applied
+- Did: dispatched the reading battery through the CONVERTED `run-review-lenses.pflow.md` with an explicit `cwd`
+  override. This is the spec's required real exercise of the converted fan-out. Read the merged report in full,
+  evaluated every finding, applied the confirmed fixes with tests.
+- Command (from the worktree, backgrounded, stdout tee'd, waited in-turn with an until-loop):
+  `uv run pflow workflows/review/run-review-lenses.pflow.md "lenses=<8 lenses>" "review_target=<Task 118 Part 1,
+  origin/main...HEAD; uv.lock not a target; ADR-0016 + checkpoint §4 settled — silence is a gap, regressions
+  disputed by default; Part 2 absence not a finding>" cwd=/Users/andfal/projects/pflow-worktrees/feat-task-118-shell-env-binding
+  | tee .taskmaster/tasks/task_118/implementation/gate-part1-report.md`.
+  - Lens list: impact-completeness, feature-interactions and simplicity on the whole diff. Per-seam targets:
+    silent-failures, validation-consistency, agent-ux, concurrency-safety, test-fidelity.
+  - Outcome: `✓ Workflow completed in 374.6s`, provider codex, 9 agent calls, `run-codex 8/8`.
+  - Trace `~/.pflow/debug/workflow-trace-3a06f035-run-review-lenses-20261006-233103-073360.json`: `resolve-cwd`
+    env `{'CWD_OVERRIDE': '/Users/andfal/projects/pflow-worktrees/feat-task-118-shell-env-binding'}`, stdout the
+    same path. The converted override works for real.
+- Coverage: all 8 lenses produced reviews (report §Coverage, "Failed-lens gaps: None"). No re-run needed.
+- Findings and dispositions (every one):
+  1. **Guide omits "when bound directly"** (impact-completeness W1, agent-ux W2, feature-interactions S;
+     convergent). **Confirmed, fixed.** `guide/nodes/shell.md` now says a string bound directly arrives unchanged,
+     a value through `inputs:` (or a loop carry) is parsed and re-serialized (`{"a":1}` → `{"a": 1}`), and to bind
+     directly when the bytes matter. Plan D2 asked for exactly this sentence and I had dropped it. Docs only.
+  2. **(2a) A literal object/array holding an unencodable string passed validation and compile, then failed at
+     run time** (validation-consistency, stated Critical). **Confirmed, fixed. Real severity: Warning** — reachable
+     only through dict/JSON IR (a `.pflow.md` file cannot hold a lone surrogate), but it is a genuine
+     validate-vs-run disagreement.
+     - Fix: `env_problems` now checks every value as the text it binds (`to_string(value)`), not only strings.
+       That made the second check loop in `bind_env` redundant: `bind_env` now runs `env_problems`, then converts
+       (net simpler).
+     - Test: `TestNamesAgreeEverywhere::test_a_literal_container_is_checked_as_the_text_it_binds[object|array]`
+       asserts a validator ERROR at `params.env.DATA` and a `CompilationError`. Mutation (restore the str-only
+       check) → 2 failed.
+  3. **(2b) The unencodable-text error advises `stdin:`, and stdin fails too** (agent-ux W1). **Confirmed, NOT
+     fixed — handed back.**
+     - Reproduced: a `ShellNode` with `stdin: "cut \ud800"` → `UnicodeEncodeError` at `shell.py:885`, then
+       `exit_code -2`.
+     - Fixing it changes ruled text: checkpoint §4f says the unencodable message has the NUL message's "same
+       shape", stdin remedy included.
+     - Options: (a) the lens's wording, *"Repair the invalid Unicode in the upstream value before binding DATA —
+       passing the same text through stdin fails too."* (recommended: true advice, importance 2, one string plus
+       one test assertion); (b) keep the ruled text (a known-wrong remedy on a rare path); (c) (a) plus make
+       stdin's own encode failure a pre-spawn error. (c) is out of Part 1 scope and changes the stdin contract.
+  4. **(C1) The carried-loop test could not detect a broken carry** (test-fidelity, Critical/false confidence).
+     **Confirmed, fixed.**
+     - Why it was blind: round 1 already printed `{"a": 1}`, so round 2 looked the same whether the carry was
+       used, bypassed, or left unparsed.
+     - The test now logs each round's `$STATE` to a file. The step prints a compact `{"b":2}` that differs from
+       the seed, and the test asserts the log reads `{"a": 1}|{"b": 2}|`.
+     - Mutations, each restored by byte copy: carry bypassed (`loop_control.apply_carry_overrides` ignores
+       `carry`) → 1 failed; `inputs:` no longer auto-parsed → 1 failed.
+  5. **Suggestion: restore `${cfg.env}` in the 4e run-time message** (agent-ux). **Skipped (disputed).** This is
+     deviation 3, already accepted by the orchestrator: the node sees only the resolved value. The PR body names
+     it as a checkpoint text delta.
+  - Verified clean, per the report: impact-completeness (no missed consumer; `node_type` survives `replace`),
+    feature-interactions, simplicity (no simplification found), silent-failures, concurrency-safety (fresh dicts,
+    deep-copied workers, `os.environ` untouched), validation-consistency (apart from 2a), and test-fidelity
+    (apart from C1).
+- Verified: `make check` green; `make test` **10460 passed / 0 failed** (10458 + 2 new 2a items).
+- Changed: `src/pflow/nodes/shell/env_binding.py`, `src/pflow/guide/nodes/shell.md`,
+  `tests/test_integration/test_shell_env_binding.py`; new `implementation/gate-part1-report.md` (the merged report).
+- Deviations/surprises: the fan-out lenses do not execute anything (stated in the report's limits). Windows D8
+  and the Linux size outcome remain CI items, as planned.
+- [RULING, orchestrator, importance 2] Finding 3 (2b) → **option (a), applied.** This corrects factual advice
+  inside checkpoint §4f's ruled shape; the rule is unchanged.
+  - The unencodable-value message now reads: "… contains a character the operating system cannot put in an
+    environment variable. Repair the invalid Unicode in the upstream value before binding DATA — passing the same
+    text through stdin fails too."
+  - The full sentence is pinned in `test_text_the_os_cannot_encode_is_refused_naming_the_variable`.
+  - The NUL message keeps its stdin advice, verified: `ShellNode` with `stdin: "a\0b"` and `od -c` → exit 0,
+    output `a  \0   b`, so a NUL survives stdin.
+- Follow-up (option c, not built, pre-existing, out of Part 1): stdin's strict UTF-8 encode (`shell.py:885`) turns
+  unencodable text into `UnicodeEncodeError` → the exit -2 path, which `ignore_errors` swallows. The orchestrator
+  carries it to the PR body.
+- Gate after the ruling: `make check` green; `make test` 10460 passed / 0 failed.
+- Next: orchestrator commits; falsifier last.

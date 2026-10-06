@@ -178,15 +178,20 @@ class TestJsonLookingTextStaysText:
         step["params"]["inputs"] = {"raw": "${up.stdout}"}
         assert _stdout(_run(_ir(self.UPSTREAM, step))) == '{"a": 1}'
 
-    def test_a_carried_loop_value_is_parsed_like_inputs(self) -> None:
+    def test_a_carried_loop_value_is_parsed_like_inputs(self, tmp_path: Path) -> None:
+        """Round 2 reads the CARRIED text (compact ``{"b":2}``, unlike the seed), parsed and re-serialized.
+
+        Fails if the carry is bypassed (round 2 would see the seed again) or if carried text
+        stopped being parsed (round 2 would see ``{"b":2}``).
+        """
+        log = tmp_path / "rounds.txt"
         flag = _code("flag", True)
-        step = _shell({"STATE": "${state}"}, 'printf "%s" "$STATE"')
+        step = _shell({"STATE": "${state}", "LOG": str(log)}, """printf '%s|' "$STATE" >> "$LOG"; printf '{"b":2}'""")
         step["params"]["inputs"] = {"state": "${up.stdout}"}
         step["loop"] = {"carry": {"state": "${s.stdout}"}, "while": "${flag.result}", "max_iterations": 2}
-        ir = _ir(self.UPSTREAM, flag, step)
-        result = _run(ir)
-        assert _stdout(result) == '{"a": 1}'
-        assert sum(1 for event in result.trace.events if event.get("node_id") == "s") == 2
+        result = _run(_ir(self.UPSTREAM, flag, step))
+        assert _stdout(result) == '{"b":2}'
+        assert log.read_text(encoding="utf-8") == '{"a": 1}|{"b": 2}|'
 
 
 class TestInjection:
@@ -355,6 +360,18 @@ class TestNamesAgreeEverywhere:
         assert [(e.message, e.context["path"]) for e in errors] == [
             ("Step 's': env must be a map of NAME: value — got a list.", "nodes[id=s].params.env")
         ]
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="UTF-16 environments hold a lone surrogate")
+    @pytest.mark.parametrize("value", [{"text": "cut \ud800"}, ["cut \ud800"]], ids=["object", "array"])
+    def test_a_literal_container_is_checked_as_the_text_it_binds(self, value: Any) -> None:
+        """An object/array binds as JSON text; a string inside it that the OS cannot encode fails at
+        validation and compile, not after earlier steps have run."""
+        ir = _ir(_shell({"DATA": value}))
+        errors, _ = _validate(ir)
+        assert [e.context["path"] for e in errors] == ["nodes[id=s].params.env.DATA"]
+        assert "The value bound to DATA in env: contains a character the operating system" in errors[0].message
+        with pytest.raises(CompilationError):
+            compile_workflow(ir, Registry())
 
     def test_a_literal_nul(self) -> None:
         errors, _ = _validate(_ir(_shell({"DATA": "a\0b"})))

@@ -118,8 +118,14 @@ class TestBindEnv:
     @pytest.mark.skipif(sys.platform == "win32", reason="Windows environments are UTF-16: a lone surrogate binds")
     def test_text_the_os_cannot_encode_is_refused_naming_the_variable(self) -> None:
         """A lone surrogate — what a JSON escape cut in half decodes to."""
-        with pytest.raises(EnvBindingError, match="The value bound to DATA in env: contains a character the operating"):
+        with pytest.raises(EnvBindingError) as exc_info:
             bind_env({"DATA": "ok \ud800"})
+        # Not the stdin advice: stdin's strict UTF-8 encode refuses the same text.
+        assert str(exc_info.value) == (
+            "The value bound to DATA in env: contains a character the operating system cannot put in an "
+            "environment variable. Repair the invalid Unicode in the upstream value before binding DATA — "
+            "passing the same text through stdin fails too."
+        )
 
     def test_the_error_renders_as_a_validation_error_on_env(self) -> None:
         """The ruled "Error: Validation Error" title. Retry/batch behaviour is pinned through the
