@@ -55,8 +55,7 @@ def is_sensitive_parameter(key: str) -> bool:
     ``author`` / ``secretary`` / ``tokens`` do NOT — the earlier raw-substring check redacted those by
     mistake. A name with no word delimiter (e.g. ``myapikey``) is one word and won't match an embedded
     ``apikey``; that trade buys the false-positive fix and is the accepted boundary (real secret params are
-    delimited). The single source of truth — ``sanitize_parameters`` / ``mask_sensitive_value`` / the rerun
-    display / the run-detail panel all defer here.
+    delimited). The single source of truth every name-based redaction site defers to.
 
     Examples:
         >>> is_sensitive_parameter("api_key")
@@ -70,6 +69,26 @@ def is_sensitive_parameter(key: str) -> bool:
     """
     signature = _word_signature(key)
     return any(sig in signature for sig in _SENSITIVE_SIGNATURES)
+
+
+def redact_sensitive(obj: Any) -> Any:
+    """Return a copy of ``obj`` with the value of every sensitive-NAMED key replaced by ``<REDACTED>``.
+
+    The display-side redaction for trace content, which is stored RAW so resume can restore it: every
+    reader that SHOWS trace values (``pflow report``, the web UI run-node panel) applies this, while resume
+    and ``--only`` loading read the trace directly. Descends every nested dict and list, so a nested
+    ``headers.Authorization`` or a list-of-dicts secret is caught. Unlike ``sanitize_parameters`` it neither
+    truncates long strings nor drops ``__`` keys — a debugging view shows the full realized value.
+    Accepted boundary: a secret inside a free-text string (a command, a prompt) has no key to match.
+    """
+    if isinstance(obj, dict):
+        return {
+            key: "<REDACTED>" if isinstance(key, str) and is_sensitive_parameter(key) else redact_sensitive(value)
+            for key, value in obj.items()
+        }
+    if isinstance(obj, list):
+        return [redact_sensitive(item) for item in obj]
+    return obj
 
 
 def mask_sensitive_value(key: str, value: str, mask_text: str = "<REDACTED>") -> str:
