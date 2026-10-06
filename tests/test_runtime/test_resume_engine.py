@@ -869,8 +869,37 @@ def test_trace_without_loop_position_restarts_the_loop_and_says_so(tmp_path) -> 
     assert _iterations(iter_file) == ["1", "2", "3", "1", "2", "3", "4", "5"]
     advisory = result.shared_after["__warnings__"]["__resume_loop_restart__"]
     assert (advisory.severity.value, advisory.node_id, advisory.id) == ("info", "k", "resume.loop-restart")
-    assert "predates loop position" in advisory.message
+    assert "the saved run recorded no loop position for this step" in advisory.message
     assert result.status.value == "success"  # INFO: the restored data is not degraded
+
+
+def test_step_given_loop_since_the_run_restarts_and_says_why_truthfully(tmp_path) -> None:
+    """Falsifier S2: a 2.8.0 trace whose step had no ``loop:`` (added since, resumed with
+    ``--force``) also records no position — the advisory's reason must hold for that cause too,
+    not claim the run predates loop position."""
+    wf = tmp_path / "edited.pflow.md"
+    flag = tmp_path / "fail"
+    flag.write_text("1", encoding="utf-8")
+    body = (
+        "# Edited\n\nA step that later gains a loop.\n\n## Steps\n\n### k\n\nCount.\n\n- type: code\n"
+        "- inputs:\n    flag: {flag}\n{loop}\n```python code\nfrom pathlib import Path\n\nflag: str\n"
+        "if Path(flag).read_text(encoding='utf-8') == '1':\n    raise RuntimeError('boom')\nresult: bool = False\n```\n"
+    )
+    wf.write_text(body.format(flag=flag.as_posix(), loop=""), encoding="utf-8")
+    failed = WorkflowRunner().run(str(wf), {}, RunnerConfig())
+    assert not failed.success
+    trace = failed.trace.save_to_file()
+    loop = "- loop:\n    while: ${k.result}\n    max_iterations: 3\n"
+    wf.write_text(body.format(flag=flag.as_posix(), loop=loop), encoding="utf-8")
+    flag.write_text("0", encoding="utf-8")
+
+    source = load_resume_source(execution_id=failed.trace.execution_id, debug_dir=trace.parent)
+    assert (source.entry_node_id, source.entry_iteration) == ("k", None)
+    result = _resume(wf, source)
+    assert result.success, [str(d) for d in result.diagnostics]
+    advisory = result.shared_after["__warnings__"]["__resume_loop_restart__"]
+    assert "recorded no loop position for this step" in advisory.message
+    assert "or the step had no `loop:` then" in advisory.message
 
 
 def _write_carry_tournament(tmp_path: Path) -> tuple[Path, Path, Path]:

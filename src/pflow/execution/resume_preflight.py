@@ -286,8 +286,9 @@ def _resolve_between_nodes_entry(resolved: ResolvedWorkflow, source: ResumeSourc
     if _node_has_loop(resolved.ir, last):
         if source.entry_iteration is None:
             raise ResumeNotResumableError(
-                f"The run {state} after loop step '{last}', and the saved run predates loop position, "
-                "so the next step — another iteration or the exit — cannot be known.",
+                f"The run {state} after loop step '{last}', and the saved run recorded no loop position "
+                "for this step (it predates loop position, or the step had no `loop:` then), so the next "
+                "step — another iteration or the exit — cannot be known.",
                 execution_id=source.execution_id,
                 trace_path=str(source.path),
                 node_id=last,

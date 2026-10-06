@@ -764,9 +764,10 @@ def build_snapshot_degraded_diagnostic(this_only: str, *, source: Literal["plann
 def build_loop_restart_diagnostic(node_id: str, *, source: Literal["planner", "runtime"]) -> Diagnostic:
     """Build the ``resume.loop-restart`` INFO ``Diagnostic`` (Task 179).
 
-    A saved run that predates loop position (trace < 2.8.0) cannot say which
-    iteration a loop step stopped at, so the resumed step restarts at iteration 1
-    — said, never guessed. INFO, not WARNING: the restored data is not degraded.
+    A saved run whose events carry no position for the resumed loop step — a trace
+    older than 2.8.0, or a step given ``loop:`` since the run (``--force``) — cannot
+    say which iteration it stopped at, so it restarts at iteration 1 — said, never
+    guessed. One message names both causes. INFO, not WARNING: the restored data is not degraded.
     Shared by ``_prepare_resume`` (sink ``__warnings__["__resume_loop_restart__"]``)
     and the dry-run planner (sink: the plan's diagnostics) so the two cannot drift.
     """
@@ -775,8 +776,9 @@ def build_loop_restart_diagnostic(node_id: str, *, source: Literal["planner", "r
         severity=Severity.INFO,
         title="Loop restarts at iteration 1",
         message=(
-            f"Loop step '{node_id}' {verb} at iteration 1: the saved run predates loop position, "
-            f"so the iteration it stopped at is unknown. Earlier iterations run again."
+            f"Loop step '{node_id}' {verb} at iteration 1: the saved run recorded no loop position for "
+            f"this step (it predates loop position, or the step had no `loop:` then), so the iteration "
+            f"it stopped at is unknown. Earlier iterations run again."
         ),
         node_id=node_id,
         source=source,

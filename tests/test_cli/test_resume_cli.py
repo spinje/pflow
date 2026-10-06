@@ -689,7 +689,7 @@ def test_between_nodes_unpositioned_loop_node_refused():
     from pflow.core.exceptions import ResumeNotResumableError
     from pflow.execution.resume_preflight import _resolve_between_nodes_entry
 
-    with pytest.raises(ResumeNotResumableError, match="predates loop position") as exc_info:
+    with pytest.raises(ResumeNotResumableError, match="recorded no loop position for this step") as exc_info:
         _resolve_between_nodes_entry(_resolved(_looping_poll_ir()), _between_source("poll", entry_iteration=None))
     assert exc_info.value.node_id == "poll"
 

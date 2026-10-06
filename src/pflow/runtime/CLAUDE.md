@@ -149,7 +149,9 @@ loop step gets its previous iteration; `--only` is iteration 1 and never sees it
 own output), otherwise all eligible captured nodes. Derive restored-node lists
 from its returned map minus the entry, not a second event scan. Gate-resolution
 lines fold onto the event of the iteration that raised them (keyless lines: the
-node's final event). Restored nodes are
+node's final event). Only the resume step's loop counter is restored: a hand-written
+back edge into another loop step (or into this one after an interrupted resumed
+attempt that continued past a recovered failure) restarts that loop at iteration 1. Restored nodes are
 successful for data lookup but relabelled not-executed by
 `execution_state.build_execution_steps`.
 

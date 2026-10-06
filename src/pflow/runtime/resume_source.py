@@ -83,9 +83,9 @@ class ResumeSource:
     Task 179: `entry_iteration` is the loop iteration the resume step (the entry,
     or the last completed step of a between-nodes source) continues at — the
     resume entry is a *(step, iteration)* pair. `1` when the step never ran;
-    `None` when its events carry no recorded position (a non-loop step, or a
-    trace that predates loop position — a loop step then restarts at 1 and says
-    so). Derived by `resume_iteration`, the one reader of the events' field.
+    `None` when its events carry no recorded position (a non-loop step, a trace
+    that predates loop position, or a step given `loop:` since the run — a loop
+    step then restarts at 1 and says so). Derived by `resume_iteration`, the one reader of the events' field.
     """
 
     path: Path

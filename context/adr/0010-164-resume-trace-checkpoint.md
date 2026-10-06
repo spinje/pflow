@@ -108,7 +108,10 @@ rule, which held only while a loop step could never be a resume entry. Supersede
 resumed loop step restarts at iteration 1" stance and #615's iteration-1-only pause rule. Rejected:
 a trailer-only position (a failure has no pause record; resume-of-a-resume would need chain reads),
 counting same-node events (fragile under #659-class overwrites), and a separate loop-state seed
-channel (a second derivation beside the one the guards scan).
+channel (a second derivation beside the one the guards scan). Known limit: only the resume step's
+loop counter is restored, so a hand-written back edge into a loop step restarts that step at
+iteration 1 when the pause is at a different step, or when a resumed attempt that continued after a
+recovered failure is itself killed.
 
 ## Considered options
 

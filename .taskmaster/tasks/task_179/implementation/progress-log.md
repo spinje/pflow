@@ -653,3 +653,45 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   regenerating — belongs with #680 (main orchestrator).
 - Windows: `tests-windows` is CI on the PR; no new subprocess/encoding/path code (fixtures write `encoding="utf-8"`).
 - Next: commit gate fixes → merge `origin/main` b59cf9e5 (#707) → re-gate → `review-falsifier` (direct, last).
+
+## [2026-10-06 04:10] phase-implementer (Opus) — review-falsifier findings: decision-independent fixes
+- Dispositions (every falsifier finding relayed by the orchestrator):
+  - **C1 (lossy carry restore)** — escalated, awaiting ruling. Not touched.
+  - **W1** — escalated, awaiting ruling. Not touched.
+  - **S2 — FIXED.** After `--force` adds `loop:` to a step, the D7 advisory claimed "the saved run predates loop
+    position" although the trace was 2.8.0. One builder, one message, now true for both causes: "the saved run
+    recorded no loop position for this step (it predates loop position, or the step had no `loop:` then)". Same
+    reason text in the preflight's unpositioned after-loop-step refusal (same `None` cause); `ResumeSource` and
+    builder docstrings updated. Tests: the old-trace advisory assertion and the preflight refusal `match` updated;
+    new pin `test_resume_engine.py::test_step_given_loop_since_the_run_restarts_and_says_why_truthfully` (a 2.8.0 run
+    of a non-loop step, `loop:` added, resumed → `entry_iteration None`, the advisory names the edit cause).
+  - **Doc qualification — FIXED.** `guide/features/resume.md` interrupted-runs bullet: the loop's-own-decision
+    sentence now excepts a `code` loop step ("routes dynamically and refuses like any `code` step"). The CLI
+    reference does not repeat that sentence. Its escalation wording is unaffected, because a `code` escalation never
+    pauses.
+  - **Known limit (03:40 disposition) — ADDED** in constraint form: one sentence appended to ADR-0010's Task-179
+    amendment and one in `src/pflow/runtime/CLAUDE.md`'s resume paragraph (only the resume step's loop counter is
+    restored; a hand-written back edge into a loop step restarts it at 1 when the pause is at a different step, or
+    when a resumed attempt that continued after a recovered failure is itself killed).
+  - **S1** (between-nodes side-effect confirm asks about a loop step that will not re-run after the loop exits) —
+    ACCEPTED: the plan's W1 review-fold cost ("a spurious confirm … is the accepted cost").
+  - **S3** (`--force` lowering `max_iterations` below the paused iteration runs one past the new cap) — SKIPPED:
+    reachable only via an edited workflow + `--force`.
+  - **Observation** (`${k.loop_stopped}` not restored on a restored upstream loop step) — pre-existing on main;
+    follow-up issue proposed upward by the orchestrator. No action here.
+- Verified: `make check` green; `make test` → 10336 passed, 0 failed; `tests/test_docs` 24 passed.
+- Next: hand back.
+
+## [2026-10-06 04:20] task-orchestrator (Opus) — falsifier evaluated; PARKED on the C1/W1 escalation
+- Falsifier (direct, last, @ 02343070): 18 promises attacked through CLI / MCP / `resume list` / browser; 16 held
+  outright. C1 (Critical): carried loop state restored through the trace's JSON — non-str dict keys come back as
+  strings and `__`-prefixed keys are dropped (`workflow_trace._sanitize_for_json`), so per-iteration approval of an
+  int-keyed carry loop silently differs from `--auto-approve` (exit 0). W1: a loop whose earlier output holds bytes
+  pauses with a token the loader always refuses. Both pre-exist for UPSTREAM steps (Task 164 resume); this task
+  widens them to the loop step's own output on every gated iteration — the "gap your change widens" trigger.
+  Escalated (3/5: behaviour change on Task 164's resume surface + the pause producer). Decision-independent items done
+  by the implementer (04:10 entry). Falsifier hygiene slip reported upward: it ran `pkill -9 -f "sleep 30"` (by name).
+- **Exact resume point:** head after this commit; on ruling A → resume the implementer (a9aaea04…) to build the
+  lossiness marker + loader refusal + producer no-pause, re-gate, re-run the falsifier on C1/W1 only; on ruling B →
+  implementer writes the guide limitation, then `verify.sh` (bar: main's drift set), `create-task-review`, spec done,
+  `create-pr`.
