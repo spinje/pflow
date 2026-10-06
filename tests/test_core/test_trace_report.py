@@ -2462,6 +2462,7 @@ class TestReportRedactsSensitiveNamedValues:
         )
         trace_file = tmp_path / "trace.json"
         write_trace_jsonl(trace_file, _make_trace(nodes=[code, shell]))
+        trace_bytes = trace_file.read_bytes()
 
         report_dir = generate_report(trace_file, str(tmp_path / "report"))
 
@@ -2480,8 +2481,9 @@ class TestReportRedactsSensitiveNamedValues:
         # ## Resolved Parameters (nested under the param name)
         assert '"AUTH_TOKEN": "<REDACTED>"' in echo
         assert '"REGION": "eu-west-1"' in echo
-        # The trace itself stays raw — resume and --only read it, not the report
-        assert self.RAW_VALUE in trace_file.read_text(encoding="utf-8")
+        # The trace itself stays raw and byte-identical — resume and --only read it, not the report
+        assert trace_file.read_bytes() == trace_bytes
+        assert self.RAW_VALUE in trace_bytes.decode("utf-8")
 
     def test_batch_item_label_never_uses_a_sensitive_named_value(self, tmp_path: Path) -> None:
         batch = _make_event(
