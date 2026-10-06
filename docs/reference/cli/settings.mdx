@@ -68,7 +68,7 @@ Creates `~/.pflow/settings.json` with default configuration. Prompts for confirm
 
 ## pflow settings show
 
-Display current settings with sensitive values masked.
+Display current settings with every `env` value masked.
 
 ```bash
 pflow settings show
@@ -95,13 +95,13 @@ Current settings:
   },
   "env": {
     "ANTHROPIC_API_KEY": "sk-***",
-    "log_level": "debug"
+    "log_level": "deb***"
   }
 }
 ```
 
 <Note>
-  Sensitive values (API keys, tokens, secrets) are automatically masked. Use `pflow settings list-env --show-values` to see full values.
+  Every `env` value is masked (first 3 characters + `***`), whatever its name — the same rule as `list-env`. Use `pflow settings list-env --show-values` to see full values.
 </Note>
 
 ## pflow settings set-env

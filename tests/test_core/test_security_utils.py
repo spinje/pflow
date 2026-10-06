@@ -7,7 +7,12 @@ look-alikes don't.
 
 from __future__ import annotations
 
-from pflow.core.security_utils import is_sensitive_parameter, mask_sensitive_value, sanitize_parameters
+from pflow.core.security_utils import (
+    is_sensitive_parameter,
+    mask_sensitive_value,
+    redact_sensitive,
+    sanitize_parameters,
+)
 
 
 class TestIsSensitiveParameter:
@@ -77,6 +82,23 @@ class TestSanitizeParameters:
     def test_truncates_long_non_secret_strings(self) -> None:
         out = sanitize_parameters({"note": "x" * 200})
         assert out["note"].endswith("...<truncated>")
+
+
+def test_redact_sensitive_redacts_at_any_depth_without_truncating_or_mutating() -> None:
+    """The display redactor for trace content: key-name redaction only — unlike sanitize_parameters it
+    keeps long values whole (a debugging view shows the full realized value) and returns a copy."""
+    raw = {
+        "headers": {"Authorization": "Bearer x", "X-Trace": "ok"},
+        "accounts": [{"api_key": "AKIA", "name": "prod"}],
+        "note": "x" * 200,
+    }
+    out = redact_sensitive(raw)
+    assert out == {
+        "headers": {"Authorization": "<REDACTED>", "X-Trace": "ok"},
+        "accounts": [{"api_key": "<REDACTED>", "name": "prod"}],
+        "note": "x" * 200,
+    }
+    assert raw["headers"]["Authorization"] == "Bearer x"  # the caller's (resume-faithful) data is untouched
 
 
 def test_mask_sensitive_value_defers_to_the_shared_rule() -> None:
