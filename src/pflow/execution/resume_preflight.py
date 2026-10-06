@@ -46,6 +46,9 @@ if TYPE_CHECKING:
 # NOT collision-proof (`validate_workflow_name` accepts uuid4-shaped names), so
 # TARGET disambiguation is existence-based (try the run id first, fall back to a
 # workflow name) rather than trusting the shape alone (§E step 2).
+# The IR types that load as ``WorkflowExecutor`` (``runtime/compilation/node_loader.py``).
+_WORKFLOW_EXECUTOR_TYPES = frozenset({"workflow", "pflow.runtime.workflow_executor"})
+
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
@@ -55,7 +58,7 @@ class ResumePreflight:
 
     ``side_effect_refusal`` is the exact refusal a non-TTY resume would raise for a
     side-effecting entry, or ``None`` (paused source / ``force`` / idempotent ``llm`` entry /
-    entry removed). A prompting caller (the CLI on a TTY) confirms instead of raising;
+    entry removed / entry never started in the source run). A prompting caller (the CLI on a TTY) confirms instead of raising;
     every other caller raises it.
     """
 
@@ -156,18 +159,34 @@ def _load_source_and_workflow(
 
 
 def _check_content_hash(resolved: ResolvedWorkflow, source: ResumeSource, *, force: bool) -> None:
-    """Refuse a resume whose workflow changed since the failed run, unless --force (§E step 3)."""
+    """Refuse a resume whose workflow changed since the failed run, unless --force (§E step 3).
+
+    The refusal names what --force would accept: the restored steps, where resume continues, and —
+    when --force would also waive the side-effect confirmation — that the step re-runs. A
+    between-nodes source has no entry yet (its successor is resolved after this gate) unless its
+    last step loops: that step continues (its next iteration), so it is named as the resume point.
+    """
     if force:
         return
     from pflow.core.workflow_id import workflow_content_hash
+    from pflow.runtime.resume_source import restored_node_ids
 
     current_hash = workflow_content_hash(resolved.ir)
     # A missing source hash (a run predating Task-173 hash tracking) is treated as
     # a mismatch — we cannot prove the workflow is unchanged — but the error says
     # exactly that, never claiming an edit that may not have happened.
     if current_hash != source.content_hash:
+        resumes_at = source.entry_node_id
+        if resumes_at is None and _node_has_loop(resolved.ir, source.last_completed_node_id):
+            resumes_at = source.last_completed_node_id
+        rerun = _side_effect_refusal(resolved, source, force=False) if resumes_at is not None else None
         raise ResumeStaleWorkflowError(
             hash_known=source.content_hash is not None,
+            restored=[node_id for node_id in restored_node_ids(source) if node_id != resumes_at],
+            entry_node_id=resumes_at,
+            entry_iteration=source.entry_iteration,
+            after_node_id=source.last_completed_node_id,
+            rerun_node_type=rerun.node_type if rerun is not None else None,
             execution_id=source.execution_id,
             trace_path=str(source.path),
         )
@@ -312,7 +331,9 @@ def _side_effect_refusal(
     Idempotent K (``llm``) resumes silently (``None``). ``--force`` bypasses (``None``). Paused
     sources skip it entirely (``None``): the entry never ran in the source run (approval gates fire
     before node.start; an escalation's entry is its never-run successor), so there is no re-fire
-    risk — and the answer flag is itself the human's consent. K's type is read from the CURRENT
+    risk — and the answer flag is itself the human's consent. A failed K the source run proves never
+    started (``entry_never_started`` — e.g. a template typo) skips it too (#690): nothing fired —
+    except a sub-workflow K, whose start the trace does not always record. K's type is read from the CURRENT
     resolved IR (registry vocabulary), never from a trace event; ``None`` type means K was
     removed/renamed since the run (only reachable if the hash gate was bypassed) — the engine
     refuses with a K-removed error before any node runs, so no side effect fires.
@@ -325,6 +346,12 @@ def _side_effect_refusal(
     entry = source.entry_node_id or source.last_completed_node_id
     node_type = _node_registry_type(resolved.ir, entry)
     if node_type is None or not is_side_effecting(node_type):
+        return None
+    from pflow.runtime.resume_source import entry_never_started
+
+    # The engine skips begin_node for WorkflowExecutor, and a BATCHED host never descends, so a
+    # sub-workflow K that ran can lack node.start — no proof either way. Task 180 deletes this.
+    if node_type not in _WORKFLOW_EXECUTOR_TYPES and entry_never_started(source):
         return None
     return ResumeSideEffectConfirmationError(
         str(entry),

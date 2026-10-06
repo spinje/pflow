@@ -37,7 +37,9 @@ from pflow.core.exceptions import (
 from pflow.runtime.resume_source import (
     ResumeSource,
     _iter_raw_trace_lines,
+    entry_never_started,
     load_resume_source,
+    restored_node_ids,
     seed_snapshot_into_shared,
 )
 from pflow.runtime.workflow_trace import format_trace_filename
@@ -1032,12 +1034,201 @@ def test_side_effect_confirmation_error_is_agent_first() -> None:
 
 
 def test_stale_workflow_error_has_two_messages() -> None:
-    edited = ResumeStaleWorkflowError(hash_known=True)
-    unverifiable = ResumeStaleWorkflowError(hash_known=False)
+    edited = ResumeStaleWorkflowError(hash_known=True, restored=["a"], entry_node_id="k")
+    unverifiable = ResumeStaleWorkflowError(hash_known=False, restored=["a"], entry_node_id="k")
     assert "edited" in str(edited)
     assert "predates" in str(unverifiable) and "edited" not in str(unverifiable)
     for err in (edited, unverifiable):
         assert any("--force" in s for s in err.suggestions)
+
+
+def test_stale_workflow_error_names_what_force_would_accept() -> None:
+    """#690: the refusal says which steps are restored (an edit to them would not take effect) and
+    where resume continues — so an agent that edited only the entry knows --force is safe."""
+    err = ResumeStaleWorkflowError(hash_known=True, restored=["fetch", "parse"], entry_node_id="save")
+    assert "Resume restores the saved outputs of 'fetch', 'parse' and resumes at 'save'" in str(err)
+    assert err.suggestions[0] == "If you changed only 'save' or later steps, pass --force to resume."
+    assert "fire again" not in " ".join(err.suggestions)
+
+    first_step = ResumeStaleWorkflowError(hash_known=True, restored=[], entry_node_id="save")
+    assert "restores no earlier steps and resumes at 'save'" in str(first_step)
+
+    between = ResumeStaleWorkflowError(hash_known=True, restored=["esc"], entry_node_id=None, after_node_id="esc")
+    assert "resumes after 'esc'" in str(between)
+    assert between.suggestions[0] == "If you changed only steps after 'esc', pass --force to resume."
+
+
+def test_stale_workflow_error_names_a_loop_entrys_iteration_and_its_restored_earlier_ones() -> None:
+    """A loop step resumed at iteration N restores its iterations before N: an edit to it does not
+    recompute them, so the refusal says the edit applies only from N on."""
+    err = ResumeStaleWorkflowError(hash_known=True, restored=[], entry_node_id="count", entry_iteration=2)
+    assert "resumes at 'count' (iteration 2)." in str(err)
+    assert "Its iterations before 2 are restored too, so an edit to 'count' applies from iteration 2 on." in str(err)
+    first = ResumeStaleWorkflowError(hash_known=True, restored=[], entry_node_id="count", entry_iteration=1)
+    assert "iteration" not in str(first)
+
+
+def test_stale_workflow_error_says_force_also_refires_a_started_side_effecting_entry() -> None:
+    """--force waives the side-effect confirmation too — the stale refusal is the only place the
+    agent learns that, so it must say so when the entry already started."""
+    err = ResumeStaleWorkflowError(hash_known=True, restored=["a"], entry_node_id="append", rerun_node_type="shell")
+    assert (
+        "--force also re-runs 'append' (a shell step that already started in the original run), "
+        "so its side effects may fire again" in err.suggestions[0]
+    )
+
+
+# ── entry_never_started / restored_node_ids (#690) ─────────────────────────────
+# `node.start` is a disk-only line, so these write the raw JSONL a streamed run produces: a leaf's
+# `node.start` and its terminal `event` share one `id`; a failure raised before `begin_node`
+# (template resolution, loop carry) has an `event` and no `node.start`.
+
+
+def _start(node_id: str, line_id: int, parent_id: int | None = None) -> dict[str, Any]:
+    return {"kind": "node.start", "node_id": node_id, "id": line_id, "parent_id": parent_id, "status": "running"}
+
+
+def _event(node_id: str, line_id: int, status: str, parent_id: int | None = None, **extra: Any) -> dict[str, Any]:
+    return {"kind": "event", "node_id": node_id, "id": line_id, "parent_id": parent_id, "status": status, **extra}
+
+
+def _raw_source(
+    tmp_path: Path,
+    lines: list[dict[str, Any]],
+    entry: str | None = "save",
+    *,
+    entry_iteration: int | None = 1,
+    content_hash: str | None = "h",
+) -> ResumeSource:
+    path = tmp_path / "trace.json"
+    meta = {"kind": "meta", "pflow_trace": "jsonl/1", "format_version": "2.8.0", "execution_id": "e1"}
+    path.write_text("\n".join(json.dumps(line) for line in [meta, *lines]) + "\n", encoding="utf-8")
+    return ResumeSource(
+        path=path,
+        workflow_path="/x/wf.pflow.md",
+        execution_id="e1",
+        entry_node_id=entry,
+        last_completed_node_id=None,
+        events=[],
+        inputs=None,
+        content_hash=content_hash,
+        entry_iteration=entry_iteration,
+    )
+
+
+def test_entry_failed_before_its_start_marker_never_started(tmp_path: Path) -> None:
+    lines = [_start("produce", 0), _event("produce", 0, "success"), _event("save", 1, "failed")]
+    assert entry_never_started(_raw_source(tmp_path, lines)) is True
+
+
+def test_entry_with_a_paired_start_marker_started(tmp_path: Path) -> None:
+    lines = [_start("produce", 0), _event("produce", 0, "success"), _start("save", 1), _event("save", 1, "failed")]
+    assert entry_never_started(_raw_source(tmp_path, lines)) is False
+
+
+def test_a_later_dangling_start_defeats_an_earlier_pre_exec_failure(tmp_path: Path) -> None:
+    """K failed before starting, an on-error back edge re-entered it, and it was killed mid-step:
+    the interrupted attempt (the loader's entry) began, whatever the earlier event says."""
+    lines = [_event("save", 1, "failed"), _start("fix", 2), _event("fix", 2, "success"), _start("save", 3)]
+    assert entry_never_started(_raw_source(tmp_path, lines)) is False
+
+
+def test_a_loop_entry_is_judged_from_the_iteration_resume_re_runs(tmp_path: Path) -> None:
+    """Iteration 1 started (and fired); iteration 2 failed resolving its carry. Resume re-runs
+    iteration 2 only, which never began. With no recorded position (a pre-2.8.0 trace: no
+    `iteration` keys, entry_iteration None) resume restarts at iteration 1, which DID begin."""
+    lines = [
+        _start("count", 0),
+        _event("count", 0, "success", iteration=1),
+        _event("count", 1, "failed", iteration=2),
+    ]
+    assert entry_never_started(_raw_source(tmp_path, lines, entry="count", entry_iteration=2)) is True
+    keyless = [_start("count", 0), _event("count", 0, "success"), _event("count", 1, "failed")]
+    assert entry_never_started(_raw_source(tmp_path, keyless, entry="count", entry_iteration=None)) is False
+
+
+def test_an_earlier_visit_that_began_is_re_run_too(tmp_path: Path) -> None:
+    """Falsifier C1: an on-error back edge re-entered K — visit 1 started (and fired), visit 2
+    failed before starting. A non-loop resume re-runs from K's FIRST event, so K began."""
+    lines = [
+        _start("save", 1),
+        _event("save", 1, "failed"),
+        _start("router", 2),
+        _event("router", 2, "success"),
+        _event("save", 3, "failed"),
+    ]
+    assert entry_never_started(_raw_source(tmp_path, lines)) is False
+
+
+def test_a_restored_visit_of_the_entry_is_no_proof(tmp_path: Path) -> None:
+    """Re-falsification: in a resumed attempt the entry's restored re-record (it ran and fired in
+    the earlier attempt) has no node.start either. A back edge then fails the entry again before
+    starting; the next resume re-runs from the restored visit, so the entry began."""
+    lines = [
+        _event("x", 0, "cached", restored=True),
+        _event("k", 1, "cached", restored=True),
+        _start("m", 2),
+        _event("m", 2, "failed"),
+        _start("x", 3),
+        _event("x", 3, "success"),
+        _event("k", 4, "failed"),
+    ]
+    assert entry_never_started(_raw_source(tmp_path, lines, entry="k")) is False
+
+
+def test_a_trace_predating_node_start_proves_nothing(tmp_path: Path) -> None:
+    """`node.start` and the meta `content_hash` arrived together (Task 173): no hash, no markers."""
+    assert entry_never_started(_raw_source(tmp_path, [_event("save", 1, "failed")], content_hash=None)) is False
+
+
+def test_a_child_start_with_the_same_id_never_pairs_with_a_top_level_event(tmp_path: Path) -> None:
+    lines = [_start("inner", 1, parent_id=0), _event("save", 1, "failed")]
+    assert entry_never_started(_raw_source(tmp_path, lines)) is True
+
+
+@pytest.mark.parametrize(
+    "lines, entry",
+    [
+        ([_event("save", 1, "failed")], None),  # between-nodes source: no entry to prove anything about
+        ([_start("produce", 0), _event("produce", 0, "success")], "save"),  # entry never recorded
+        ([{"kind": "event", "node_id": "save", "parent_id": None, "status": "failed"}], "save"),  # no id
+        ([_event("save", 1, "cached")], "save"),  # a cache hit stands for an earlier execution
+    ],
+)
+def test_anything_short_of_proof_reads_as_started(
+    tmp_path: Path, lines: list[dict[str, Any]], entry: str | None
+) -> None:
+    assert entry_never_started(_raw_source(tmp_path, lines, entry=entry)) is False
+
+
+def test_unreadable_trace_reads_as_started(tmp_path: Path) -> None:
+    source = _raw_source(tmp_path, [_event("save", 1, "failed")])
+    source.path.unlink()
+    assert entry_never_started(source) is False
+
+
+def test_restored_node_ids_is_the_seed_set_minus_the_entry() -> None:
+    """Same derivation the loader guards and the engine seeds: completed steps before the entry,
+    a failed (recovered) step excluded, and a loop entry's own earlier iteration not listed."""
+    events = [
+        {"node_id": "fetch", "status": "success"},
+        {"node_id": "flaky", "status": "failed"},
+        {"node_id": "count", "status": "success", "iteration": 1},
+        {"node_id": "count", "status": "failed", "iteration": 2},
+        {"node_id": "later", "status": "success"},
+    ]
+    source = ResumeSource(
+        path=Path("t.json"),
+        workflow_path=None,
+        execution_id="e1",
+        entry_node_id="count",
+        last_completed_node_id=None,
+        events=events,
+        inputs=None,
+        content_hash=None,
+        entry_iteration=2,
+    )
+    assert restored_node_ids(source) == ["fetch"]
 
 
 # ── Keystone: a REAL failed run, not a synthetic fixture ──────────────────────

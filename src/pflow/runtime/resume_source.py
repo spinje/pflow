@@ -340,16 +340,15 @@ def _seedable_final_events(
     if entry_node_id is None:
         scope = events
     else:
-        idx = next(
-            (
-                i
-                for i, e in enumerate(events)
-                if e.get("node_id") == entry_node_id and (e.get("iteration") or 1) >= entry_iteration
-            ),
-            None,
-        )
+        idx = next((i for i, e in enumerate(events) if _resumes_from(e, entry_node_id, entry_iteration)), None)
         scope = events if idx is None else events[:idx]
     return {nid: ev for nid, ev in final_events_by_node(scope).items() if ev.get("status") != "failed"}
+
+
+def _resumes_from(event: dict[str, Any], entry_node_id: str, entry_iteration: int) -> bool:
+    """Whether ``event`` is the entry's at ``entry_iteration`` or later — the first such event is
+    where the seed slice ends and where the resume re-runs from (a keyless event is iteration 1)."""
+    return event.get("node_id") == entry_node_id and (event.get("iteration") or 1) >= entry_iteration
 
 
 def lossy_seed(
@@ -366,6 +365,62 @@ def lossy_seed(
         if lossy:
             return node_id, [str(entry) for entry in lossy]
     return None
+
+
+def restored_node_ids(source: ResumeSource) -> list[str]:
+    """The steps a resume of ``source`` restores instead of re-running, in run order.
+
+    The loader's own seed derivation (the arguments ``load_resume_source`` scans) minus the entry,
+    which runs — the same set the engine counts as "N upstream steps restored".
+    """
+    seedable = _seedable_final_events(source.events, source.entry_node_id, source.entry_iteration or 1)
+    return [node_id for node_id in seedable if node_id != source.entry_node_id]
+
+
+def entry_never_started(source: ResumeSource) -> bool:
+    """Whether the source run PROVES the entry never began on any visit the resume re-runs (#690).
+
+    ``begin_node`` flushes a top-level ``node.start`` before a step's prep/exec, and the step's
+    terminal ``event`` reuses that line's ``id``; a failure raised earlier (template resolution, a
+    loop-carry error) records a FAILED ``event`` with no ``node.start``. The resume re-runs from the
+    entry's first event at ``entry_iteration`` or later (``_resumes_from``, the seed slice's own
+    cut), so from there on every line of the entry must be exactly that: a failed, unpaired event.
+    A ``node.start`` (a visit that began) or any other event — a ``restored`` re-record or a cache
+    hit, which stand for a run that executed earlier, also unpaired — is no proof. Traces without
+    ``content_hash`` predate ``node.start`` (both arrived with Task 173) and prove nothing either.
+    """
+    entry = source.entry_node_id
+    if entry is None or source.content_hash is None:
+        return False
+    try:
+        lines = [
+            line
+            for line in _iter_raw_trace_lines(source.path)
+            if line.get("parent_id") is None
+            and line.get("node_id") == entry
+            and line.get("kind") in ("node.start", "event")
+        ]
+    except (OSError, ValueError):
+        return False
+    first_iteration = source.entry_iteration or 1
+    cut = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if line.get("kind") == "event" and _resumes_from(line, entry, first_iteration)
+        ),
+        None,
+    )
+    if cut is None:
+        return False
+    started_ids = {line.get("id") for line in lines[:cut] if line.get("kind") == "node.start"}
+    return all(
+        line.get("kind") == "event"
+        and line.get("status") == "failed"
+        and isinstance(line.get("id"), int)
+        and line["id"] not in started_ids
+        for line in lines[cut:]
+    )
 
 
 def _apply_gate_resolutions(path: Path, events: list[dict[str, Any]]) -> None:

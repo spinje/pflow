@@ -1456,11 +1456,18 @@ class ResumeStaleWorkflowError(ResumeSourceError):
     """The workflow changed (or can't be proven unchanged) since the original run
     (Task 164; also paused resumes, Task 171).
 
-    Two messages: a KNOWN hash mismatch states the workflow was edited; a MISSING
-    source hash (a run predating hash tracking) states only that the match cannot
-    be verified — never claiming an edit that may not have happened. Both suggest
-    ``--force``. Wording stays neutral ("original run") because this refusal serves
-    failed, interrupted, AND paused resumes — a paused run was not a failure.
+    A KNOWN hash mismatch states the workflow was edited; a MISSING source hash (a
+    run predating hash tracking) states only that the match cannot be verified —
+    never claiming an edit that may not have happened. Either way the message names
+    what ``--force`` would accept (#690): the steps resume restores instead of
+    re-running (an edit to them would not take effect) and where it resumes — at
+    ``entry_node_id`` (from ``entry_iteration`` when a loop step continues past its first
+    iteration, whose earlier iterations are restored too), or after ``after_node_id`` for a
+    between-nodes source. When
+    ``rerun_node_type`` is given, it also says that ``--force`` waives the
+    side-effect confirmation the entry would otherwise need. Wording stays neutral
+    ("original run") because this refusal serves failed, interrupted, AND paused
+    resumes — a paused run was not a failure.
     """
 
     _TITLE = "Workflow changed since the original run"
@@ -1469,25 +1476,54 @@ class ResumeStaleWorkflowError(ResumeSourceError):
         self,
         *,
         hash_known: bool,
+        restored: list[str],
+        entry_node_id: str | None,
+        entry_iteration: int | None = None,
+        after_node_id: str | None = None,
+        rerun_node_type: str | None = None,
         execution_id: str | None = None,
         trace_path: str | None = None,
     ):
         self.hash_known = hash_known
         if hash_known:
-            message = (
-                "The workflow was edited since the original run, so the restored upstream outputs "
-                "may not match the current steps."
+            changed = "The workflow was edited since the original run."
+        else:
+            changed = "Cannot verify the workflow is unchanged — this run predates workflow-hash tracking."
+        later_iteration = entry_node_id is not None and entry_iteration is not None and entry_iteration > 1
+        where = f"at '{entry_node_id}'" if entry_node_id is not None else f"after '{after_node_id}'"
+        if later_iteration:
+            where += f" (iteration {entry_iteration})"
+        names = ", ".join(f"'{node_id}'" for node_id in restored)
+        if not restored:
+            restores = f"Resume restores no earlier steps and resumes {where}."
+        elif len(restored) == 1:
+            restores = (
+                f"Resume restores the saved output of {names} and resumes {where}, "
+                f"so an edit to {names} would not take effect."
             )
         else:
-            message = (
-                "Cannot verify the workflow is unchanged — this run predates workflow-hash tracking, "
-                "so the restored upstream outputs may not match the current steps."
+            restores = (
+                f"Resume restores the saved outputs of {names} and resumes {where}, "
+                "so an edit to those steps would not take effect."
+            )
+        if later_iteration:
+            restores += (
+                f" Its iterations before {entry_iteration} are restored too, so an edit to '{entry_node_id}' "
+                f"applies from iteration {entry_iteration} on."
+            )
+        scope = f"'{entry_node_id}' or later steps" if entry_node_id is not None else f"steps after '{after_node_id}'"
+        force = f"If you changed only {scope}, pass --force to resume."
+        if rerun_node_type is not None:
+            force += (
+                f" --force also re-runs '{entry_node_id}' (a {rerun_node_type} step that already started in the "
+                "original run), so its side effects may fire again — if you are an AI agent, confirm that "
+                "with your human first."
             )
         super().__init__(
-            message,
+            f"{changed} {restores}",
             execution_id=execution_id,
             trace_path=trace_path,
-            suggestions=["Re-run the workflow from the start, or pass --force to resume anyway."],
+            suggestions=[force, "Otherwise re-run the workflow from the start."],
         )
 
 
