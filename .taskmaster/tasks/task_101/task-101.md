@@ -6,6 +6,15 @@ Add a `files` parameter to the shell node that allows passing template data as t
 ## Status
 not started
 
+> **Partly overtaken by Task 118 (note added 2026-10-06).** Task 118 makes shell bodies plain sh and
+> binds values as environment variables through `env:` — which removes this task's motivating
+> problem (quotes and apostrophes breaking a command with data pasted into it). What remains is
+> narrower: several LARGE values in one step (environment size is limited; `stdin` carries only
+> one). If that is ever observed, re-scope this task to "values over the env limit are written to
+> temp files, exposed under the same names and with the same value-to-text rule as `env:`" — the
+> `files` design below predates 118 and its examples use inline templates that 118 forbids. Until
+> then this stays `later`; do not plan from the text below without a rewrite.
+
 ## Dependencies
 - Task 41: Implement Shell Node - The shell node must exist before we can extend it with file input capabilities
 
