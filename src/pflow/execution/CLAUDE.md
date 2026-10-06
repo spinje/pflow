@@ -65,16 +65,17 @@ pause have different result statuses; a usable token also requires persistence.
 
 `preflight_resume` owns load/staleness/entry checks and returns a side-effect
 refusal for the caller to enforce. The verdict skips a failed entry only on
-proof it never started on any visit the resume re-runs — no top-level
-`node.start` at or after the entry's re-run point
-(`resume_source.entry_never_started`, cut by the seed slice's own
-`_resumes_from`) — so it relies on the engine writing `node.start` before any
-node code runs. A `workflow` K never gets the skip: a batched host writes no
-`node.start` (Task 180 closes that and drops the carve-out). The stale refusal
-reuses the verdict to say that `--force` would re-fire a started side-effecting
-entry. Dry-run still checks stale workflow identity but must not require
-side-effect confirmation. Callers own settings-env injection and compilation;
-preflight does neither.
+proof it never started on any visit the resume re-runs — from the entry's re-run
+point (the seed slice's own cut, `_resumes_from`) every top-level line of the
+entry is a failed event with no `node.start`
+(`resume_source.entry_never_started`; a restored or cached event is no proof) —
+so it relies on the engine writing `node.start` before any node code runs. A
+`workflow` K never gets the skip: a batched host writes no `node.start` (Task
+180 closes that and drops the carve-out). The stale refusal reuses the verdict
+to say that `--force` would re-fire a started side-effecting entry. Dry-run
+still checks stale workflow identity but must not require side-effect
+confirmation. Callers own settings-env injection and compilation; preflight does
+neither.
 
 ## Dry-Run Planner
 
