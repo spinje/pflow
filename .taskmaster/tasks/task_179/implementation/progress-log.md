@@ -754,3 +754,18 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
 - Handed up per the ruling's fail-closed rule. **Exact resume point:** head after this commit (code unchanged since
   a2aec33c); on the scope ruling → resume the implementer (a9aaea04…) with the 04:55 options, then the targeted gate,
   falsifier re-run, close-out as in the 04:35 entry.
+
+## [2026-10-06 05:20] task-orchestrator (Opus) — [RULING] marker scope: Option 1, judged on author-produced values
+- [RULING] (main orchestrator, under the user's session grant): the `lossy` marker covers anything the trace cannot
+  round-trip unchanged, judged on what the AUTHOR's code produced, never on engine-written keys: (a) a non-string dict
+  key anywhere in a node's result; (b) a dropped key only when author-produced (an author's `__foo` IS lossy; the
+  engine's `__metrics__`/`__pflow_stats__`/`__pflow_warnings__` and engine-written `_debug_context`/`_batch_trace` are
+  NOT); (c) bytes; (d) any value that would fall to `json.dumps(default=str)` (set, date/datetime, Decimal, Path, custom
+  objects). Tuple→list unmarked. One check in `_sanitize_for_json` before the `default=str` fallback; loader refusal +
+  producer no-pause as ruled at 04:35.
+- Preconditions (fail-closed): (1) marker set exactly (a)–(d) — a sixth kind STOPs; (2) zero false refusals over the
+  repo corpus — hand back the case, never loosen; (3) one message family naming step + lossy key/type + remedy *"make the
+  step's result JSON-native (dict/list/str/int/float/bool/None) — e.g. `str(dt)` / `sorted(s)` in the code step — or
+  re-run from the start"*; (4) changed pause tests listed by name. PR body sentence (user-visible changes): "a resume
+  whose restored upstream value would have been silently coerced by the trace now refuses with the field named".
+- Next: resume the implementer (rotate to a fresh Opus implementer from this log tail if its window degrades).
