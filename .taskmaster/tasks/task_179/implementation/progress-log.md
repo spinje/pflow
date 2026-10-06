@@ -695,3 +695,21 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   lossiness marker + loader refusal + producer no-pause, re-gate, re-run the falsifier on C1/W1 only; on ruling B →
   implementer writes the guide limitation, then `verify.sh` (bar: main's drift set), `create-task-review`, spec done,
   `create-pr`.
+
+## [2026-10-06 04:35] task-orchestrator (Opus) — [RULING] C1+W1: A (close in-task)
+- [RULING] (main orchestrator, under the user's session grant *"go ahead and run this session end to end"*): **A** —
+  lossiness marker + loader refusal + producer no-pause, riding 2.8.0. Rationale: Q2 decides the direction; Task 171's
+  pause-is-a-promise rules out W1's dead tokens; the "gap your change widens" trigger fires. User-visible consequence
+  (some non-loop resumes that silently continued with wrong upstream data now refuse) goes in the PR body with one
+  before/after.
+- Fail-closed preconditions (each failure → hand back, not decide): (1) marker fires ONLY for non-str key coerced,
+  `__` key dropped from a NODE OUTPUT, bytes → placeholder; tuple→list unmarked; a fourth lossy transformation found →
+  STOP and name it; (2) zero new refusals across the repo's own corpus (every resume/`--only` test + tracked example
+  resume paths) — any false positive → STOP; (3) refusal reuses the binary-data guidance family verbatim where it fits
+  and names the lossy field/key; (4) producer change keeps every existing pause test green except those encoding W1 —
+  listed by name here.
+- Hygiene break recorded: the falsifier ran `pkill -9 -f "sleep 30"` — kill by name, machine-wide (violates "kill only
+  PIDs whose argv carries your worktree path"). Main orchestrator is fixing the defs at close.
+- Follow-ups: #2 (`loop_stopped` not restored) and #3 (dry-run footer wording) filed by the main orchestrator; #1
+  (all loop counters) stays the documented known limit.
+- Next: resume the implementer to build A + targeted gate re-run; then falsifier re-run on C1/W1 + lossy repros.
