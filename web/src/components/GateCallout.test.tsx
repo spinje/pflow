@@ -3,6 +3,10 @@
 // (RunPanel.test.tsx pattern) with the REAL ApiError, so the refusal-body contract
 // (`.body.refusal` + extras) is what these tests exercise, not a fabricated shape.
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
@@ -261,5 +265,48 @@ describe("GateCallout — refusal states (never silence)", () => {
     render(<GateCallout run="r1" onPinRun={vi.fn()} />);
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(screen.getByText(/not paused/)).toBeTruthy();
+  });
+});
+
+// #714: whatever answers the gate lives in `.gate-foot`, pinned while the content above it
+// scrolls. jsdom computes no layout, so this pins the two halves it CAN see — the DOM split
+// (answer controls in the foot, preview/options above it) and the stylesheet's sticky rule;
+// the measured "answer row inside the viewport" check is a real-browser screenshot pass.
+describe("GateCallout — the answer never scrolls away (#714)", () => {
+  const foot = (el: Element): Element | null => el.closest(".gate-foot");
+
+  it("approval: Deny/Approve and their errors sit in the foot; the preview does not", async () => {
+    vi.mocked(fetchGate).mockResolvedValue(APPROVAL);
+    vi.mocked(resumeRun).mockRejectedValue(
+      new ApiError(409, [{ message: "the paused gate needs an answer flag" }], { refusal: "answer_required" }),
+    );
+    render(<GateCallout run="r1" onPinRun={vi.fn()} />);
+    const approve = await screen.findByRole("button", { name: "Approve" });
+
+    expect(foot(approve)).not.toBeNull();
+    expect(foot(screen.getByRole("button", { name: "Deny" }))).not.toBeNull();
+    expect(foot(screen.getByText("./deploy.sh --prod"))).toBeNull();
+
+    fireEvent.click(approve);
+    expect(foot(await screen.findByRole("alert"))).not.toBeNull();
+  });
+
+  it("escalation: the free-text row and Answer sit in the foot; the option cards scroll above it", async () => {
+    vi.mocked(fetchGate).mockResolvedValue(ESCALATION);
+    render(<GateCallout run="r1" onPinRun={vi.fn()} />);
+    const option = await screen.findByRole("button", { name: /Expand-contract/ });
+
+    expect(foot(screen.getByRole("button", { name: "Answer" }))).not.toBeNull();
+    expect(foot(screen.getByLabelText("Free-text answer"))).not.toBeNull();
+    expect(foot(option)).toBeNull();
+  });
+
+  it("the stylesheet pins the foot (position: sticky)", () => {
+    // Read via fs (see cssOrder.test.ts for why not `?raw`); path-joined, because under jsdom
+    // the global URL is jsdom's, which node's fileURLToPath rejects.
+    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../index.css"), "utf8");
+    const rule = /\.gate-foot\s*\{([^}]*)\}/.exec(css.replace(/\/\*[\s\S]*?\*\//g, ""));
+    expect(rule, "the .gate-foot rule is missing from index.css").not.toBeNull();
+    expect(rule![1]).toMatch(/position:\s*sticky/);
   });
 });

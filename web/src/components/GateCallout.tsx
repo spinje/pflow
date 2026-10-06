@@ -9,6 +9,10 @@
 // anchors at the ⏸ frontier node; on a delivered answer the parent PINS the overlay to the
 // new attempt (onPinRun), which clears the paused banner and unmounts this panel.
 //
+// Layout (#714): whatever ANSWERS the gate (+ its errors) goes in `.gate-foot`, which stays
+// pinned while everything above it scrolls (index.css). Escalation option cards stay above it:
+// they only select, and a long option list must be able to scroll.
+//
 // The answer delivery + refusal machine (superseded / ack-then-force / inline diagnostics —
 // "refusals are the UX, never silence") is the shared useResumeAnswer/RefusalNotice seam in
 // resumeAnswer.tsx; this file owns only the gate CONTENT.
@@ -97,7 +101,8 @@ export function GateCallout({
     <div className="gate">
       <p className="gate-eyebrow">
         {req.node_type} · {req.node_id}
-        {typeof req.iteration === "number" && ` · iteration ${req.iteration}`}
+        {/* No-break space: a wrapping eyebrow never strands the number on its own line. */}
+        {typeof req.iteration === "number" && ` · iteration ${req.iteration}`}
       </p>
       {req.kind === "action_approval" ? (
         <>
@@ -113,24 +118,26 @@ export function GateCallout({
             </dl>
           )}
           {req.recommendation !== null && <p className="gate-recommendation">{req.recommendation}</p>}
-          <GateErrors errors={answer.errors} />
-          <div className="gate-actions">
-            <button
-              type="button"
-              className="gate-btn gate-deny"
-              disabled={submitting}
-              onClick={() => answer.submit({ approve: "no" })}
-            >
-              Deny
-            </button>
-            <button
-              type="button"
-              className="gate-btn gate-approve"
-              disabled={submitting}
-              onClick={() => answer.submit({ approve: "yes" })}
-            >
-              Approve
-            </button>
+          <div className="gate-foot">
+            <GateErrors errors={answer.errors} />
+            <div className="gate-actions">
+              <button
+                type="button"
+                className="gate-btn gate-deny"
+                disabled={submitting}
+                onClick={() => answer.submit({ approve: "no" })}
+              >
+                Deny
+              </button>
+              <button
+                type="button"
+                className="gate-btn gate-approve"
+                disabled={submitting}
+                onClick={() => answer.submit({ approve: "yes" })}
+              >
+                Approve
+              </button>
+            </div>
           </div>
         </>
       ) : (
@@ -165,45 +172,47 @@ export function GateCallout({
           {req.recommendation !== null && recommendedIndex === -1 && (
             <p className="gate-recommendation">Recommended: {req.recommendation}</p>
           )}
-          <GateErrors errors={answer.errors} />
-          <form
-            className="gate-freeform"
-            onSubmit={(e) => {
-              e.preventDefault();
-              // One submit path for both sources. Empty/whitespace text never posts — the
-              // server would 400 it (its shape guard); blocking client-side keeps the refusal
-              // out of the wire entirely.
-              if (selected !== null) {
-                answer.submit({ choose: labels[selected]! });
-                return;
-              }
-              const text = choice.trim();
-              if (text !== "") answer.submit({ choose: text });
-            }}
-          >
-            <input
-              className="gate-freeform-input"
-              value={choice}
-              onChange={(e) => {
-                setChoice(e.target.value);
-                setSelected(null); // typing moves the intent to free text
+          <div className="gate-foot">
+            <GateErrors errors={answer.errors} />
+            <form
+              className="gate-freeform"
+              onSubmit={(e) => {
+                e.preventDefault();
+                // One submit path for both sources. Empty/whitespace text never posts — the
+                // server would 400 it (its shape guard); blocking client-side keeps the refusal
+                // out of the wire entirely.
+                if (selected !== null) {
+                  answer.submit({ choose: labels[selected]! });
+                  return;
+                }
+                const text = choice.trim();
+                if (text !== "") answer.submit({ choose: text });
               }}
-              placeholder={req.options.length > 0 ? "Or answer in your own words…" : "Type an answer…"}
-              aria-label="Free-text answer"
-            />
-            {/* Static label, beside the input (owner-preferred layout 2026-07-12): a dynamic
-                "Answer with X" squeezed the input (clipped placeholder) and pushed the panel
-                past the callout's 320px max-height (scrollbar). The highlighted card names the
-                selection; the tooltip carries the full "Answer with X" for hover confirmation. */}
-            <button
-              type="submit"
-              className="gate-btn gate-primary"
-              title={selected !== null ? `Answer with “${labels[selected]}”` : undefined}
-              disabled={submitting || (selected === null && choice.trim() === "")}
             >
-              Answer
-            </button>
-          </form>
+              <input
+                className="gate-freeform-input"
+                value={choice}
+                onChange={(e) => {
+                  setChoice(e.target.value);
+                  setSelected(null); // typing moves the intent to free text
+                }}
+                placeholder={req.options.length > 0 ? "Or answer in your own words…" : "Type an answer…"}
+                aria-label="Free-text answer"
+              />
+              {/* Static label, beside the input (owner-preferred layout 2026-07-12): a dynamic
+                  "Answer with X" squeezed the input (clipped placeholder) and pushed the panel
+                  past the callout's 320px max-height (scrollbar). The highlighted card names the
+                  selection; the tooltip carries the full "Answer with X" for hover confirmation. */}
+              <button
+                type="submit"
+                className="gate-btn gate-primary"
+                title={selected !== null ? `Answer with “${labels[selected]}”` : undefined}
+                disabled={submitting || (selected === null && choice.trim() === "")}
+              >
+                Answer
+              </button>
+            </form>
+          </div>
         </>
       )}
     </div>

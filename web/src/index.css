@@ -2322,10 +2322,17 @@ textarea.run-field-input {
   text-transform: uppercase;
   color: var(--text-muted);
 }
-/* The run id, pushed to the right of the title (sits just before the ✕). */
+/* The run id / gated step id, pushed to the right of the title (sits just before the ✕). One
+   line, ellipsized: a long unbroken id would otherwise push the ✕ out of the box (#714). Both
+   callers carry the full text in a `title` tooltip; the gate eyebrow also shows the full id. */
 .node-callout-subtitle {
+  min-width: 0;
   margin-left: auto;
   margin-right: 10px;
+  padding-left: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--mono);
   font-size: 10px;
   color: var(--text-faint);
@@ -2465,12 +2472,14 @@ button.say-affordance {
   padding-top: 10px;
   border-top: 1px solid var(--border);
 }
-/* Small caps context line: `node_type · node_id` — same voice as the callout title. */
+/* Small caps context line: `node_type · node_id` — same voice as the callout title. A step id
+   with no break opportunity (`a_long_snake_id`) wraps instead of widening the body. */
 .gate-eyebrow {
   margin: 0;
   font-family: var(--mono);
   font-size: 11px;
   color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 .gate-question {
   margin: 0;
@@ -2594,6 +2603,22 @@ button.say-affordance {
 .gate-freeform-input:focus {
   outline: none;
   border-color: var(--accent);
+}
+/* The gate's answer controls (+ errors), pinned to the bottom of the scrolling .node-callout-body:
+   the content above scrolls under it, the answer never does (#714). Every -10px/-12px below is
+   `.node-callout-body`'s padding, cancelled so the foot reads as the callout's footer — full
+   width, the header's hairline — with nothing scrolling past its sides or below it. `bottom` is
+   negative because a sticky box's bottom edge stops at the scroller's padding, not its edge. */
+.gate-foot {
+  position: sticky;
+  bottom: -10px;
+  margin: 0 -12px -10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border);
 }
 /* The action row: Deny/Approve, Cancel/Resume-anyway, ↻ Resume — right-aligned like a dialog. */
 .gate-actions {
