@@ -1,0 +1,65 @@
+{
+  "success": true,
+  "result": {
+    "result": "IT'S A BODY"
+  },
+  "status": "success",
+  "workflow": {
+    "action": "unsaved",
+    "name": "/Users/andfal/projects/pflow-worktrees/feat-task-118-shell-env-binding/examples/nested/document-processor.pflow.md"
+  },
+  "warnings": [],
+  "advisories": [],
+  "diagnostics": [],
+  "duration_ms": 75.31,
+  "total_cost_usd": 0.0,
+  "nodes_executed": 3,
+  "metrics": {
+    "workflow": {
+      "duration_ms": 74.42,
+      "nodes_executed": 3,
+      "cost_usd": 0.0,
+      "tokens_input": 0,
+      "tokens_output": 0,
+      "tokens_total": 0,
+      "models_used": [],
+      "node_timings": {
+        "process_title": 12.001457973383367,
+        "process_body": 12.685416964814067,
+        "combine": 4.055459052324295
+      }
+    },
+    "total": {
+      "tokens_input": 0,
+      "tokens_output": 0,
+      "tokens_total": 0,
+      "total_calls": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "execution": {
+    "duration_ms": 75.31,
+    "nodes_executed": 3,
+    "nodes_total": 3,
+    "steps": [
+      {
+        "node_id": "process_title",
+        "status": "completed",
+        "duration_ms": 12.001457973383367,
+        "cached": false
+      },
+      {
+        "node_id": "process_body",
+        "status": "completed",
+        "duration_ms": 12.685416964814067,
+        "cached": false
+      },
+      {
+        "node_id": "combine",
+        "status": "completed",
+        "duration_ms": 4.055459052324295,
+        "cached": false
+      }
+    ]
+  }
+}

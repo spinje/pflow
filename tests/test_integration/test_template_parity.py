@@ -44,6 +44,7 @@ import pytest
 from pflow.core.prompt_cache import CacheRenderContext, build_cache_system_blocks
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
+from pflow.nodes.shell.env_binding import bind_env
 from pflow.registry import Registry
 from pflow.registry.scanner import extract_metadata
 from pflow.runtime import WorkflowEngine, compile_workflow
@@ -472,6 +473,12 @@ def _drive_sub_workflow(row: Row, ir: dict[str, Any], shared: dict[str, Any]) ->
     return observed
 
 
+def _drive_shell_env(row: Row, ir: dict[str, Any], shared: dict[str, Any]) -> RuntimeObservation:
+    """``env: {V: <template>}`` resolved, then bound the way ``ShellNode.prep()`` binds it."""
+    observed = _resolve_param(row, _compile(row, ir).node_configs["s"], shared, "env")
+    return _resolved(bind_env(observed.value)["V"]) if observed.kind == "resolves" else observed
+
+
 def _drive_prewarm(row: Row, ir: dict[str, Any], shared: dict[str, Any]) -> RuntimeObservation:
     """``None`` means the warm-up silently drops the user's ``system`` prompt: Absent, no report."""
     value = _resolve_template_string(row.template, shared)
@@ -577,6 +584,12 @@ SURFACES: Mapping[str, Surface] = MappingProxyType({
     ),
     "sub_workflow": Surface(
         _build_sub_workflow, _drive_sub_workflow, lambda _row, result: result.shared_after["s"]["got"]
+    ),
+    # A shell step's ``env:`` value: the text the command reads as ``$V`` (printed verbatim).
+    "shell_env": Surface(
+        lambda row, _t, _ir: _node("shell", {"command": 'printf "%s" "$V"', "env": {"V": row.template}}),
+        _drive_shell_env,
+        lambda _row, result: result.shared_after["s"]["stdout"],
     ),
     # The engine's batch warm-up resolves an llm node's ``system`` with this helper;
     # end to end, the same text is a plain ``sink_str`` param.
@@ -1550,6 +1563,28 @@ PREWARM_ROWS: tuple[Row, ...] = (
     ),
 )
 
+SHELL_ENV_ROWS: tuple[Row, ...] = (
+    # Task 118 Part 1: an `env:` value binds as `to_string` text, never JSON-parsed.
+    Row("shell_env_non_string", "shell_env", "${p.out.num}", Ok(), Resolves("3")),
+    Row(
+        "shell_env_compact_json_string",
+        "shell_env",
+        "${p.out.json_str}",
+        Ok(),
+        Resolves('{"a":1}'),
+        # DEFAULT_PAYLOAD's json_str carries a space — only compact text shows a re-serialization.
+        payload=with_payload(out={**P["out"], "json_str": '{"a":1}'}),
+        mutation="resolve_templates auto-parses the leaves of every dict param again",
+    ),
+    Row(
+        "shell_env_missing_field",
+        "shell_env",
+        "${p.nope}",
+        Error("does not output 'nope'"),
+        Unresolved(("p.nope",)),
+    ),
+)
+
 CACHE_ROWS: tuple[Row, ...] = (
     Row(
         "cache_var_ref",
@@ -1705,7 +1740,7 @@ CACHE_ROWS: tuple[Row, ...] = (
 )
 
 SURFACE_ROWS: tuple[Row, ...] = (
-    PARAM_ROWS + BATCH_ROWS + LOOP_ROWS + OUTPUT_ROWS + SUB_WORKFLOW_ROWS + PREWARM_ROWS + CACHE_ROWS
+    PARAM_ROWS + BATCH_ROWS + LOOP_ROWS + OUTPUT_ROWS + SUB_WORKFLOW_ROWS + PREWARM_ROWS + SHELL_ENV_ROWS + CACHE_ROWS
 )
 
 

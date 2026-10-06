@@ -16,6 +16,7 @@ from pflow.core.json_utils import try_parse_json
 from pflow.core.param_coercion import coerce_param_for_node
 from pflow.core.templates import CONTAINER_TYPES, LIST_TYPES, Reference, Resolution, TemplateResolver, parse, resolve
 from pflow.core.types import outer_base_type
+from pflow.core.workflow.template_surfaces import binds_as_text
 
 from .template_errors import (
     build_json_parse_error_message,
@@ -84,6 +85,15 @@ def build_type_cache(interface_metadata: dict[str, Any] | None) -> dict[str, str
                     types[key] = _runtime_base_type(type_str)
 
     return types
+
+
+def parses_leaves(template_config: TemplateConfig, key: str) -> bool:
+    """Whether a dict/list param's string leaves are JSON-parsed on resolution.
+
+    Consumer-keyed today (an ``env:`` value binds as text); Task 120 adds the
+    source-keyed rule (#686) here.
+    """
+    return not binds_as_text(template_config.node_type, key)
 
 
 def split_params(
@@ -264,7 +274,11 @@ def resolve_templates(  # noqa: C901
             is_simple_template = False
         else:
             # A nested dict/list auto-parses JSON-string leaves; a simple string keeps its value's type.
-            resolution = resolve(template, context, auto_parse=isinstance(template, (dict, list)))
+            resolution = resolve(
+                template,
+                context,
+                auto_parse=isinstance(template, (dict, list)) and parses_leaves(template_config, key),
+            )
             resolved_value = resolution.value
             is_simple_template = isinstance(template, str) and parse(template).is_simple
 

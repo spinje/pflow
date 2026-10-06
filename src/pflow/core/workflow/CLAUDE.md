@@ -9,6 +9,7 @@
 | Change pre-execution validation | `validator.py::WorkflowValidator.validate` |
 | Change dependencies or cache declaration rules | `data_flow.py::validate_data_flow`, `_validate_cache_block` |
 | Add a template-bearing IR location (every template check sees it) | `template_surfaces.py::iter_template_surfaces` |
+| Decide that a param's values bind as text (never JSON-parsed — `shell.env`) | `template_surfaces.py::binds_as_text`; the resolver consults it through `parses_leaves` |
 | Shared loop/gate validation rules | `loop_validation.py::check_loop_polarity`, `gate_validation.py::check_approval_allowed` (also used by the compiler) |
 | Resolve child workflows and external files | `sub_workflow_resolver.py`, `dependency_discovery.py` |
 | Change static graph construction or rendering | `graph/CLAUDE.md`; compatibility entry point in `mermaid/CLAUDE.md` |
