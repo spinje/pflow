@@ -88,3 +88,22 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   `task-112.md:73` names Pass 7 as coverage; `task-181.md` mis-cites the unused-input check.
 - Next: commit plan + checkpoint + inventory + spec + log; hand back with CP-1's path; on resume with the
   ruling, fold strings (and D5 if rule 1/2 change) and record it here before any build.
+
+## [2026-10-07 00:20] task-planner (Fable) — CP-1 RULED; PR shape ruled; plan unparked
+- Did: folded the rulings. [RULING] (main orchestrator under the user's grant *"run as far as you can without
+  me tonight, end to end, you have the grant"*): CP-1 rulings 1–9 **all as recommended** — scope-based,
+  step-local leftover rule with hard cases (a)–(g); ruling 2 = **W** (warning for an unknown-root pflow-only
+  shape in a shell command); `$${` an error in both bodies with the drafted fixes; 4a–4f incl. the
+  literal-boolean warning, clobber list as a warning, case-duplicates as an error, binding failures raised
+  before spawn and never swallowed; ruling 5 incl. the unread-`inputs:`-key warning; ruling 6 = one
+  display-safe copy via `redact_sensitive`, 200-char cap wherever it travels, full values in the report;
+  7 accepted; 8 acknowledged; 9 wording accepted. **Correction applied:** checkpoint §6 said bound values
+  show as "compact JSON" — `to_string` uses default separators (`{"a": 1, "b": [1, 2]}`), as §4a already
+  said; §6 now matches. PR shape: **two PRs** — Part 1 non-breaking, may merge once green; **Part 2 goes
+  PR-ready and is NOT merged until the user rules on a release** (plan §4.0). Phase E on Opus, not
+  design-bearing: ruled. CONTEXT.md nouns (§11): the main orchestrator writes them when Part 2 merges.
+- Changed: `diagnostics-checkpoint.md` (header + §6 text rule), `implementation-plan.md` (§4.0, §9 CP-1).
+- Verified: n/a (text). | Assumed: nothing new.
+- Deviations/surprises: none — every recommendation was taken.
+- Self-checks: the build gate the plan names (this entry) now exists; nothing else changes in the plan.
+- Next: task orchestrator launches on Part 1 (P0 + PA) from this plan.

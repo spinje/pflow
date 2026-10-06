@@ -4,7 +4,8 @@ Every message this task adds or changes, and the rule that decides when each one
 **BEFORE** blocks are verbatim output of today's code (`b2cd92e3`, macOS, probe workflows run
 with `uv run pflow`). **AFTER** blocks are drafts — nothing is built yet; they follow the
 renderer's real layout (`Error N: Title` / message / `At:` / fixes / `See also:` at column 0).
-Nine rulings are asked for; each has a recommendation. Reply per number, or "all as recommended".
+Nine rulings were asked for; **all nine were ruled as recommended on 2026-10-06** (main orchestrator, under
+the user's end-to-end grant) — see the progress log. The drafts below are the ruled text.
 
 ---
 
@@ -442,7 +443,8 @@ Command failed with exit code 3: calling users
 **Display rule (part of ruling 6).** What a failing step records about its environment is a
 *display-safe copy*, made once at the source: masked by key name through the one shared function
 (`security_utils.redact_sensitive`, the same path `pflow report` and the web UI use); each value
-the exact text the command received (`True`, `3`, compact JSON); each value capped at **200
+the exact text the command received (`True`, `3`, `{"a": 1, "b": [1, 2]}` — `to_string`'s default
+separators, as in §4a); each value capped at **200
 characters** (the cap the `Command:` line already has) ending `… (4,812 chars — full value: pflow
 report)`; a newline inside a value shown as `\n`. That one copy is what every surface carries —
 the terminal block, the JSON error, the error records of a failed batch item or sub-workflow — so a

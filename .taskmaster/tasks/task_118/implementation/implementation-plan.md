@@ -496,7 +496,14 @@ regeneration (R, test-fidelity W5). Batch memo (#675) is untouched.
 
 ## 4. Phases
 
-### 4.0 PR shape — the planner's proposal
+### 4.0 PR shape — RULED 2026-10-06: two PRs
+
+**Ruling (main orchestrator, under the user's end-to-end grant):** two PRs as proposed. **Part 1**
+(P0 + PA + the two tooling workflows in a form that runs identically on today's code) is
+non-breaking and may merge as soon as it is green. **Part 2** (the breaking part) goes PR-ready and
+is **NOT merged until the user rules on a release first** — the task orchestrator hands back at
+`create-pr` and stops. Phase E on Opus, not design-bearing: ruled. CP-1's nine rulings: all as
+recommended; the checkpoint file is the ruled text.
 
 **Two PRs.** Part 1 (P0 + PA) is small, stands alone, fixes a live validate-passes/run-crashes bug
 that a second lane hit independently this week, unblocks Task 120, and is the only way to get a
@@ -1176,10 +1183,9 @@ command type check (Pass 7) as existing coverage; `task-181.md` cites the unused
 
 ## 9. Embedded checkpoints (flagged so the orchestrator plans them as hand-backs)
 
-- **CP-1 — diagnostics, show before code. BUILT BY THE PLANNER** (`diagnostics-checkpoint.md`);
-  the main orchestrator shows it to the user and the ruling is appended to the progress log
-  **before any build starts**. The task orchestrator's first act is to find that entry; if it is
-  absent, hand back — do not start, do not re-draft. PA depends on ruling 4; PD on 6 and 7; PB on
+- **CP-1 — diagnostics, show before code. BUILT BY THE PLANNER AND RULED** (`diagnostics-checkpoint.md`
+  is the ruled text; the progress-log entry of 2026-10-06 records the nine rulings — all as
+  recommended). The task orchestrator's first act is to find that entry; it exists, so build. PA depends on ruling 4; PD on 6 and 7; PB on
   1, 2, 3, 5; PF on 8, 9. A ruling that changes text changes strings and assertions only; a ruling
   that changes rule 1 or 2 changes D5 — re-read D5 against it before PB.
 - **CP-2 — Windows oracle (conditional).** D8-1, -2 or -3 failing on `tests-windows` is a design
