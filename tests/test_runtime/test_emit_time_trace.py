@@ -934,12 +934,30 @@ def test_a_lone_surrogate_streams_and_reads_back_unchanged(tmp_path, monkeypatch
 
 
 @pytest.mark.trace_files
-def test_a_line_json_cannot_write_disables_streaming_like_a_disk_fault(tmp_path, monkeypatch):
-    """The writer's contract covers any fault writing a line, not only I/O (#724): a node output JSON
-    cannot encode (a tuple key — ``json.dumps`` raises ``TypeError``) disables streaming and leaves the
-    successful run successful, exactly as a disk-full write does."""
+def test_a_non_json_key_still_writes_a_complete_trace(tmp_path, monkeypatch):
+    """A key ``json.dumps`` cannot write (a tuple) is written as its text, marked lossy, so the trace is
+    complete — a half-written file would read as an interrupted run that ``pflow resume`` offers (#724)."""
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     wf = _code_workflow(tmp_path, 'result: dict = {(1, 2): "x"}')
+
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False))
+
+    assert result.success, [d.message for d in result.errors]
+    trace = load_trace_file(result.trace.trace_path)
+    assert trace["final_status"] == "success"
+    [event] = trace["nodes"]
+    assert event["node_output"]["result"] == {"(1, 2)": "x"}
+    assert event["lossy"] == ["result.(1, 2): non-string key (tuple)"]
+
+
+@pytest.mark.trace_files
+def test_a_line_that_cannot_be_written_disables_streaming_like_a_disk_fault(tmp_path, monkeypatch):
+    """The writer's contract covers any fault writing a line, not only I/O (#724): an output value whose
+    text form raises (``json.dumps(default=str)``) disables streaming and leaves the successful run
+    successful, exactly as a disk-full write does."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    code = 'class Opaque:\n    def __str__(self):\n        raise RuntimeError("no text form")\n\nresult: dict = {"v": Opaque()}'
+    wf = _code_workflow(tmp_path, code)
 
     result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False))
 

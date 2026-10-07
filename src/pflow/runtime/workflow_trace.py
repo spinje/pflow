@@ -1344,7 +1344,7 @@ class WorkflowTraceCollector:
 
         ``lossy`` (Task 179, a node output only): collects every place the trace
         cannot round-trip what the AUTHOR's code produced, as ``"<path>: <why>"`` —
-        a non-string key (``json`` turns it into a string), a dropped key below the
+        a non-string key (it reads back as a string), a dropped key below the
         top level, or at the top level unless the engine owns it (``_ENGINE_OUTPUT_KEYS``), bytes (the
         placeholder), and a value that would fall to ``json.dumps(default=str)``
         (set, date, Decimal, Path, custom objects). Tuple→list is not lossy, nor are
@@ -1376,7 +1376,9 @@ class WorkflowTraceCollector:
                     if lossy is not None and (path or key not in _ENGINE_OUTPUT_KEYS):
                         lossy.append(f"{child}: key dropped by the trace")
                     continue
-                result[key] = self._sanitize_for_json(value, lossy, child)
+                # json.dumps writes str/int/float/bool/None keys itself and raises on any other (a tuple).
+                json_key = key if key is None or isinstance(key, (str, int, float)) else str(key)
+                result[json_key] = self._sanitize_for_json(value, lossy, child)
             return result
         elif isinstance(data, bytes):
             if lossy is not None:
