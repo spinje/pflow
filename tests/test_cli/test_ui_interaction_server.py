@@ -1445,6 +1445,28 @@ class TestResumeEndpoint:
         body = response.json()
         assert body["refusal"] == "stale_workflow"
         assert body["hash_known"] is True
+        # The refusal's own text rides `errors[0]` — the browser's ack panel renders it verbatim (#721).
+        (diagnostic,) = body["errors"]
+        assert "restores the saved output of 'g1' and resumes at 'gated'" in diagnostic["message"]
+        assert "pass --force to resume" in diagnostic["suggestions"][0]
+        popen.assert_not_called()
+
+    def test_stale_refusal_of_a_started_step_carries_the_re_fire_line(self, tmp_path: Path, monkeypatch) -> None:
+        """An edited workflow whose failed entry already started: the stale body's suggestion says
+        --force re-fires it — the line the browser ack must show before "Resume anyway" (#721)."""
+        self._home(tmp_path, monkeypatch)
+        wf = tmp_path / "failing.pflow.md"
+        wf.write_text(_FAILING_WF, encoding="utf-8")
+        failed = CliRunner(mix_stderr=False).invoke(cli, [str(wf)])
+        assert failed.exit_code == 1, failed.stderr
+        wf.write_text(_FAILING_WF.replace("exit 7", "exit 0"), encoding="utf-8")
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": str(wf)})
+        assert response.status_code == 409
+        body = response.json()
+        assert body["refusal"] == "stale_workflow"
+        (diagnostic,) = body["errors"]
+        assert "--force also re-runs 'boom' (a shell step that already started" in diagnostic["suggestions"][0]
         popen.assert_not_called()
 
     def test_unanswered_paused_is_409_answer_required_with_the_masked_gate(self, tmp_path: Path, monkeypatch) -> None:
