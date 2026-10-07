@@ -1185,6 +1185,7 @@ class TestGateEndpoint:
         (debug / name).write_text(f"{meta_line}\n{{not json\n{trailer_line}\n", encoding="utf-8")
         response = _client().get("/api/gate", params={"run": "garbled-run"})
         assert response.status_code == 404
+        assert "not paused" in response.json()["error"], "the run was discovered; the parse failed"
 
     def test_missing_run_param_is_400(self, tmp_path: Path, monkeypatch) -> None:
         self._debug_dir(tmp_path, monkeypatch)
