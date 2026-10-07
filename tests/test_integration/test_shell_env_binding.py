@@ -21,6 +21,7 @@ import pytest
 
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.exceptions import CompilationError
+from pflow.core.trace_io import load_trace_file
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.result import ExecutionResult, RunnerConfig
 from pflow.execution.runner import WorkflowRunner
@@ -262,18 +263,26 @@ class TestBindingFailures:
         ],
         ids=["nul", "lone-surrogate"],
     )
+    @pytest.mark.trace_files
     def test_an_unbindable_value_under_ignore_errors_and_retry(
-        self, value: str, expected: str, attempts: list[str]
+        self, value: str, expected: str, attempts: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Runner-level evidence with trace streaming OFF (conftest default). Through the real CLI the
-        lone-surrogate row is currently masked: the trace writer re-raises a ``UnicodeEncodeError``
-        (``workflow_trace._flush_line`` catches only ``OSError``) — pre-existing, a filed follow-up."""
+        """Trace streaming ON, as through the CLI: the streamed trace once re-raised the lone surrogate's
+        ``UnicodeEncodeError`` over the binding error (#724). The step's own error surfaces with its
+        ``node_id``, and the trace is still written, holding the value it recorded."""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
         step = _shell({"V": "${x}"}, retry={"max": 3})
         step["params"]["ignore_errors"] = True
         ir = _ir(step, inputs={"x": _input("string")})
         assert _validate(ir)[0] == []
-        self._assert_failed_before_spawn(_run(ir, {"x": value}), expected)
+        result = _run(ir, {"x": value})
+        self._assert_failed_before_spawn(result, expected)
+        assert [d.node_id for d in result.errors] == ["s"]
+        assert not any("codec" in d.message for d in result.errors)
         assert attempts == ["prep"]
+        trace_path = result.trace.finalize()
+        assert trace_path is not None
+        assert load_trace_file(trace_path)["inputs"] == {"x": value}
 
     def test_an_unreadable_name_arriving_whole(self, attempts: list[str]) -> None:
         step = _shell("${cfg}", retry={"max": 3})

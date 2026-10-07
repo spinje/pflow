@@ -905,6 +905,50 @@ def test_finalize_io_fault_closes_stream_and_returns_none(tmp_path, monkeypatch)
     assert c.finalize() is None  # idempotent re-call
 
 
+def _code_workflow(tmp_path: Path, code: str) -> Path:
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        f"# WF\n\nOne code node.\n\n## Steps\n\n### make\n\nProduce a value.\n\n- type: code\n\n"
+        f"```python code\n{code}\n```\n",
+        encoding="utf-8",
+    )
+    return wf
+
+
+@pytest.mark.trace_files
+def test_a_lone_surrogate_streams_and_reads_back_unchanged(tmp_path, monkeypatch):
+    """A lone surrogate (what a truncated JSON escape upstream parses into) cannot be UTF-8-encoded, but
+    the trace still records it (#724): the successful run stays successful, and the reader returns the
+    exact value — both a short leaf and one long enough to be interned as a ``blob``."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    wf = _code_workflow(tmp_path, 'small = "cut \\ud800"\nresult: list = [small, small + "x" * 2000]')
+
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False))
+
+    assert result.success, [d.message for d in result.errors]
+    path = result.trace.trace_path
+    assert path is not None
+    assert [line["kind"] for line in _read_lines(path)] == ["meta", "node.start", "blob", "event", "run.complete"]
+    [event] = load_trace_file(path)["nodes"]
+    assert event["node_output"]["result"] == ["cut \ud800", "cut \ud800" + "x" * 2000]
+
+
+@pytest.mark.trace_files
+def test_a_line_json_cannot_write_disables_streaming_like_a_disk_fault(tmp_path, monkeypatch):
+    """The writer's contract covers any fault writing a line, not only I/O (#724): a node output JSON
+    cannot encode (a tuple key — ``json.dumps`` raises ``TypeError``) disables streaming and leaves the
+    successful run successful, exactly as a disk-full write does."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    wf = _code_workflow(tmp_path, 'result: dict = {(1, 2): "x"}')
+
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False))
+
+    assert result.success, [d.message for d in result.errors]
+    assert [e["node_id"] for e in result.trace.events] == ["make"]  # in-memory trace retained
+    assert result.trace._stream_failed
+    assert result.trace.trace_path is None
+
+
 # --- Runner-owned finalization (C3): library callers get a complete file, not an incomplete one --------
 
 

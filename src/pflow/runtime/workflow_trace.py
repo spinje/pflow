@@ -1003,9 +1003,10 @@ class WorkflowTraceCollector:
         ``intern=False`` writes the line verbatim — used for the ``meta`` line so its marker can never be
         preceded by a ``blob`` declaration (which would make the whole trace unreadable).
 
-        The streamed file is a best-effort tail of the in-memory trace: an I/O fault here disables
-        streaming (``_disable_streaming``) instead of propagating, so a disk-full / read-only
-        ``~/.pflow/debug`` can never turn a successful node into a failure or mask a real node error."""
+        The streamed file is a best-effort tail of the in-memory trace: ANY fault writing a line — a
+        disk-full / read-only ``~/.pflow/debug``, or a value JSON cannot encode (a tuple key) — disables
+        streaming (``_disable_streaming``) instead of propagating, so the trace can never turn a successful
+        node into a failure or mask a real node error."""
         if self._stream is None:
             return
         try:
@@ -1013,7 +1014,7 @@ class WorkflowTraceCollector:
             self._stream.write(json.dumps(payload, default=str))
             self._stream.write("\n")
             self._stream.flush()
-        except OSError as exc:
+        except Exception as exc:
             self._disable_streaming(exc)
 
     def _emit_blob_line(self, digest: str, value: str) -> None:
@@ -1096,13 +1097,13 @@ class WorkflowTraceCollector:
             agg.update(self.pause_request)
         return agg
 
-    def _disable_streaming(self, exc: OSError) -> None:
-        """Give up on disk streaming after the first I/O fault — log once, drop the handle, and never
+    def _disable_streaming(self, exc: Exception) -> None:
+        """Give up on disk streaming after the first write fault — log once, drop the handle, and never
         reopen (``_stream_failed`` blocks ``_open_stream``). The in-memory trace stays complete (it's the
         source of truth); the file just stops growing. ``_stream_path`` is cleared so ``finalize`` returns
         no path to a partial file. This keeps trace persistence a pure side-channel that can never alter
         execution outcome."""
-        logger.warning("trace streaming disabled after I/O error (in-memory trace retained): %s", exc)
+        logger.warning("trace streaming disabled after a write error (in-memory trace retained): %s", exc)
         self._stream_failed = True
         self._close_stream()
         self._stream_path = None
