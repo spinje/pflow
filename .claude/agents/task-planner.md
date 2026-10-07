@@ -68,8 +68,10 @@ First acts: verify the base ref (`git log -1` vs `origin/main`) and `make instal
 4. **Self-review the plan — you own its quality; nobody above you reads it.**
    **Mandatory when the plan touches the engine or the trace format** (plan-mode `deep-review`
    — pflow's highest-risk seams). Otherwise your judgment: big/risky plans get a scaled battery;
-   genuinely small plans skip. Verify Critical findings against code yourself; fold confirmed
-   fixes into the plan before committing.
+   genuinely small plans skip. Dispatch the reading lenses through the pflow fan-out on the codex
+   provider (the skill's "Dispatch" section — plan mode included; cross-model is the point), waited on
+   in-turn; direct launches are the disclosed fallback. Verify Critical findings against code yourself;
+   fold confirmed fixes into the plan before committing.
 5. **Commit + hand off**: append a progress-log entry (planning complete; ONLY load-bearing
    residue the plan doesn't capture), **commit the plan + spec corrections + progress log on the
    feature branch** (deliberate staging, never `-A`). Then end with a SHORT handback: "plan
