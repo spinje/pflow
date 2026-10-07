@@ -188,6 +188,20 @@ describe("GateCallout — escalation", () => {
     expect(screen.queryByText(/^Recommended:/)).toBeNull();
   });
 
+  it("a non-string question/recommendation renders as text instead of crashing the viewer (#720)", async () => {
+    // The shape an unresolved trace blob ref has on the wire. The server resolves these; the panel
+    // must still never hand a raw object to React (that throws and blanks the whole viewer).
+    const ref = { $pflow_blob: "7fabd35f2de7c0b8a20fa3fc04684300" } as unknown as string;
+    vi.mocked(fetchGate).mockResolvedValue({
+      ...ESCALATION,
+      gate_request: { ...ESCALATION.gate_request, question: ref, recommendation: ref },
+    });
+    const { container } = render(<GateCallout run="r1" onPinRun={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector(".gate-question")?.textContent).toContain("$pflow_blob"));
+    expect(container.querySelector(".gate-recommendation")?.textContent).toContain("$pflow_blob");
+    expect(screen.getByRole("button", { name: "Answer" })).toBeTruthy(); // the panel stays answerable
+  });
+
   it("free-text answers send the trimmed text; empty/whitespace is blocked client-side", async () => {
     vi.mocked(fetchGate).mockResolvedValue(ESCALATION);
     render(<GateCallout run="r1" onPinRun={vi.fn()} />);

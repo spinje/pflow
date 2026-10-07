@@ -113,7 +113,10 @@ def intern_event_leaves(  # noqa: C901 — a recursive container walk; one branc
         if isinstance(value, list):
             return [walk(child) for child in value]
         if isinstance(value, str):
-            encoded = value.encode("utf-8")
+            # `surrogatepass`: these bytes only size and name the blob — the line itself is ASCII JSON, so a
+            # lone surrogate (a truncated JSON escape upstream) is written as `\udXXX` and reads back unchanged
+            # (JSON's own limit: a high one directly followed by a low one reads back as the pair they spell).
+            encoded = value.encode("utf-8", "surrogatepass")
             if len(encoded) >= INTERN_MIN_BYTES:
                 digest = hashlib.md5(encoded, usedforsecurity=False).hexdigest()
                 if digest not in declared:
