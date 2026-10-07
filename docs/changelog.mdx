@@ -5,6 +5,104 @@ icon: "clock"
 rss: true
 ---
 
+<Update label="October 2026" description="v0.16.0" tags={["New releases", "Improvements", "Breaking changes"]}>
+  ## Unified Template Engine and Core Validation
+
+  We consolidated all template parsing into a single AST engine under `core/templates`. Variable interpolation `${...}` now follows strict grammar rules across all workflow surfaces, while an explicit `$${...}` escape sequence allows outputting literal template blocks. Workflow output declarations and node parameters also feature stricter static validation.
+
+  ```markdown
+  ### process-batch
+  - type: shell
+  - command: echo "Processing $${batch_name}"
+  - env:
+      ITEM_NAME: ${results[${__index__}].name}
+  ```
+
+  **Highlights**
+  - Consolidated template parsing into a strict AST module in `core/templates`, eliminating inconsistent evaluation between workflow validation and runtime execution.
+  - Added the `$${...}` escape syntax to preserve literal `${...}` blocks in template outputs and shell parameter expansions.
+  - Added support for index expressions within template references, such as `${results[${__index__}].title}`.
+  - Required an explicit `source:` attribute on every declared workflow output during validation.
+  - Added validator field-checking for output sources like step parameters.
+  - Fixed markdown parser block scalar (`- key: |`) handling so YAML multi-line block scalars remain transparent to heading and code fence detection.
+  - Updated workflow validation to reject non-string `code` parameters on code nodes.
+  - Fixed `pflow save` to validate with the same placeholder inputs as `--validate-only` and `analyze-cache`, so save no longer accepts a workflow that a run rejects.
+
+  ## Durable Loop Resumption and Stdio Isolation
+
+  Workflows can now pause and resume at exact loop iterations without restarting from iteration 1. Resuming loop steps preserves position in trace format 2.8.0, while non-interactive gated loops issue new tokens per iteration. Execution safety has also been strengthened with stdio reservation and lossy seed checks.
+
+  ```bash
+  # Resume a paused or interrupted loop step from its exact saved iteration
+  pflow resume 7a9e4afb-2095-447e-8043-0660438104f9 --approve yes
+  ```
+
+  <Tip>
+    When a workflow pauses inside a loop, every gated iteration issues a unique resume token. In non-interactive runs, `pflow resume --approve` answers one gate at a time, and the Web UI's Approve answers one iteration the same way. To let a gated loop run unattended, pre-approve it with `--auto-approve=<step>`.
+  </Tip>
+
+  **Highlights**
+  - Added durable loop position tracking (Trace format 2.8.0), enabling paused or interrupted loop steps to continue from the iteration where execution stopped.
+  - Added `ResumeFidelityError` preflight checks to refuse resumes when upstream restored values would silently diverge due to non-JSON-native structures.
+  - Fixed `pflow resume --approve` behavior to resolve only a single gate instance per invocation.
+  - Updated resume preflight checks to avoid prompting for side-effect confirmations on steps that never started executing.
+  - Added `env` as a direct working binding channel for shell node steps.
+  - Fixed stdio stream reservation so shell child processes and MCP user code correctly inherit and read stdin.
+  - Routed probe verbose progress lines (`-v`) to stderr so JSON output on stdout parses cleanly.
+  - Fixed code node `stdout` and `stderr` capturing per execution context to prevent output leakage across thread boundaries.
+  - Updated the `delete-file` node to require an explicit boolean `true` input (`confirm_delete`) before authorizing deletion.
+
+  ## LLM Discovery and Environment Redaction
+
+  We introduced `pflow settings llm models` to list and filter available LLM models per provider. Environment variables displayed in settings are now uniformly masked, and sensitive keys in execution trace reports are redacted automatically.
+
+  ```bash
+  # List usable LLM models for configured providers
+  pflow settings llm models anthropic gpt-4o --output-format json
+  ```
+
+  <Note>
+    `pflow settings llm models` fetches LiteLLM's live catalog when online and falls back to the bundled catalog snapshot when offline.
+  </Note>
+
+  **Highlights**
+  - Added the `pflow settings llm models` CLI command to inspect usable models per provider with keyword filtering and JSON output options.
+  - Updated the provider settings table to derive registry entries dynamically from `PROVIDERS`, matching runtime provider status.
+  - Changed `pflow settings llm providers` to no longer list `anyscale`, which LiteLLM no longer routes.
+  - Updated `pflow settings` to mask every environment variable value regardless of its variable name.
+  - Added automatic redaction of sensitive-named values (such as API keys and tokens) in `pflow report` execution outputs.
+  - Fixed LiteLLM catalog merging to join upstream updates under exact model keys without re-keying entries.
+  - Updated cost metrics to explicitly label subscription-billed agent invocations instead of reporting missing pricing data.
+
+  ## Web UI and MCP Integration Enhancements
+
+  We expanded MCP node parameter controls, improved tool sync stability, and fixed interaction issues in the Web UI gate callout panel.
+
+  **Highlights**
+  - Added opt-in `result_format: json_block` and custom `timeout` parameters to MCP nodes.
+  - Fixed MCP content block dispatching to use the SDK type discriminator rather than property inspection.
+  - Fixed MCP tool synchronization to preserve existing tools when partial sync failures occur.
+  - Fixed core registry refresh to use a single snapshot so concurrent pflow processes can no longer wipe registered MCP entries.
+  - Fixed the Web UI gate panel to keep submitted answers pinned and prevent long step IDs from pushing the close button out of view.
+
+  <Accordion title="Breaking changes">
+    ### Declared Workflow Outputs Require a Source
+    All declared workflow outputs now require an explicit `source:` key during validation. Workflows declaring empty output definitions will fail validation.
+
+    ### Explicit Boolean Input Required for File Deletion
+    The `delete-file` node now requires a workflow input named `confirm_delete` set to boolean `true`. Node parameters or string values like `"true"` no longer authorize deletion.
+
+    ### Strict Template Parsing
+    Unescaped `${` sequences that do not form valid expression syntax now trigger malformed template validation errors instead of evaluating as literal text. Use `$${...}` to escape literal template brackets.
+
+    ### Strict Code Node Parameters
+    The `code` parameter on `code` nodes must be a valid string block. Non-string definitions trigger validation errors before execution.
+
+    ### Resume Fidelity Validation
+    Workflow resumption validates JSON seed fidelity. Upstream step states containing non-JSON-native types (e.g. non-string dictionary keys or dates) raise a `ResumeFidelityError` naming the step and field. Make the step's result JSON-native or re-run from the start.
+  </Accordion>
+</Update>
+
 <Update label="August 2026" description="v0.15.1" tags={["Improvements", "Bug fixes"]}>
   ## LLM Key Propagation and Diagnostics
 
