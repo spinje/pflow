@@ -30,7 +30,10 @@ def _large_batch_failure_workflow() -> dict:
             {
                 "id": "fail-batch",
                 "type": "shell",
-                "params": {"command": 'echo "forced batch failure for ${item.label}" >&2; exit 1'},
+                "params": {
+                    "command": 'echo "forced batch failure for $ITEM_LABEL" >&2; exit 1',
+                    "env": {"ITEM_LABEL": "${item.label}"},
+                },
                 "batch": {
                     "items": [_large_batch_item()],
                     "error_handling": "fail_fast",
@@ -78,10 +81,11 @@ def _degraded_large_batch_workflow() -> dict:
                 "type": "shell",
                 "params": {
                     "command": (
-                        'if [ "${item.label}" = "oversized-item" ]; then '
-                        'echo "forced batch failure for ${item.label}" >&2; exit 1; '
+                        'if [ "$ITEM_LABEL" = "oversized-item" ]; then '
+                        'echo "forced batch failure for $ITEM_LABEL" >&2; exit 1; '
                         "else echo ok; fi"
-                    )
+                    ),
+                    "env": {"ITEM_LABEL": "${item.label}"},
                 },
                 "batch": {
                     "items": [{"label": "small-item", "payload": "ok"}, _large_batch_item()],
@@ -379,7 +383,8 @@ class TestEnhancedErrorOutput:
                     "type": "shell",
                     "params": {
                         # Wrong template - 'output' doesn't exist, should be 'result'
-                        "command": "echo ${producer.output}"
+                        "command": 'echo "$PRODUCER_OUTPUT"',
+                        "env": {"PRODUCER_OUTPUT": "${producer.output}"},
                     },
                 },
             ],

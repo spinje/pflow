@@ -1647,9 +1647,11 @@ class TestParamRouting:
             - type: shell
             - batch:
                 items: ${fetch.stdout}
+            - env:
+                ITEM: ${item}
 
             ```shell command
-            echo ${item}
+            echo "$ITEM"
             ```
         """)
         result = parse_markdown(content)

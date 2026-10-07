@@ -63,10 +63,12 @@ echo "upstream-value"
 Fails unless mode=ok.
 
 - type: shell
+- env:
+    MODE: ${mode}
 - next: step3
 
 ```shell command
-test "${mode}" = "ok" && echo "step2-ran"
+test "$MODE" = "ok" && echo "step2-ran"
 ```
 
 ### step3
@@ -74,9 +76,12 @@ test "${mode}" = "ok" && echo "step2-ran"
 Final step, reads step2 and step1.
 
 - type: shell
+- env:
+    STEP1_STDOUT: ${step1.stdout}
+    STEP2_STDOUT: ${step2.stdout}
 
 ```shell command
-echo "done ${step1.stdout} ${step2.stdout}"
+echo "done $STEP1_STDOUT $STEP2_STDOUT"
 ```
 """
 
@@ -231,7 +236,11 @@ def _write_llm_wf(tmp_path: Path) -> Path:
         "nodes": [
             {"id": "prep", "type": "shell", "params": {"command": "echo ready"}},
             {"id": "gen", "type": "llm", "params": {"model": "test/resume", "prompt": "refine ${prep.stdout}"}},
-            {"id": "tail", "type": "shell", "params": {"command": "echo '${gen.response}'"}},
+            {
+                "id": "tail",
+                "type": "shell",
+                "params": {"command": 'echo "$GEN_RESPONSE"', "env": {"GEN_RESPONSE": "${gen.response}"}},
+            },
         ],
     }
     wf = tmp_path / "llm_wf.pflow.md"
@@ -365,9 +374,11 @@ Append each item's value.
 - batch:
     items: ${{produce.result}}
     error_handling: fail_fast
+- env:
+    ITEM_V: ${{item.v}}
 
 ```shell command
-echo "${{item.v}}" >> {out}
+echo "$ITEM_V" >> {out}
 ```
 """
 
@@ -418,9 +429,11 @@ Append to the ledger, then fail.
 
 - type: shell
 - on-error: router
+- env:
+    ROUTER_RESULT_P: ${{router.result.p}}
 
 ```shell command
-echo "fired ${{router.result.p}}" >> {out}; exit 1
+echo "fired $ROUTER_RESULT_P" >> {out}; exit 1
 ```
 """
 
@@ -469,9 +482,11 @@ result: dict = {{"p": "a"}} if first else {{}}
 Fire the side effect.
 
 - type: shell
+- env:
+    X_RESULT_P: ${{x.result.p}}
 
 ```shell command
-echo "K fired ${{x.result.p}}" >> {out}
+echo "K fired $X_RESULT_P" >> {out}
 ```
 
 ### m
@@ -534,9 +549,11 @@ The output.
 Append.
 
 - type: shell
+- env:
+    TAG: ${{tag}}
 
 ```shell command
-echo "fired ${{tag}}" >> {out}
+echo "fired $TAG" >> {out}
 ```
 """
 
@@ -1188,8 +1205,9 @@ def _write_looping_host(tmp_path: Path) -> tuple[Path, Path]:
         f"- type: workflow\n- workflow: {child.as_posix()}\n"
         '- inputs:\n    contenders: ["a", "b", "c", "d", "e"]\n'
         "- loop:\n    carry:\n      contenders: ${rounds.survivors}\n    while: ${rounds.more}\n    max_iterations: 10\n"
-        "- next: winner\n\n### winner\n\nAnnounce the survivor.\n\n- type: shell\n\n"
-        "```shell command\nprintf 'winner %s' '${rounds.survivors[0]}'\n```\n",
+        "- next: winner\n\n### winner\n\nAnnounce the survivor.\n\n- type: shell\n"
+        "- env:\n    ROUNDS_SURVIVORS_0: ${rounds.survivors[0]}\n\n"
+        "```shell command\nprintf 'winner %s' \"$ROUNDS_SURVIVORS_0\"\n```\n",
         encoding="utf-8",
     )
     return wf, log

@@ -36,7 +36,7 @@ _WF_IR = {
             "id": "echo",
             "type": "shell",
             "purpose": "Echo the scenario value back out.",
-            "params": {"command": 'echo "scenario=${scenario}"'},
+            "params": {"command": 'echo "scenario=$SCENARIO"', "env": {"SCENARIO": "${scenario}"}},
         }
     ],
 }

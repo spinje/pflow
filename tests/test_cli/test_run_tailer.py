@@ -845,7 +845,8 @@ def _write_declared_defaults_wf(path: Path, node_id: str = "greet") -> Path:
         "# Round Trip\n\nGuards the pristine-IR stamp via a defaulted input.\n\n"
         "## Inputs\n\n### name\n\nThe name to greet.\n\n- type: string\n- default: world\n\n"
         "## Steps\n\n"
-        f"### {node_id}\n\nEcho a greeting using the defaulted input.\n\n- type: shell\n- command: echo hi ${{name}}\n",
+        f"### {node_id}\n\nEcho a greeting using the defaulted input.\n\n- type: shell\n"
+        '- env: { NAME: ${name} }\n- command: echo hi "$NAME"\n',
         encoding="utf-8",
     )
     return path

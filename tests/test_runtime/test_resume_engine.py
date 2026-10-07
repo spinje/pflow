@@ -72,7 +72,10 @@ def _write_three_step_workflow(tmp_path: Path, *, step3_suffix: str = "") -> Pat
             {
                 "id": "step3",
                 "type": "shell",
-                "params": {"command": "printf '%s|%s' '${step1.response}' '${step2.response}'" + step3_suffix},
+                "params": {
+                    "command": 'printf \'%s|%s\' "$STEP1_RESPONSE" "$STEP2_RESPONSE"' + step3_suffix,
+                    "env": {"STEP1_RESPONSE": "${step1.response}", "STEP2_RESPONSE": "${step2.response}"},
+                },
             },
         ],
     }
@@ -665,14 +668,15 @@ def test_restored_subworkflow_and_batch_hosts_are_childless_and_reseed(tmp_path)
                 {
                     "id": "fan",
                     "type": "shell",
-                    "params": {"command": "printf 'item-%s' '${item}'"},
+                    "params": {"command": "printf 'item-%s' \"$ITEM\"", "env": {"ITEM": "${item}"}},
                     "batch": {"items": ["a", "b"], "parallel": False},
                 },
                 {
                     "id": "k",
                     "type": "shell",
                     "params": {
-                        "command": f"printf '%s|%s' '${{sub.final}}' '${{fan.results[0].stdout}}'; exit $(cat {exit_file})"
+                        "command": f'printf \'%s|%s\' "$SUB_FINAL" "$FAN_RESULTS_0_STDOUT"; exit $(cat {exit_file})',
+                        "env": {"SUB_FINAL": "${sub.final}", "FAN_RESULTS_0_STDOUT": "${fan.results[0].stdout}"},
                     },
                 },
             ],
@@ -718,7 +722,11 @@ def test_resume_at_a_sub_workflow_host_reruns_the_whole_host(tmp_path) -> None:
         {
             "inputs": {"mode": {"type": "string", "required": True}},
             "nodes": [
-                {"id": "inner", "type": "shell", "params": {"command": "test '${mode}' = ok && printf inner-ok"}}
+                {
+                    "id": "inner",
+                    "type": "shell",
+                    "params": {"command": 'test "$MODE" = ok && printf inner-ok', "env": {"MODE": "${mode}"}},
+                }
             ],
             "outputs": {"out": {"description": "The child's value.", "source": "${inner.stdout}"}},
         },
@@ -731,7 +739,11 @@ def test_resume_at_a_sub_workflow_host_reruns_the_whole_host(tmp_path) -> None:
             "nodes": [
                 {"id": "pre", "type": "shell", "params": {"command": "printf pre-done"}},
                 {"id": "host", "type": "workflow", "params": {"workflow": str(child), "inputs": {"mode": "${mode}"}}},
-                {"id": "post", "type": "shell", "params": {"command": "printf 'post %s' '${host.out}'"}},
+                {
+                    "id": "post",
+                    "type": "shell",
+                    "params": {"command": "printf 'post %s' \"$HOST_OUT\"", "env": {"HOST_OUT": "${host.out}"}},
+                },
             ],
         },
         wf,
@@ -1071,9 +1083,11 @@ def test_both_primary_and_fallback_fail_resumes_at_the_primary_e2e(tmp_path) -> 
             - type: shell
             - on-error: fallback
             - next: done
+            - env:
+                MODE: ${mode}
 
             ```shell command
-            test "${mode}" = "ok" && echo primary-ok
+            test "$MODE" = "ok" && echo primary-ok
             ```
 
             ### fallback
@@ -1241,9 +1255,11 @@ WF_RECOVERED_COALESCE = textwrap.dedent(
     - type: shell
     - on-error: fallback
     - next: use
+    - env:
+        MODE: ${mode}
 
     ```shell command
-    test "${mode}" = "ok" && printf primary-data
+    test "$MODE" = "ok" && printf primary-data
     ```
 
     ### fallback
@@ -1262,9 +1278,12 @@ WF_RECOVERED_COALESCE = textwrap.dedent(
     Consumes the coalesce; fails unless flag=ok.
 
     - type: shell
+    - env:
+        FLAG: ${flag}
+        PRIMARY_STDOUT_FALLBACK_STDOUT: ${primary.stdout ?? fallback.stdout}
 
     ```shell command
-    test "${flag}" = "ok" && printf 'used=%s' '${primary.stdout ?? fallback.stdout}'
+    test "$FLAG" = "ok" && printf 'used=%s' "$PRIMARY_STDOUT_FALLBACK_STDOUT"
     ```
     """
 )
@@ -1341,9 +1360,11 @@ def test_incomplete_tail_ending_in_unrecovered_failure_reenters_at_the_failure(t
 
             - type: shell
             - next: after
+            - env:
+                MODE: ${mode}
 
             ```shell command
-            test "${mode}" = "ok" && printf boom-ok
+            test "$MODE" = "ok" && printf boom-ok
             ```
 
             ### after

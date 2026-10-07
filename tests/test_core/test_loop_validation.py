@@ -129,7 +129,7 @@ def test_iteration_path_access_rejected(registry) -> None:
         {
             "id": "c",
             "type": "shell",
-            "params": {"command": "echo ${__iteration__.foo}"},
+            "params": {"command": "cat", "stdin": "${__iteration__.foo}"},
             "loop": {"while": "${c.exit_code}", "max_iterations": 3},
         }
     ])
@@ -142,7 +142,7 @@ def test_bare_iteration_allowed(registry) -> None:
         {
             "id": "c",
             "type": "shell",
-            "params": {"command": "echo ${__iteration__}"},
+            "params": {"command": "cat", "stdin": "${__iteration__}"},
             "loop": {"while": "${c.exit_code}", "max_iterations": 3},
         }
     ])

@@ -58,7 +58,10 @@ def _large_batch_failure_ir() -> dict:
             {
                 "id": "fail-batch",
                 "type": "shell",
-                "params": {"command": 'echo "forced batch failure for ${item.label}" >&2; exit 1'},
+                "params": {
+                    "command": 'echo "forced batch failure for $ITEM_LABEL" >&2; exit 1',
+                    "env": {"ITEM_LABEL": "${item.label}"},
+                },
                 "batch": {
                     "items": [{"label": "oversized-item", "payload": payload}],
                     "error_handling": "fail_fast",

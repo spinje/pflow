@@ -75,7 +75,7 @@ class TestDualModeStdinBehavior:
                 {
                     "id": "test_echo",
                     "type": "shell",
-                    "params": {"command": "echo '${data}'"},
+                    "params": {"command": 'echo "$DATA"', "env": {"DATA": "${data}"}},
                 }
             ],
             "edges": [],
@@ -174,7 +174,13 @@ class TestDualModeStdinBehavior:
         workflow = {
             "ir_version": "0.1.0",
             "inputs": {"path": {"type": "string", "required": True}},
-            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo '${path}'"}}],
+            "nodes": [
+                {
+                    "id": "echo1",
+                    "type": "shell",
+                    "params": {"command": 'echo "$PATH_VALUE"', "env": {"PATH_VALUE": "${path}"}},
+                }
+            ],
             "edges": [],
             "start_node": "echo1",
         }
@@ -272,7 +278,9 @@ class TestDualModeStdinBehavior:
         workflow = {
             "ir_version": "0.1.0",
             "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
-            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo '${data}'"}}],
+            "nodes": [
+                {"id": "echo1", "type": "shell", "params": {"command": 'echo "$DATA"', "env": {"DATA": "${data}"}}}
+            ],
             "edges": [],
             "start_node": "echo1",
         }
@@ -314,7 +322,7 @@ class TestRealShellIntegration:
                 {
                     "id": "test_echo",
                     "type": "shell",
-                    "params": {"command": "echo '${data}'"},
+                    "params": {"command": 'echo "$DATA"', "env": {"DATA": "${data}"}},
                 }
             ],
             "edges": [],

@@ -91,7 +91,8 @@ class TestSchemaAndValidation:
 
     def test_batch_host_gate_rejected_by_validator(self):
         node = _shell(approval="required", batch={"items": "${items}", "as": "item"})
-        node["params"]["command"] = "echo ${item}"
+        node["params"]["command"] = 'echo "$ITEM"'
+        node["params"]["env"] = {"ITEM": "${item}"}
         diagnostics = WorkflowValidator().validate(_ir(node))
         messages = [d.message for d in diagnostics]
         assert any("not supported on batch steps" in m for m in messages)
@@ -103,7 +104,8 @@ class TestSchemaAndValidation:
         child = tmp_path / "child.pflow.md"
         child.write_text(
             "# Child\n\nChild with an invalid batch gate.\n\n## Steps\n\n"
-            "### fan\n\nFan out.\n\n- type: shell\n- command: echo ${item}\n"
+            "### fan\n\nFan out.\n\n- type: shell\n- env: { ITEM: ${item} }\n"
+            '- command: echo "$ITEM"\n'
             "- approval: required\n"
             "- batch:\n    items: ${items}\n    as: item\n",
             encoding="utf-8",
@@ -128,7 +130,8 @@ class TestCompiler:
 
     def test_batch_host_gate_is_a_compilation_error(self):
         node = _shell(approval="required", batch={"items": "${items}", "as": "item"})
-        node["params"]["command"] = "echo ${item}"
+        node["params"]["command"] = 'echo "$ITEM"'
+        node["params"]["env"] = {"ITEM": "${item}"}
         with pytest.raises(CompilationError) as exc_info:
             compile_workflow(_ir(node), Registry())
         rendered = "\n".join(d.message for d in exc_info.value.to_diagnostics())

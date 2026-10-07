@@ -27,7 +27,7 @@ def test_runner_resolves_template_in_single_node_ir() -> None:
             {
                 "id": "shell",
                 "type": "shell",
-                "params": {"command": "echo ${greeting}"},
+                "params": {"command": 'echo "$GREETING"', "env": {"GREETING": "${greeting}"}},
             }
         ],
         "edges": [],

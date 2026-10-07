@@ -951,7 +951,8 @@ class TestBatchConfig:
                         ],
                         "as": "task",
                     },
-                    "params": {"command": "${task.cmd}", "stdin": "${task.input}"},
+                    # $TASK_CMD unquoted on purpose: the item's command text word-splits ("wc -l").
+                    "params": {"command": "$TASK_CMD", "env": {"TASK_CMD": "${task.cmd}"}, "stdin": "${task.input}"},
                 }
             ],
         }

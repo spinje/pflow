@@ -53,9 +53,8 @@ def test_non_string_code_is_rejected(code: Any, type_name: str) -> None:
     assert error.suggestions
 
 
-@pytest.mark.parametrize("code", ["name: str\nresult: str = name", "${upstream.stdout}"])
-def test_string_code_is_accepted(code: str) -> None:
-    diagnostics = WorkflowValidator.validate(_code_node_workflow(code), skip_node_types=True)
+def test_string_code_is_accepted() -> None:
+    diagnostics = WorkflowValidator.validate(_code_node_workflow("name: str\nresult: str = name"), skip_node_types=True)
 
     assert _code_param_errors(diagnostics) == []
 

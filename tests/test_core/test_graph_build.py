@@ -838,14 +838,15 @@ def test_batch_alias_ref_in_plain_param_forms_no_edge() -> None:
             {
                 "id": "fan",
                 "type": "shell",
-                "params": {"command": "echo ${item.text}"},
+                "params": {"command": 'echo "$T"', "env": {"T": "${item.text}"}},
                 "batch": {"items": "${prep.rows}"},
             },
         ],
         "edges": [{"from": "prep", "to": "fan"}],
     })
 
-    assert not any(edge.kind == EdgeKind.DATA_FLOW and edge.input_name == "command" for edge in graph.edges)
+    # An env leaf's edge would be labelled by its dict key (`T`).
+    assert not any(edge.kind == EdgeKind.DATA_FLOW and edge.input_name == "T" for edge in graph.edges)
     # the items-source dependency itself is still there (the batch arm)
     assert any(
         edge.kind == EdgeKind.DATA_FLOW and edge.source == NodeId("prep") and edge.target == NodeId("fan")
@@ -1397,7 +1398,11 @@ def test_data_flow_edges_carry_output_path_below_the_resolved_port() -> None:
         {
             "inputs": {"input_x": {"type": "object"}},
             "nodes": [
-                {"id": "gen", "type": "code", "params": {"code": "result = compute('${input_x.y}')"}},
+                {
+                    "id": "gen",
+                    "type": "code",
+                    "params": {"inputs": {"x": "${input_x.y}"}, "code": "result = compute(x)"},
+                },
                 {
                     "id": "check",
                     "type": "workflow",
@@ -1530,7 +1535,7 @@ def test_leaf_dynamic_batch_records_sibling_items_source_data_flow() -> None:
             {
                 "id": "summarize",
                 "type": "shell",
-                "params": {"command": "echo ${item}"},
+                "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                 "batch": {"items": "${prep.rows}"},
             },
         ],

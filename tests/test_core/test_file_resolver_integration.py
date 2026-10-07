@@ -264,10 +264,10 @@ Run external script.
         from pflow.registry.registry import Registry
         from pflow.runtime import compile_workflow
 
-        # External command file with template variable referencing an upstream node
+        # External stdin file with template variable referencing an upstream node
         scripts_dir = tmp_path / "scripts"
         scripts_dir.mkdir()
-        (scripts_dir / "process.sh").write_text('echo "Processing: ${fetch.stdout}"', encoding="utf-8")
+        (scripts_dir / "payload.txt").write_text("Processing: ${fetch.stdout}", encoding="utf-8")
 
         workflow_md = """\
 # Template Detection Test
@@ -286,10 +286,11 @@ echo "some data"
 
 ### process
 
-Process the fetched data using an external command file.
+Process the fetched data using an external stdin file.
 
 - type: shell
-- command: ./scripts/process.sh
+- stdin: ./scripts/payload.txt
+- command: cat
 """
         workflow_file = tmp_path / "workflow.pflow.md"
         workflow_file.write_text(workflow_md, encoding="utf-8")
@@ -302,12 +303,12 @@ Process the fetched data using an external command file.
         initial_params = {"_pflow_workflow_file": str(workflow_file)}
         workflow = compile_workflow(ir, registry, initial_params=initial_params)
 
-        # If we get here, compilation succeeded — template validation found
-        # ${fetch.stdout} in the resolved file content and validated it against
-        # the 'fetch' node's outputs. If file resolution failed silently,
-        # template validation would report "fetch.stdout has no valid source"
-        # because it would see "./scripts/process.sh" as the literal command.
-        assert workflow is not None
+        # Compilation succeeded and classified the resolved file content as a
+        # template: had resolution run after template detection, the literal
+        # "./scripts/payload.txt" would sit in static params instead.
+        template_config = workflow.node_configs["process"].template_config
+        assert template_config is not None
+        assert template_config.template_params["stdin"] == "Processing: ${fetch.stdout}"
 
     def test_nested_workflow_file_refs_resolve_from_child_dir(self, tmp_path: Path) -> None:
         """File references in child workflows resolve relative to the child, not parent.
@@ -322,7 +323,7 @@ Process the fetched data using an external command file.
         child_dir = tmp_path / "child"
         child_scripts = child_dir / "scripts"
         child_scripts.mkdir(parents=True)
-        (child_scripts / "greet.sh").write_text('echo "Hello ${name}"', encoding="utf-8")
+        (child_scripts / "greet.sh").write_text('echo "Hello $NAME"', encoding="utf-8")
 
         child_md = """\
 # Child Workflow
@@ -343,6 +344,8 @@ The name to greet.
 Greet by name using external command.
 
 - type: shell
+- env:
+    NAME: ${name}
 - command: ./scripts/greet.sh
 """
         child_file = child_dir / "child.pflow.md"

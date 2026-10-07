@@ -408,9 +408,11 @@ Text input.
 Echo the input text.
 
 - type: shell
+- env:
+    TEXT: ${text}
 
 ```shell command
-echo "${text}"
+echo "$TEXT"
 ```
 """
 

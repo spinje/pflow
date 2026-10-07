@@ -27,7 +27,7 @@ def gated_workflow(tmp_path):
     proof = tmp_path / "proof.txt"
     path = tmp_path / "gated.pflow.md"
     # Keep the guarded step as shell: denial rendering intentionally asserts
-    # the resolved `gate.preview.command` that only a shell action provides.
+    # the resolved `gate.preview.env` that a shell action carries.
     path.write_text(
         "# Gated Demo\n\nDemo.\n\n## Steps\n\n"
         "### make-value\n\nProduce a value.\n\n"
@@ -37,7 +37,8 @@ def gated_workflow(tmp_path):
         "```\n\n"
         "### guarded-step\n\nPost the value.\n\n"
         "- type: shell\n"
-        f"- command: echo posting-${{make-value.result}} > {proof}; printf done\n"
+        "- env: { MAKE_VALUE_RESULT: ${make-value.result} }\n"
+        f'- command: echo posting-"$MAKE_VALUE_RESULT" > {proof}; printf done\n'
         "- approval: required\n",
         encoding="utf-8",
     )
@@ -76,8 +77,9 @@ class TestDeniedExit:
         assert any(d.get("context", {}).get("category") == "gate" for d in document["diagnostics"])
         assert document["errors"] and document["errors"][0]["node_id"] == "guarded-step"
         # The preview shows the RESOLVED action the human said no to — the exact
-        # substituted value, so a regression to the raw ${...} template fails here.
-        assert "posting-hello" in document["gate"]["preview"]["command"]
+        # bound value, so a regression to the raw ${...} template fails here.
+        assert document["gate"]["preview"]["command"].startswith('echo posting-"$MAKE_VALUE_RESULT"')
+        assert document["gate"]["preview"]["env"] == {"MAKE_VALUE_RESULT": "hello"}
 
     def test_approved_gate_runs_step_and_exits_0(self, gated_workflow, monkeypatch):
         path, proof = gated_workflow

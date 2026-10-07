@@ -514,9 +514,11 @@ Raises a decision escalation.
 Reads the human's decision.
 
 - type: shell
+- env:
+    ESC_RESULT_ESCALATION_DECISION_CHOSEN: ${esc.result.escalation.decision.chosen}
 
 ```shell command
-echo "picked ${esc.result.escalation.decision.chosen}"
+echo "picked $ESC_RESULT_ESCALATION_DECISION_CHOSEN"
 ```
 
 ## Outputs
@@ -626,9 +628,12 @@ Escalates until a decision is folded in.
 Runs once the loop exits.
 
 - type: shell
+- env:
+    IMPL_RESULT_APPLIED: ${impl.result.applied}
+    TAIL: ${tail}
 
 ```shell command
-printf 'applied %s\\n' '${impl.result.applied}' >> '${tail}'
+printf 'applied %s\\n' "$IMPL_RESULT_APPLIED" >> "$TAIL"
 ```
 """
 
@@ -707,9 +712,11 @@ Approval-gated consumer of the decision.
 
 - type: shell
 - approval: required
+- env:
+    ESC_RESULT_ESCALATION_DECISION_CHOSEN: ${esc.result.escalation.decision.chosen}
 
 ```shell command
-echo "acted on ${esc.result.escalation.decision.chosen}"
+echo "acted on $ESC_RESULT_ESCALATION_DECISION_CHOSEN"
 ```
 
 ## Outputs

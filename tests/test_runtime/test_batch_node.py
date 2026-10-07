@@ -2867,7 +2867,8 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
                     "id": "check",
                     "type": "shell",
                     "params": {
-                        "command": 'if [ "${item}" = "fail-b" ]; then exit 1; fi; echo "${item}"',
+                        "command": 'if [ "$ITEM" = "fail-b" ]; then exit 1; fi; echo "$ITEM"',
+                        "env": {"ITEM": "${item}"},
                     },
                     "purpose": "Shell node that fails when item is fail-b, otherwise echoes it",
                 }
@@ -2942,7 +2943,7 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
                 {
                     "id": "fetch",
                     "type": "shell",
-                    "params": {"command": "echo ok-${item}"},
+                    "params": {"command": 'echo ok-"$ITEM"', "env": {"ITEM": "${item}"}},
                     "batch": {
                         "items": ["a", "b", "c"],
                         "error_handling": "continue",
@@ -2981,7 +2982,7 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
                 {
                     "id": "fetch",
                     "type": "shell",
-                    "params": {"command": "echo ok-${item}"},
+                    "params": {"command": 'echo ok-"$ITEM"', "env": {"ITEM": "${item}"}},
                     "batch": {
                         "items": ["a", "b", "c"],
                         "error_handling": "continue",
@@ -3024,7 +3025,8 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
                     "id": "check",
                     "type": "shell",
                     "params": {
-                        "command": 'if [ "${item}" = "fail-b" ]; then exit 1; fi; echo "${item}"',
+                        "command": 'if [ "$ITEM" = "fail-b" ]; then exit 1; fi; echo "$ITEM"',
+                        "env": {"ITEM": "${item}"},
                     },
                     "purpose": "Shell node that fails when item is fail-b, otherwise echoes it",
                 }
@@ -3147,7 +3149,8 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
                     "id": "step1",
                     "type": "shell",
                     "params": {
-                        "command": 'if [ "${item}" = "bad" ]; then exit 1; fi; echo "s1-${item}"',
+                        "command": 'if [ "$ITEM" = "bad" ]; then exit 1; fi; echo "s1-$ITEM"',
+                        "env": {"ITEM": "${item}"},
                     },
                     "batch": {
                         "items": ["ok-a", "bad", "ok-c"],
@@ -3159,7 +3162,8 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
                     "id": "step2",
                     "type": "shell",
                     "params": {
-                        "command": 'echo "s2-${item.stdout}"',
+                        "command": 'echo "s2-$ITEM_STDOUT"',
+                        "env": {"ITEM_STDOUT": "${item.stdout}"},
                     },
                     "batch": {
                         "items": "${step1.results}",

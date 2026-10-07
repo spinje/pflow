@@ -91,7 +91,8 @@ class TestWorkflowBooleanParameterExecution:
                             # Conditional: if skip_processing is truthy, just echo empty
                             # Otherwise, count lines (consumes stdin)
                             # Using *[Tt]rue* pattern to match Python's "True" string
-                            "command": "case '${skip_processing}' in *[Tt]rue*) echo 'skipped' ;; *) wc -l ;; esac",
+                            "command": "case \"$SKIP_PROCESSING\" in *[Tt]rue*) echo 'skipped' ;; *) wc -l ;; esac",
+                            "env": {"SKIP_PROCESSING": "${skip_processing}"},
                         },
                     },
                     {
@@ -163,7 +164,8 @@ class TestWorkflowBooleanParameterExecution:
                         "type": "shell",
                         "params": {
                             "stdin": "${read-data.content}",
-                            "command": "case '${skip_processing}' in *[Tt]rue*) echo 'skipped' ;; *) wc -l ;; esac",
+                            "command": "case \"$SKIP_PROCESSING\" in *[Tt]rue*) echo 'skipped' ;; *) wc -l ;; esac",
+                            "env": {"SKIP_PROCESSING": "${skip_processing}"},
                         },
                     },
                 ],
@@ -205,7 +207,8 @@ class TestWorkflowBooleanParameterExecution:
                         "params": {
                             "stdin": "${read.content}",
                             # When process_data is false, echo empty (doesn't consume stdin)
-                            "command": "case '${process_data}' in *[Ff]alse*) echo '[]' ;; *) cat ;; esac",
+                            "command": "case \"$PROCESS_DATA\" in *[Ff]alse*) echo '[]' ;; *) cat ;; esac",
+                            "env": {"PROCESS_DATA": "${process_data}"},
                         },
                     },
                 ],
@@ -362,7 +365,8 @@ Conclusion paragraph.
                             "stdin": "${fetch.content}",
                             # Real pattern: when describe_images is false, output empty array
                             # When true, grep for image URLs
-                            "command": "case '${describe_images}' in *[Ff]alse*) echo '[]' ;; *) grep -o 'https://[^)]*' || echo '[]' ;; esac",
+                            "command": "case \"$DESCRIBE_IMAGES\" in *[Ff]alse*) echo '[]' ;; *) grep -o 'https://[^)]*' || echo '[]' ;; esac",
+                            "env": {"DESCRIBE_IMAGES": "${describe_images}"},
                         },
                     },
                     {
@@ -421,7 +425,8 @@ Conclusion paragraph.
                         "type": "shell",
                         "params": {
                             "stdin": "${read.content}",
-                            "command": "case '${step1_process}' in *[Tt]rue*) cat ;; *) echo 'step1-skip' ;; esac",
+                            "command": "case \"$STEP1_PROCESS\" in *[Tt]rue*) cat ;; *) echo 'step1-skip' ;; esac",
+                            "env": {"STEP1_PROCESS": "${step1_process}"},
                         },
                     },
                     {
@@ -429,7 +434,8 @@ Conclusion paragraph.
                         "type": "shell",
                         "params": {
                             "stdin": "${step1.stdout}",
-                            "command": "case '${step2_process}' in *[Tt]rue*) cat ;; *) echo 'step2-skip' ;; esac",
+                            "command": "case \"$STEP2_PROCESS\" in *[Tt]rue*) cat ;; *) echo 'step2-skip' ;; esac",
+                            "env": {"STEP2_PROCESS": "${step2_process}"},
                         },
                     },
                 ],

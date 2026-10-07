@@ -46,7 +46,11 @@ def _client(app: Starlette | None = None) -> TestClient:
 _VALID_IR = {
     "nodes": [
         {"id": "greet", "type": "shell", "params": {"command": "echo hello"}},
-        {"id": "done", "type": "shell", "params": {"command": "echo ${greet.stdout}"}},
+        {
+            "id": "done",
+            "type": "shell",
+            "params": {"command": 'echo "$GREET_STDOUT"', "env": {"GREET_STDOUT": "${greet.stdout}"}},
+        },
     ],
     "edges": [{"from": "greet", "to": "done"}],
 }
@@ -463,7 +467,7 @@ def _workflow_with_input(tmp_path: Path, *, required: bool) -> Path:
     path.write_text(
         "# WithInput\n\nEchoes an input.\n\n## Inputs\n\n"
         "### text\n\nText to echo.\n\n- type: string\n" + default_line + "\n"
-        '## Steps\n\n### echo\n\nEchoes the text.\n\n- type: shell\n- command: echo "${text}"\n',
+        '## Steps\n\n### echo\n\nEchoes the text.\n\n- type: shell\n- env: { TEXT: ${text} }\n- command: echo "$TEXT"\n',
         encoding="utf-8",
     )
     return path
@@ -1311,8 +1315,9 @@ class TestResumeEndpoint:
             "# Escalation Demo\n\nAn escalating step, then a consumer.\n\n## Steps\n\n"
             "### esc\n\nRaises a decision escalation.\n\n"
             "- type: escalating-node\n- question: pick a or b\n- next: after\n\n"
-            "### after\n\nReads the decision.\n\n- type: shell\n\n"
-            '```shell command\necho "picked ${esc.result.escalation.decision.chosen}"\n```\n',
+            "### after\n\nReads the decision.\n\n- type: shell\n"
+            "- env:\n    ESC_RESULT_ESCALATION_DECISION_CHOSEN: ${esc.result.escalation.decision.chosen}\n\n"
+            '```shell command\necho "picked $ESC_RESULT_ESCALATION_DECISION_CHOSEN"\n```\n',
             encoding="utf-8",
         )
         token = self._pause(wf)

@@ -551,7 +551,10 @@ def test_only_coalesce_silently_uses_snapshot_branch(tmp_path: Path) -> None:
                 "id": "report",
                 "type": "shell",
                 "purpose": "Coalesces whichever branch ran.",
-                "params": {"command": "printf 'got ${primary.stdout ?? fallback.stdout}'"},
+                "params": {
+                    "command": "printf 'got '\"$PRIMARY_STDOUT_FALLBACK_STDOUT\"",
+                    "env": {"PRIMARY_STDOUT_FALLBACK_STDOUT": "${primary.stdout ?? fallback.stdout}"},
+                },
             },
         ],
     }
@@ -610,7 +613,10 @@ def test_only_does_not_seed_a_recovered_failure_upstream(tmp_path: Path) -> None
                 "id": "report",
                 "type": "shell",
                 "purpose": "Coalesces the recovered-failure primary against the fallback.",
-                "params": {"command": "printf 'got ${primary.stdout ?? fallback.stdout}'"},
+                "params": {
+                    "command": "printf 'got '\"$PRIMARY_STDOUT_FALLBACK_STDOUT\"",
+                    "env": {"PRIMARY_STDOUT_FALLBACK_STDOUT": "${primary.stdout ?? fallback.stdout}"},
+                },
             },
         ],
     }
@@ -777,7 +783,10 @@ def test_planner_only_seeds_resolved_content_from_interned_trace(tmp_path: Path)
                 "id": "target",
                 "type": "shell",
                 "cache": True,
-                "params": {"command": "printf 'got ${upstream.stdout}'"},
+                "params": {
+                    "command": "printf 'got '\"$UPSTREAM_STDOUT\"",
+                    "env": {"UPSTREAM_STDOUT": "${upstream.stdout}"},
+                },
             },
         ],
         "edges": [{"from": "upstream", "to": "target"}],
@@ -810,7 +819,10 @@ def test_planner_execute_verdict_matches_engine_executing(tmp_path: Path) -> Non
             {
                 "id": "target",
                 "type": "shell",
-                "params": {"command": f"echo ran >> {sentinel}; printf 'got ${{upstream.stdout}}'"},
+                "params": {
+                    "command": f"echo ran >> {sentinel}; printf 'got '\"$UPSTREAM_STDOUT\"",
+                    "env": {"UPSTREAM_STDOUT": "${upstream.stdout}"},
+                },
             },
         ],
         "edges": [{"from": "upstream", "to": "target"}],
@@ -909,7 +921,10 @@ def test_only_subworkflow_target_reruns_whole_child(tmp_path: Path) -> None:
                 "id": "echo",
                 "type": "shell",
                 "purpose": "Echo the input and record that the child ran.",
-                "params": {"command": f"echo ran >> {child_sentinel}; printf '%s' '${{text}}'"},
+                "params": {
+                    "command": f"echo ran >> {child_sentinel}; printf '%s' \"$TEXT\"",
+                    "env": {"TEXT": "${text}"},
+                },
             },
         ],
     }
@@ -982,14 +997,14 @@ def test_real_degraded_batch_snapshot_warns_in_run_and_plan(tmp_path: Path) -> N
                 "id": "fetch",
                 "type": "shell",
                 "purpose": "Batch that fails one item; continue drops it and degrades the run.",
-                "params": {"command": "test '${item}' != 'FAIL'"},
+                "params": {"command": "test \"$ITEM\" != 'FAIL'", "env": {"ITEM": "${item}"}},
                 "batch": {"items": ["ok1", "ok2", "FAIL"], "error_handling": "continue", "parallel": False},
             },
             {
                 "id": "summarize",
                 "type": "shell",
                 "purpose": "Downstream node restored under --only.",
-                "params": {"command": "printf 'count=${fetch.count}'"},
+                "params": {"command": "printf 'count='\"$FETCH_COUNT\"", "env": {"FETCH_COUNT": "${fetch.count}"}},
             },
         ],
         "edges": [{"from": "fetch", "to": "summarize"}],

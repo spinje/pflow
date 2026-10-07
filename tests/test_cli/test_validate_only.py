@@ -142,7 +142,10 @@ class TestValidateOnlyTemplateValidation:
                 {
                     "id": "process",
                     "type": "shell",
-                    "params": {"command": "echo ${wrong_node.result}"},  # References non-existent node
+                    "params": {
+                        "command": 'echo "$WRONG_NODE_RESULT"',
+                        "env": {"WRONG_NODE_RESULT": "${wrong_node.result}"},
+                    },  # References non-existent node
                 },
             ],
             "edges": [{"from": "fetch", "to": "process"}],
@@ -174,7 +177,16 @@ class TestValidateOnlyWithoutInputValues:
                 "repo": {"type": "string", "description": "GitHub repo"},
                 "pr_number": {"type": "number", "description": "PR number"},
             },
-            "nodes": [{"id": "fetch", "type": "shell", "params": {"command": "echo ${repo} ${pr_number}"}}],
+            "nodes": [
+                {
+                    "id": "fetch",
+                    "type": "shell",
+                    "params": {
+                        "command": 'echo "$REPO" "$PR_NUMBER"',
+                        "env": {"REPO": "${repo}", "PR_NUMBER": "${pr_number}"},
+                    },
+                }
+            ],
             "edges": [],
         }
 
@@ -199,7 +211,13 @@ class TestValidateOnlySkipsPrepareInputs:
         workflow = {
             "ir_version": "0.1.0",
             "inputs": {"required_input": {"type": "string", "description": "Required"}},
-            "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo ${required_input}"}}],
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "shell",
+                    "params": {"command": 'echo "$REQUIRED_INPUT"', "env": {"REQUIRED_INPUT": "${required_input}"}},
+                }
+            ],
             "edges": [],
         }
 
@@ -626,7 +644,14 @@ class TestValidationErrorDiagnosticShape:
             "ir_version": "0.1.0",
             "nodes": [
                 {"id": "bad-type", "type": "nonexistent_type_xyz", "params": {}},
-                {"id": "fetch", "type": "shell", "params": {"command": "echo ${bad-type.missing_field}"}},
+                {
+                    "id": "fetch",
+                    "type": "shell",
+                    "params": {
+                        "command": 'echo "$BAD_TYPE_MISSING_FIELD"',
+                        "env": {"BAD_TYPE_MISSING_FIELD": "${bad-type.missing_field}"},
+                    },
+                },
             ],
             "edges": [{"from": "bad-type", "to": "fetch"}],
         }
@@ -759,7 +784,8 @@ class TestFailurePathShowsWarnings:
             "Use the input.\n\n"
             "- type: shell\n"
             "- cache: false\n"
-            "- command: echo ${required_value}\n",
+            "- env: { REQUIRED_VALUE: ${required_value} }\n"
+            '- command: echo "$REQUIRED_VALUE"\n',
             encoding="utf-8",
         )
 
@@ -800,8 +826,16 @@ class TestValidateOnlyWithComplexWorkflows:
             "ir_version": "0.1.0",
             "nodes": [
                 {"id": "node1", "type": "shell", "params": {"command": "echo start"}},
-                {"id": "node2", "type": "shell", "params": {"command": "echo ${node1.stdout}"}},
-                {"id": "node3", "type": "shell", "params": {"command": "echo ${node2.stdout}"}},
+                {
+                    "id": "node2",
+                    "type": "shell",
+                    "params": {"command": 'echo "$NODE1_STDOUT"', "env": {"NODE1_STDOUT": "${node1.stdout}"}},
+                },
+                {
+                    "id": "node3",
+                    "type": "shell",
+                    "params": {"command": 'echo "$NODE2_STDOUT"', "env": {"NODE2_STDOUT": "${node2.stdout}"}},
+                },
             ],
             "edges": [{"from": "node1", "to": "node2"}, {"from": "node2", "to": "node3"}],
         }
@@ -824,8 +858,16 @@ class TestValidateOnlyWithComplexWorkflows:
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "node1", "type": "shell", "params": {"command": "echo ${node2.stdout}"}},
-                {"id": "node2", "type": "shell", "params": {"command": "echo ${node1.stdout}"}},
+                {
+                    "id": "node1",
+                    "type": "shell",
+                    "params": {"command": 'echo "$NODE2_STDOUT"', "env": {"NODE2_STDOUT": "${node2.stdout}"}},
+                },
+                {
+                    "id": "node2",
+                    "type": "shell",
+                    "params": {"command": 'echo "$NODE1_STDOUT"', "env": {"NODE1_STDOUT": "${node1.stdout}"}},
+                },
             ],
             "edges": [{"from": "node1", "to": "node2"}],
         }

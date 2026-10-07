@@ -523,7 +523,7 @@ def test_plan_batch_sub_workflow_preserves_child_approval_flag(tmp_path) -> None
                 {
                     "id": "gated-echo",
                     "type": "shell",
-                    "params": {"command": "printf '${value}'"},
+                    "params": {"command": 'printf "$VALUE"', "env": {"VALUE": "${value}"}},
                     "approval": "required",
                 }
             ],
@@ -1246,9 +1246,11 @@ Pick a topic.
 
 - type: shell
 - cache: true
+- env:
+    SEED: ${seed}
 
 ```shell command
-printf "topic-from-%s" "${seed}"
+printf "topic-from-%s" "$SEED"
 ```
 
 ### make
@@ -1257,9 +1259,11 @@ Make a body.
 
 - type: shell
 - cache: true
+- env:
+    SEED: ${seed}
 
 ```shell command
-printf "body-from-%s" "${seed}"
+printf "body-from-%s" "$SEED"
 ```
 """,
         encoding="utf-8",
@@ -1278,7 +1282,10 @@ printf "body-from-%s" "${seed}"
                     "id": "combine",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": 'printf "%s|%s" "${analyze.topic}" "${analyze.body}"'},
+                    "params": {
+                        "command": 'printf "%s|%s" "$ANALYZE_TOPIC" "$ANALYZE_BODY"',
+                        "env": {"ANALYZE_TOPIC": "${analyze.topic}", "ANALYZE_BODY": "${analyze.body}"},
+                    },
                 },
             ],
             "edges": [{"from": "analyze", "to": "combine"}],
@@ -1356,9 +1363,11 @@ Pick a topic.
 
 - type: shell
 - cache: true
+- env:
+    SEED: ${seed}
 
 ```shell command
-printf "topic-from-%s" "${seed}"
+printf "topic-from-%s" "$SEED"
 ```
 """,
         encoding="utf-8",
@@ -1376,7 +1385,10 @@ printf "topic-from-%s" "${seed}"
                     "id": "combine",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": 'printf "result=%s" "${analyze.topic}"'},
+                    "params": {
+                        "command": 'printf "result=%s" "$ANALYZE_TOPIC"',
+                        "env": {"ANALYZE_TOPIC": "${analyze.topic}"},
+                    },
                 },
             ],
             "edges": [{"from": "analyze", "to": "combine"}],
@@ -1438,9 +1450,11 @@ Do the work.
 
 - type: shell
 - cache: true
+- env:
+    SEED: ${seed}
 
 ```shell command
-printf "computed-from-%s" "${seed}"
+printf "computed-from-%s" "$SEED"
 ```
 """,
         encoding="utf-8",
@@ -1459,7 +1473,10 @@ printf "computed-from-%s" "${seed}"
                     "id": "use",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": 'printf "got %s" "${analyze.compute.stdout}"'},
+                    "params": {
+                        "command": 'printf "got %s" "$ANALYZE_COMPUTE_STDOUT"',
+                        "env": {"ANALYZE_COMPUTE_STDOUT": "${analyze.compute.stdout}"},
+                    },
                 },
             ],
             "edges": [{"from": "analyze", "to": "use"}],
@@ -1783,7 +1800,10 @@ def test_plan_bfs_recurses_into_sub_workflow_carrying_child_stats(tmp_path) -> N
                     "id": "child-work",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": f"echo child-work >> {log_file}; printf 'child-${{seed}}'"},
+                    "params": {
+                        "command": f"echo child-work >> {log_file}; printf 'child-'\"$SEED\"",
+                        "env": {"SEED": "${seed}"},
+                    },
                 },
             ],
             "edges": [],
@@ -1903,13 +1923,16 @@ def test_plan_downstream_linear_subworkflow_reports_exact_cost_basis(tmp_path) -
                     "id": "child-a",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": f"echo a >> {log_file}; printf 'a-${{seed}}'"},
+                    "params": {"command": f"echo a >> {log_file}; printf 'a-'\"$SEED\"", "env": {"SEED": "${seed}"}},
                 },
                 {
                     "id": "child-b",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": f"echo b >> {log_file}; printf '${{child-a.stdout}}-b'"},
+                    "params": {
+                        "command": f"echo b >> {log_file}; printf \"$CHILD_A_STDOUT\"'-b'",
+                        "env": {"CHILD_A_STDOUT": "${child-a.stdout}"},
+                    },
                 },
             ],
             "edges": [{"from": "child-a", "to": "child-b"}],
@@ -2100,7 +2123,7 @@ def test_plan_summary_execute_by_type_aggregates_across_nested(tmp_path) -> None
                     "id": "child-shell",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": f"echo s >> {log_file}; printf '${{seed}}'"},
+                    "params": {"command": f'echo s >> {log_file}; printf "$SEED"', "env": {"SEED": "${seed}"}},
                 },
             ],
             "edges": [],
@@ -2201,7 +2224,7 @@ def test_plan_downstream_bfs_detects_sub_workflow_cycle(tmp_path) -> None:
                     "id": "upstream",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": f"echo u >> {log_file}; printf '${{seed}}'"},
+                    "params": {"command": f'echo u >> {log_file}; printf "$SEED"', "env": {"SEED": "${seed}"}},
                 },
                 {
                     "id": "call-child",
@@ -2316,7 +2339,8 @@ Echoes the value.
 
 - type: shell
 - cache: true
-- command: echo a:${{value}} >> {log_file}; printf a:${{value}}
+- env: {{ VALUE: ${{value}} }}
+- command: echo a:"$VALUE" >> {log_file}; printf a:"$VALUE"
 
 ## Outputs
 
@@ -2353,7 +2377,8 @@ Echoes the value.
 
 - type: shell
 - cache: true
-- command: echo b:${{value}} >> {log_file}; printf b:${{value}}
+- env: {{ VALUE: ${{value}} }}
+- command: echo b:"$VALUE" >> {log_file}; printf b:"$VALUE"
 
 ## Outputs
 
@@ -2548,7 +2573,14 @@ def test_plan_batch_sub_workflow_output_shape_matches_engine(tmp_path) -> None:
     write_workflow_file(
         {
             "inputs": {"value": {"type": "string"}},
-            "nodes": [{"id": "echo", "type": "shell", "cache": True, "params": {"command": "printf ${value}"}}],
+            "nodes": [
+                {
+                    "id": "echo",
+                    "type": "shell",
+                    "cache": True,
+                    "params": {"command": 'printf "$VALUE"', "env": {"VALUE": "${value}"}},
+                }
+            ],
             "edges": [],
             "outputs": {"out": {"source": "${echo.stdout}", "description": "Echoed value"}},
         },
@@ -2639,8 +2671,16 @@ def test_engine_and_planner_walk_entry_state_match(tmp_path) -> None:
     ir = {
         "nodes": [
             {"id": "first", "type": "shell", "params": {"command": "printf first-v1"}},
-            {"id": "middle", "type": "shell", "params": {"command": "printf 'mid ${first.stdout}'"}},
-            {"id": "last", "type": "shell", "params": {"command": "printf 'tail ${middle.stdout}'"}},
+            {
+                "id": "middle",
+                "type": "shell",
+                "params": {"command": "printf 'mid '\"$FIRST_STDOUT\"", "env": {"FIRST_STDOUT": "${first.stdout}"}},
+            },
+            {
+                "id": "last",
+                "type": "shell",
+                "params": {"command": "printf 'tail '\"$MIDDLE_STDOUT\"", "env": {"MIDDLE_STDOUT": "${middle.stdout}"}},
+            },
         ],
         "edges": [{"from": "first", "to": "middle"}, {"from": "middle", "to": "last"}],
     }
@@ -2719,9 +2759,16 @@ def test_engine_and_planner_resume_entry_state_match(tmp_path) -> None:
             {
                 "id": "middle",
                 "type": "shell",
-                "params": {"command": "test '${mode}' = ok && printf 'mid ${first.stdout}'"},
+                "params": {
+                    "command": 'test "$MODE" = ok && printf \'mid \'"$FIRST_STDOUT"',
+                    "env": {"MODE": "${mode}", "FIRST_STDOUT": "${first.stdout}"},
+                },
             },
-            {"id": "last", "type": "shell", "params": {"command": "printf 'tail ${middle.stdout}'"}},
+            {
+                "id": "last",
+                "type": "shell",
+                "params": {"command": "printf 'tail '\"$MIDDLE_STDOUT\"", "env": {"MIDDLE_STDOUT": "${middle.stdout}"}},
+            },
         ],
         "edges": [{"from": "first", "to": "middle"}, {"from": "middle", "to": "last"}],
     }
@@ -2962,7 +3009,7 @@ def test_engine_and_planner_paused_approval_entry_state_match(tmp_path) -> None:
             {
                 "id": "guarded",
                 "type": "shell",
-                "params": {"command": "printf 'act ${prep.stdout}'"},
+                "params": {"command": "printf 'act '\"$PREP_STDOUT\"", "env": {"PREP_STDOUT": "${prep.stdout}"}},
                 "approval": "required",
             },
         ],
@@ -3419,7 +3466,14 @@ def test_plan_downstream_batch_respects_depth_guard(tmp_path, monkeypatch) -> No
     write_workflow_file(
         {
             "inputs": {"value": {"type": "string"}},
-            "nodes": [{"id": "echo", "type": "shell", "cache": True, "params": {"command": "printf ${value}"}}],
+            "nodes": [
+                {
+                    "id": "echo",
+                    "type": "shell",
+                    "cache": True,
+                    "params": {"command": 'printf "$VALUE"', "env": {"VALUE": "${value}"}},
+                }
+            ],
             "edges": [],
             "outputs": {"out": {"source": "${echo.stdout}", "description": "o"}},
         },

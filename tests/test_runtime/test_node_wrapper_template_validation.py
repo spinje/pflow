@@ -592,7 +592,7 @@ class TestCoalesceErrorMessages:
         """When neither branch ran, error shows which nodes didn't execute."""
         with pytest.raises(ValueError) as exc_info:
             _resolve(
-                {"command": "${branch-high.stdout ?? branch-low.stdout}"},
+                {"prompt": "${branch-high.stdout ?? branch-low.stdout}"},
                 {},
             )
 
@@ -607,7 +607,7 @@ class TestCoalesceErrorMessages:
 
         with pytest.raises(ValueError) as exc_info:
             _resolve(
-                {"command": "${branch-high.stddout ?? branch-low.stdout}"},
+                {"prompt": "${branch-high.stddout ?? branch-low.stdout}"},
                 shared,
             )
 

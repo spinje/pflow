@@ -747,3 +747,90 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   output). Regenerable: check out `a296ceca` and run `implementation/baseline/task159_actual.sh`. Kept untracked in
   the worktree for PZ's actual-vs-actual comparison; deleted before the PR.
 - Next: launch I3 (fresh, Opus · medium) on PC2 from `implementation/pc-instrumented-hits.txt`.
+
+## [2026-10-07 23:54] implementer I3 (Opus) — PC2 test-suite conversion (env: binding, old semantics)
+- Did: converted every PC2 site from `pc-instrumented-hits.txt` + §6 (incl. "missed"/helper sites) by §5 — T1 → `env:`
+  (no braced `${NAME}` in any body, D13), T2 → the §6 param, T4 → static body + PD surface, T5 → `inputs:`; ran the
+  instrumented suite before and after with a fresh temporary hook (I2's was not preserved), then removed it.
+- Changed: 76 test files under `tests/` (cli, core, execution, integration, mcp_server, runtime incl.
+  `test_template_validation/`); no `src/` change. Mechanical IR-literal sites went through a scratch converter
+  (§5.3 quote-state rules, names per §5.2 with `is_sensitive_parameter` + `AMBIENT_NAMES` checks — 0 hits over all 129
+  chosen names); markdown/f-string sites by hand.
+- Verified (executed):
+  - Hook: logs `(PYTEST_CURRENT_TEST, node id, param, site)` when `(shell, command)`/`(code, code)` holds
+    `TemplateResolver.has_templates`; `split_params` reads `node_type`/`node_id` from the compiler frame.
+    BEFORE (head `eee01b34`): `make test` 10505 passed + `make test-e2e` 52/2 skipped; every PC1-tagged row is ABSENT
+    (react-flow fixtures, example/guide validation, multi-chunk, golden hashes, template_parity) — confirmed, not assumed.
+    AFTER: 10504 + 52/2; remaining hits = only T3: `test_types.py` (the same 28 tests) and
+    `test_loop_validation.py::test_shell_carry_key_referenced_via_nested_path_no_warning`; zero subprocess-child hits.
+    Hook removed: `git diff` on `template_surfaces.py` + `template_resolution.py` = 0 lines.
+  - `inventory.py --files`, tests rows left: T3 — `test_types.py` 28, `test_command_validation.py` 3,
+    `test_loop_validation.py:460`; the two intentional rows — `test_trace_report.py:1643/1650` (ruling A's legacy item,
+    one test) and `test_shell_failure_display.py:584`; false positives — `test_trace_report.py:930` (PD's MCPNode
+    `command` param, not a shell body), `test_loop_control.py:101` (§6: leave), and the inventory's python-manual
+    heuristic (any f-string holding "shell command" and a `$`) on converted or body-free f-strings:
+    `test_resume_cli.py:1204`, `test_plan_drift.py:2836`, `test_iteration_pattern.py:45`, `test_loop_config.py:1382`,
+    `test_compiler_output_wrapping.py` ×2, `test_only_snapshot.py:1077`, `test_resume_engine.py:775`,
+    `test_template_validation/test_validator.py:1056` — every one of them ran under the hook with zero hits.
+  - `make check` green; `make test` **10504 passed / 0 failed** (baseline 10505, −1 = deviation 1); `make test-e2e`
+    52 passed / 2 skipped (= baseline).
+  - T1 outputs: every stdout/file assertion passed unchanged (no expected-output edit anywhere except deviation 3,
+    which is a source line number, not command output). Real CLI: `uv run pflow --dry-run` on the converted
+    `test_dry_run` shape fails with "Workflow requires input 'name'" (the reason its name states, not a leftover).
+  - PD display-copy leak probe (`faninner`, batch items `SENSITIVE-*`): `SENSITIVE` occurrences in the carried
+    `__failures__` bundle identical old-form vs env-form (2, both the display-safe `summary` fields).
+  | Assumed: marker-excluded tests (paid/LLM) are not in the hook's net — the inventory (static) shows no body site in them.
+- Deviations/surprises:
+  1. `test_workflow_validator_code_param.py::test_string_code_is_accepted`: dropped the `"${upstream.stdout}"`
+     parametrize case (−1 test). Not in §6; it is a templated code body (T5-shaped) whose only claim is "a string is
+     accepted" — the validator has no template branch (`validator.py:133`), so the case was redundant with the plain
+     string case and becomes meaningless once bodies are static. Importance 1.
+  2. `test_core/test_file_resolver_integration.py` (not in §6; I2 tagged it): `test_compile_ir_detects_templates_in_file_content`
+     moved to a file-loaded `stdin` (T2; `stdin` is in `FILE_RESOLVABLE_PARAMS`) and DEEPENED — it only asserted
+     `workflow is not None`, which passes with or without detection; now asserts
+     `node_configs["process"].template_config.template_params["stdin"] == "Processing: ${fetch.stdout}"`.
+     `test_nested_workflow_file_refs_resolve_from_child_dir`: T1 (`greet.sh` reads `$NAME`, child binds `NAME`).
+  3. `test_cli/test_cli_error_boundary.py`: the added `- env:` line moves the asserted parse-error entity from line 23 to
+     24 — four assertions + the header comment updated. Fixture shape, not behaviour.
+  4. `test_runtime/test_template_escape.py`: the hit file tags it T3, §6 says retarget the escape tests to `stdin` + `cat`
+     IN PC — followed §6: all four escape tests now carry the escape on `stdin`; `…reaches_the_shell` renamed
+     `…validates_and_stays_literal` (asserts `${PFLOW_TEST_UNSET_620:-world}` arrives literal — no shell expands it on
+     stdin); the batch `results[0]["command"]` assertion dropped; `DOCS_ESCAPE_EXAMPLE` is no longer "verbatim" (PC1
+     rewrote the docs fence to `write-file`) — it carries the docs' `"Price: $${PRICE}"` string. No T3 body site is
+     left in this file; PB's two body tests (unescaped `${X:-world}`, `$${` in a body is the error) are still PB's.
+  5. Names (importance 1): `${rounds.survivors[0]}` → `ROUNDS_SURVIVORS_0` (trailing `_` from `]` dropped; leading/
+     trailing `_` stripped generally, as §5.2's `__index__` → `INDEX`); coalesce expressions named from the whole
+     expression (`PRIMARY_STDOUT_FALLBACK_STDOUT`); `test_workflow_data_flow.py` helper `_wf` now takes the bare
+     reference and binds a fixed `VALUE`; `test_graph_build.py:841` uses §6's `T`.
+  6. `test_ir_schema.py:954` (`command: ${task.cmd}` — the item IS the command): `$TASK_CMD` left unquoted with a
+     comment (word splitting relied on, §5.3); schema-only test.
+  7. Converted beyond the hit list (inventory-visible): `test_cli/test_guide.py:438`, `test_core/test_markdown_parser.py:1650`,
+     `test_core/test_ir_schema.py:954`, `test_runtime/test_prepare_inputs_extras.py:253`, `test_resume_engine.py`
+     fences 1086/1256/1277/1356, `test_workflow_executor.py` 191/496, `test_trace_integration.py:915`, and
+     `test_node_wrapper_template_validation.py:595/610` (`split_params` has no node type → key renamed to `prompt`, §6).
+  8. T4 shape actually built: gate previews assert `preview["command"]` = the static body AND `preview["env"]` =
+     `{NAME: resolved}` (`test_approval_gate_cli`, `rt/test_approval_gate` ×3, `rt/test_gate_trace` exact dicts,
+     `test_cli_mcp_parity` paused text `command:`/`env:` lines); `test_trace_integration` asserts
+     `template_resolutions == {"env": {...}}` (and per batch item `["env"]`), which also pins `command` absent.
+  9. `test_loop_config.py`: renamed `test_shell_carry_threads_into_command_text_across_rounds` →
+     `test_shell_carry_threads_into_env_across_rounds` (keeps `inputs: state` as the Carry target, binds `STATE`), per §6.
+- Self-checks: **Fully happy?** Yes, with one stated limit: T2 discrimination was checked by reading each asserted
+  message and spot-executing the ones that could go vacuous (loop-validation `__iteration__` messages identical
+  old/new except `parameter 'stdin'`; dry-run reason via the real CLI; validate-only/mcp undefined-ref and cycle tests
+  assert the ref/cycle text). `test_union_types.py`'s "0 warnings" cases rely on stdin being scanned — proven by its
+  sibling that expects exactly 1 warning through the same `stdin` path. test-reflect: not needed — mechanical
+  conversion; the instrumented run and byte-identical T1 outputs are the test (one non-discriminating T2 found and
+  deepened — deviation 2).
+- Next: orchestrator commits PC2; PB.
+
+## [2026-10-08 02:05] task orchestrator (Opus) — PC2 verified and committed
+- Verified: `make check` green, `make test` 10504 passed / 0 failed (mine). I3's entry (`[2026-10-07 23:54]` — real
+  clock, sorts above I2's 10-08 entries) accepted with its deviations 1–9 (all importance 1).
+- "Fully happy?" asked: yes. Residue for PB (I3, not logged by it): `env:` leaf edges ARE labelled by the dict key
+  (executed: `env: {T: ${prep.rows}}` → `input_name='T'`); verdict flips expected at PB only in `test_types.py` (28),
+  `test_command_validation.py` (3), `test_loop_validation.py:460`; `test_workflow_data_flow.py:493/521` keep
+  `${array[@]}` / `${#count}` in shell bodies on purpose — the leftover rule must stay silent on them (an over-fire
+  guard); the T2 vehicles (`stdin`/`prompt`/`env`) stay templated after the flip; PB adds (not converts) the two
+  escape-in-body tests; golden-hash drift expected at PB = zero (D14); marker-excluded (paid) tests were outside the
+  hook — the static inventory shows no body site there.
+- Next: launch I4 (fresh, Opus · high) on PB.

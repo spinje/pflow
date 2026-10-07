@@ -45,7 +45,9 @@ def test_meta_inputs_records_user_and_default_values(tmp_path, monkeypatch):
         "# Greet\n\nGreets someone.\n\n## Inputs\n\n"
         "### name\n\nWho to greet.\n\n- type: string\n- default: World\n\n"
         "### count\n\nHow many times.\n\n- type: integer\n- default: 3\n\n"
-        '## Steps\n\n### greet\n\nEchoes a greeting.\n\n- type: shell\n- command: echo "hi ${name} ${count}"\n',
+        "## Steps\n\n### greet\n\nEchoes a greeting.\n\n- type: shell\n"
+        "- env: { NAME: ${name}, COUNT: ${count} }\n"
+        '- command: echo "hi $NAME $COUNT"\n',
         encoding="utf-8",
     )
 
@@ -85,7 +87,9 @@ def test_meta_inputs_present_for_inline_content_run(tmp_path, monkeypatch):
     content = (
         "# Inline\n\nInline workflow.\n\n## Inputs\n\n"
         "### topic\n\nThe topic.\n\n- type: string\n- default: cats\n\n"
-        '## Steps\n\n### echo\n\nEchoes the topic.\n\n- type: shell\n- command: echo "${topic}"\n'
+        "## Steps\n\n### echo\n\nEchoes the topic.\n\n- type: shell\n"
+        "- env: { TOPIC: ${topic} }\n"
+        '- command: echo "$TOPIC"\n'
     )
 
     result = WorkflowRunner().run(content, {"topic": "dogs"}, config=RunnerConfig())
@@ -106,7 +110,9 @@ def test_meta_inputs_records_required_input_value_not_placeholder(tmp_path, monk
     wf.write_text(
         "# Required\n\nHas a required input.\n\n## Inputs\n\n"
         "### subject\n\nThe subject (required, no default).\n\n- type: string\n\n"
-        '## Steps\n\n### greet\n\nGreets the subject.\n\n- type: shell\n- command: echo "hi ${subject}"\n',
+        "## Steps\n\n### greet\n\nGreets the subject.\n\n- type: shell\n"
+        "- env: { SUBJECT: ${subject} }\n"
+        '- command: echo "hi $SUBJECT"\n',
         encoding="utf-8",
     )
 
@@ -131,7 +137,9 @@ def test_meta_inputs_on_eager_meta_line_before_node_events(tmp_path, monkeypatch
     wf.write_text(
         "# Ordered\n\nOne input, one node.\n\n## Inputs\n\n"
         "### who\n\nThe subject.\n\n- type: string\n- default: world\n\n"
-        '## Steps\n\n### greet\n\nGreets the subject.\n\n- type: shell\n- command: echo "hi ${who}"\n',
+        "## Steps\n\n### greet\n\nGreets the subject.\n\n- type: shell\n"
+        "- env: { WHO: ${who} }\n"
+        '- command: echo "hi $WHO"\n',
         encoding="utf-8",
     )
 

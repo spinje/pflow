@@ -137,7 +137,12 @@ def test_memo_cache_miss_on_different_input(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "diff-input", "type": "shell", "cache": True, "params": {"command": "printf '%s' '${input_val}'"}},
+            {
+                "id": "diff-input",
+                "type": "shell",
+                "cache": True,
+                "params": {"command": "printf '%s' \"$INPUT_VAL\"", "env": {"INPUT_VAL": "${input_val}"}},
+            },
         ],
         "edges": [],
         "inputs": {"input_val": {"type": "string", "description": "Test input"}},

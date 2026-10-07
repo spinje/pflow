@@ -170,7 +170,13 @@ def test_markdown_workflow_with_parameters():
         workflow = {
             "ir_version": "0.1.0",
             "inputs": {"param1": {"type": "string", "required": True}},
-            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo ${param1}"}}],
+            "nodes": [
+                {
+                    "id": "echo1",
+                    "type": "shell",
+                    "params": {"command": 'echo "$PARAM1"', "env": {"PARAM1": "${param1}"}},
+                }
+            ],
             "edges": [],
         }
         with open("workflow.pflow.md", "w", encoding="utf-8") as f:
@@ -335,7 +341,9 @@ def test_stdin_with_file_workflow(mock_stdin_has_data):
         workflow = {
             "ir_version": "0.1.0",
             "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
-            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo '${data}'"}}],
+            "nodes": [
+                {"id": "echo1", "type": "shell", "params": {"command": 'echo "$DATA"', "env": {"DATA": "${data}"}}}
+            ],
             "edges": [],
         }
         with open("workflow.pflow.md", "w", encoding="utf-8") as f:

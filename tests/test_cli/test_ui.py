@@ -168,7 +168,7 @@ class TestSourceEndpoint:
                 {
                     "id": "greet",
                     "type": "shell",
-                    "params": {"command": "echo ${name}"},
+                    "params": {"command": 'echo "$NAME"', "env": {"NAME": "${name}"}},
                 }
             ],
             "outputs": {"greeting": {"description": "Greeting text.", "source": "${greet.stdout}"}},

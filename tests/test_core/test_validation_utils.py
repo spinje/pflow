@@ -166,9 +166,10 @@ Call the child.
 Show the child output.
 
 - type: shell
+- stdin: ${sub.reslt}
 
 ```shell command
-echo ${sub.reslt}
+cat
 ```
 """
 

@@ -36,7 +36,8 @@ The uppercased text result.
 Convert text to uppercase using tr.
 
 - type: shell
-- command: echo "${text}" | tr '[:lower:]' '[:upper:]'
+- env: { TEXT: ${text} }
+- command: echo "$TEXT" | tr '[:lower:]' '[:upper:]'
 """
 
 
@@ -50,7 +51,8 @@ def _make_parent_workflow(child_ref: str, pass_text: bool = True) -> str:
     text_param = "- inputs:\n    text: ${title}\n" if pass_text else ""
     # When not passing text, still use ${title} in the show step so
     # the declared input is not flagged as unused by validation.
-    show_cmd = "echo ${process.result}" if pass_text else "echo ${title}"
+    show_env = "- env: { PROCESS_RESULT: ${process.result} }" if pass_text else "- env: { TITLE: ${title} }"
+    show_cmd = 'echo "$PROCESS_RESULT"' if pass_text else 'echo "$TITLE"'
     return f"""\
 # Parent
 
@@ -76,6 +78,7 @@ Process the title through a child workflow.
 Show the final result.
 
 - type: shell
+{show_env}
 - command: {show_cmd}
 """
 
@@ -385,7 +388,8 @@ Call the middle workflow.
 Display the result.
 
 - type: shell
-- command: echo ${process.result}
+- env: { PROCESS_RESULT: ${process.result} }
+- command: echo "$PROCESS_RESULT"
 """,
             encoding="utf-8",
         )

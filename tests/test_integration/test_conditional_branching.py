@@ -769,9 +769,11 @@ class TestFullPipeline:
 
             - type: shell
             - next: end
+            - env:
+                ROUTER_RESULT: ${router.result}
 
             ```shell command
-            echo "Standard: ${router.result}"
+            echo "Standard: $ROUTER_RESULT"
             ```
 
             ### premium-path
@@ -780,9 +782,11 @@ class TestFullPipeline:
 
             - type: shell
             - next: end
+            - env:
+                ROUTER_RESULT: ${router.result}
 
             ```shell command
-            echo "Premium: ${router.result}"
+            echo "Premium: $ROUTER_RESULT"
             ```
         """)
 
