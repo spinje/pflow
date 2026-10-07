@@ -375,10 +375,25 @@ class TestWindowsOracle:
         """
         monkeypatch.setenv("TEMP", "inherited-temp")
         shared: dict[str, Any] = {}
-        assert _run(shared, command='printf "%s" "$Temp"', env={"Temp": "bound-temp"}) == "default", shared.get(
-            "stderr"
-        )
-        assert shared["stdout"] == "bound-temp"
+        # The trailing `env` listing is CP-2 evidence: which spelling(s) the child actually holds.
+        command = "printf '%s' \"$Temp\"; printf '|'; env | grep -i '^temp=' | tr '\\n' ';'"
+        assert _run(shared, command=command, env={"Temp": "bound-temp"}) == "default", shared.get("stderr")
+        seen = shared["stdout"]
+        assert seen.split("|", 1)[0] == "bound-temp", f"child saw: {seen!r}"
+
+    def test_d8_2_a_mixed_case_name_outside_windows_well_known_names_reads_by_its_spelling(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """D8-2, CP-2 evidence row: the same collision with a name no Windows runtime treats specially.
+
+        POSIX leg: regression guard (``$PFLOWD8`` keeps the inherited value there).
+        """
+        monkeypatch.setenv("PFLOWD8", "inherited-d8")
+        shared: dict[str, Any] = {}
+        command = "printf '%s' \"$PflowD8\"; printf '|'; env | grep -i '^pflowd8=' | tr '\\n' ';'"
+        assert _run(shared, command=command, env={"PflowD8": "bound-d8"}) == "default", shared.get("stderr")
+        seen = shared["stdout"]
+        assert seen.split("|", 1)[0] == "bound-d8", f"child saw: {seen!r}"
 
     def test_d8_3_a_hostile_value_arrives_byte_identical(self, tmp_path: Path) -> None:
         """D8-3 / #59: quotes, newline, ``$``, backticks, ``$(…)``, a leading ``-`` and non-ASCII, intact.
