@@ -1408,8 +1408,9 @@ class WorkflowTraceCollector:
                 clean_item["node_output"] = self._sanitize_for_json(clean_item["node_output"], found)
                 if found:
                     clean_item["lossy"] = found
-            if "template_resolutions" in clean_item:
-                clean_item["template_resolutions"] = self._sanitize_for_json(clean_item["template_resolutions"])
+            for key in ("item", "template_resolutions"):
+                if key in clean_item:
+                    clean_item[key] = self._sanitize_for_json(clean_item[key])
             # Recurse into nested events (sub-workflow batch items)
             if "events" in clean_item:
                 # Child events from sub-workflow collectors are already sanitized,

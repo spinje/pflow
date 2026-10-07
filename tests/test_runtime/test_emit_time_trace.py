@@ -951,6 +951,29 @@ def test_a_non_json_key_still_writes_a_complete_trace(tmp_path, monkeypatch):
 
 
 @pytest.mark.trace_files
+def test_a_batch_over_items_with_a_non_json_key_writes_a_complete_trace(tmp_path, monkeypatch):
+    """The per-item record carries the item itself: a tuple key there is written as its text too, or the
+    successful batch would leave a half-written trace (#724)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        "# WF\n\nBatch over tuple-keyed items.\n\n## Steps\n\n### items\n\nItems.\n\n- type: code\n\n"
+        '```python code\nresult: list = [{(1, 2): "a"}]\n```\n\n'
+        "### each\n\nOne per item.\n\n- type: code\n- inputs:\n    it: ${item}\n- batch:\n    items: ${items.result}\n\n"
+        '```python code\nit: dict\nresult: str = "ok"\n```\n',
+        encoding="utf-8",
+    )
+
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False))
+
+    assert result.success, [d.message for d in result.errors]
+    trace = load_trace_file(result.trace.trace_path)
+    assert trace["final_status"] == "success"
+    each = next(e for e in trace["nodes"] if e["node_id"] == "each")
+    assert [item["item"] for item in each["batch_items"]] == [{"(1, 2)": "a"}]
+
+
+@pytest.mark.trace_files
 def test_a_line_that_cannot_be_written_disables_streaming_like_a_disk_fault(tmp_path, monkeypatch):
     """The writer's contract covers any fault writing a line, not only I/O (#724): an output value whose
     text form raises (``json.dumps(default=str)``) disables streaming and leaves the successful run
