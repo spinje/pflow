@@ -517,3 +517,19 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   reads its value), `make check` + `make test`, commit, push, wait for CI green on #723, amend the PR body's
   Windows paragraph with the D8 outcomes, hand back at create-pr with head SHA + `gh pr checks` snapshot naming
   `tests-windows (core-cli-nodes)` + `dev servers: none`. Do not merge.
+
+## [2026-10-07 02:40] task orchestrator (Opus) — CP-2 RULED (a); applied
+- [RULING] (main orchestrator, under the user's end-to-end grant, importance 2): **(a)** — accept, document, pin.
+  Guide states only what was observed. Deltas 1–5 from the checkpoint text accepted as logged; follow-ups 1 and 4
+  (unencodable text masked by the trace writer / stdin's -2 path) filed by the main orchestrator at merge; 2 and 3
+  go to Task 120's spec.
+- Did: `guide/nodes/shell.md` Names bullet: "On Windows, Git Bash imports Windows path variables such as `PATH`
+  and `TEMP` upper-cased, with their values converted to POSIX paths — use another name for data." The two D8-2
+  second-row tests folded into one — `test_d8_2_a_case_colliding_name_keeps_its_spelling_except_windows_path_variables`:
+  presence first (`PflowD8` beside inherited `PFLOWD8` reads by its spelling, value untouched, every platform),
+  then the pinned exception (win32: exactly one `TEMP=` entry, value an absolute POSIX path ending `/bound-temp`,
+  `$Temp` empty; POSIX: both spellings, `$Temp` = bound value — regression guard).
+- Assumed (Cygwin docs, NOT observed, deliberately not in the guide): `TMP`, `HOME`, `TMPDIR` are imported the same
+  way as `TEMP`.
+- Verified: `make check` green; `make test-all-local` 10536 passed / 2 skipped; CI pending on push.
+- Next: push, wait for #723 CI green, amend the PR body's Windows paragraph, hand back at create-pr.

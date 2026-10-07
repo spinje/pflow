@@ -361,34 +361,43 @@ class TestWindowsOracle:
             assert f"Path={bound}" in lines
             assert next(line for line in lines if line.startswith("PATH=")).endswith(str(inherited))
 
-    def test_d8_2_a_mixed_case_name_colliding_with_an_inherited_one_reads_by_its_spelling(
+    def test_d8_2_a_case_colliding_name_keeps_its_spelling_except_windows_path_variables(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """D8-2, second row: ``Temp`` beside an inherited ``TEMP`` is readable as ``$Temp``.
+        """D8-2, second row (CP-2, ruled (a)): a mixed-case name beside an inherited case-variant.
 
-        POSIX leg: regression guard (``$TEMP`` keeps the inherited value there).
+        An ordinary name (``PflowD8`` beside ``PFLOWD8``) is read by its authored spelling, value
+        untouched, on every platform. A Windows path variable is the exception, observed on
+        ``tests-windows``: Git Bash imports ``Temp`` as ``TEMP`` with the value converted to an
+        absolute POSIX path, and ``$Temp`` is empty. POSIX legs: regression guards.
         """
-        monkeypatch.setenv("TEMP", "inherited-temp")
-        shared: dict[str, Any] = {}
-        # The trailing `env` listing is CP-2 evidence: which spelling(s) the child actually holds.
-        command = "printf '%s' \"$Temp\"; printf '|'; env | grep -i '^temp=' | tr '\\n' ';'"
-        assert _run(shared, command=command, env={"Temp": "bound-temp"}) == "default", shared.get("stderr")
-        seen = shared["stdout"]
-        assert seen.split("|", 1)[0] == "bound-temp", f"child saw: {seen!r}"
 
-    def test_d8_2_a_mixed_case_name_outside_windows_well_known_names_reads_by_its_spelling(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """D8-2, CP-2 evidence row: the same collision with a name no Windows runtime treats specially.
+        def child_sees(name: str, value: str) -> tuple[str, list[str]]:
+            """``$name`` in the child, and every environment entry spelled like ``name`` in any case."""
+            shared: dict[str, Any] = {}
+            command = f"printf '%s' \"${name}\"; printf '|'; env | grep -i '^{name}='"
+            assert _run(shared, command=command, env={name: value}) == "default", shared.get("stderr")
+            read, _, listing = shared["stdout"].partition("|")
+            return read, listing.splitlines()
 
-        POSIX leg: regression guard (``$PFLOWD8`` keeps the inherited value there).
-        """
         monkeypatch.setenv("PFLOWD8", "inherited-d8")
-        shared: dict[str, Any] = {}
-        command = "printf '%s' \"$PflowD8\"; printf '|'; env | grep -i '^pflowd8=' | tr '\\n' ';'"
-        assert _run(shared, command=command, env={"PflowD8": "bound-d8"}) == "default", shared.get("stderr")
-        seen = shared["stdout"]
-        assert seen.split("|", 1)[0] == "bound-d8", f"child saw: {seen!r}"
+        monkeypatch.setenv("TEMP", "inherited-temp")
+
+        # Presence: the general rule holds — the authored spelling reads the bound value.
+        read, entries = child_sees("PflowD8", "bound-d8")
+        assert read == "bound-d8", entries
+        assert "PflowD8=bound-d8" in entries, entries
+
+        read, entries = child_sees("Temp", "bound-temp")
+        if sys.platform == "win32":
+            assert read == "", entries
+            assert len(entries) == 1, entries
+            name, _, converted = entries[0].partition("=")
+            assert name == "TEMP", entries
+            assert converted.startswith("/") and converted.endswith("/bound-temp"), entries
+        else:
+            assert read == "bound-temp", entries
+            assert sorted(entries) == ["TEMP=inherited-temp", "Temp=bound-temp"], entries
 
     def test_d8_3_a_hostile_value_arrives_byte_identical(self, tmp_path: Path) -> None:
         """D8-3 / #59: quotes, newline, ``$``, backticks, ``$(…)``, a leading ``-`` and non-ASCII, intact.
