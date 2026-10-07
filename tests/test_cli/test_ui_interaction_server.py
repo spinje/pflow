@@ -979,6 +979,42 @@ def _write_paused_trace(
     (debug / name).write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
 
 
+def _escalation_wf(tmp_path: Path, question: str) -> Path:
+    """A real escalating workflow (``EscalatingNode`` from test_gate_pause, a non-code producer) whose
+    gate asks ``question``. Registry injection is the test_paused_cli.py pattern — works only inside
+    pytest, where isolate_pflow_config redirects Registry to tmp paths."""
+    from pflow.registry import Registry
+    from tests.test_runtime.test_gate_pause import EscalatingNode
+
+    registry = Registry()
+    nodes = registry.load()
+    nodes["escalating-node"] = {
+        "module": "tests.test_runtime.test_gate_pause",
+        "class_name": "EscalatingNode",
+        "docstring": EscalatingNode.__doc__ or "",
+        "file_path": "tests/test_runtime/test_gate_pause.py",
+        "type": "core",
+        "interface": {
+            "description": "Test node that raises a decision escalation.",
+            "params": [{"key": "question", "type": "str", "description": "The escalation question"}],
+            "inputs": [],
+            "outputs": [{"key": "result", "type": "dict", "description": "Carries the escalation marker"}],
+            "actions": ["default"],
+        },
+    }
+    registry.save(nodes)
+    wf = tmp_path / "esc_demo.pflow.md"
+    wf.write_text(
+        "# Escalation Demo\n\nAn escalating step, then a consumer.\n\n## Steps\n\n"
+        "### esc\n\nRaises a decision escalation.\n\n"
+        f"- type: escalating-node\n- question: {question}\n- next: after\n\n"
+        "### after\n\nReads the decision.\n\n- type: shell\n\n"
+        '```shell command\necho "picked ${esc.result.escalation.decision.chosen}"\n```\n',
+        encoding="utf-8",
+    )
+    return wf
+
+
 class TestGateEndpoint:
     """``GET /api/gate`` — the on-demand gate payload read (Task 176). Read-only; the bulky
     ``gate_request`` is served here precisely so it never rides the SSE wire or ``/api/runs``."""
@@ -1039,6 +1075,51 @@ class TestGateEndpoint:
         assert body["paused_node_id"] == "gated"
         assert body["gate_request"]["iteration"] == 1
 
+    @pytest.mark.trace_files
+    def test_long_approval_command_is_served_in_full_not_as_a_blob_ref(self, tmp_path: Path, monkeypatch) -> None:
+        """#720: the trace interns every string >= 1 KB as a ``$pflow_blob`` ref whose body sits on an
+        EARLIER line; the paused trailer's ``gate_request`` carries only the ref. A real gated run with a
+        2 KB command must reach the panel as the full command (presence) — never the ref (absence), or
+        the human approves a command they cannot see."""
+        self._debug_dir(tmp_path, monkeypatch)
+        command = "echo " + " ".join(f"segment{i:03d}" for i in range(200))
+        assert len(command.encode()) >= 2048
+        wf = tmp_path / "big_cmd.pflow.md"
+        wf.write_text(
+            "# Big Command\n\nA gated step with a long command.\n\n## Steps\n\n"
+            "### big\n\nNeeds approval.\n\n- type: shell\n- approval: required\n"
+            f"- command: {command}\n",
+            encoding="utf-8",
+        )
+        run = CliRunner(mix_stderr=False).invoke(cli, [str(wf)])
+        assert run.exit_code == 4, run.stderr
+        token = _TOKEN_RE.search(run.stdout).group(1)
+        trace = next((tmp_path / ".pflow" / "debug").glob("workflow-trace-*.json")).read_text(encoding="utf-8")
+        assert "$pflow_blob" in trace.splitlines()[-1], "precondition: the trailer carries an interned ref"
+
+        response = _client().get("/api/gate", params={"run": token})
+        assert response.status_code == 200
+        assert response.json()["gate_request"]["preview"]["command"] == command
+        assert "$pflow_blob" not in response.text
+
+    @pytest.mark.trace_files
+    def test_long_escalation_question_is_served_in_full_not_as_a_blob_ref(self, tmp_path: Path, monkeypatch) -> None:
+        """#720: the escalation arm — a 2 KB question (interned on the node's output event, referenced
+        by the trailer) reaches the panel as text. A ref here crashed the whole viewer (an object as a
+        React child)."""
+        self._debug_dir(tmp_path, monkeypatch)
+        question = "Which configuration layout should the migration use? " * 40
+        question = question.strip()
+        assert len(question.encode()) >= 2048
+        run = CliRunner(mix_stderr=False).invoke(cli, [str(_escalation_wf(tmp_path, question))])
+        assert run.exit_code == 4, run.stderr
+        token = _TOKEN_RE.search(run.stdout).group(1)
+
+        response = _client().get("/api/gate", params={"run": token})
+        assert response.status_code == 200
+        assert response.json()["gate_request"]["question"] == question
+        assert "$pflow_blob" not in response.text
+
     def test_unknown_run_id_is_404(self, tmp_path: Path, monkeypatch) -> None:
         self._debug_dir(tmp_path, monkeypatch)
         response = _client().get("/api/gate", params={"run": "no-such-run"})
@@ -1088,14 +1169,32 @@ class TestGateEndpoint:
         response = _client().get("/api/gate", params={"run": "kindless-run"})
         assert response.status_code == 404
 
+    def test_unparseable_trace_is_404_not_500(self, tmp_path: Path, monkeypatch) -> None:
+        """A paused trace the full reader cannot parse (a malformed line before the trailer) is the
+        not-paused 404 — the same trace `pflow resume` refuses — never a 500."""
+        debug = self._debug_dir(tmp_path, monkeypatch)
+        name = "workflow-trace-aaa-wf-20260101-000000-000001.json"
+        _write_paused_trace(
+            debug,
+            name,
+            "/wf.pflow.md",
+            execution_id="garbled-run",
+            gate_request={"node_id": "deploy", "node_type": "shell", "kind": "action_approval", "preview": {}},
+        )
+        meta_line, trailer_line = (debug / name).read_text(encoding="utf-8").splitlines()
+        (debug / name).write_text(f"{meta_line}\n{{not json\n{trailer_line}\n", encoding="utf-8")
+        response = _client().get("/api/gate", params={"run": "garbled-run"})
+        assert response.status_code == 404
+        assert "not paused" in response.json()["error"], "the run was discovered; the parse failed"
+
     def test_missing_run_param_is_400(self, tmp_path: Path, monkeypatch) -> None:
         self._debug_dir(tmp_path, monkeypatch)
         assert _client().get("/api/gate").status_code == 400
         assert _client().get("/api/gate", params={"run": ""}).status_code == 400
 
     def test_oversized_gate_request_is_still_served(self, tmp_path: Path, monkeypatch) -> None:
-        """A paused trailer larger than the reader's 64 KB tail window (Task 171 gotcha) is still served
-        in full — the endpoint rides read_run_trailer's one-shot full re-read."""
+        """A paused trailer larger than a 64 KB tail window (the Task 171 gotcha for tail readers) is
+        still served in full — the endpoint reads the whole trace, never a bounded tail."""
         debug = self._debug_dir(tmp_path, monkeypatch)
         big_value = "x" * 100_000
         _write_paused_trace(
@@ -1283,39 +1382,8 @@ class TestResumeEndpoint:
     def test_choose_on_a_real_escalation_maps_to_its_flag(self, tmp_path: Path, monkeypatch) -> None:
         """An escalation pause answered with `choose` → `--choose <text>` (the label text — the
         numeric mapping is a loader-side terminal convenience; edge ledger #9)."""
-        from pflow.registry import Registry
-        from tests.test_runtime.test_gate_pause import EscalatingNode
-
         self._home(tmp_path, monkeypatch)
-        # Registry injection (the test_paused_cli.py pattern — works only inside pytest, where
-        # isolate_pflow_config redirects Registry to tmp paths).
-        registry = Registry()
-        nodes = registry.load()
-        nodes["escalating-node"] = {
-            "module": "tests.test_runtime.test_gate_pause",
-            "class_name": "EscalatingNode",
-            "docstring": EscalatingNode.__doc__ or "",
-            "file_path": "tests/test_runtime/test_gate_pause.py",
-            "type": "core",
-            "interface": {
-                "description": "Test node that raises a decision escalation.",
-                "params": [{"key": "question", "type": "str", "description": "The escalation question"}],
-                "inputs": [],
-                "outputs": [{"key": "result", "type": "dict", "description": "Carries the escalation marker"}],
-                "actions": ["default"],
-            },
-        }
-        registry.save(nodes)
-        wf = tmp_path / "esc_demo.pflow.md"
-        wf.write_text(
-            "# Escalation Demo\n\nAn escalating step, then a consumer.\n\n## Steps\n\n"
-            "### esc\n\nRaises a decision escalation.\n\n"
-            "- type: escalating-node\n- question: pick a or b\n- next: after\n\n"
-            "### after\n\nReads the decision.\n\n- type: shell\n\n"
-            '```shell command\necho "picked ${esc.result.escalation.decision.chosen}"\n```\n',
-            encoding="utf-8",
-        )
-        token = self._pause(wf)
+        token = self._pause(_escalation_wf(tmp_path, "pick a or b"))
         with patch("pflow.ui.server.subprocess.Popen") as popen:
             response = _client().post("/api/resume", json={"run": token, "choose": "b"})
         assert response.status_code == 200, response.text
