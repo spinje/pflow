@@ -57,10 +57,11 @@ proof.
   before the PR, not again before the merge click; recognition would add "re-check origin/main
   right before merging; if it moved, repeat the gate" | s08 | n=1
 - a durable doc carried a mechanism written from a SUMMARY instead of the cited code — s08 ADR-0015 ("prose
-  interpolator"), s09 Task 170 spec freeze line, s10 ADR-0016 ("the code body is literal Python" — it is
-  templated; the guide line is an authoring rule); each caught by a context-free review; recognition
-  would make "read the cited function before writing its mechanism into an ADR/spec" a checklist line
-  in ADR-FORMAT.md's review rule and the create-task skill | s08, s09, s10 | n=3 → PROPOSED (promote now)
+  interpolator"), s09 Task 170 spec freeze line, s10 ADR-0016 ("the code body is literal Python"), s11 a
+  DECIDED ledger line + ADR-0016 ("compact JSON" — `to_string` uses default separators) and Task 182 ("SC2154
+  catches it"); each caught by a context-free reader; APPLIED at s11 close as a sentence in ADR-FORMAT.md's
+  "Review before commit" (re-derive every mechanism from the cited code; name the function, not a list of its
+  outputs) | s08, s09, s10, s11 | n=4 → promoted (ratify or revert)
 - a lane ran `git stash push`/`pop` in a worktree and popped the USER's shared `stash@{0}` (Task 125 WIP) —
   stashes are repo-wide across worktrees; recognition would add "never `git stash`" to every implementing
   role's def (packets carried it ad hoc after; no repeat in s10 under the packet line) | s09 | n=1 → PROPOSED
@@ -89,6 +90,10 @@ proof.
   note) → the post-merge `git merge --ff-only origin/main` aborted on the local change; the branch already
   carried the note. Recognition: once a task's worktree exists, its spec is edited ONLY on the branch
   (or relayed to the producer) | s10 | n=1
+- a finished lane left a process with its cwd inside its worktree, so `./scripts/worktree rm` refused at
+  teardown — s11 #696 lane (`ugrep … | wc -l` reading stdin, 44 min) and #690 lane (`eza -t`, the shell's `ls`
+  alias, hung 1h39m); killed by PID by the main orchestrator; APPLIED at s11 close as a sentence in
+  `lane-implementer.md` Ship step 4 | s11 | n=2 → promoted (ratify or revert)
 - `pflow-codebase-searcher` agents REFUSE to write report files (their def forbids it) while the orchestrator's
   brief asked for one — four briefs in s10 asked, four returned inline; recognition: briefs to searchers ask
   for an inline report, never a file | s10 | n=1

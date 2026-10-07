@@ -29,7 +29,10 @@ Scan `context/adr/` for the highest existing number and increment by one.
 An ADR drafted from a design conversation is committed only after a **context-free fresh agent
 reviews it adversarially**: verify its load-bearing claims against the code, find where it is
 wrong, fold the findings. A conversation-born ADR inherits the conversation's shared blind spots;
-the fresh read is what catches them. ADRs produced inside a task's normal flow are covered by
+the fresh read is what catches them. The reviewer re-derives every mechanism the ADR states from the
+cited code — and the author names the function that produces a behaviour rather than a hand-written
+list of its outputs, because a mechanism paraphrased from a summary is the error this review keeps
+finding. ADRs produced inside a task's normal flow are covered by
 that task's existing review gates and need no extra pass.
 
 ## When to offer an ADR
