@@ -893,18 +893,45 @@ class TestBuildNodeFile:
         assert '"cache_control"' in md
         assert "red" in md
 
-    def test_shell_command_resolution(self) -> None:
+    def test_shell_command_and_env(self) -> None:
+        """Every shell step shows its command; bound values get ``## Env`` as the text the command
+        received (``True``, not ``true``), masked by name, and are not repeated as a resolved param."""
         event = _make_event(
+            node_type="ShellNode",
+            node_params={
+                "command": 'curl "$URL"',
+                "env": {"URL": "https://api.example.com", "VERBOSE": True, "API_TOKEN": "sk-1"},
+            },
             template_resolutions={
-                "command": {
-                    "template": "curl ${url}",
-                    "resolved": "curl https://api.example.com",
+                "env": {
+                    "template": {"URL": "${url}", "VERBOSE": "${verbose}", "API_TOKEN": "${token}"},
+                    "resolved": {"URL": "https://api.example.com", "VERBOSE": True, "API_TOKEN": "sk-1"},
                 },
-            }
+            },
         )
         md = _build_node_file(event)
-        assert "## Command" in md
-        assert "curl https://api.example.com" in md
+        assert '## Command\n\n```bash\ncurl "$URL"\n```' in md
+        env_block = json.dumps(
+            {"URL": "https://api.example.com", "VERBOSE": "True", "API_TOKEN": "<REDACTED>"}, indent=2
+        )
+        assert f"## Env\n\n```json\n{env_block}\n```" in md
+        assert "## Resolved Parameters" not in md
+        assert "sk-1" not in md
+
+    def test_shell_command_without_env(self) -> None:
+        md = _build_node_file(_make_event(node_type="ShellNode", node_params={"command": "echo hi"}))
+        assert "## Command\n\n```bash\necho hi\n```" in md
+        assert "## Env" not in md
+
+    def test_a_command_param_on_another_node_type_is_not_a_shell_command(self) -> None:
+        event = _make_event(
+            node_type="MCPNode",
+            node_params={"command": "ls"},
+            template_resolutions={"command": {"template": "${c}", "resolved": "ls"}},
+        )
+        md = _build_node_file(event)
+        assert "## Command" not in md
+        assert '"command": "ls"' in md  # still shown, under Resolved Parameters
 
     def test_llm_response(self) -> None:
         event = _make_event(llm_response="Here is the summary...")
@@ -1560,32 +1587,73 @@ class TestBuildBatchItemFile:
         assert "transformed-data" in md
 
     def test_item_with_shell_output(self) -> None:
-        """Shell batch items should show structured stdout/stderr, not raw JSON."""
-        parent = _make_event(node_id="greet")
+        """Shell batch items should show structured stdout/stderr, not raw JSON — and the step's
+        command with the item's OWN bound values (an item event carries no params)."""
+        parent = _make_event(
+            node_id="greet",
+            node_type="ShellNode",
+            node_params={"command": 'echo "Hello, $NAME"', "env": {"NAME": "${user.name}"}},
+        )
         item = {
             "index": 0,
             "item": {"name": "Alice"},
             "success": True,
             "duration_ms": 5,
             "template_resolutions": {
-                "command": {"template": 'echo "Hello, ${user.name}"', "resolved": 'echo "Hello, Alice"'},
+                "env": {"template": {"NAME": "${user.name}"}, "resolved": {"NAME": "Alice"}},
             },
             "node_output": {
                 "stdout": "Hello, Alice",
                 "stderr": "",
                 "exit_code": 0,
-                "command": 'echo "Hello, Alice"',
+                "command": 'echo "Hello, $NAME"',
             },
         }
         md = _build_batch_item_file(item, parent)
-        assert "## Command" in md
-        assert 'echo "Hello, Alice"' in md
+        assert '## Command\n\n```bash\necho "Hello, $NAME"\n```' in md
+        assert '## Env\n\n```json\n{\n  "NAME": "Alice"\n}\n```' in md
+        assert "${user.name}" not in md
         assert "## stdout" in md
         assert "Hello, Alice" in md
         # Empty stderr should be omitted
         assert "## stderr" not in md
         # Should NOT show raw JSON dump
         assert "exit_code" not in md
+
+    def test_item_with_literal_env_reads_it_from_the_step(self) -> None:
+        """A literal ``env:`` is static: it never reaches an item's resolutions, only the step's params."""
+        parent = _make_event(
+            node_id="flagged",
+            node_type="ShellNode",
+            node_params={"command": 'echo "$FLAG"', "env": {"FLAG": True}},
+        )
+        item = {
+            "index": 0,
+            "item": "a",
+            "duration_ms": 5,
+            "template_resolutions": {},
+            "node_output": {"stdout": "True"},
+        }
+        md = _build_batch_item_file(item, parent)
+        assert '## Env\n\n```json\n{\n  "FLAG": "True"\n}\n```' in md
+
+    def test_legacy_item_keeps_its_own_resolved_command(self) -> None:
+        """A trace of an old-form step (templated command) holds the resolved command on each item."""
+        parent = _make_event(
+            node_id="greet", node_type="ShellNode", node_params={"command": 'echo "Hello, ${item.name}"'}
+        )
+        item = {
+            "index": 0,
+            "item": {"name": "Alice"},
+            "duration_ms": 5,
+            "template_resolutions": {
+                "command": {"template": 'echo "Hello, ${item.name}"', "resolved": 'echo "Hello, Alice"'},
+            },
+            "node_output": {"stdout": "Hello, Alice"},
+        }
+        md = _build_batch_item_file(item, parent)
+        assert '## Command\n\n```bash\necho "Hello, Alice"\n```' in md
+        assert "${item.name}" not in md
 
     def test_failed_item(self) -> None:
         parent = _make_event(node_id="fetch")
@@ -2478,9 +2546,8 @@ class TestReportRedactsSensitiveNamedValues:
         assert '"kind": "fake"' in measure
         assert '"api_key": "<REDACTED>"' in measure
         assert '"rows": 3' in measure
-        # ## Resolved Parameters (nested under the param name)
-        assert '"AUTH_TOKEN": "<REDACTED>"' in echo
-        assert '"REGION": "eu-west-1"' in echo
+        # ## Env (a shell step's bound values)
+        assert '## Env\n\n```json\n{\n  "AUTH_TOKEN": "<REDACTED>",\n  "REGION": "eu-west-1"\n}' in echo
         # The trace itself stays raw and byte-identical — resume and --only read it, not the report
         assert trace_file.read_bytes() == trace_bytes
         assert self.RAW_VALUE in trace_bytes.decode("utf-8")

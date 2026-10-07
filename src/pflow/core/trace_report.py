@@ -26,7 +26,7 @@ from pflow.core.metrics import (
 )
 from pflow.core.node_type_display import node_type_tag
 from pflow.core.security_utils import is_sensitive_parameter, redact_sensitive
-from pflow.core.templates import TemplateResolver
+from pflow.core.templates import TemplateResolver, to_string
 from pflow.core.trace_io import load_trace_file
 from pflow.core.trace_tree import TraceTree, batch_item_cost, event_cost
 from pflow.runtime.workflow_trace import final_events_by_node
@@ -1143,6 +1143,7 @@ def _format_remaining_node_output(output: dict[str, Any], lines: list[str]) -> N
         "item",
         "exit_code",
         "command",
+        "env",
         "stdout_is_binary",
         "stderr_is_binary",
         "llm_usage",
@@ -1294,11 +1295,12 @@ def _format_agent_tools(event: dict[str, Any], lines: list[str]) -> None:
     lines.append("")
 
 
-def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
+def _format_resolutions(event: dict[str, Any], lines: list[str], host: dict[str, Any] | None = None) -> None:
     """Render template resolutions and static params as markdown sections.
 
-    Handles all node types: prompt (LLM), command (Shell), code+inputs (Python),
+    Handles all node types: prompt (LLM), command + env (Shell), code+inputs (Python),
     and a catch-all for any other resolved parameters (HTTP headers, file paths, etc.).
+    ``host`` is a batch item's step event (an item event carries no type or params).
     """
     resolutions = event.get("template_resolutions", {})
     shown: set[str] = set()
@@ -1318,9 +1320,10 @@ def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
 
     _format_agent_tools(event, lines)
 
-    if "command" in resolutions:
-        lines.extend(["## Command", "", f"```bash\n{resolutions['command'].get('resolved', '')}\n```", ""])
-        shown.add("command")
+    step = host or event
+    if node_type_tag(step.get("node_type", "")) == "shell":
+        _format_shell_command_and_env(resolutions, step.get("node_params", {}), lines)
+        shown.update({"command", "env"})
 
     # Code nodes: source code from node_params (static, not in template_resolutions)
     node_params = event.get("node_params", {})
@@ -1345,6 +1348,24 @@ def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
         lines.extend(["## Resolved Parameters", ""])
         lines.append(f"```json\n{json.dumps(remaining, indent=2, default=str)}\n```")
         lines.append("")
+
+
+def _format_shell_command_and_env(resolutions: dict[str, Any], step_params: dict[str, Any], lines: list[str]) -> None:
+    """``## Command`` (always) and ``## Env`` — each bound value as the text the command
+    received (``to_string``), full length, masked by name. Each param reads the event's own
+    resolved value when it has one (a batch item's templated param), else the step's params
+    (static and resolved, merged — an item event carries none of its own)."""
+    command = _resolved_or_static("command", resolutions, step_params)
+    if isinstance(command, str):
+        lines.extend(["## Command", "", f"```bash\n{command}\n```", ""])
+    env = _resolved_or_static("env", resolutions, step_params)
+    if isinstance(env, dict) and env:
+        shown_env = redact_sensitive({name: to_string(value) for name, value in env.items()})
+        lines.extend(["## Env", "", f"```json\n{json.dumps(shown_env, indent=2)}\n```", ""])
+
+
+def _resolved_or_static(key: str, resolutions: dict[str, Any], step_params: dict[str, Any]) -> Any:
+    return resolutions[key].get("resolved") if key in resolutions else step_params.get(key)
 
 
 def _build_node_file(event: dict[str, Any]) -> str:
@@ -1544,7 +1565,7 @@ def _build_batch_item_file(item: dict[str, Any], parent_event: dict[str, Any]) -
         lines.append(f"- Error: {error}")
     lines.append("")
 
-    _format_resolutions(item, lines)
+    _format_resolutions(item, lines, host=parent_event)
     _format_node_output(item, lines)
 
     return "\n".join(lines)

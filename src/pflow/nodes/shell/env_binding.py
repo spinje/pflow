@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from pflow.core.exceptions import NodeError
+from pflow.core.security_utils import redact_sensitive
 from pflow.core.templates import to_string
 
 # Upper-cased name -> what replacing it does to the command. Compared case-insensitively
@@ -136,6 +137,27 @@ def merge_env(inherited: Mapping[str, str], bound: Mapping[str, str], *, ignore_
         merged = dict(inherited)
     merged.update(bound)
     return merged
+
+
+_DISPLAY_CAP = 200  # characters per value — the failure block's `Command:` cap
+
+
+def displayable_env(bound: Mapping[str, str]) -> dict[str, str]:
+    """The copy of the bound values a failing step records beside ``command``.
+
+    Display-safe at the source, because this one record reaches every failure surface
+    (the error block, JSON and MCP errors, a failed batch item's or sub-workflow's error
+    record): masked by name, each value capped at 200 characters naming its full length,
+    newlines shown as ``\\n``. Full values stay in the trace for ``pflow report``.
+    """
+    return {name: _display_value(value) for name, value in redact_sensitive(dict(bound)).items()}
+
+
+def _display_value(text: str) -> str:
+    shown = text[:_DISPLAY_CAP].replace("\n", "\\n")
+    if len(text) <= _DISPLAY_CAP:
+        return shown
+    return f"{shown}… ({len(text):,} chars — full value: pflow report)"
 
 
 def oversized_error(bound: Mapping[str, str], command: str) -> EnvBindingError:

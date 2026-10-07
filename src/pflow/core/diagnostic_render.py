@@ -12,6 +12,7 @@ from pflow.core.diagnostic import (
     Diagnostic,
     Severity,
 )
+from pflow.core.security_utils import is_sensitive_parameter
 from pflow.core.templates import parse_path
 
 _CACHE_CATEGORIES: frozenset[str] = frozenset({CACHE_FAILURE_CATEGORY, CACHE_WARNING_CATEGORY, CACHE_ADVISORY_CATEGORY})
@@ -613,6 +614,7 @@ def _render_shell_failure_block(data: dict[str, Any]) -> list[str]:
     if command := data.get("command"):
         cmd_preview = command[:200] + "..." if len(command) > 200 else command
         lines.append(f"        Command: {cmd_preview}")
+    lines.extend(_format_shell_env_lines(data.get("env"), indent="        "))
     if (exit_code := data.get("exit_code")) is not None:
         lines.append(f"        Exit code: {exit_code}")
     if stderr := data.get("stderr"):
@@ -811,12 +813,25 @@ def _format_mcp_error_details_lines(mcp_error_details: dict[str, Any]) -> list[s
     return lines
 
 
+def _format_shell_env_lines(env: object, *, indent: str) -> list[str]:
+    """`Env:` lines of both shell failure blocks, from the node's display-safe copy of its
+    bound values (``nodes/shell/env_binding.py::displayable_env`` — already masked and capped)."""
+    if not isinstance(env, dict) or not env:
+        return []
+    lines = [f"{indent}Env:"]
+    lines.extend(f"{indent}  {name}={value}" for name, value in env.items())
+    if any(is_sensitive_parameter(str(name)) for name in env):
+        lines.append(f"{indent}  (<REDACTED>: hidden because the name looks like a secret)")
+    return lines
+
+
 def _format_shell_error_lines(context: dict[str, Any]) -> list[str]:
     """Render shell command failure details."""
     lines = ["", "  Shell details:"]
     command = context.get("shell_command") or ""
     command_display = command[:200] + "..." if len(command) > 200 else command
     lines.append(f"    Command: {command_display}")
+    lines.extend(_format_shell_env_lines(context.get("shell_env"), indent="    "))
     if stdout := context.get("shell_stdout"):
         stdout_preview = stdout[:300] + "..." if len(stdout) > 300 else stdout
         lines.append(f"    Stdout: {stdout_preview}")

@@ -17,7 +17,7 @@ from pflow.core.exceptions import NodeError, PflowError
 from pflow.core.node import Node
 from pflow.core.user_errors import UserFriendlyError
 
-from .env_binding import bind_env, merge_env, oversized_error
+from .env_binding import bind_env, displayable_env, merge_env, oversized_error
 
 logger = logging.getLogger(__name__)
 
@@ -969,6 +969,9 @@ class ShellNode(Node):
     def post(self, shared: dict, prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store results in shared store and determine action.
 
+        A failing step also records ``displayable_env`` of its bound values beside
+        ``command`` — the failure surfaces read node output only.
+
         Args:
             shared: The shared store to write results to
             prep_res: Prepared command configuration
@@ -977,6 +980,13 @@ class ShellNode(Node):
         Returns:
             Action string for flow control
         """
+        action = self._store_and_route(shared, prep_res, exec_res)
+        if action == "error" and prep_res["env"]:
+            shared["env"] = displayable_env(prep_res["env"])
+        return action
+
+    def _store_and_route(self, shared: dict, prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
+        """Write the command's results to ``shared`` and choose the action."""
         # Handle stdout encoding (strip trailing newlines for text output)
         self._store_output(
             shared,

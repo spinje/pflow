@@ -359,6 +359,8 @@ def _enrich_error_from_node_output(context: dict[str, Any], node_output: dict[st
     # Shell node data
     if "exit_code" in node_output and "command" in node_output:
         context["shell_command"] = node_output.get("command")
+        if "env" in node_output:  # the node's display-safe copy of its bound values
+            context["shell_env"] = node_output["env"]
         context["shell_exit_code"] = node_output.get("exit_code")
         context["shell_stdout"] = node_output.get("stdout")
         context["shell_stderr"] = node_output.get("stderr")
