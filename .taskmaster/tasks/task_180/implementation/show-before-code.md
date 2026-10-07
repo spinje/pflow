@@ -1,5 +1,9 @@
 # Task 180 — show before code: which edits refuse, which pass (USER CHECKPOINT)
 
+> **RULED 2026-10-07** — user: *"yes go with your recommendations"* on the main orchestrator's plain-language relay.
+> Every AFTER row stands as proposed (incl. row 14 refuses, row 9 passes, policy-only settings count as edits);
+> `--force` = **(a)**, one flag. This file is the ruled text; the spec's ledger points here.
+
 Every BEFORE below was **executed on today's code** (main `2a3f73ef`, isolated HOME, workflow
 `produce` (shell) → `shape` (code) → `save` (write-file, template typo `${shape.result.txt}`); the
 run fails at `save`, so `produce` and `shape` are the restored steps and `save` is the resume

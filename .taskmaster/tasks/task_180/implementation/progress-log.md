@@ -46,3 +46,10 @@
   approval edited) to refuse or to re-ask — the plan refuses (consent is for what was seen); the
   checkpoint says so.
 - Next: main orchestrator surfaces `show-before-code.md`; P1 may build before the ruling; P0 + P2/P3 after it.
+
+## [2026-10-07] main orchestrator — show-before-code RULED
+- Did: relayed `show-before-code.md` to the user in plain language; user: *"yes go with your recommendations"*.
+- Changed: spec gains `## Decisions (ruled 2026-10-07)`; checkpoint file header carries the ruling.
+- Verified: all 16 AFTER rows as proposed; `--force` (a) one flag. | Assumed: nothing.
+- Deviations/surprises: none — the planner's residual doubt (row 14 refuse vs re-ask) resolved as refuse.
+- Next: build (P0–P4) launches after Task 118 Part 2 merges (engine seam); P1 may start earlier if the seam frees.

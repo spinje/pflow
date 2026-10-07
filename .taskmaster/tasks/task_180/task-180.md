@@ -68,6 +68,16 @@ survive this task; the refusal text narrows to the edited-upstream case.
   for every node (engine contact; changes on-disk trace content and what the live overlay shows
   as `running`) and **deletes that guard** in `execution/resume_preflight.py` as part of closing.
 
+## Decisions (ruled 2026-10-07)
+
+- **Which edits refuse** — the 16-row table in `implementation/show-before-code.md` is the ruled behaviour
+  (user: *"yes go with your recommendations"*): refuse on an edited/removed restored step, a changed
+  recorded `next` upstream, a new start step, a missing resume point, and a paused-approval step edited
+  after its approval (row 14); pass on prose, the resume point itself, downstream edits, and an edited
+  input default (row 9, guide sentence). Policy-only settings on a restored step count as edits (fail-closed).
+- **`--force` stays one flag (a)** — waives both the stale refusal and the side-effect confirmation; the
+  refusal text says when it also re-fires a started step. Later narrowing is additive (new flags beside it).
+
 ## Open questions (resolve at start)
 
 - **What identifies a step for this purpose** — its params? its type and edges? Prose excluded?
@@ -88,8 +98,7 @@ survive this task; the refusal text narrows to the edited-upstream case.
 - **How it composes with Task 179's restore contract** — the fidelity refusal fires in the loader
   before preflight and is not bypassed by `--force`; loop position is restored per Iteration. A
   looped restored step's identity must not change between iterations.
-- **Whether `--force` splits** (stale-workflow vs side-effect confirmation) once the stale check
-  is narrow — or whether narrowing makes the split unnecessary. The web UI's resume bridge maps
+- ~~Whether `--force` splits~~ — DECIDED (a) above. The web UI's resume bridge maps
   these refusals (`stale_workflow`); any change there is in scope.
 - `--only` snapshots (ADR-0002, #458) read the same traces — say whether they gain the same check
   or stay as they are.
