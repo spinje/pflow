@@ -25,9 +25,11 @@ The greeting message to emit.
 Echo the greeting.
 
 - type: shell
+- env:
+    GREETING: ${greeting}
 
 ```shell command
-echo "${greeting}"
+echo "$GREETING"
 ```
 
 ### count
@@ -35,9 +37,11 @@ echo "${greeting}"
 Count the characters in the greeting.
 
 - type: shell
+- env:
+    GREETING: ${greeting}
 
 ```shell command
-printf %s "${greeting}" | wc -c | tr -d ' '
+printf %s "$GREETING" | wc -c | tr -d ' '
 ```
 
 ## Outputs

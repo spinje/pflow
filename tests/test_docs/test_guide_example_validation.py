@@ -294,8 +294,9 @@ class TestInlineExampleValidation:
             "drifted_node_ref": (
                 "# D\n\nReferences a ghost node.\n\n## Steps\n\n### a\n\nFirst.\n\n"
                 "- type: shell\n\n```shell command\necho hi\n```\n\n### b\n\n"
-                "Second references a node that isn't there.\n\n- type: shell\n\n"
-                '```shell command\necho "${ghost-node.result}"\n```\n'
+                "Second references a node that isn't there.\n\n- type: shell\n"
+                "- env:\n    V: ${ghost-node.result}\n\n"
+                '```shell command\necho "$V"\n```\n'
             ),
             "unknown_node_type": (
                 "# T\n\nUses a node type that doesn't exist.\n\n## Steps\n\n### a\n\n"

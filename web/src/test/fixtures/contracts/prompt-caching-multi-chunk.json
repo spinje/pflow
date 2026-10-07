@@ -143,12 +143,20 @@
       "purpose": "Per-session context, scoped by ${session_id}.",
       "params": [
         {
-          "name": "command",
-          "value": "echo \"Session ${session_id}: editorial style is concise, formal, no emoji.\"",
+          "name": "env",
+          "value": {
+            "SESSION_ID": "${session_id}"
+          },
           "is_dynamic": true,
+          "source": null
+        },
+        {
+          "name": "command",
+          "value": "echo \"Session $SESSION_ID: editorial style is concise, formal, no emoji.\"",
+          "is_dynamic": false,
           "source": {
             "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
-            "line": 84
+            "line": 86
           }
         }
       ],
@@ -191,7 +199,7 @@
           "is_dynamic": true,
           "source": {
             "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
-            "line": 96
+            "line": 98
           }
         }
       ],
@@ -201,7 +209,7 @@
       "parent": null,
       "source": {
         "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
-        "line": 87
+        "line": 89
       },
       "is_decision": false,
       "is_terminal": false,
@@ -238,7 +246,7 @@
           "is_dynamic": true,
           "source": {
             "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
-            "line": 110
+            "line": 112
           }
         }
       ],
@@ -248,7 +256,7 @@
       "parent": null,
       "source": {
         "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
-        "line": 100
+        "line": 102
       },
       "is_decision": false,
       "is_terminal": false,
@@ -283,7 +291,7 @@
       "parent": "g1",
       "source": {
         "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
-        "line": 119
+        "line": 121
       },
       "is_decision": false,
       "is_terminal": true,
@@ -314,7 +322,7 @@
       "parent": "g1",
       "source": {
         "file": "examples/core/prompt-caching-multi-chunk.pflow.md",
-        "line": 126
+        "line": 128
       },
       "is_decision": false,
       "is_terminal": true,
@@ -382,7 +390,7 @@
       "kind": "data_flow",
       "label": null,
       "output_field": null,
-      "input_name": "command",
+      "input_name": "SESSION_ID",
       "shadowed": false,
       "condition": null,
       "output_path": []

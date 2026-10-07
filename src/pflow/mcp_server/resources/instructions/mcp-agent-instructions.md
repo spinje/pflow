@@ -408,9 +408,11 @@ Fetch data from an MCP service. Need testing — accessing specific nested field
 Check data status. Specific path `${fetch-data.result.data.status}` = test required.
 
 - type: shell
+- env:
+    STATUS: ${fetch-data.result.data.status}
 
 ```shell command
-echo 'Status: ${fetch-data.result.data.status}'
+echo "Status: $STATUS"
 ```
 `````
 
@@ -722,9 +724,11 @@ Fetch data from protected API with authentication.
 List recently modified files. Note: `$var` = shell variable, `${var}` = pflow template.
 
 - type: shell
+- env:
+    DEPTH: ${depth}
 
 ```shell command
-find . -maxdepth ${depth} -type f -newer /tmp/marker 2>/dev/null | head -20
+find . -maxdepth "$DEPTH" -type f -newer /tmp/marker 2>/dev/null | head -20
 ```
 
 ### filter-and-reshape
@@ -1228,9 +1232,13 @@ filters:
 ### run-pipeline
 
 - type: shell
+- env:
+    OUTPUT_DIR: ${output_dir}
+    API_URL: ${api_url}
+    LIMIT: ${limit}
 
 ```shell command
-mkdir -p ${output_dir}/images && curl -s ${api_url}/items?limit=${limit}
+mkdir -p "$OUTPUT_DIR/images" && curl -s "$API_URL/items?limit=$LIMIT"
 ```
 ````
 
@@ -1679,13 +1687,15 @@ Analyze each file.
 Fetch each URL in parallel.
 
 - type: shell
+- env:
+    URL: ${item}
 - batch:
     items: ${urls}
     parallel: true
     max_concurrent: 40
 
 ```shell command
-curl -s '${item}'
+curl -s "$URL"
 ```
 ````
 
@@ -1828,9 +1838,11 @@ Handle small batches.
 
 - type: shell
 - next: end
+- env:
+    COUNT: ${classify.result}
 
 ```shell command
-echo "Small batch: ${classify.result} items"
+echo "Small batch: $COUNT items"
 ```
 
 ### bulk-process
@@ -1839,9 +1851,11 @@ Handle large batches.
 
 - type: shell
 - next: end
+- env:
+    COUNT: ${classify.result}
 
 ```shell command
-echo "Large batch: ${classify.result} items"
+echo "Large batch: $COUNT items"
 ```
 ````
 
@@ -1867,9 +1881,11 @@ Handle category A.
 
 - type: shell
 - next: end
+- env:
+    CATEGORY: ${route.result}
 
 ```shell command
-echo "A: ${route.result}"
+echo "A: $CATEGORY"
 ```
 
 ### path-b
@@ -1878,9 +1894,11 @@ Handle category B.
 
 - type: shell
 - next: end
+- env:
+    CATEGORY: ${route.result}
 
 ```shell command
-echo "B: ${route.result}"
+echo "B: $CATEGORY"
 ```
 ````
 

@@ -1368,13 +1368,14 @@ def test_refs_with_path_in_reads_the_template_parse() -> None:
 
 def test_dynamic_index_read_draws_a_data_flow_edge_from_the_indexed_batch() -> None:
     """``${process-batch.results[${__index__}].stdout}`` (the committed example) reads the
-    upstream batch's ``results`` — one DATA_FLOW edge carrying the ``stdout`` sub-path."""
+    upstream batch's ``results`` — one DATA_FLOW edge carrying the ``stdout`` sub-path, labelled with
+    the ``env:`` key that binds it."""
     graph = build_graph(_parse("examples/test-nested-index.pflow.md"))
     into_correlate = [
         edge for edge in graph.edges if edge.kind == EdgeKind.DATA_FLOW and edge.target.node_id == "correlate-batch"
     ]
     assert [(e.source, e.output_field, e.output_path, e.input_name) for e in into_correlate] == [
-        (NodeId("process-batch"), "results", ("stdout",), "command")
+        (NodeId("process-batch"), "results", ("stdout",), "PREV")
     ]
 
 

@@ -18,6 +18,7 @@ def run_parse_result(
     work_type: str = "task",
     issue_number: str = "",
     agent: str = "claude",
+    description: str = "Add portable agent assets",
 ) -> dict[str, str]:
     """Execute the workflow's parse-result node with deterministic inputs."""
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -29,7 +30,7 @@ def run_parse_result(
         "repo_root": "/project/pflow",
         "current_branch": "main",
         "base_branch": "",
-        "description": "Add portable agent assets",
+        "description": description,
         "work_type": work_type,
         "issue_number": issue_number,
         "title_resolved": False,
@@ -54,7 +55,7 @@ def test_copy_folder_resolves_from_the_repository_root() -> None:
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
     section = workflow.split("### copy-folder", maxsplit=1)[1].split("### output-status", maxsplit=1)[0]
 
-    assert "ROOT='${get-repo-root.stdout}'" in section
+    assert "    ROOT: ${get-repo-root.stdout}\n" in section  # bound in env:, read as "$ROOT"
     assert '[ -d "$ROOT/$FOLDER" ]' in section
     assert 'cp -r "$ROOT/$FOLDER"' in section
 
@@ -99,3 +100,12 @@ def test_codex_gets_the_sandbox_testing_hint() -> None:
 
     assert "sandbox-testing" in result["agent_hint"]
     assert result["agent_label"] == "Codex"
+
+
+def test_safe_description_escapes_only_the_do_script_quoting_layers() -> None:
+    """The launch step binds the description in env:, and the heredoc expands "$SAFE_DESCRIPTION"
+    without re-scanning it — so `$`, backticks and backslashes must NOT be escaped for the heredoc."""
+    result = run_parse_result(BRANCH_RESPONSE, description='it\'s $HOME `id` \\ "q"')
+
+    # inner sh single quotes: ' -> '\''  ;  AppleScript string: \ -> \\, " -> \"
+    assert result["safe_description"] == "it'\\\\''s $HOME `id` \\\\ \\\"q\\\""

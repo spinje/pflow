@@ -24,7 +24,9 @@ Run elimination rounds until one contender remains.
 Print the winner.
 
 - type: shell
+- env:
+    WINNER: ${run-rounds.survivors[0]}
 
 ```shell command
-echo "Winner: ${run-rounds.survivors[0]}"
+echo "Winner: $WINNER"
 ```

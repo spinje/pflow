@@ -243,9 +243,12 @@ Analyze the document.
 Log the token usage from the analysis.
 
 - type: shell
+- env:
+    MODEL: ${analyze.llm_usage.model}
+    TOTAL_TOKENS: ${analyze.llm_usage.total_tokens}
 
 ```shell command
-echo "Model: ${analyze.llm_usage.model}, Tokens: ${analyze.llm_usage.total_tokens}"
+echo "Model: $MODEL, Tokens: $TOTAL_TOKENS"
 ```
 ```
 
@@ -316,13 +319,11 @@ Literal `${...}` text (not a template variable) uses double dollar signs to esca
 ````markdown
 ### print_price
 
-Print the literal price variable.
+Write the literal price variable to a file.
 
-- type: shell
-
-```shell command
-echo 'Price: $${PRICE}'
-```
+- type: write-file
+- file_path: price.txt
+- content: "Price: $${PRICE}"
 ````
 
 This produces the literal string `Price: ${PRICE}` instead of trying to resolve a variable.

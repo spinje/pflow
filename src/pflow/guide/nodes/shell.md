@@ -19,9 +19,11 @@
 List recently modified files. Note: `$var` = shell variable, `${var}` = pflow template.
 
 - type: shell
+- env:
+    DEPTH: ${depth}
 
 ```shell command
-find . -maxdepth ${depth} -type f -newer /tmp/marker 2>/dev/null | head -20
+find . -maxdepth "$DEPTH" -type f -newer /tmp/marker 2>/dev/null | head -20
 ```
 ```
 
@@ -35,9 +37,13 @@ find . -maxdepth ${depth} -type f -newer /tmp/marker 2>/dev/null | head -20
 Creates the output directory, then pulls items from the API into it.
 
 - type: shell
+- env:
+    OUTPUT_DIR: ${output_dir}
+    API_URL: ${api_url}
+    LIMIT: ${limit}
 
 ```shell command
-mkdir -p ${output_dir}/images && curl -s ${api_url}/items?limit=${limit}
+mkdir -p "$OUTPUT_DIR/images" && curl -s "$API_URL/items?limit=$LIMIT"
 ```
 ````
 

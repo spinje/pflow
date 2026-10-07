@@ -17,13 +17,15 @@ Analyze each file.
 Fetch each URL in parallel.
 
 - type: shell
+- env:
+    URL: ${item}
 - batch:
     items: ${urls}
     parallel: true
     max_concurrent: 40
 
 ```shell command
-curl -s '${item}'
+curl -s "$URL"
 ```
 ````
 

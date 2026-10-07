@@ -49,7 +49,9 @@ The uppercased text.
 Uppercase via `tr`.
 
 - type: shell
-- command: echo "${text}" | tr '[:lower:]' '[:upper:]'
+- env:
+    TEXT: ${text}
+- command: echo "$TEXT" | tr '[:lower:]' '[:upper:]'
 ````
 
 **Parent workflow** calling the child:
@@ -79,7 +81,10 @@ Convert the body to uppercase using the shared sub-workflow.
 Combine the processed title and body into a single output.
 
 - type: shell
-- command: printf "Title: %s\nBody: %s" "${process-title.result}" "${process-body.result}"
+- env:
+    TITLE: ${process-title.result}
+    BODY: ${process-body.result}
+- command: printf "Title: %s\nBody: %s" "$TITLE" "$BODY"
 ````
 
 ### Dynamic Child Selection (Template References)
@@ -193,12 +198,13 @@ Take the first item, log it, write the remainder back.
 
 - type: shell
 - inputs:
-    raw: ${read-queue.stdout}
     iteration: ${iteration}
+- env:
+    QUEUE: ${read-queue.stdout}
 
 ```shell command
-printf '%s\n' "${raw}" | head -n 1 >> log.txt
-printf '%s\n' "${raw}" | tail -n +2 > queue.txt
+printf '%s\n' "$QUEUE" | head -n 1 >> log.txt
+printf '%s\n' "$QUEUE" | tail -n +2 > queue.txt
 ```
 ````
 

@@ -1,0 +1,34 @@
+{
+  "exit_code": 0,
+  "nodes": [
+    {
+      "iteration": 1,
+      "path": "run-rounds",
+      "status": "success"
+    },
+    {
+      "path": "run-rounds/judge",
+      "status": "success",
+      "stderr": "",
+      "stdout": ""
+    },
+    {
+      "iteration": 2,
+      "path": "run-rounds",
+      "status": "success"
+    },
+    {
+      "path": "run-rounds/judge",
+      "status": "success",
+      "stderr": "",
+      "stdout": ""
+    },
+    {
+      "exit_code": 0,
+      "path": "announce",
+      "status": "success",
+      "stderr": "",
+      "stdout": "Winner: ada"
+    }
+  ]
+}

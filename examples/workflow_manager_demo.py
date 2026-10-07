@@ -8,7 +8,7 @@ sample_workflow_ir = {
     "ir_version": "0.1.0",
     "inputs": {"message": {"type": "str", "description": "Message to display"}},
     "outputs": {"result": {"type": "str", "description": "Shell output"}},
-    "nodes": [{"id": "greet", "type": "shell", "params": {"command": "echo ${message}"}}],
+    "nodes": [{"id": "greet", "type": "shell", "params": {"command": 'echo "$MESSAGE"', "env": {"MESSAGE": "${message}"}}}],
     "edges": [],
 }
 

@@ -27,7 +27,12 @@ Save the generated code to a file.
 Report generation results and cost.
 
 - type: shell
+- env:
+    COST: ${generate.llm_usage.cost_usd}
+    DURATION_MS: ${generate.llm_usage.duration_ms}
+    INPUT_TOKENS: ${generate.llm_usage.input_tokens}
+    OUTPUT_TOKENS: ${generate.llm_usage.output_tokens}
 
 ```text command
-echo "Code generated and saved to fibonacci.py\n\nExecution cost: $${generate.llm_usage.cost_usd}\nDuration: ${generate.llm_usage.duration_ms}ms\nTokens used: ${generate.llm_usage.input_tokens} input, ${generate.llm_usage.output_tokens} output"
+echo "Code generated and saved to fibonacci.py\n\nExecution cost: \$$COST\nDuration: $DURATION_MS""ms\nTokens used: $INPUT_TOKENS input, $OUTPUT_TOKENS output"
 ```

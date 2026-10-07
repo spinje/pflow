@@ -29,9 +29,11 @@ Path to the changelog file to prepend the new entry to.
 Get repo from input or detect from git remote origin URL.
 
 - type: shell
+- env:
+    REPO: ${repo}
 
 ```shell command
-if [ -n '${repo}' ]; then printf '%s' '${repo}'; else git remote get-url origin 2>/dev/null | sed -E 's|.*github.com[:/]||' | sed 's/.git$//' | tr -d '\n'; fi
+if [ -n "$REPO" ]; then printf '%s' "$REPO"; else git remote get-url origin 2>/dev/null | sed -E 's|.*github.com[:/]||' | sed 's/.git$//' | tr -d '\n'; fi
 ```
 
 ### get-latest-tag
@@ -49,9 +51,11 @@ tag=$(git describe --tags --abbrev=0 2>/dev/null || echo 'v0.0.0'); printf '{"la
 Get commits since last tag using --first-parent to avoid PR merge duplicates.
 
 - type: shell
+- env:
+    LATEST_TAG: ${get-latest-tag.stdout.latest_tag.name}
 
 ```shell command
-git log ${get-latest-tag.stdout.latest_tag.name}..HEAD --first-parent --format='%H|%h|%s|%an|%aI' | while IFS='|' read -r sha short subj author date; do jq -n --arg sha "$sha" --arg short "$short" --arg subj "$subj" --arg author "$author" --arg date "$date" '{sha: $sha, short_sha: $short, subject: $subj, author: $author, date: $date}'; done | jq -s '.'
+git log "$LATEST_TAG"..HEAD --first-parent --format='%H|%h|%s|%an|%aI' | while IFS='|' read -r sha short subj author date; do jq -n --arg sha "$sha" --arg short "$short" --arg subj "$subj" --arg author "$author" --arg date "$date" '{sha: $sha, short_sha: $short, subject: $subj, author: $author, date: $date}'; done | jq -s '.'
 ```
 
 ### get-today
@@ -69,9 +73,11 @@ date +%Y-%m-%d
 Get documentation changes since last tag for accuracy context.
 
 - type: shell
+- env:
+    LATEST_TAG: ${get-latest-tag.stdout.latest_tag.name}
 
 ```shell command
-git diff ${get-latest-tag.stdout.latest_tag.name}..HEAD -- docs/ 2>/dev/null | head -200 || echo 'No docs changes'
+git diff "$LATEST_TAG"..HEAD -- docs/ 2>/dev/null | head -200 || echo 'No docs changes'
 ```
 
 ### extract-pr-info
@@ -102,6 +108,9 @@ Fetch PR details from GitHub using gh CLI for commits with PR references.
 Runs in parallel for speed, continues on errors (private repos, rate limits).
 
 - type: shell
+- env:
+    PR_NUMBER: ${commit.pr_number}
+    REPO: ${resolve-repo.stdout}
 
 ```yaml batch
 items: ${filter-commits-with-prs.stdout}
@@ -112,7 +121,7 @@ error_handling: continue
 ```
 
 ```shell command
-gh pr view ${commit.pr_number} --repo '${resolve-repo.stdout}' --json title,body,url 2>/dev/null || echo '{"title": null, "body": null, "url": null}'
+gh pr view "$PR_NUMBER" --repo "$REPO" --json title,body,url 2>/dev/null || echo '{"title": null, "body": null, "url": null}'
 ```
 
 ### get-file-changes
@@ -120,6 +129,8 @@ gh pr view ${commit.pr_number} --repo '${resolve-repo.stdout}' --json title,body
 Get list of changed files for each commit to help classify user-facing vs internal.
 
 - type: shell
+- env:
+    SHA: ${commit.sha}
 
 ```yaml batch
 items: ${extract-pr-info.stdout}
@@ -129,7 +140,7 @@ max_concurrent: 40
 ```
 
 ```shell command
-git diff-tree --no-commit-id --name-only -r ${commit.sha} 2>/dev/null | jq -R -s 'split("\n") | map(select(length > 0))'
+git diff-tree --no-commit-id --name-only -r "$SHA" 2>/dev/null | jq -R -s 'split("\n") | map(select(length > 0))'
 ```
 
 ### combine-commit-data
@@ -266,9 +277,11 @@ Prepend new changelog entry to existing changelog file.
 
 - type: shell
 - stdin: ${format-changelog.stdout}
+- env:
+    CHANGELOG_PATH: ${changelog_path}
 
 ```shell command
-changelog=$(cat); if [ -f '${changelog_path}' ]; then { echo "$changelog"; echo ''; cat '${changelog_path}'; } > /tmp/changelog.tmp && mv /tmp/changelog.tmp '${changelog_path}'; else echo "$changelog" > '${changelog_path}'; fi && echo 'Updated: ${changelog_path}'
+changelog=$(cat); if [ -f "$CHANGELOG_PATH" ]; then { echo "$changelog"; echo ''; cat "$CHANGELOG_PATH"; } > /tmp/changelog.tmp && mv /tmp/changelog.tmp "$CHANGELOG_PATH"; else echo "$changelog" > "$CHANGELOG_PATH"; fi && echo "Updated: $CHANGELOG_PATH"
 ```
 
 ### output-summary
@@ -276,6 +289,8 @@ changelog=$(cat); if [ -f '${changelog_path}' ]; then { echo "$changelog"; echo 
 Output summary of what was generated including entry counts and files updated.
 
 - type: shell
+- env:
+    CHANGELOG_PATH: ${changelog_path}
 
 ```yaml stdin
 user_facing: ${split-by-classification.stdout.user_facing}
@@ -285,7 +300,7 @@ bump: ${compute-version-bump.stdout}
 ```
 
 ```shell command
-jq -r '(.version | gsub("[\\n\\r]"; "")) as $v | (.bump | gsub("[\\n\\r]"; "")) as $b | (.internal | if type == "string" then fromjson else . end) as $int | (.user_facing | if type == "string" then fromjson else . end) as $uf | "\n=== Changelog Generated ===\nVersion: " + $v + "\nVersion bump: " + $b + "\nUser-facing entries: " + ($uf | length | tostring) + "\nSkipped (internal): " + ($int | length | tostring) + "\n\nFiles updated:\n- ${changelog_path}\n- releases/" + $v + "-context.md\n\nReview the context file before committing."'
+jq -r --arg changelog_path "$CHANGELOG_PATH" '(.version | gsub("[\\n\\r]"; "")) as $v | (.bump | gsub("[\\n\\r]"; "")) as $b | (.internal | if type == "string" then fromjson else . end) as $int | (.user_facing | if type == "string" then fromjson else . end) as $uf | "\n=== Changelog Generated ===\nVersion: " + $v + "\nVersion bump: " + $b + "\nUser-facing entries: " + ($uf | length | tostring) + "\nSkipped (internal): " + ($int | length | tostring) + "\n\nFiles updated:\n- " + $changelog_path + "\n- releases/" + $v + "-context.md\n\nReview the context file before committing."'
 ```
 
 ## Outputs

@@ -52,16 +52,18 @@ jq -r '.data.name'
 ```
 ````
 
-**Wrong** - data in command (will break on special characters):
+**Wrong** - structured data bound through `env:` (the OS caps its size; use stdin):
 ````markdown
 ### process
 
 Process the API response with jq.
 
 - type: shell
+- env:
+    RESPONSE: ${api.response}
 
 ```shell command
-echo '${api.response}' | jq
+echo "$RESPONSE" | jq
 ```
 ````
 

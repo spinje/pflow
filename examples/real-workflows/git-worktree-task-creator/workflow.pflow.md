@@ -301,12 +301,12 @@ if issue_number:
         branch_name = f'{ref}-{branch_name}'
 
 # Escape description for embedding in: osascript <<APPLESCRIPT ... do script "...claude '...DESC...'" ... APPLESCRIPT
+# The launch step binds it in env: and the heredoc expands "$SAFE_DESCRIPTION" without
+# re-scanning the value, so only the two quoting layers inside the do script string apply.
 # Layer 2 (innermost): inner shell single-quote context (' → '\'' )
 safe = description.replace("'", "'\\''" )
 # Layer 1: AppleScript double-quote context (\ → \\, " → \")
 safe = safe.replace('\\', '\\\\').replace('"', '\\"')
-# Layer 0 (outermost): outer bash unquoted heredoc context (\ → \\, ` → \`, $ → \$)
-safe = safe.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$')
 
 # Select which coding agent the launch step starts in the worktree's Terminal.
 # 'claude' mirrors the original behaviour (--dangerously-skip-permissions);
@@ -370,13 +370,15 @@ Creates the git worktree inside the `<repo-root>-worktrees/` folder (e.g. `../pf
 Overwrite handling is concentrated here (this step absorbed the former separate cleanup step). By default (`overwrite=false`) it is **non-destructive**: it refuses — with an actionable error naming the conflict and the `overwrite=true` escape hatch — if a branch or worktree with the computed name already exists, and creates the branch with lowercase `-b` (which itself fails if the branch exists). This prevents a name collision between two *different* tasks from silently discarding prior work — the failure mode where several issue-URL runs collapsed onto one hallucinated name and force-reset each other. Pass `overwrite=true` to intentionally re-run the **same** task: that path removes any existing worktree at the target and uses `-B` to reset the branch to the base, restoring the old convenience behavior on explicit opt-in.
 
 - type: shell
+- env:
+    WT: ${parse-result.result.worktree_path}
+    BR: ${parse-result.result.full_branch}
+    BASE: ${parse-result.result.base_branch}
+    OVERWRITE: ${overwrite}
 
 ```shell command
-WT="${parse-result.result.worktree_path}"
-BR="${parse-result.result.full_branch}"
-BASE="${parse-result.result.base_branch}"
 mkdir -p "$(dirname "$WT")"
-if [ '${overwrite}' = 'true' ] || [ '${overwrite}' = 'True' ] || [ '${overwrite}' = '1' ]; then
+if [ "$OVERWRITE" = 'true' ] || [ "$OVERWRITE" = 'True' ] || [ "$OVERWRITE" = '1' ]; then
   git worktree remove "$WT" 2>/dev/null || true
   git worktree add "$WT" -B "$BR" "$BASE"
 else
@@ -398,9 +400,13 @@ Copies an optional folder (typically a gitignored scratchpad with research notes
 
 - type: shell
 - ignore_errors: true
+- env:
+    FOLDER: ${copy_folder}
+    ROOT: ${get-repo-root.stdout}
+    WORKTREE: ${parse-result.result.worktree_path}
 
 ```shell command
-FOLDER='${copy_folder}' && ROOT='${get-repo-root.stdout}' && WORKTREE='${parse-result.result.worktree_path}' && if [ -n "$FOLDER" ]; then if [ -d "$ROOT/$FOLDER" ]; then PARENT=$(dirname "$FOLDER") && mkdir -p "$WORKTREE/$PARENT" && cp -r "$ROOT/$FOLDER" "$WORKTREE/$PARENT/" && echo "Copied $FOLDER to worktree"; else echo "Warning: folder '$FOLDER' not found under repo root, skipping" >&2; fi; else echo 'No folder to copy'; fi
+if [ -n "$FOLDER" ]; then if [ -d "$ROOT/$FOLDER" ]; then PARENT=$(dirname "$FOLDER") && mkdir -p "$WORKTREE/$PARENT" && cp -r "$ROOT/$FOLDER" "$WORKTREE/$PARENT/" && echo "Copied $FOLDER to worktree"; else echo "Warning: folder '$FOLDER' not found under repo root, skipping" >&2; fi; else echo 'No folder to copy'; fi
 ```
 
 ### output-status
@@ -408,9 +414,11 @@ FOLDER='${copy_folder}' && ROOT='${get-repo-root.stdout}' && WORKTREE='${parse-r
 Emits the primary workflow output — a confirmation message with the worktree path that downstream consumers (CLI, skills, agents) can parse or display.
 
 - type: shell
+- env:
+    WORKTREE: ${parse-result.result.worktree_path}
 
 ```shell command
-echo "✅ Worktree created at ${parse-result.result.worktree_path}"
+echo "✅ Worktree created at $WORKTREE"
 ```
 
 ### launch-cursor
@@ -419,31 +427,44 @@ Opens Cursor IDE pointed at the new worktree directory. Skipped when `open_curso
 
 - type: shell
 - ignore_errors: true
+- env:
+    OPEN_CURSOR: ${open_cursor}
+    WORKTREE: ${parse-result.result.worktree_path}
 
 ```shell command
-if [ '${open_cursor}' != 'false' ] && [ '${open_cursor}' != 'False' ] && [ '${open_cursor}' != '0' ]; then open -a "Cursor" "${parse-result.result.worktree_path}" && echo 'Cursor launched'; else echo 'Skipping Cursor'; fi
+if [ "$OPEN_CURSOR" != 'false' ] && [ "$OPEN_CURSOR" != 'False' ] && [ "$OPEN_CURSOR" != '0' ]; then open -a "Cursor" "$WORKTREE" && echo 'Cursor launched'; else echo 'Skipping Cursor'; fi
 ```
 
 ### launch-cli
 
-Opens a new Terminal window, cd's into the worktree, and starts the selected coding agent (`claude` or `codex`, per the `agent` input) with the description and branch name as initial context. The launch command prefix (`claude --dangerously-skip-permissions` or `codex --sandbox workspace-write --ask-for-approval never`) is derived in `parse-result` as `agent_cmd`; both agents take the context prompt as a positional argument, so only this prefix differs. The absolute worktree path is inlined **directly** into the `do script` command as a resolved `${parse-result.result.worktree_path}` value — NOT passed via a bash variable. This matters: `do script` runs in a brand-new Terminal window whose shell never inherited the workflow's variables, so a `cd $VAR` there would expand to empty and silently land in `$HOME` (the bug that previously launched Claude in the home folder with a stray trust dialog and no project `.claude/` context). A guard refuses to launch (and reports on stderr) if the worktree dir is missing, so it can never fall back to home. `activate` brings Terminal above the Cursor window opened by the prior node, and the window created by `do script` is automatically Terminal's frontmost window — so the Claude session lands on top without any manual window-raising. The description is labelled `Task:` or `GitHub issue:` per `work_type`, with issues explicitly told not to create taskmaster scaffolding. When `agent=codex`, the prompt additionally tells Codex to use the repo-local `sandbox-testing` skill when running pflow tests (Claude has no such skill, so it's added only for codex; named in plain text to stay safe through the quoting layers, which `agent_hint` is not escaped through). The description is pre-escaped by parse-result to handle quotes safely through the AppleScript and shell quoting layers. Skipped when `open_cli` is false.
+Opens a new Terminal window, cd's into the worktree, and starts the selected coding agent (`claude` or `codex`, per the `agent` input) with the description and branch name as initial context. The launch command prefix (`claude --dangerously-skip-permissions` or `codex --sandbox workspace-write --ask-for-approval never`) is derived in `parse-result` as `agent_cmd`; both agents take the context prompt as a positional argument, so only this prefix differs. The absolute worktree path is inlined **directly** into the `do script` command — the outer shell expands `$WORKTREE` inside the unquoted heredoc before `osascript` runs — NOT left as a variable for the new window's shell. This matters: `do script` runs in a brand-new Terminal window whose shell never inherited the workflow's variables, so a `cd $VAR` there would expand to empty and silently land in `$HOME` (the bug that previously launched Claude in the home folder with a stray trust dialog and no project `.claude/` context). A guard refuses to launch (and reports on stderr) if the worktree dir is missing, so it can never fall back to home. `activate` brings Terminal above the Cursor window opened by the prior node, and the window created by `do script` is automatically Terminal's frontmost window — so the Claude session lands on top without any manual window-raising. The description is labelled `Task:` or `GitHub issue:` per `work_type`, with issues explicitly told not to create taskmaster scaffolding. When `agent=codex`, the prompt additionally tells Codex to use the repo-local `sandbox-testing` skill when running pflow tests (Claude has no such skill, so it's added only for codex; named in plain text to stay safe through the quoting layers, which `agent_hint` is not escaped through). The description is pre-escaped by parse-result to handle quotes safely through the AppleScript and shell quoting layers. Skipped when `open_cli` is false.
 
 - type: shell
 - ignore_errors: true
+- env:
+    OPEN_CLI: ${open_cli}
+    AGENT_LABEL: ${parse-result.result.agent_label}
+    WORKTREE: ${parse-result.result.worktree_path}
+    AGENT_CMD: ${parse-result.result.agent_cmd}
+    FULL_BRANCH: ${parse-result.result.full_branch}
+    WORK_LABEL: ${parse-result.result.work_label}
+    SAFE_DESCRIPTION: ${parse-result.result.safe_description}
+    AGENT_HINT: ${parse-result.result.agent_hint}
+    FOLDER_HINT: ${parse-result.result.folder_hint}
 
 ```shell command
-if [ '${open_cli}' = 'false' ] || [ '${open_cli}' = 'False' ] || [ '${open_cli}' = '0' ]; then
-  echo 'Skipping ${parse-result.result.agent_label}'
-elif [ ! -d "${parse-result.result.worktree_path}" ]; then
-  echo "ERROR: worktree directory not found, not launching ${parse-result.result.agent_label}: ${parse-result.result.worktree_path}" >&2
+if [ "$OPEN_CLI" = 'false' ] || [ "$OPEN_CLI" = 'False' ] || [ "$OPEN_CLI" = '0' ]; then
+  echo "Skipping $AGENT_LABEL"
+elif [ ! -d "$WORKTREE" ]; then
+  echo "ERROR: worktree directory not found, not launching $AGENT_LABEL: $WORKTREE" >&2
 else
   osascript <<APPLESCRIPT
 tell application "Terminal"
     activate
-    do script "cd '${parse-result.result.worktree_path}' && ${parse-result.result.agent_cmd} 'You have been assigned to work in a dedicated git worktree. Worktree: ${parse-result.result.worktree_path}, Branch: ${parse-result.result.full_branch}, ${parse-result.result.work_label}: ${parse-result.result.safe_description}. All changes here are separate from main. ${parse-result.result.agent_hint} ${parse-result.result.folder_hint}'"
+    do script "cd '$WORKTREE' && $AGENT_CMD 'You have been assigned to work in a dedicated git worktree. Worktree: $WORKTREE, Branch: $FULL_BRANCH, $WORK_LABEL: $SAFE_DESCRIPTION. All changes here are separate from main. $AGENT_HINT $FOLDER_HINT'"
 end tell
 APPLESCRIPT
-  echo '${parse-result.result.agent_label} launched in Terminal'
+  echo "$AGENT_LABEL launched in Terminal"
 fi
 ```
 

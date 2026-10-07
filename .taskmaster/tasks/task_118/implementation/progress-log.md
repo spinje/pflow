@@ -533,3 +533,217 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   way as `TEMP`.
 - Verified: `make check` green; `make test-all-local` 10536 passed / 2 skipped; CI pending on push.
 - Next: push, wait for #723 CI green, amend the PR body's Windows paragraph, hand back at create-pr.
+
+## [2026-10-07 22:40] task orchestrator (Opus) — Part 2 boot (implement-from-plan, PD → PC → PB → PE → PF → PZ)
+- Did: verified the worktree `feat-task-118-part-2-bodies-untemplated` at `a296ceca` = `origin/main`, tree clean;
+  read spec + starting-context, plan, checkpoint (ruled), this log (CP-1 ruled 00:20; CP-2 ruled (a) 02:40), the
+  Task 170 review, Task 179's serialize list (resume seam — Part 2 does not touch it), ADR-0016.
+- Verified: `src/`+`web/` delta `b2cd92e3..a296ceca` = Part 1 itself, #690's resume files, #714's gate panel —
+  none on a PD/PC/PB/PE surface except the Part 1 files the plan builds on. Plan file:lines are re-verified by
+  each implementer before editing (plan header).
+- Packet facts recorded here so they survive this context:
+  - Parallel lanes: #720 (`ui/run_tailer.py`, `ui/server.py` `/api/gate`, web gate-panel components; maybe a
+    READ-side blob resolve in `core/trace_io.py`), #724 (`runtime/workflow_trace.py` `_flush_line`,
+    `core/trace_io.py` encode; maybe a `stdin:` encode-error route in `nodes/shell/shell.py`). Editing
+    `trace_io.py`/`shell.py` → log it, expect a rebase; editing `workflow_trace.py` → STOP, hand back.
+  - v0.16.0 is cut from `main` before Part 2 merges: merge main and re-run the full gate before `create-pr`;
+    the merge is the main orchestrator's (plan §4.0).
+  - Task 181 requests (plan on `feat/task-181-mcp-code-params-json` @ `924b7d94`, §0 checks 4–5): (1) D5 step 1's
+    per-step scope rule as ONE named public helper 181 can call alone; (2) an "add to used" seam in the unused-
+    input pass. Both are PB's; evaluated against D1/D5 there and the decision logged — no generality beyond them.
+  - Task 120 extends the `env:` no-parse rule as a per-leaf predicate (`binds_as_text`/`parses_leaves`) — never a
+    `key == "env"` branch.
+  - `tests-windows (core-cli-nodes)` executes this change; `test_stdin_no_hang_integration` flaked once (re-run
+    first). A D8 test failure is CP-2 territory (hand back).
+  - CONTEXT.md is the main orchestrator's (plan §11) — not edited here.
+- Next: launch I2 (Opus · medium) on PD → PC1, bundled per plan §4 (PD's tests get test-reflect, directed now).
+
+## [2026-10-07 23:05] implementer I2 (Opus) — Part 2 baseline (head a296ceca, before any edit)
+- Did: the four baselines; saved every Task-159 case's ACTUAL output (P0 recorded only the drift set).
+- Changed: `implementation/baseline/task159_actual.sh` (new — runs each case in place exactly as `run-case.sh`
+  does, copies the normalized stdout/stderr/exit code out, restores the committed `expected-*` bytes);
+  `implementation/baseline/task159-before/<case>/{stdout,stderr,exit-code}.txt` (87 cases).
+- Verified (executed, macOS): `make test` **10484 passed / 0 failed** (failing set empty). `inventory.py` **426 sites
+  / 126 files** = §2.5's 428/128 minus `workflows/` (2/2, converted by Part 1 — row now absent); every other area
+  row equal to §2.5. `verify.sh` **75 / 12 / 0**, drift set = §2.5 by name. `capture.py --check` **29 / 1 differing**
+  (`error-handling/typo-on-failed-node`, = §2.5). Harness check: the 87 saved actual outputs equal the committed
+  expected files for exactly the 75 passing cases and differ for exactly the 12 drifted ones; `git status` on
+  `task_159/` clean after the capture.
+- Deviations/surprises: the capture must run each case in its real directory — a copy outside the repo changes the
+  repo-relative paths the CLI prints (first attempt: 61 false diffs; `/var` vs `/private/var` was another 35).
+- Next: PD.
+
+## [2026-10-07 23:40] implementer I2 (Opus) — PD What ran stays answerable
+- Did: D9 display-safe copy (`env_binding.displayable_env`: `redact_sensitive` by name, each value capped at 200
+  chars + `… (N chars — full value: pflow report)`, `\n` escaped), written by `ShellNode.post()` only when the
+  action is `"error"` and something is bound; enrichment → `context["shell_env"]` (placed after `shell_command`,
+  matching the ruled JSON order); `_SHELL_DISPLAY_FIELDS` gains `env`; ONE `_format_shell_env_lines(env, indent=)`
+  serves both shell blocks (the redaction note keyed on `is_sensitive_parameter(name)`, the same rule that made the
+  copy); report `## Command` (from the step's `node_params`, always, shell steps only — keyed on
+  `node_type_tag(...) == "shell"`) + `## Env` (`redact_sensitive({k: to_string(v)})`, full length; a batch item reads
+  its own `template_resolutions["env"]`, else the host's params), `env` out of `## Resolved Parameters` and `## Output`.
+- Changed: `nodes/shell/{env_binding.py, shell.py}` (**shell.py edited — lane #724 rebase expected**: `post()` is now
+  a 4-line wrapper over the old body renamed `_store_and_route`), `execution/executor_service.py`,
+  `runtime/engine/template_errors.py`, `core/diagnostic_render.py`, `core/trace_report.py`; tests: new
+  `tests/test_integration/test_shell_failure_display.py` (16), `tests/test_core/test_trace_report.py` (899/1571/2457
+  rewritten → 3 node-file tests + the batch-item test + the redaction test's `## Env` block),
+  `tests/test_nodes/test_shell/test_auto_handling.py:183` (hand-built `prep_res` gains `"env": {}` — `post()` reads it).
+- Verified: `make check` green; `make test` **10502 passed / 0 failed** (baseline 10484 → +18, all mine; failing set
+  empty). Real surface (`uv run pflow` + `pflow report`, checkpoint §6/§7 probe `echo "calling $ENDPOINT" >&2; exit 3`
+  with `ENDPOINT=users`, `API_TOKEN=sk-secret-123456`): the text block, the JSON error (`shell_env` in `context` and
+  top level) and the report page reproduce the AFTER text verbatim; a batch probe's `item-1-beta.md` shows the static
+  command and `{"ITEM": "beta"}`. Trace format untouched (D12) — the copy is node output the trace already records.
+- Deviations/surprises:
+  1. **Not built: "popped on success" (D9).** Mutation M2 (removing the pop) left every test green, and the code says
+     why: a failing step's whole namespace moves into `__failures__` (`runtime/node_state.py::mark_node_failed`,
+     "the original namespace key is removed") and a revisit starts from an empty one — a stale copy cannot survive
+     in any engine path, so the pop was dead code. Removed it; PD test 9 stays as the labelled regression guard of
+     that archival premise (it is the test that would see a stale copy if archival changed). Importance 1. A trap
+     found on the way, for anyone who re-adds it: `NamespacedSharedStore.pop("env", None)` raises `KeyError` when the
+     ROOT has an `env` key (a step or input named `env`) — the mixin's `pop` reads through to the root, then
+     `__delitem__` refuses to delete there (executed).
+  2. `## Command` is gated on the shell node type (plan: "for a shell event") — a non-shell param named `command`
+     (an MCP tool's) now lands under `## Resolved Parameters` instead of being rendered as bash; pinned by a test.
+  3. A batch item of an OLD-form step (templated command) now shows the host's template text in `## Command`
+     (items carry no params; the old code read the item's resolved command). Transitional only — after PB no body
+     is templated; PC converts the corpus first. Kept the final-code shape (one source) instead of a fallback PB
+     would delete.
+  4. Plan PD's Files line says "+ the redaction where the block's data is built" (`template_errors.py`): not needed —
+     the copy is display-safe at the source (D9), so the referenced-failure block only had to list `env`.
+- Self-checks: **test-reflect (directed):** ran ten mutations, each restored from a byte copy (`cmp` clean), counted
+  reds over the PD test files: M1 copy never written → 9 failed; M2 no pop → 0 (→ deviation 1); M3 not redacted → 6;
+  M4 not capped → 3; M5 `env` missing from `_SHELL_DISPLAY_FIELDS` → 1 (test 6); M6 item page reads host params →
+  3; M7 no `shell_env` enrichment → 7; M8 report shows typed values → 2; M9 no shell type gate → 1; M10 `env` repeated
+  under Resolved Parameters → 2. DELETED a redundant tail assertion in the length test (the exact 200-char line
+  already fails on an uncapped value). LABELLED as regression guards (they pass on pre-PD code): test 5's success
+  half, test 7 (code page), test 8a (a top-level batch's error records carry no node output — M3/M4 left it green,
+  as expected), test 9 (see deviation 1). Every absence assertion is paired in the same output with a presence
+  (`<REDACTED>` / `PAYLOAD-START` / the `Env:` lines / `## Env`). **Fully happy?** Yes, with one honest note: on
+  Windows these tests rely on Git Bash `printf`/`touch`/`>&2` like the rest of the shell suite — not run here.
+- Next: PC1 — node-output dumps and the instrumented suite run on the unconverted tree first.
+
+## [2026-10-07 23:55] implementer I2 (Opus) — PD amended per orchestrator ruling (A)
+- Did: [RULING, orchestrator, importance 1–2] (A) acknowledged and applied — a batch item's `## Command` and `## Env`
+  each read the ITEM's own `template_resolutions[<param>]["resolved"]` when present, else the host's
+  `node_params[<param>]` (one helper, `trace_report._resolved_or_static`). **This reverses PD deviation 3** (the
+  host-only command): a legacy trace keeps the item's resolved command. `## Env` already had this rule.
+- Changed: `core/trace_report.py`; `tests/test_core/test_trace_report.py` +2
+  (`test_item_with_literal_env_reads_it_from_the_step`, `test_legacy_item_keeps_its_own_resolved_command`).
+- Verified: the two new tests + the PD files 230 passed. Mutations (byte-copy restored): command host-only → 1 failed
+  (legacy test); env item-only → 1 failed (literal-env test). (B) noted for PC1 — see its entry.
+- Next: PC1.
+
+## [2026-10-08 00:55] implementer I2 (Opus) — PC1 corpus conversion (examples, Task-159 baseline, guide/docs/MCP fences)
+- Did: before converting — the node-output tool and before-dumps, then ONE instrumented suite run (temporary hook in
+  `split_params` + `iter_node_surfaces`, removed; `git diff` on both files empty). Then converted by §5 (no braced
+  `${NAME}` in any body — D13), the `git-worktree-task-creator` hand case (Layer 0 deleted), harness edit (1) only,
+  the PC1 tests, react-flow fixture regen, golden hashes; wrote and ran `equivalence.py`.
+- [RULING, orchestrator] (B) acknowledged: only harness edit (1) (`drifted_node_ref` → `env: {V: ${ghost-node.result}}`,
+  body `echo "$V"`) landed; edit (2) (`_BARE_VAR_RE` → `template_params`) was never made — it is PB's.
+- Changed: 20 example files + `examples/workflow_manager_demo.py`; Task-159 `02/03`, `04/03`, `_shared/.../fetch-source`;
+  guide `features/{batch,branching,sub-workflows}.md`, `nodes/shell.md` (fences only); `docs/how-it-works/template-variables.mdx`,
+  `docs/reference/nodes/shell.mdx`; both `mcp_server/resources/instructions/*.md` (8 fences each); tests
+  `test_core/test_graph_build.py:1378` (edge `input_name` `command` → `PREV`), `test_runtime/test_worktree_creator_workflow.py`
+  (`:57` → `ROOT: ${get-repo-root.stdout}` in the env block; +1 test: `safe_description` escapes only the two
+  do-script layers), `test_docs/test_guide_example_validation.py` (edit 1); `web/src/test/fixtures/contracts/prompt-caching-multi-chunk.json`
+  (regen: `env` param added, command static, source lines +2, edge `input_name` → `SESSION_ID`);
+  `tests/test_runtime/fixtures/golden_config_hashes.json`. Tools/evidence (new, `implementation/`): `baseline/node_outputs.py`,
+  `baseline/node-outputs-{before,after}/`, `baseline/task159-after/`, `equivalence.py`, `baseline/equivalence-run.txt`,
+  `pc-instrumented-hits.txt` (77 files / 419 tests, each tagged PC1 / T3 / PC2 — **the PC2 scope**).
+- Verified (executed):
+  - node-output dumps (7 runnable workflows incl. `document-processor`; dump stable across two pre-runs): **identical** before/after.
+  - `capture.py --check`: 29 / 1 differing — output byte-identical to the baseline run (only the pre-existing
+    `typo-on-failed-node`). **Not re-captured**: the only hunk is the P0 drift; re-capturing would launder it.
+  - `task159_actual.sh` actual-vs-actual: 86/87 identical; the one diff is `12-…/04-guide-auto-detect` (snapshots guide
+    text; drifting since P0) and every hunk is a guide fence this phase converted. Not regenerated (drifted at P0; PF
+    regenerates after the prose). `02/03` and `04/03` (converted) print the same output.
+  - golden hashes: test listed exactly 10 drifted nodes, regenerated, diff = those 10: `batch-test{,-parallel}::greet_users`,
+    `template-variables::{api_caller,notifier}`, `git-worktree-task-creator::{create-worktree,copy-folder,output-status,
+    launch-cursor,launch-cli,parse-result}`. `parse-result` is the hand case (its code lost Layer 0) — not a body conversion.
+  - `--validate-only`: valid — changelog, worktree-creator, vision-scraper, execute-plan, the three agent examples,
+    `batch-test*`, `template-variables`, `prompt-caching-multi-chunk`. `release-announcements` / `live-reload` fail ONLY
+    on uninstalled MCP servers (unknown `mcp-composio-*` type / `pageId` param); the error set is identical to the
+    unconverted file's (diffed), none mentions env/command.
+  - `inventory.py`: 0 in `examples/`, `workflows/`, `task_159/`, `src/pflow/guide`, `docs`, `src/pflow/mcp_server/resources`.
+    Remaining `src` row = `registry/context_builder.py` — a false positive (the code snippet has no `${`; the scanner
+    attributes a neighbouring stdin snippet). Tests: the PC2 set, plus two new rows that are intentional/false
+    positives: `test_trace_report.py:1643` (ruling A's legacy-trace fixture — an old-form command in trace data) and
+    `test_shell_failure_display.py:584` (f-string with a static fence). Architecture JSON-IR grep: 7 sites, all in
+    `architecture/reference/template-variables.md` (PF §7) — not touched.
+  - `equivalence.py` (every changed shell step in `examples/`, stub PATH printing argv+stdin, fresh cwd per side):
+    benign — identical except (a) the three agent `$${…}` reports: the old form was broken (`bad substitution` —
+    `$${x}` reached sh as `${generate.llm_usage.cost_usd}`), now prints `$0.0123`; (b) changelog `get-commits`,
+    `get-docs-diff`, `fetch-pr-data`, `get-file-changes`: the old unquoted form word-split a value with spaces; real
+    values (tag, PR number, sha) are single tokens, so quoting changes nothing; (c) changelog `output-summary`: argv differs
+    by design (`jq --arg`); real-jq run identical for `CHANGELOG.md`, and the old form fails to parse for a hostile path.
+    Hostile — every OLD/NEW difference is the old form pasting the value into sh text (quotes broke, `$5` expanded,
+    words split); NEW carries every value verbatim except where the value is only compared or its branch is not taken
+    (`OVERWRITE`, `OPEN_CLI`, `OPEN_CURSOR`, `DESCRIBE_IMAGES`, `BASE`/`ROOT`/`WORKTREE`/`TARGET_URL` on untaken branches).
+  - **Hand case:** `launch-cli` with `osascript` stubbed and a real worktree dir, description `it's "q" $5 \`id\` \ back`:
+    the do-script text is **identical** old (Layer 0 + pasting) vs new (no Layer 0 + `env:`). Negative control: keeping
+    Layer 0 in the new code → `DIFF hostile … launch-cli` (restored by byte copy).
+  - `make check` green; `make test` **10505 passed / 0 failed** (PD 10502 + 2 ruling-A tests + 1 worktree test).
+  | Not run: `web/` tests on the regenerated contract fixture (no `node_modules` in this worktree) — `lossless.test.ts`
+  sweeps it generically; PE runs `npm test`.
+- Deviations/surprises:
+  1. Two fences that were not plain conversions (docs, importance 1): `template-variables.mdx`'s escape example is now a
+     `write-file` `content: "Price: $${PRICE}"` (PF's stated decision, done here because D13 converts fences in PC; the
+     surrounding prose stays true); `nodes/shell.mdx`'s **Wrong** example became `echo "$RESPONSE" | jq` bound in `env:`
+     and its one-line label now names the real problem ("structured data bound through `env:` (the OS caps its size; use
+     stdin)") — the old label would have been false over the new fence.
+  2. `guide/features/sub-workflows.md` take-and-write keeps `inputs: {iteration: ${iteration}}` (it consumes the child's
+     declared input; the body never read it) and binds `QUEUE` in `env:`. **PB: the unread-`inputs:`-key warning will
+     fire on this guide fence** — decide there (bind it, or drop the input from the example).
+  3. Names chosen for content where the old alias was opaque: `raw` → `QUEUE`; worktree-creator `create-worktree` binds
+     its existing locals `WT`/`BR`/`BASE` directly (assignments deleted), `copy-folder` binds `FOLDER`/`ROOT`/`WORKTREE`
+     directly; agent examples split quotes as `"…$DURATION_MS""ms…"` (a name character follows; no braces — D13).
+  4. Inventory `--files` before/after shows `tests/` rows unchanged except the two noted above (PC2 untouched).
+  5. The guide/MCP prose around converted fences now contradicts them in places (`shell.md` "Templates in Shell Commands …
+     resolve before the shell runs", "`${var}` = pflow template") — PF's, as planned.
+- Self-checks: **Fully happy?** Yes for the corpus: every runnable output is identical, every non-runnable step was
+  executed under stubs and each difference explained, the hand case is proven with a negative control. Open, for
+  others: deviation 2 (PB), `web/` tests (PE), the 7 architecture JSON sites and the prose (PF). test-reflect: not
+  needed — the gate tools are the test (the one new unit test, Layer-0, was checked by computing the expected
+  string by hand and by the harness's negative control).
+- Next: orchestrator commits PD + PC1; PC2 (I3) from `pc-instrumented-hits.txt`.
+
+## [2026-10-07 23:05] task orchestrator (Opus) — cross-model plan read (codex review-plan, relayed by main) — dispositions
+- Source: `/Users/andfal/projects/pflow/scratchpads/session-12/fanout-plan-mode/report.md` (claims; 5 W, 0 C). Each read
+  against code on `a296ceca`. None changes a phase order or a seam decision → no hand-back.
+- (1) PC needs `template_params` before PB creates it — **ADOPTED (relocated).** PF/PC's harness edit (2)
+  (`_BARE_VAR_RE` → names from `template_params`) moves to PB; edit (1) (`drifted_node_ref` → `env:`) stays in PC.
+  PC writes no braced `${NAME}` in a body (D13), so the harness needs (2) only once bodies may hold `${HOME}`.
+  Sent to I2 mid-PC1.
+- (2) A fifth `is_file_reference` param site — **ADOPTED for PB.** Verified `core/file_resolver.py:183-200`
+  `_resolve_batch_file_references` B2 loop calls `is_file_reference(value)` per batch-item key at :192 with no
+  node type. PB routes it through the same `is_param_file_reference(node_type, key, value)` and tests inline and
+  file-loaded batch items; PB's brief says: grep EVERY `is_file_reference` caller over a param value, the plan's
+  count is not the gate.
+- (3) Prediction walk narrowed by `template_params` — **ADOPTED (row dropped).** Verified: `_node_templates_touch`
+  (`predict.py:362`) is reached only through `_node_references_any` over `llm_nodes` (`predict.py:229, 251-252`), so
+  a shell/code body never reaches it, and `template_params` would drop its `batch`/`inputs` coverage. D7's
+  `predict.py` row is not built.
+- (4) PD batch-report fallback — **ADOPTED.** Item page: the item's own `template_resolutions[param].resolved`
+  first, else the host's `node_params[param]` (literal `env:` is static → absent from item resolutions; legacy
+  traces carry the resolved command per item, pinned at `test_trace_report.py:1571`). Sent to I2 mid-PD with two
+  tests (literal-only env item page; legacy-shaped item command).
+- (5) PE full-tier fallback — **ADOPTED for PE.** Verified `web/src/graph/sourceDecorate.ts:311-325`
+  `highlightBlock` falls back to `content.map(refSegments)` for every grammar on null/line-mismatch. PE brief: teal
+  refs only where the full tier's successful path would (markdown), in the instant tier AND the fallback; tests for
+  null result and line-count mismatch.
+
+## [2026-10-08 01:20] task orchestrator (Opus) — PD + PC1 verified and committed
+- Verified: read I2's four entries; `make check` green, `make test` 10505 passed / 0 failed (mine, on the final tree).
+  "Fully happy?" asked: yes. Its unlogged residue, for PC2: the hit list predates PC1 (rows tagged PC1 should clear —
+  confirm, not assume); it names tests, not lines (map helper-built workflows via §6's helper names); it covers
+  `make test` + `make test-e2e` only (marker-excluded tests are not in it); `test_trace_report.py::
+  test_legacy_item_keeps_its_own_resolved_command` keeps an old-form command ON PURPOSE (ruling A) — never convert it.
+- Accepted deviations: D9's success-path pop not built (dead code — a failed namespace moves to `__failures__`;
+  test 9 guards the premise; importance 1); `## Command` gated on the shell node type; the two docs fences rewritten
+  rather than converted (PC1 dev. 1). Carry-overs: PB — the sub-workflows guide fence's unread `inputs: {iteration}`;
+  PE — `npm test` on the regenerated contract fixture; PF — 7 JSON-IR sites in `architecture/reference/
+  template-variables.md`, prose contradicting converted fences.
+- Not committed, deliberately: `implementation/baseline/task159-{before,after}/` (522 files, 2.8 MB of normalized CLI
+  output). Regenerable: check out `a296ceca` and run `implementation/baseline/task159_actual.sh`. Kept untracked in
+  the worktree for PZ's actual-vs-actual comparison; deleted before the PR.
+- Next: launch I3 (fresh, Opus · medium) on PC2 from `implementation/pc-instrumented-hits.txt`.

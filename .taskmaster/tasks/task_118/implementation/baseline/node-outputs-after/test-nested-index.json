@@ -1,0 +1,62 @@
+{
+  "exit_code": 0,
+  "nodes": [
+    {
+      "exit_code": 0,
+      "path": "generate-data",
+      "status": "success",
+      "stderr": "",
+      "stdout": "[{\"name\": \"alice\", \"score\": 85}, {\"name\": \"bob\", \"score\": 92}, {\"name\": \"charlie\", \"score\": 78}]"
+    },
+    {
+      "path": "process-batch",
+      "status": "success"
+    },
+    {
+      "exit_code": 0,
+      "path": "process-batch[0]",
+      "status": "success",
+      "stderr": "",
+      "stdout": "Processing user alice (index 0) with score 85"
+    },
+    {
+      "exit_code": 0,
+      "path": "process-batch[1]",
+      "status": "success",
+      "stderr": "",
+      "stdout": "Processing user bob (index 1) with score 92"
+    },
+    {
+      "exit_code": 0,
+      "path": "process-batch[2]",
+      "status": "success",
+      "stderr": "",
+      "stdout": "Processing user charlie (index 2) with score 78"
+    },
+    {
+      "path": "correlate-batch",
+      "status": "success"
+    },
+    {
+      "exit_code": 0,
+      "path": "correlate-batch[0]",
+      "status": "success",
+      "stderr": "",
+      "stdout": "First user: Processing user alice (index 0) with score 85 (VIP)"
+    },
+    {
+      "exit_code": 0,
+      "path": "correlate-batch[1]",
+      "status": "success",
+      "stderr": "",
+      "stdout": "Second user: Processing user bob (index 1) with score 92 (Regular)"
+    },
+    {
+      "exit_code": 0,
+      "path": "correlate-batch[2]",
+      "status": "success",
+      "stderr": "",
+      "stdout": "Third user: Processing user charlie (index 2) with score 78 (New)"
+    }
+  ]
+}
