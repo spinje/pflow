@@ -14,7 +14,6 @@ import errno
 import os
 import subprocess
 import sys
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -314,10 +313,6 @@ class TestShellNodeBinding:
 # ---------------------------------------------------------------------------
 
 
-class D8Observation(UserWarning):
-    """The observed Windows outcome, surfaced in the pytest warnings summary so CI shows it."""
-
-
 class TestWindowsOracle:
     """Plan D8. Evidence only on ``tests-windows``; the POSIX legs are regression guards.
 
@@ -410,10 +405,10 @@ class TestWindowsOracle:
         assert not marker.exists()
 
     def test_d8_4_a_200kb_value_binds_or_fails_before_spawn(self) -> None:
-        """D8-4: a 200 KB value. darwin binds; linux refuses (one value over 128 KiB); win32: observed.
+        """D8-4: a 200 KB value. darwin and win32 bind; linux refuses (one value over 128 KiB).
 
         Every platform: never "exit code -2", never swallowed by ``ignore_errors``. The win32
-        outcome is emitted as a ``D8Observation`` warning so the CI log records it.
+        expectation is pinned from ``tests-windows`` (Git Bash bound and read all 200000 bytes).
         """
         value = "x" * 200_000
         node = ShellNode()
@@ -429,9 +424,7 @@ class TestWindowsOracle:
             assert shared["exit_code"] == 0, f"swallowed or failed after spawn — {outcome}"
             assert shared["stdout"].strip() == "200000", outcome
         assert shared.get("exit_code") != -2, outcome
-        if sys.platform == "darwin":
-            assert outcome.startswith("bound"), outcome
-        elif sys.platform == "linux":
+        if sys.platform == "linux":
             assert outcome.startswith("refused"), outcome
         else:
-            warnings.warn(D8Observation(f"D8-4 on {sys.platform}: {outcome[:300]}"), stacklevel=1)
+            assert outcome.startswith("bound"), outcome
