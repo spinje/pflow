@@ -484,3 +484,36 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   `type: string` CLI input is still type-inferred (O2 → Task 120); stdin's strict UTF-8 encode falls to the
   exit -2 path (00:45 option c).
 - Next: merge origin/main, `make check` + `make test-all-local` on the merged result, `create-pr`.
+
+## [2026-10-07 02:10] task orchestrator (Opus) — PR #723 open; tests-windows answered D8; CP-2 FIRES (D8-2 second row) — PARKED-ON-RULING
+- Did: `create-pr` → PR #723 (no closing refs — verified `closingIssuesReferences: []`); merged origin/main
+  `2a3f73ef` first (the #690 resume-preflight lane; clean merge; `make check` + `make test-all-local` 10536 passed /
+  2 skipped on the merged result `cc9c2755`). CI on `cc9c2755`: every job green except `tests-windows
+  (core-cli-nodes)` — 1 failed / 6262 passed. Pushed one evidence probe (`54804587`) and re-ran.
+- **D8 outcomes (tests-windows, Python 3.13, Git Bash):**
+  - D8-1 a native path bound in `env:` is readable as `cat "$FILE"` — PASS (values are data; no translation).
+  - D8-2 row 1 `env: {Path: X}` → exactly one PATH-named variable holding X, inherited entry gone — PASS.
+  - D8-3 hostile value byte-identical, `$(touch …)` inert — PASS.
+  - D8-4 a 200 KB value on win32 — **binds** (`exit_code=0 stdout='200000'`); pinned in `ffed0647` (no Windows
+    E2BIG branch, per D3). Linux refuses one value over 128 KiB — confirmed by every ubuntu job; guide states it.
+  - **D8-2 row 2 FAILED:** `env: {Temp: bound-temp}` beside an inherited `TEMP` → the child holds
+    `TEMP=/d/a/pflow/pflow/bound-temp` and `$Temp` is empty (CI evidence string `'|TEMP=/d/a/pflow/pflow/bound-temp;'`).
+    Git Bash's runtime imports `TEMP` upper-cased AND path-converts its value (relative text made an absolute POSIX
+    path). Evidence row `PflowD8` beside inherited `PFLOWD8` — PASS: outside Windows' well-known path names the
+    authored spelling holds and the value is untouched. Assumed (Cygwin's documented import list, not observed):
+    `TMP`, `HOME`, `TMPDIR` behave like `TEMP`; `PATH` is the same mechanism (D8-2 row 1 passes because a PATH
+    value is meant to be converted).
+- CP-2 (plan §9; builder notes predicted this row): the plan routes a D8-1..3 failure to the user as a design
+  fork. Options handed up (main orchestrator → user): (a) accept + document + pin — one guide line ("on Windows,
+  Git Bash reads PATH, TEMP, TMP (any spelling) upper-case and converts their values to POSIX paths — use another
+  name for data"), the failing row rewritten to pin the observed behaviour, no product code; (b) (a) + add
+  TEMP/TMP to the shell-owned warning list (changes ruled 4d's seven-name list); (c) normalize these names on
+  win32 ourselves — cannot stop the runtime's path conversion; not recommended. Recommendation: (a).
+- State: branch head = this entry's commit (pushed); tree clean; PR #723 CI red ONLY on that row. No implementer
+  live (I1 idle, ~392k tokens; holds the PA code). No dev servers.
+- **Resume point:** on the ruling, apply it (a: guide line in `guide/nodes/shell.md` env section + rewrite
+  `test_d8_2_a_mixed_case_name_colliding_with_an_inherited_one_reads_by_its_spelling` into a pinned
+  per-platform assertion — win32: `$TEMP` holds the POSIX-converted value and `$Temp` is empty; POSIX: `$Temp`
+  reads its value), `make check` + `make test`, commit, push, wait for CI green on #723, amend the PR body's
+  Windows paragraph with the D8 outcomes, hand back at create-pr with head SHA + `gh pr checks` snapshot naming
+  `tests-windows (core-cli-nodes)` + `dev servers: none`. Do not merge.
