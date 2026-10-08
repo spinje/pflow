@@ -7,6 +7,7 @@
 // binding (review-caught 2026-06-11).
 
 import type { RFGraph, RFNode } from "../types";
+import { isCodeBody } from "../utils/format";
 
 // What the graph's edges READ from one node, per output field: a bare read
 // (`${n.result}`) and/or sub-key reads (`${n.result.ok}` → "ok" — the FIRST
@@ -135,6 +136,7 @@ function paramTextReads(graph: RFGraph): ParamRead[] {
   for (const reader of graph.nodes) {
     const alias = reader.batch?.as_name;
     for (const param of reader.params) {
+      if (isCodeBody(reader.kind, param.name)) continue; // plain code: its `${…}` reads nothing
       for (const leaf of stringLeaves(param.value)) {
         for (const { root, fields } of templateRefs(leaf)) {
           if (root === alias) continue; // the per-item batch alias, never a sibling

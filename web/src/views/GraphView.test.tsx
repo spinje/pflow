@@ -112,7 +112,7 @@ const GRAPH: RFGraph = {
       ref: { node_id: "done", ancestor_path: [], port: null },
       kind: "shell",
       purpose: "",
-      params: [{ name: "command", value: "${greet.stdout}", is_dynamic: true, source: null }],
+      params: [{ name: "stdin", value: "${greet.stdout}", is_dynamic: true, source: null }],
       io: null,
       loop: null,
       batch: null,
@@ -136,7 +136,7 @@ const GRAPH: RFGraph = {
       kind: "data_flow",
       label: null,
       output_field: "stdout",
-      input_name: "command",
+      input_name: "stdin",
       shadowed: false,
       condition: null,
       output_path: [],
@@ -641,7 +641,7 @@ describe("GraphView mount", () => {
           kind: "data_flow",
           label: null,
           output_field: null,
-          input_name: "command",
+          input_name: "stdin",
           shadowed: false,
           condition: null,
           output_path: [],
@@ -891,7 +891,7 @@ describe("GraphView mount", () => {
       source_field: "stdout",
       source_path: [],
       target: GRAPH.nodes[1]!.ref,
-      input_name: "command",
+      input_name: "stdin",
     };
     act(() => live.handlers!.focus(target));
 
@@ -923,7 +923,7 @@ describe("GraphView mount", () => {
           kind: "data_flow",
           label: null,
           output_field: "stdout",
-          input_name: "command",
+          input_name: "stdin",
           shadowed: false,
           condition: null,
           output_path: [],
@@ -948,7 +948,7 @@ describe("GraphView mount", () => {
           source_field: "stdout",
           source_path: [],
           target: { ...targetRef, ancestor_path: [...targetRef.ancestor_path] },
-          input_name: "command",
+          input_name: "stdin",
         }),
       );
 
@@ -1240,7 +1240,7 @@ describe("agent say callout (Task 174 + persistent-captions follow-up)", () => {
           source_field: "stdout",
           source_path: [],
           target: GRAPH.nodes[1]!.ref,
-          input_name: "command",
+          input_name: "stdin",
         },
         "this wire",
         null,

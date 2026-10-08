@@ -103,8 +103,8 @@ function edge(id: string, source: string, target: string, kind: EdgeKind, over: 
 // Two leaves joined by one data edge: in beautiful, focusing "a" (or the edge)
 // expands {a, b} — the smallest graph where focus changes the layout state.
 const DATA_GRAPH: RFGraph = {
-  nodes: [node("a"), node("b", { params: [{ name: "command", value: "${a.stdout}", is_dynamic: true, source: null }] })],
-  edges: [edge("e0", "a", "b", "data_flow", { output_field: "stdout", input_name: "command" })],
+  nodes: [node("a"), node("b", { params: [{ name: "stdin", value: "${a.stdout}", is_dynamic: true, source: null }] })],
+  edges: [edge("e0", "a", "b", "data_flow", { output_field: "stdout", input_name: "stdin" })],
   groups: [],
 };
 
@@ -394,13 +394,13 @@ describe("useWorkflowGraph — builtEdgeIds", () => {
         node("a"),
         node("b", {
           params: [
-            { name: "command", value: "${a.stdout}", is_dynamic: true, source: null },
+            { name: "stdin", value: "${a.stdout}", is_dynamic: true, source: null },
             { name: "other", value: "${a.stdout}", is_dynamic: true, source: null },
           ],
         }),
       ],
       edges: [
-        edge("e0", "a", "b", "data_flow", { output_field: "stdout", input_name: "command" }),
+        edge("e0", "a", "b", "data_flow", { output_field: "stdout", input_name: "stdin" }),
         edge("e1", "a", "b", "data_flow", { output_field: "stdout", input_name: "other" }),
       ],
       groups: [],

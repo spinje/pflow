@@ -7,7 +7,7 @@ import { useState } from "react";
 
 import { cacheInsertIndex } from "../graph/flow";
 import { resolveBatchItems } from "../utils/batchItems";
-import { fullValue, nodeColor, paramLanguage } from "../utils/format";
+import { fullValue, isCodeBody, nodeColor, paramLanguage } from "../utils/format";
 import { iconFor } from "../utils/icons";
 import { resolveEndpointFlatId } from "../utils/viewParams";
 import { BatchItemsBlock } from "./BatchItems";
@@ -71,7 +71,9 @@ export function ParamBlock({
   onOpenSource?: (ref: SourceRef) => void;
 }): JSX.Element {
   const src = sourceLabel(param.source);
-  const items = batch && !batch.dynamic ? resolveBatchItems(param.value, batch.as_name, batch.items) : null;
+  // A code body's `${item.x}` is the shell's/Python's own text, never substituted.
+  const items =
+    batch && !batch.dynamic && !isCodeBody(kind, param.name) ? resolveBatchItems(param.value, batch.as_name, batch.items) : null;
   const [expanded, setExpanded] = useState(false);
   return (
     <div className="read-param">
@@ -110,12 +112,12 @@ export function ParamBlock({
       {items && expanded && (
         // Each item's resolved value, headed by its discriminating field. The
         // body colors with the SAME language as the raw param (a resolved prompt
-        // is markdown source, like the param itself).
+        // is markdown source, like the param itself; a dict `env` is JSON).
         <div className="batch-items">
           {items.map((item, i) => (
             <div className="batch-item" key={i}>
               <div className="batch-item-head">{item.label}</div>
-              <CodeBlock code={item.value} lang={paramLanguage(kind, param.name, item.value)} expandLabel={item.label} />
+              <CodeBlock code={item.value} lang={paramLanguage(kind, param.name, param.value)} expandLabel={item.label} />
             </div>
           ))}
         </div>

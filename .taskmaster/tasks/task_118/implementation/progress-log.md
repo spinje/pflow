@@ -1070,3 +1070,122 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
 - Disposition: accepted as logged. `review-falsifier` stays with the completion gate (direct launch, mine).
 - I4 retired for PF: window ~545k, past the plan's ~350k rotation point → PF goes to a fresh Opus · medium launch.
 - Next: PE (I5, fresh, Opus · medium, specialist web hand-off).
+
+## [2026-10-08 05:30] implementer I5 (Opus) — PE Web (+ the full-tier-fallback amendment)
+- Did: refs stop being read / substituted / tealed inside a code body on the web side; both `sourceDecorate.ts` teal
+  sites follow one rule; four test fixtures moved off a ref-bearing shell `command`. Probe driven through `pflow ui`.
+- Changed: `web/src/utils/format.ts` (`isCodeBody(kind, name)` beside `paramLanguage`, comment naming
+  `template_surfaces._BODIES` as the source of truth); `web/src/graph/scan.ts` (`paramTextReads` skips a body);
+  `web/src/components/ReadPanel.tsx` (`ParamBlock`: no batch-item expansion for a body); `web/src/graph/sourceDecorate.ts`
+  (`tealsRefs(grammar)` = `null || "markdown"` + `plainLines`, used by the instant tier, the full tier's success path
+  and its null/mismatch fallback); `web/src/graph/CLAUDE.md` (one paragraph under Rows and read presentation).
+  Tests: `scan.test.ts` (6 parity rows + env-edge landing), `sourceDecorate.test.ts` (old "teals inside fence"
+  test inverted; new 4-tier `it.each`), `ParamBlock.test.tsx` (body never expands, `stdin` does),
+  `SourcePane.test.tsx`, `useWorkflowGraph.test.tsx:106,397`, `GraphView.test.tsx:115` + its six
+  `input_name: "command"` edge/target refs (→ `stdin`).
+- **`isCodeBody` call sites (Task 181 checks by name):** `web/src/graph/scan.ts:139` (`paramTextReads`) and
+  `web/src/components/ReadPanel.tsx:76` (`ParamBlock` items). Definition `web/src/utils/format.ts:146`.
+  `sourceDecorate.ts` does NOT call it (no node type in a fence) — it keys on the fence grammar (`tealsRefs`).
+- Verified: web baseline before edits 55 files / 818 tests; after `npm run typecheck` clean, `npm test` 55 / **830**
+  passed (no lint script in `web/package.json`). `make check` green; `make test` **10574 passed** / 0 failed (= the
+  PB-review head's count; the contract drift check passes, so PC1's `prompt-caching-multi-chunk.json` is current and it
+  goes through `lossless.test.ts` "REAL contracts" — green both before and after my edits). Kill check: with
+  `scan.ts`/`ReadPanel.tsx`/`sourceDecorate.ts` restored from HEAD, exactly the 8 new skip assertions fail (shell.command,
+  code.code, the inverted sync test, instant / null / mismatch tiers, SourcePane line 8, ParamBlock) and every presence
+  partner passes; files restored after.
+  Driven (`pflow ui --port 8791` from this worktree's `.venv`, PIDs 42525/42532 — stopped; `lsof :8791` empty; no
+  chrome-devtools-mcp left). Probe `scratchpad/i5-t118p2/body-probe.pflow.md` (`up` → `use` with
+  `echo "${HOME}" "$DATA"` + `env: {DATA: ${up.stdout}}` → literal batch `fan` with `stdin: ${item.name}`,
+  `env: {GREETING: ${item.greeting}}`, `cat; echo "${HOME} $GREETING"`); `/api/graph`: every `command` `is_dynamic=false`,
+  one data edge `e2 up.stdout → input_name "DATA"`. Screenshots in `/tmp/pflow-shots/t118pe/`:
+  (1) `body-probe-advanced-none-LR-n1-2-20261008-011127.png`, `…-n2-2-20261008-011135.png` — command rows plain, no
+  chip, no dynamic dot; env/stdin rows dynamic. (2) same + `body-probe-advanced-none-LR-1-20261008-011114.png`;
+  `inspect`: e2's path ends at x=136,y=327 = the env row target handle (322–332), the command handle (361–372) unreached.
+  (3) `read-use.png` — Command bash-highlighted, no `dynamic` badge, `${HOME}` not teal; Env `dynamic`. (4)
+  `fan-command-source.png` + `source-tiers.png` — fence `echo "${HOME}" "$DATA"` plain bash; `DATA: ${up.stdout}` teal.
+  Both tiers sampled in-browser by a scratch rAF-polling probe (`scratchpad/i5-t118p2/tier-probe.pflow.md`): instant
+  (pre-shiki) and full — fence lines `tealRefs: []` in both, env/stdin lines tealed in both. The instant tier lasts ~6
+  frames, so it is a DOM sample, not a screenshot. (5) `read-fan.png`, `read-fan-expanded.png`, `fan-command-source.png`
+  (DOM probe: stdin `▸ 2 items` → expands to ada/bob; command no expander; **env no expander — see deviation 1**).
+- Deviations/surprises:
+  1. **Acceptance (5) "item expansion for `env`" is not met and cannot be by PE's files — needs your ruling.**
+     `resolveBatchItems` (`web/src/utils/batchItems.ts:96`) returns null for any non-string value, and `env` ships as
+     a dict, so `env: {GREETING: ${item.greeting}}` never had an expander (pre-existing, not a regression of mine).
+     Verified with `stdin` (a string Template param) instead. After the flip `env` is THE batch-shell channel, so the
+     common batch shell step loses its per-item preview. Options: (a) extend `resolveBatchItems` to dict/list values —
+     substitute in string leaves, render the item as JSON (touches `batchItems.ts` + its tests; small, but a
+     display choice on how a per-item dict reads); (b) accept, log as a follow-up. Recommend (a) as a follow-up issue,
+     not in PE (importance 2; outside the plan's file list).
+  2. **Null-grammar fences stay tealed.** The amendment's "(markdown)" vs the full tier's actual behavior: an ungrammared
+     fence (`text content` — a write-file Template param) has no highlight attempt; the full tier always tealed it
+     through `refSegments`, so "where the full tier would teal" = `markdown || null` (same rule as `CodeBlock.tealRefs`).
+     Pinned by the `text content` row in the tier test. Consequence: yaml/json fences (real Template params like
+     `headers`) now lose instant-tier teal — they never had full-tier teal, so the tiers just agree now. Importance 1.
+  3. **The two `isCodeBody` call sites are defense-in-depth on valid workflows.** A body holding an in-scope root
+     (`${item.x}`, `${up.stdout}`) fails validation and `/api/graph` returns 422 (executed on a variant of the probe),
+     and an out-of-scope `${HOME}` has no producer, so neither site changes what a valid canvas shows today. They keep
+     TS ≡ Python (`param_mode`) as the plan's parity rule requires; the only user-visible PE change on valid workflows is
+     the source pane's teal.
+  4. `SourcePane.test.tsx`: kept `echo ${repo}` in the shell fence (now the shell's own text) and asserted it is NOT
+     tealed while the `- inputs: ${data}` body value is, instead of moving the ref out — the test's subject is the fence
+     swap, and the inversion pins PE's rule in the real component.
+  5. `GraphView.test.tsx` needed six `input_name: "command"` edits beyond the plan's :115 (the same GRAPH edge's id,
+     focus/say targets, an input-port binding into `greet`, the nested-reveal edge) — all now `stdin`.
+  6. Python `_BODIES` (`template_surfaces.py:27`) has no back-pointer to `isCodeBody`; the pointer runs TS → Python
+     only. A one-line comment there is outside PE's files — PF or the orchestrator, if wanted.
+- Self-checks: fully happy? With the code, yes; the loose end is deviation 1 (an acceptance item the plan assumed
+  existing code met). `paramLanguage` repeats the same two (kind, name) pairs with a language — left (different
+  question, one call each; folding them is a reach). test-reflect (directed scope — skip tests that could pass
+  vacuously): resolved — every skip assertion has a presence partner in the same test (env/stdin/inputs/other-kind
+  `command` rows read `a.out`; prompt + `text content` fences teal in every tier; `stdin` expands beside the body), and
+  the kill check above shows each skip assertion fails without the change. The env-edge landing row passes on HEAD too
+  (it pins existing `bindingParam` dict-key landing with a `${HOME}` command beside it — the plan's "labelled by the env
+  key" row; kept, not a skip test).
+- Tooling postmortem (screenshot skill): worked — `screenshot` / `inspect` / `click` all first-try, `-p` output clean,
+  `focus=<node_id>` opens the read panel (undocumented in the URL table: it says "click-focus state"). Friction:
+  (S) no way to scroll the read panel — the Command block of a batch node sits below the fold at 760×560; I wrote a
+  scratch evaluate-script probe that `scrollIntoView`s a param. (S) the instant source tier cannot be screenshotted
+  (≈6 rAF frames); a rAF-polling DOM sample was the only evidence — a `sample-tiers` option or doc note would help.
+  (M) a generic `probe.pflow.md` (run a caller-supplied JS selector→facts function after settle, then screenshot)
+  would have replaced both scratch workflows. Near-miss: an `evaluate_script` `function:` is a Template param, so a
+  literal `${` in the JS (e.g. searching for `"${"`) is parsed as a pflow ref — I wrote `"$" + "{"`; worth a line in
+  the skill's Troubleshooting.
+- Next: orchestrator rules on deviation 1; commit; PF.
+- [2026-10-08 06:05] **Ruling on deviation 1 applied** ((a), in PE). `web/src/utils/batchItems.ts`: `refsBatchAlias`,
+  `aliasFields` and `resolveBatchItems` walk string LEAVES (`stringLeaves`; dicts by value, lists by item — keys never
+  read or substituted); a dict/list item value is `fullValue(mapLeaves(value, substitute))` — the same formatter
+  `ParamBlock` uses for the un-expanded param (indented JSON), no new treatment. `ReadPanel.tsx` `ParamBlock`: an item's
+  language now comes from `paramLanguage(kind, name, param.value)` (the item value is text, so asking with it would
+  have rendered a dict's items plain; for string params the result is identical — `paramLanguage` keys on type, and
+  both are strings). `isCodeBody` skip stays first. Tests: `batchItems.test.ts` (dict `env` per item with substituted
+  leaf and non-alias leaf verbatim; ref-looking key untouched; nested list leaf + label drops the read field; dict
+  with no alias ref → null), `ParamBlock.test.tsx` (dict `env` expands to the JSON text per item, highlighted as
+  `json`; the `stdin` string presence partner unchanged). Kill check: `batchItems.ts` from HEAD → 4 fail; the item
+  language reverted to `item.value` → the ParamBlock dict test fails; restored. Driven (same probe, `pflow ui --port
+  8791` from this tree, PIDs 90396/90401 stopped, `lsof :8791` empty): `/tmp/pflow-shots/t118pe/read-fan-env-expanded.png`
+  — Env `▸ 2 items` → `name: ada {"GREETING": "hi"}`, `name: bob {"GREETING": "hey"}`, JSON-highlighted; Stdin
+  still `2 items`; Command no expander. Acceptance (5) now met as written. Gate: `npm run typecheck` clean, `npm test`
+  55 / **834** passed, `make check` green, `make test` **10574** passed. `dev servers: none`.
+
+## [2026-10-08 06:00] task orchestrator (Opus) — PE rulings + screenshot-skill postmortem dispositions
+- [RULING, orchestrator, importance 2] I5 deviation 1 (no per-item expansion for a dict `env:`) → **built in PE**
+  (option a): ORCHESTRATION "a gap your change is about to widen is yours to close" — the dict gap pre-exists, this
+  task moves every batch shell step's values into `env:`. Leaves substituted, keys untouched, rendered with the
+  un-expanded dict formatter (no new visual); revertible as one function + tests.
+- Deviation 2 (null-grammar fences stay tealed; yaml/json lose only instant-tier teal so the tiers agree) — accepted,
+  importance 1. Deviation 3 (the two `isCodeBody` sites change nothing visible on a VALID workflow; parity only) —
+  accepted. Deviation 6 (Python `_BODIES` has no back-pointer to `isCodeBody`) → PF adds the one-line comment.
+- Postmortem (`screenshot-pflow-web-ui`): (S) no read-panel scroll primitive → follow-up issue candidate at the merge
+  seam (hand-back); (S) instant source tier not screenshot-able → DROP (one task's need; DOM sample documented in this
+  log); (M) generic probe workflow → DROP (no second observed need); near-miss `${` inside an `evaluate_script`
+  `function:` parsed as a pflow ref → DROP here, it is exactly Task 181's surface (code handed to MCP tools); named in
+  the task-review for 181.
+
+## [2026-10-08 06:40] task orchestrator (Opus) — PE verified and committed
+- Verified (mine): `npm run typecheck` clean; vitest 55 files / 834 passed; `make check` green; `make test` 10574 / 0
+  failed; nothing listening on 8791 from this tree. I5's sub-bullet "Ruling on deviation 1 applied": dict/list
+  expansion via the existing `fullValue` formatter; `ReadPanel` picks the item language from the param's value (an
+  item arrives as text) — accepted. Acceptance (5) re-driven: `/tmp/pflow-shots/t118pe/read-fan-env-expanded.png`.
+- Fully happy: resolved in I5's entry (code yes; the one loose end was deviation 1, now built). test-reflect resolved
+  there (every skip assertion has a presence partner; kill check 8/8).
+- Next: PF (fresh, Opus · medium).

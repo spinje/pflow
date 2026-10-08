@@ -138,6 +138,15 @@ export function paramLanguage(kind: string, name: string, value: unknown): strin
   return null;
 }
 
+/** Whether a param holds plain code that pflow never reads for `${…}` — the
+ *  mirror of Python's `param_mode(kind, name) == "body"` (`_BODIES` in
+ *  `src/pflow/core/workflow/template_surfaces.py`, the source of truth — edit both
+ *  together). A body's `${HOME}` is the shell's/Python's own text: no ref, no read,
+ *  no per-item substitution. */
+export function isCodeBody(kind: string, name: string): boolean {
+  return (kind === "shell" && name === "command") || (kind === "code" && name === "code");
+}
+
 /** Present an edge's input_name as a binding label. `prompt_cache` is the
  *  contract's reserved name for a `## Cache` chunk dependency — no param row
  *  exists for it, so the raw sentinel must never reach the user. */
