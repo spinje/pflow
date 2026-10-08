@@ -70,8 +70,8 @@ point (the seed slice's own cut, `_resumes_from`) every top-level line of the
 entry is a failed event with no `node.start`
 (`resume_source.entry_never_started`; a restored or cached event is no proof) —
 so it relies on the engine writing `node.start` before any node code runs. A
-`workflow` K never gets the skip: a batched host writes no `node.start` (Task
-180 closes that and drops the carve-out). The stale refusal reuses the verdict
+`workflow` K gets the skip only on a trace carrying `step_identity`: older traces
+never wrote a batched host's `node.start`. The stale refusal reuses the verdict
 to say that `--force` would re-fire a started side-effecting entry. Dry-run
 still checks stale workflow identity but must not require side-effect
 confirmation. Callers own settings-env injection and compilation; preflight does

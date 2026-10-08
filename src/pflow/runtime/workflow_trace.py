@@ -40,8 +40,12 @@ logger = logging.getLogger(__name__)
 # on the ``run.complete`` trailer. 2.8.0 (Task 179, additive) records loop position: ``iteration`` on
 # every loop-node event and on its ``gate`` lines, and inside ``gate_request``; and ``lossy`` on an event
 # (and batch item) whose ``node_output`` the trace could not store unchanged — resume never seeds it.
+# 2.9.0 (Task 180, additive) adds ``step_identity`` to the meta line (each top-level step's definition
+# hash and next steps, plus the start step — ``core/workflow_id.step_identity``; resume checks the steps it
+# restores against it), and writes ``node.start`` for batched sub-workflow hosts too. A change to what
+# ``step_identity`` hashes bumps the minor, and resume must then treat older maps as absent.
 # Consumers gate on ``startswith("2.")``; old traces remain readable.
-TRACE_FORMAT_VERSION = "2.8.0"
+TRACE_FORMAT_VERSION = "2.9.0"
 
 # Keys the ENGINE writes into a node's output namespace, which the trace drops on purpose
 # (`_sanitize_for_json`): dropping them loses nothing the author produced, so no `lossy` mark.
@@ -513,6 +517,7 @@ class WorkflowTraceCollector:
         is_run_scoped: bool = False,
         stream_to_disk: bool = False,
         content_hash: str | None = None,
+        step_identity: dict[str, Any] | None = None,
         execution_id: str | None = None,
         resumed_from: str | None = None,
     ):
@@ -558,6 +563,9 @@ class WorkflowTraceCollector:
                 Defaults to ``None`` so the per-sub-workflow buffer collector and
                 all test fixtures construct unchanged; an old trace (or a run
                 that didn't supply it) simply has no fingerprint → "can't verify".
+            step_identity: Task 180 — ``core.workflow_id.step_identity`` of the same resolved IR,
+                stamped into the ``meta`` line so resume can tell which restored step an edit touched.
+                ``None`` for buffer collectors and fixtures (the key is then written as ``null``).
             execution_id: Force the run's id instead of minting a fresh UUID (Task
                 175). The ``pflow ui`` ▶ launch mints the id server-side and threads
                 it here (via ``RunnerConfig`` ← ``PFLOW_EXECUTION_ID``) so the browser
@@ -576,6 +584,7 @@ class WorkflowTraceCollector:
         self.workflow_name = workflow_name
         self.workflow_path = workflow_path
         self.content_hash = content_hash
+        self.step_identity = step_identity
         self.resumed_from = resumed_from
         self.is_run_scoped = is_run_scoped
         self.execution_id = execution_id or str(uuid.uuid4())
@@ -1057,6 +1066,7 @@ class WorkflowTraceCollector:
             "start_time": self.start_time.isoformat(),
             "only_node": self.only_node,
             "content_hash": self.content_hash,
+            "step_identity": self.step_identity,
             "inputs": self.inputs,
             "resumed_from": self.resumed_from,
         }

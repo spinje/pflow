@@ -86,6 +86,10 @@ class ResumeSource:
     `None` when its events carry no recorded position (a non-loop step, a trace
     that predates loop position, or a step given `loop:` since the run — a loop
     step then restarts at 1 and says so). Derived by `resume_iteration`, the one reader of the events' field.
+
+    Task 180: `step_identity` is the meta line's per-step identity map
+    (`core/workflow_id.step_identity`) — `None` on a trace that predates it or
+    carries a malformed one, which keeps the whole-workflow `content_hash` check.
     """
 
     path: Path
@@ -99,6 +103,7 @@ class ResumeSource:
     paused_node_id: str | None = None
     gate_request: dict[str, Any] | None = None
     entry_iteration: int | None = 1
+    step_identity: dict[str, Any] | None = None
 
 
 def _is_trace_locked(path: Path) -> bool | None:
@@ -950,7 +955,19 @@ def load_resume_source(
         paused_node_id=paused_node_id,
         gate_request=gate_request,
         entry_iteration=entry_iteration,
+        step_identity=_recorded_step_identity(data),
     )
+
+
+def _recorded_step_identity(data: dict[str, Any]) -> dict[str, Any] | None:
+    """The trace's ``step_identity`` when it has the recorded shape, else ``None`` (absent or malformed —
+    either way the preflight falls back to the whole-workflow hash, never a partial check)."""
+    identity = data.get("step_identity")
+    if not isinstance(identity, dict) or not isinstance(identity.get("steps"), dict):
+        return None
+    if not isinstance(identity.get("start"), (str, type(None))):
+        return None
+    return identity
 
 
 # The EXACT engine-injected reserved keys that ``apply_memo_hit`` strips when

@@ -81,6 +81,7 @@ def _write_trace(
     paused_node_id: str | None = None,
     gate_request: dict[str, Any] | None = None,
     format_version: str = "2.5.0",
+    step_identity: Any = None,
 ) -> Path:
     """Write a synthetic resume-source trace the loader can discover, returning its path."""
     debug_dir.mkdir(parents=True, exist_ok=True)
@@ -101,6 +102,8 @@ def _write_trace(
         data["warnings"] = warnings
     if resumed_from is not None:
         data["resumed_from"] = resumed_from
+    if step_identity is not None:
+        data["step_identity"] = step_identity
     # Task 171: the pause record rides the run.complete trailer; the fixture
     # builder routes non-META keys there, matching the producer.
     if paused_node_id is not None:
@@ -785,6 +788,46 @@ def test_missing_content_hash_returned_as_none(tmp_path: Path) -> None:
     assert source.content_hash is None
 
 
+_IDENTITY = {
+    "start": "clone",
+    "steps": {
+        "clone": {"hash": "a" * 32, "next": [["default", "build"]]},
+        "build": {"hash": "b" * 32, "next": []},
+    },
+}
+
+
+def test_step_identity_round_trips_from_the_meta_line(tmp_path: Path) -> None:
+    path = _write_trace(
+        tmp_path, execution_id="ident", timestamp="20260101-000000", format_version="2.9.0", step_identity=_IDENTITY
+    )
+    assert json.loads(path.read_text(encoding="utf-8").splitlines()[0])["step_identity"] == _IDENTITY
+    assert load_resume_source(workflow_path=WF, debug_dir=tmp_path).step_identity == _IDENTITY
+
+
+@pytest.mark.parametrize(
+    "recorded",
+    [None, "not-a-map", {"start": "clone"}, {"start": 3, "steps": {}}, {"start": "clone", "steps": ["clone"]}],
+    ids=["absent", "string", "no-steps", "start-not-a-step-id", "steps-not-a-map"],
+)
+def test_absent_or_malformed_step_identity_loads_as_none(tmp_path: Path, recorded: Any) -> None:
+    """A 2.8.0 trace has no map; a malformed one must not reach the preflight as half a check — both load
+    as ``None``, which keeps the whole-workflow hash compare."""
+    _write_trace(
+        tmp_path, execution_id="old", timestamp="20260101-000000", format_version="2.8.0", step_identity=recorded
+    )
+    assert load_resume_source(workflow_path=WF, debug_dir=tmp_path).step_identity is None
+
+
+@pytest.mark.parametrize(
+    ("version", "predates"), [("2.7.0", True), ("2.8.0", False), ("2.9.0", False), ("2.10.0", False)]
+)
+def test_lossy_marker_era_reads_later_minors_correctly(version: str, predates: bool) -> None:
+    from pflow.runtime.resume_source import _predates_lossy_marker
+
+    assert _predates_lossy_marker({"format_version": version}) is predates
+
+
 # ── Paused arm + answer fold (Task 171, Phase 2) ──────────────────────────────
 # Real-collector keystones live beside the producers: approval in
 # test_resume_engine.py (WorkflowRunner e2e), escalation in test_gate_pause.py
@@ -1033,49 +1076,109 @@ def test_side_effect_confirmation_error_is_agent_first() -> None:
     assert diag.context.get("execution_id") == "e1"
 
 
-def test_stale_workflow_error_has_two_messages() -> None:
-    edited = ResumeStaleWorkflowError(hash_known=True, restored=["a"], entry_node_id="k")
-    unverifiable = ResumeStaleWorkflowError(hash_known=False, restored=["a"], entry_node_id="k")
-    assert "edited" in str(edited)
-    assert "predates" in str(unverifiable) and "edited" not in str(unverifiable)
-    for err in (edited, unverifiable):
-        assert any("--force" in s for s in err.suggestions)
+def _stale(**changes: Any) -> ResumeStaleWorkflowError:
+    return ResumeStaleWorkflowError(hash_known=True, **{"entry_node_id": "save", **changes})
 
 
-def test_stale_workflow_error_names_what_force_would_accept() -> None:
-    """#690: the refusal says which steps are restored (an edit to them would not take effect) and
-    where resume continues — so an agent that edited only the entry knows --force is safe."""
-    err = ResumeStaleWorkflowError(hash_known=True, restored=["fetch", "parse"], entry_node_id="save")
-    assert "Resume restores the saved outputs of 'fetch', 'parse' and resumes at 'save'" in str(err)
-    assert err.suggestions[0] == "If you changed only 'save' or later steps, pass --force to resume."
-    assert "fire again" not in " ".join(err.suggestions)
+def test_stale_workflow_error_names_the_edited_step_and_what_force_accepts() -> None:
+    """The ruled text (show-before-code, row 3): the lead names the edited step; the body says what
+    resume re-runs; re-running is the first remedy and --force the second, saying what it keeps."""
+    err = _stale(edited=["produce"])
+    assert str(err) == (
+        "'produce' was edited. Resume re-runs nothing before 'save' — it restores the saved outputs of the "
+        "steps that ran — so that edit would not take effect."
+    )
+    assert err.suggestions == [
+        "Re-run the workflow from the start so the edit takes effect.",
+        "Pass --force to resume anyway: steps before 'save' keep their saved outputs and are not re-run "
+        "(an inserted step is skipped).",
+    ]
 
-    first_step = ResumeStaleWorkflowError(hash_known=True, restored=[], entry_node_id="save")
-    assert "restores no earlier steps and resumes at 'save'" in str(first_step)
 
-    between = ResumeStaleWorkflowError(hash_known=True, restored=["esc"], entry_node_id=None, after_node_id="esc")
-    assert "resumes after 'esc'" in str(between)
-    assert between.suggestions[0] == "If you changed only steps after 'esc', pass --force to resume."
+def test_stale_workflow_error_leads_come_in_the_ruled_order() -> None:
+    err = _stale(
+        new_start=("banner", "produce"),
+        rerouted={"shape": (["prepare"], ["save"])},
+        approved_edited="save",
+        edited=["shape"],
+        removed=["old"],
+        skipped=frozenset({"banner", "prepare"}),
+    )
+    assert str(err).startswith(
+        "'old' is no longer in the workflow (resume would still restore its saved output). 'shape' was edited. 'save' was edited after it was approved — the "
+        "approval covered the earlier version. 'shape' now continues to 'prepare', which never ran — resume would "
+        "skip it. The workflow now starts at 'banner', which never ran — resume would skip it. Resume re-runs "
+        "nothing before 'save'"
+    )
+    assert "so those edits would not take effect." in str(err)
 
 
-def test_stale_workflow_error_names_a_loop_entrys_iteration_and_its_restored_earlier_ones() -> None:
-    """A loop step resumed at iteration N restores its iterations before N: an edit to it does not
-    recompute them, so the refusal says the edit applies only from N on."""
-    err = ResumeStaleWorkflowError(hash_known=True, restored=[], entry_node_id="count", entry_iteration=2)
-    assert "resumes at 'count' (iteration 2)." in str(err)
-    assert "Its iterations before 2 are restored too, so an edit to 'count' applies from iteration 2 on." in str(err)
-    first = ResumeStaleWorkflowError(hash_known=True, restored=[], entry_node_id="count", entry_iteration=1)
+def test_stale_workflow_error_reroute_says_never_ran_only_for_a_skipped_step() -> None:
+    skipped = _stale(rerouted={"shape": (["prepare"], ["save"])}, skipped=frozenset({"prepare"}))
+    instead = _stale(rerouted={"produce": (["save"], ["shape"])})
+    ends = _stale(rerouted={"produce": ([], ["shape"])})
+    assert str(skipped).startswith("'shape' now continues to 'prepare', which never ran — resume would skip it.")
+    assert str(instead).startswith("'produce' now continues to 'save' instead of 'shape'.")
+    assert str(ends).startswith("'produce' now ends the workflow instead of continuing to 'shape'.")
+    restart = _stale(new_start=("shape", "produce"))
+    assert str(restart).startswith("The workflow now starts at 'shape' instead of 'produce'.")
+
+
+def test_stale_workflow_error_for_a_missing_resume_point_offers_no_force() -> None:
+    """--force cannot resume at a step that is gone (the engine refuses K-removed) — never offer it."""
+    err = _stale(resume_point_missing=True)
+    assert str(err) == "The resume point 'save' is no longer in the workflow."
+    assert err.suggestions == ["Re-run the workflow from the start.", "Or restore the step 'save' and resume again."]
+    assert err.node_id == "save"
+
+
+def test_stale_workflow_error_between_nodes_and_loop_scopes() -> None:
+    between = _stale(entry_node_id=None, after_node_id="esc", edited=["esc"])
+    assert "Resume re-runs nothing up to and including 'esc' — it restores" in str(between)
+    assert between.suggestions[1].startswith("Pass --force to resume anyway: steps up to and including 'esc' keep")
+    loop = _stale(entry_node_id="count", entry_iteration=3, edited=["prep"])
+    assert "Resume re-runs nothing before 'count' (iteration 3) — it restores" in str(loop)
+    assert "Its iterations before 3 are restored too, so an edit to 'count' applies from iteration 3 on." in str(loop)
+    first = _stale(entry_node_id="count", entry_iteration=1, edited=["prep"])
     assert "iteration" not in str(first)
 
 
 def test_stale_workflow_error_says_force_also_refires_a_started_side_effecting_entry() -> None:
     """--force waives the side-effect confirmation too — the stale refusal is the only place the
     agent learns that, so it must say so when the entry already started."""
-    err = ResumeStaleWorkflowError(hash_known=True, restored=["a"], entry_node_id="append", rerun_node_type="shell")
-    assert (
-        "--force also re-runs 'append' (a shell step that already started in the original run), "
-        "so its side effects may fire again" in err.suggestions[0]
+    err = _stale(entry_node_id="append", edited=["a"], rerun_node_type="shell")
+    assert err.suggestions[1].endswith(
+        "--force also re-runs 'append' (a shell step that already started in the original run), so its side "
+        "effects may fire again — if you are an AI agent, confirm that with your human first."
     )
+    assert "fire again" not in " ".join(_stale(edited=["a"]).suggestions)
+
+
+def test_stale_workflow_error_fallback_texts_never_name_a_change() -> None:
+    """No per-step identity on the trace: an older pflow (hash known) vs. pre-hash tracking (unknown)."""
+    older = _stale()
+    unverifiable = ResumeStaleWorkflowError(hash_known=False, entry_node_id="save")
+    assert str(older).startswith(
+        "This run was recorded by an older pflow version that did not record each step's definition, so resume "
+        "cannot tell which step changed. Resume re-runs nothing before 'save'"
+    )
+    assert str(unverifiable).startswith("Cannot verify the workflow is unchanged — this run predates")
+    for err in (older, unverifiable):
+        assert "so an edit to them would not take effect." in str(err)
+        assert err.suggestions[1].startswith("Pass --force to resume anyway")
+        assert err.to_diagnostics()[0].context["changed_steps"] is None  # unknown, never "nothing changed"
+
+
+def test_stale_workflow_error_carries_structured_fields_for_agents() -> None:
+    err = _stale(edited=["produce"], new_start=("banner", "produce"), skipped=frozenset({"banner"}))
+    context = err.to_diagnostics()[0].context
+    assert context is not None
+    assert (context["changed_steps"], context["new_start"], context["resume_point"]) == (["produce"], "banner", "save")
+    assert context["resume_point_missing"] is False
+    assert context["category"] == "execution_failure"
+    assert err.to_diagnostics()[0].node_id == "produce"
+    two = _stale(edited=["a"], rerouted={"b": (["c"], ["d"])}).to_diagnostics()[0]
+    assert (two.context or {})["changed_steps"] == ["a", "b"] and two.node_id is None
 
 
 # ── entry_never_started / restored_node_ids (#690) ─────────────────────────────
@@ -1279,6 +1382,12 @@ def test_real_failed_run_is_resumable_end_to_end(tmp_path: Path) -> None:
     # and this trace predates nothing — inputs are an (empty) dict, never a crash.
     assert source.content_hash
     assert source.inputs in ({}, None)
+    # Task 180: the per-step identity the preflight checks is the resolved IR's, recorded at run start.
+    from pflow.core.workflow_id import step_identity
+    from pflow.execution.workflow_resolver import resolve_workflow
+
+    assert source.step_identity == step_identity(resolve_workflow(str(wf)).ir)
+    assert list(source.step_identity["steps"]) == ["prep", "boom"]
 
 
 # --- Task 179: the resume entry is a (step, iteration) pair ----------------------

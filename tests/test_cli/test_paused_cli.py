@@ -254,16 +254,45 @@ def test_only_gate_preflight_warns_fail_not_pause(home, gate_wf):
     assert "will pause at approval gate" not in result.stderr
 
 
-def test_stale_hash_refuses_paused_resume_and_force_proceeds(home, gate_wf):
+def test_editing_the_approved_step_refuses_and_force_proceeds(home, gate_wf):
+    """Row 14: `--approve yes` is consent to the preview the human saw — the gated step edited since
+    is checked even though it is the resume point. --force waives it (and runs the edited step)."""
     token = _pause(gate_wf)
-    gate_wf.write_text(gate_wf.read_text(encoding="utf-8") + "\n<!-- edited since the pause -->\n", encoding="utf-8")
+    gate_wf.write_text(gate_wf.read_text(encoding="utf-8").replace("gated action", "gated action v2"), "utf-8")
     refused = _runner().invoke(cli, ["resume", token, "--approve", "yes"])
     assert refused.exit_code == 1
-    # Task 171: neutral wording ("original run") — a paused run was not a failure.
-    assert "edited since the original run" in refused.stdout + refused.stderr
+    combined = refused.stdout + refused.stderr
+    assert "'gated' was edited after it was approved — the approval covered the earlier version." in combined
+    assert "Re-run the workflow from the start so the edit takes effect." in combined
     forced = _runner().invoke(cli, ["resume", token, "--approve", "yes", "--force"])
     assert forced.exit_code == 0, forced.stderr
-    assert "gated action" in forced.stdout
+    assert "gated action v2" in forced.stdout
+
+
+def test_editing_a_step_before_the_paused_gate_refuses_naming_it(home, gate_wf):
+    token = _pause(gate_wf)
+    gate_wf.write_text(gate_wf.read_text(encoding="utf-8").replace('"g1-value"', '"g1-value-2"'), "utf-8")
+    refused = _runner().invoke(cli, ["resume", token, "--approve", "yes"])
+    assert refused.exit_code == 1
+    combined = refused.stdout + refused.stderr
+    # Neutral wording ("original run") — a paused run was not a failure (Task 171).
+    assert "Workflow changed since the original run" in combined
+    assert "'g1' was edited. Resume re-runs nothing before 'gated'" in combined
+    assert "after it was approved" not in combined
+
+
+def test_a_step_added_after_the_paused_gate_passes_and_the_gate_runs(home, tmp_path, gate_wf):
+    token = _pause(gate_wf)
+    marker = tmp_path / "after-ran"
+    gate_wf.write_text(
+        gate_wf.read_text(encoding="utf-8")
+        + f"\n### after\n\nAfter the gate.\n\n- type: shell\n\n```shell command\ntouch {marker.as_posix()}\n```\n",
+        encoding="utf-8",
+    )
+    resumed = _runner().invoke(cli, ["resume", token, "--approve", "yes"])
+    assert resumed.exit_code == 0, resumed.stderr
+    assert "gated..." in resumed.stderr  # the approved gate fired
+    assert marker.exists()
 
 
 _FIRST_NODE_GATE_WF = """# First Gate
@@ -683,6 +712,43 @@ def test_refork_recipe_pauses_and_resumes_non_interactively(home, tmp_path, refo
     assert resumed.exit_code == 0, resumed.stderr
     assert log.read_text(encoding="utf-8").splitlines() == ["decision=", "decision=left"]
     assert tail.read_text(encoding="utf-8").splitlines() == ["applied left"]
+
+
+def test_editing_the_paused_escalation_step_refuses(home, esc_wf):
+    """The escalating step completed and its answer continues to its successor: it is restored
+    (between-nodes), so an edit to it refuses; the scope names everything up to and including it."""
+    token = _pause(esc_wf)
+    esc_wf.write_text(esc_wf.read_text(encoding="utf-8").replace("pick a or b", "pick c or d"), "utf-8")
+    refused = _runner().invoke(cli, ["resume", token, "--choose", "1"])
+    assert refused.exit_code == 1
+    combined = refused.stdout + refused.stderr
+    assert "'esc' was edited. Resume re-runs nothing up to and including 'esc'" in combined
+
+
+def test_editing_the_escalation_successor_passes(home, esc_wf):
+    token = _pause(esc_wf)
+    esc_wf.write_text(esc_wf.read_text(encoding="utf-8").replace('echo "picked', 'echo "chose'), "utf-8")
+    resumed = _runner().invoke(cli, ["resume", token, "--choose", "1"])
+    assert resumed.exit_code == 0, resumed.stderr
+    assert "chose a" in resumed.stdout
+
+
+def test_a_step_inserted_after_the_escalation_refuses_without_claiming_a_skip(home, esc_wf):
+    """Between-nodes: the escalating step now leads elsewhere, which the rule refuses — but resume
+    would RUN the new step (it continues at the step's current successor), so the refusal must not
+    say it is skipped."""
+    token = _pause(esc_wf)
+    esc_wf.write_text(
+        esc_wf.read_text(encoding="utf-8").replace(
+            "- next: after\n", "- next: check\n\n### check\n\nCheck.\n\n- type: shell\n- command: true\n- next: after\n"
+        ),
+        "utf-8",
+    )
+    refused = _runner().invoke(cli, ["resume", token, "--choose", "1"])
+    assert refused.exit_code == 1
+    combined = refused.stdout + refused.stderr
+    assert "'esc' now continues to 'check' instead of 'after'." in combined
+    assert "never ran" not in combined
 
 
 def test_approve_on_escalation_refuses_with_the_right_flag(home, esc_wf):

@@ -108,7 +108,7 @@ def _gate_pausable(request: Any, config: NodeConfig, node: Any, action: Any) -> 
     ``resume_preflight._resolve_between_nodes_entry`` (execution/resume_preflight.py)
     KIND-for-kind, so the producer never emits a token the resume path bounces.
     The CLI-side refusals stay as belt-and-braces — the workflow can be edited
-    between pause and resume (hash gate + ``--force``).
+    between pause and resume (identity gate + ``--force``).
     """
     if request.kind == GATE_KIND_APPROVAL:
         return True

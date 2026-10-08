@@ -40,6 +40,9 @@ META_KEYS = (
     "start_time",
     "only_node",
     "content_hash",
+    # Task 180 (2.9.0): each top-level step's definition hash + next steps, and the start step — what
+    # resume checks before restoring a step's saved output (`core/workflow_id.step_identity`).
+    "step_identity",
     "inputs",
     # Task 164 (2.6.0): attempt-chain lineage — the source run's execution_id when this run
     # resumed a prior failed attempt, else null. Knowable at run start; the resume loader's

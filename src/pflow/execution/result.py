@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.workflow.status import WorkflowStatus
+
+if TYPE_CHECKING:
+    from pflow.registry import Registry
+    from pflow.runtime.engine.types import CompiledWorkflow
 
 
 @dataclass(frozen=True)
@@ -62,6 +66,21 @@ class ResolvedWorkflow:
     title: str | None = None  # H1 title from .pflow.md (None for dict/content sources)
     description: str | None = None  # H1 prose from .pflow.md (None for dict/content sources)
     diagnostics: tuple[Diagnostic, ...] = ()
+
+
+@dataclass(frozen=True)
+class PreparedWorkflow:
+    """A workflow taken through everything a run does before its trace exists (``WorkflowRunner.preflight``).
+
+    ``params`` are the ones it compiled with: the caller's, plus the workflow-file scope id and the
+    declared input defaults. ``diagnostics`` are the non-error validation diagnostics.
+    """
+
+    resolved: ResolvedWorkflow
+    compiled: CompiledWorkflow
+    params: dict[str, Any]
+    registry: Registry
+    diagnostics: list[Diagnostic]
 
 
 @dataclass

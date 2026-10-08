@@ -322,8 +322,8 @@ def _run_hint(args: list[str]) -> tuple[Any, str]:
 
 
 def test_fix_then_resume_of_a_step_that_never_started(home, tmp_path):
-    """The issue's loop end to end: no side-effect confirmation for a K that never began, and the
-    edited-workflow refusal names the restored step without a re-fire warning."""
+    """The issue's loop end to end: no side-effect confirmation for a K that never began, and —
+    since only K was edited (Task 180) — no --force either: the fix resumes and completes."""
     out = tmp_path / "out.txt"
     wf = tmp_path / "typo.pflow.md"
     wf.write_text(_TYPO_WF.format(out=out), encoding="utf-8")
@@ -336,15 +336,9 @@ def test_fix_then_resume_of_a_step_that_never_started(home, tmp_path):
     assert newer_id != exec_id
 
     wf.write_text(wf.read_text(encoding="utf-8").replace("markdwn", "markdown"), encoding="utf-8")
-    stale = _runner().invoke(cli, ["resume", newer_id])
-    assert stale.exit_code == 1
-    combined = stale.stdout + stale.stderr
-    assert "Resume restores the saved output of 'produce' and resumes at 'save'" in combined
-    assert "If you changed only 'save' or later steps, pass --force to resume." in combined
-    assert "fire again" not in combined
-
-    forced = _runner().invoke(cli, ["resume", newer_id, "--force"])
-    assert forced.exit_code == 0, forced.stderr
+    fixed = _runner().invoke(cli, ["resume", newer_id])
+    assert fixed.exit_code == 0, fixed.stdout + fixed.stderr
+    assert "Workflow changed" not in fixed.stdout + fixed.stderr
     assert out.read_text(encoding="utf-8").strip() == "# hi"
 
 
@@ -749,31 +743,44 @@ def test_attempt_killed_inside_a_batched_host_supersedes_its_source(home, tmp_pa
 # --- Stale-workflow gate (§E step 3) -----------------------------------------
 
 
-def test_stale_hash_refusal_after_edit(home, shell_wf):
+_STEP1_EDIT = ('echo "upstream-value"', 'echo "upstream-value-2"')
+
+
+def test_stale_refusal_names_the_edited_restored_step(home, shell_wf):
     exec_id = _run_to_failure(shell_wf)
-    shell_wf.write_text(shell_wf.read_text(encoding="utf-8") + "\n<!-- edited -->\n", encoding="utf-8")
+    shell_wf.write_text(shell_wf.read_text(encoding="utf-8").replace(*_STEP1_EDIT), encoding="utf-8")
     result = _runner().invoke(cli, ["resume", exec_id, "mode=ok"])
     assert result.exit_code == 1
     combined = result.stdout + result.stderr
-    assert "edited since the original run" in combined
-    assert "Resume restores the saved output of 'step1' and resumes at 'step2'" in combined
+    assert "'step1' was edited. Resume re-runs nothing before 'step2'" in combined
     # step2 (shell) started in the source run, and --force also waives its side-effect
     # confirmation — the stale refusal is the only place the agent can learn that (#690).
     assert "--force also re-runs 'step2' (a shell step that already started" in combined
 
 
-def test_stale_hash_force_override_runs(home, shell_wf):
+def test_an_edit_after_the_resume_point_passes_the_identity_gate(home, shell_wf):
+    """Downstream of K is free to change; what remains is K's own side-effect confirmation."""
     exec_id = _run_to_failure(shell_wf)
-    shell_wf.write_text(shell_wf.read_text(encoding="utf-8") + "\n<!-- edited -->\n", encoding="utf-8")
+    shell_wf.write_text(shell_wf.read_text(encoding="utf-8").replace('echo "done', 'echo "finished'), "utf-8")
+    result = _runner().invoke(cli, ["resume", exec_id, "mode=ok"])
+    assert result.exit_code == 1
+    assert "Resuming re-runs step 'step2' (a shell step)" in result.stdout + result.stderr
+    assert "Workflow changed" not in result.stdout + result.stderr
+
+
+def test_stale_force_override_runs(home, shell_wf):
+    exec_id = _run_to_failure(shell_wf)
+    shell_wf.write_text(shell_wf.read_text(encoding="utf-8").replace(*_STEP1_EDIT), encoding="utf-8")
     result = _runner().invoke(cli, ["resume", exec_id, "mode=ok", "--force"])
     assert result.exit_code == 0, result.stderr
+    assert "done upstream-value step2-ran" in result.stdout  # step1's restored output, not the edit's
 
 
 def test_stale_unverifiable_message_when_hash_absent(tmp_path):
     """A source predating hash tracking (content_hash=None) says so, never claims an edit."""
     from pflow.core.exceptions import ResumeStaleWorkflowError
     from pflow.execution.result import ResolvedWorkflow
-    from pflow.execution.resume_preflight import _check_content_hash
+    from pflow.execution.resume_preflight import _check_workflow_identity
     from pflow.runtime.resume_source import ResumeSource
 
     resolved = ResolvedWorkflow(
@@ -790,10 +797,11 @@ def test_stale_unverifiable_message_when_hash_absent(tmp_path):
         content_hash=None,
     )
     with pytest.raises(ResumeStaleWorkflowError) as exc:
-        _check_content_hash(resolved, source, force=False)
+        _check_workflow_identity(resolved, source, force=False)
     assert "predates" in str(exc.value)
+    assert exc.value.hash_known is False
     # --force bypasses even the unverifiable case.
-    _check_content_hash(resolved, source, force=True)
+    _check_workflow_identity(resolved, source, force=True)
 
 
 # --- Disambiguation (existence precedence, §E step 2) ------------------------
@@ -1031,12 +1039,12 @@ def test_dry_run_json_carries_resume_block(home, shell_wf):
 
 
 def test_dry_run_still_refuses_stale_workflow(home, shell_wf):
-    """Preview mirrors the real resume: a stale workflow refuses without --force even for --dry-run."""
+    """Preview mirrors the real resume: an edited restored step refuses without --force even for --dry-run."""
     exec_id = _run_to_failure(shell_wf)
-    shell_wf.write_text(shell_wf.read_text(encoding="utf-8") + "\n<!-- edited -->\n", encoding="utf-8")
+    shell_wf.write_text(shell_wf.read_text(encoding="utf-8").replace(*_STEP1_EDIT), encoding="utf-8")
     result = _runner().invoke(cli, ["resume", exec_id, "mode=ok", "--dry-run"])
     assert result.exit_code == 1
-    assert "edited since the original run" in (result.stdout + result.stderr)
+    assert "'step1' was edited." in (result.stdout + result.stderr)
 
 
 # --- Incomplete-run between-nodes resolution (Decision 7 / §E step 4) ---------
@@ -1328,8 +1336,8 @@ def test_resume_honors_pflow_execution_id_env(home, shell_wf, monkeypatch):
 
 
 def _write_looping_host(tmp_path: Path) -> tuple[Path, Path]:
-    """A ``workflow`` host looping over a child that drops one contender per round (4 rounds),
-    logging each round's carried input. Returns ``(workflow, rounds log)``."""
+    """A ``seed`` step, then a ``workflow`` host looping over a child that drops one contender per
+    round (4 rounds), logging each round's carried input. Returns ``(workflow, rounds log)``."""
     log = tmp_path / "rounds.jsonl"
     child = tmp_path / "round.pflow.md"
     child.write_text(
@@ -1345,13 +1353,17 @@ def _write_looping_host(tmp_path: Path) -> tuple[Path, Path]:
     )
     wf = tmp_path / "rounds.pflow.md"
     wf.write_text(
-        "# Rounds\n\nElimination rounds over a looping sub-workflow.\n\n## Steps\n\n### rounds\n\nRun the rounds.\n\n"
+        "# Rounds\n\nElimination rounds over a looping sub-workflow.\n\n## Steps\n\n"
+        "### seed\n\nList the contenders.\n\n- type: code\n\n"
+        '```python code\nresult: list = ["a", "b", "c", "d", "e"]\n```\n\n'
+        "### rounds\n\nRun the rounds.\n\n"
         f"- type: workflow\n- workflow: {child.as_posix()}\n"
-        '- inputs:\n    contenders: ["a", "b", "c", "d", "e"]\n'
+        "- inputs:\n    contenders: ${seed.result}\n"
         "- loop:\n    carry:\n      contenders: ${rounds.survivors}\n    while: ${rounds.more}\n    max_iterations: 10\n"
         "- next: winner\n\n### winner\n\nAnnounce the survivor.\n\n- type: shell\n"
         "- env:\n    ROUNDS_SURVIVORS_0: ${rounds.survivors[0]}\n\n"
-        "```shell command\nprintf 'winner %s' \"$ROUNDS_SURVIVORS_0\"\n```\n",
+        "```shell command\nprintf 'winner %s' \"$ROUNDS_SURVIVORS_0\"\n```\n\n"
+        "## Outputs\n\n### message\n\nThe winner line.\n\n- source: ${winner.stdout}\n",
         encoding="utf-8",
     )
     return wf, log
@@ -1377,18 +1389,33 @@ def _kill_looping_host_after_iteration_2(home: Path, wf: Path, log: Path) -> tup
 
 
 def test_stale_refusal_names_a_between_iterations_loop_step_as_the_resume_point(home, tmp_path):
-    """#690: killed between iterations, the loop step CONTINUES (its next iteration) — the stale
-    refusal must not call it restored-and-frozen, and must say --force re-fires it."""
+    """#690: killed between iterations, the loop step CONTINUES (its next iteration) — an edit
+    upstream of it refuses naming the loop step as the resume point, and says --force re-fires it."""
     wf, log = _write_looping_host(tmp_path)
     exec_id, _ = _kill_looping_host_after_iteration_2(home, wf, log)
-    wf.write_text(wf.read_text(encoding="utf-8").replace("Announce the survivor.", "Name the survivor."), "utf-8")
+    wf.write_text(wf.read_text(encoding="utf-8").replace('"e"]', '"e", "f"]'), "utf-8")
 
     refused = _runner().invoke(cli, ["resume", exec_id])
     assert refused.exit_code == 1
     combined = refused.stdout + refused.stderr
-    assert "Resume restores no earlier steps and resumes at 'rounds' (iteration 3)." in combined
+    assert "'seed' was edited. Resume re-runs nothing before 'rounds' (iteration 3)" in combined
     assert "Its iterations before 3 are restored too, so an edit to 'rounds' applies from iteration 3 on." in combined
     assert "--force also re-runs 'rounds' (a workflow step that already started" in combined
+
+
+def test_editing_the_loop_step_resumed_mid_loop_applies_from_that_iteration(home, tmp_path, monkeypatch):
+    """Row 11: the loop step is the resume point, so editing it passes the identity gate; its
+    iterations before 3 stay restored and the edit (a lower cap) applies from iteration 3 on."""
+    wf, log = _write_looping_host(tmp_path)
+    exec_id, rounds = _kill_looping_host_after_iteration_2(home, wf, log)
+    wf.write_text(wf.read_text(encoding="utf-8").replace("max_iterations: 10", "max_iterations: 3"), "utf-8")
+    # `rounds` already started, so its side-effect confirmation still applies — answer it on a "TTY".
+    monkeypatch.setattr("pflow.execution.gate_prompt.can_prompt", lambda oc: True)
+    monkeypatch.setattr("pflow.cli.commands.resume.click.confirm", lambda *a, **k: True)
+    resumed = _runner().invoke(cli, ["resume", exec_id])
+    assert resumed.exit_code == 0, resumed.stdout + resumed.stderr
+    assert [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] == rounds[:3]
+    assert "winner d" in resumed.stdout  # capped at 3: the uncapped run's round 4 never ran
 
 
 def test_killed_between_loop_iterations_continues_with_the_engine_decision_e2e(home, tmp_path):

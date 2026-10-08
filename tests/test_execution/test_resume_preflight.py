@@ -9,8 +9,9 @@ seam smoke that ``preflight_resume`` runs the gates in the CLI's order.
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -113,3 +114,78 @@ class TestPreflightOrderSmoke:
         monkeypatch.setattr(resume_preflight, "_load_source_and_workflow", lambda t, gate_answer: (source, resolved))
         pf = preflight_resume("whatever", force=True)
         assert pf.source.entry_node_id == "after"  # the escalation answer continues at the successor
+
+
+class TestIdentityGate:
+    """``_check_workflow_identity`` on hand-built sources: the fail-closed arms the CLI rows cannot
+    reach with a real trace (a recorded map that lacks a step or holds a malformed entry)."""
+
+    _IR: ClassVar[dict[str, Any]] = {
+        "nodes": [
+            {"id": "a", "type": "shell", "params": {"command": "echo a"}},
+            {"id": "b", "type": "shell", "params": {"command": "echo b"}},
+            {"id": "k", "type": "write-file", "params": {"file_path": "x", "content": "y"}},
+        ],
+        "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "k"}],
+    }
+
+    @classmethod
+    def _source(cls, recorded: dict[str, Any] | None) -> ResumeSource:
+        return ResumeSource(
+            path=Path("trace.json"),
+            workflow_path="wf.pflow.md",
+            execution_id="exec-1",
+            entry_node_id="k",
+            last_completed_node_id=None,
+            events=[{"node_id": "a", "status": "success"}, {"node_id": "b", "status": "success"}],
+            inputs=None,
+            content_hash="whatever",
+            step_identity=recorded,
+        )
+
+    def _check(self, recorded: dict[str, Any] | None) -> None:
+        from pflow.execution.resume_preflight import _check_workflow_identity
+
+        _check_workflow_identity(ResolvedWorkflow(ir=self._IR, source="file"), self._source(recorded), force=False)
+
+    def test_an_unchanged_workflow_passes(self) -> None:
+        from pflow.core.workflow_id import step_identity
+
+        self._check(step_identity(self._IR))  # presence twin of every refusal below
+
+    def test_a_restored_step_missing_from_the_recorded_map_counts_as_edited(self) -> None:
+        from pflow.core.workflow_id import step_identity
+
+        recorded = step_identity(self._IR)
+        del recorded["steps"]["a"]
+        with pytest.raises(ResumeStaleWorkflowError) as exc:
+            self._check(recorded)
+        assert exc.value.changed_steps == ["a"]
+
+    def test_a_malformed_recorded_step_counts_as_edited_never_as_unchanged(self) -> None:
+        from pflow.core.workflow_id import step_identity
+
+        recorded = step_identity(self._IR)
+        recorded["steps"]["b"] = "not-a-step"
+        with pytest.raises(ResumeStaleWorkflowError) as exc:
+            self._check(recorded)
+        assert exc.value.changed_steps == ["b"]
+        assert "'b' was edited." in str(exc.value)
+
+    def test_the_resume_point_itself_is_never_compared(self) -> None:
+        from pflow.core.workflow_id import step_identity
+
+        recorded = step_identity(self._IR)
+        recorded["steps"]["k"] = {"hash": "stale", "next": [["default", "elsewhere"]]}
+        self._check(recorded)
+
+    def test_without_a_recorded_map_the_whole_workflow_hash_decides(self) -> None:
+        from pflow.core.workflow_id import workflow_content_hash
+
+        with pytest.raises(ResumeStaleWorkflowError) as exc:
+            self._check(None)  # content_hash "whatever" != the current digest
+        assert exc.value.changed_steps is None and exc.value.hash_known is True
+        source = dataclasses.replace(self._source(None), content_hash=workflow_content_hash(self._IR))
+        from pflow.execution.resume_preflight import _check_workflow_identity
+
+        _check_workflow_identity(ResolvedWorkflow(ir=self._IR, source="file"), source, force=False)

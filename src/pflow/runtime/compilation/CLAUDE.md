@@ -9,7 +9,7 @@ a `CompiledWorkflow`. Execution belongs to the engine.
 |---|---|
 | Compile entry point | `compiler.py::compile_workflow` |
 | Node construction/configuration | `compiler.py::_create_node_and_config` |
-| Edges or start node | `compiler.py::_wire_nodes`, `_get_start_node` |
+| Edges or start node | `compiler.py::_wire_nodes`, `_get_start_node` (the rule: `core/ir_schema.py::start_node_id`, shared with the static graph and resume) |
 | Compile-time validation | `compile_validation.py::_prepare_compilation` |
 | Input/default/environment resolution | `ir_preparation.py::prepare_inputs` |
 | Dashed MCP server/tool name split | `mcp_resolution.py::_parse_mcp_node_type` |

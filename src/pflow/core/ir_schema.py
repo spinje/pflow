@@ -862,3 +862,16 @@ def normalize_ir(workflow_ir: dict[str, Any]) -> dict[str, Any]:
                 node["params"] = node.pop("parameters")
 
     return workflow_ir
+
+
+def start_node_id(ir: dict[str, Any]) -> str | None:
+    """The step a run of ``ir`` starts at: ``start_node`` when set, else the first node (``None`` if none).
+
+    The one rule shared by the compiler (which step the flow starts at), the static graph (its start
+    annotation) and resume (``workflow_id.step_identity`` records it, so an inserted first step refuses).
+    """
+    start = ir.get("start_node")
+    if isinstance(start, str) and start:
+        return start
+    nodes = ir.get("nodes") or []
+    return str(nodes[0]["id"]) if nodes else None

@@ -23,7 +23,7 @@ from pflow.core.markdown_parser import parse_markdown
 from pflow.core.trace_io import BLOB_SENTINEL, load_trace_file, substitute_refs
 from pflow.core.workflow.graph import build_graph, render_react_flow
 from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
-from pflow.core.workflow_id import workflow_content_hash
+from pflow.core.workflow_id import step_identity, workflow_content_hash
 from pflow.execution import WorkflowRunner
 from pflow.execution.result import RunnerConfig
 from pflow.execution.workflow_resolver import resolve_workflow
@@ -1378,6 +1378,39 @@ def test_producer_stamps_content_hash_equal_to_the_resolved_ir_digest(tmp_path, 
     meta = _read_lines(result.trace._stream_path)[0]
     assert meta["kind"] == "meta"
     assert meta["content_hash"] == workflow_content_hash(resolve_workflow(str(wf)).ir)
+
+
+@pytest.mark.trace_files
+def test_meta_records_the_step_identity_of_every_top_level_step_and_only_those(tmp_path, monkeypatch):
+    """Task 180 (2.9.0): a REAL run's meta line carries ``step_identity`` of the resolved IR — one entry per
+    top-level step (a sub-workflow's own steps never appear: resume seeds top-level steps only) — beside an
+    unchanged ``content_hash``, on the first line of the file."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    child = tmp_path / "child.pflow.md"
+    child.write_text(
+        "# Child\n\nOne step.\n\n## Steps\n\n### inner\n\nInner step.\n\n- type: shell\n- command: echo in\n",
+        encoding="utf-8",
+    )
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        "# WF\n\nA shell step, then a sub-workflow.\n\n## Steps\n\n"
+        "### prep\n\nPrepare.\n\n- type: shell\n- command: echo hi\n\n"
+        "### call-child\n\nDelegate.\n\n- type: workflow\n- workflow: ./child.pflow.md\n",
+        encoding="utf-8",
+    )
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig())
+    assert result.success
+    lines = _read_lines(result.trace._stream_path)
+    assert [ln["node_id"] for ln in lines if ln["kind"] == "event"] == ["prep", "inner", "call-child"]
+    meta = lines[0]
+    assert meta["kind"] == "meta"
+    resolved_ir = resolve_workflow(str(wf)).ir
+    assert meta["step_identity"] == step_identity(resolved_ir)
+    assert meta["step_identity"]["start"] == "prep"
+    assert list(meta["step_identity"]["steps"]) == ["prep", "call-child"]
+    assert meta["step_identity"]["steps"]["prep"]["next"] == [["default", "call-child"]]
+    assert meta["content_hash"] == workflow_content_hash(resolved_ir)
+    assert load_trace_file(result.trace._stream_path)["step_identity"] == meta["step_identity"]
 
 
 @pytest.mark.trace_files

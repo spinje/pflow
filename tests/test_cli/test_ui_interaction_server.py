@@ -940,6 +940,22 @@ class TestRunEndpoint:
                 assert response.status_code == 400, body
         popen.assert_not_called()
 
+    def test_validator_only_error_is_400_and_does_not_spawn(self, tmp_path: Path) -> None:
+        """A template the compiler accepts but the full validator rejects — the spawned run would die
+        before writing its trace, so the pre-flight runs the same validation."""
+        workflow = tmp_path / "validator-only.pflow.md"
+        workflow.write_text(
+            "# Validator Only\n\nOne step.\n\n## Steps\n\n### save\n\nSave.\n\n- type: write-file\n"
+            "- file_path: x.txt\n- content: ${nope}\n",
+            encoding="utf-8",
+        )
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/run", json={"workflow": str(workflow), "inputs": {}})
+
+        assert response.status_code == 400, response.text
+        assert "nope" in json.dumps(response.json()["errors"])
+        popen.assert_not_called()
+
     def test_missing_required_input_is_400_with_diagnostics_and_does_not_spawn(self, tmp_path: Path) -> None:
         # The pre-flight compile (off-loop) catches the silent pre-trace-failure class as a clean 400.
         workflow = _workflow_with_input(tmp_path, required=True)
@@ -1272,6 +1288,34 @@ exit 7
 ```
 """
 
+# An upstream step, then a failing side-effecting one — an edit to `prep` is an edit to a restored step.
+_PREP_THEN_FAILING_WF = """# Prep Then Fail
+
+A completed step, then one that fails.
+
+## Steps
+
+### prep
+
+Prepare.
+
+- type: shell
+
+```shell command
+echo prep
+```
+
+### boom
+
+Always fails.
+
+- type: shell
+
+```shell command
+exit 7
+```
+"""
+
 _TOKEN_RE = re.compile(r"Resume token: (\S+) \(exit 4\)")
 
 # Task 179: an approval-gated loop step — pauses at iteration 1 with `gate_request.iteration` set.
@@ -1440,10 +1484,12 @@ class TestResumeEndpoint:
         popen.assert_not_called()
 
     def test_stale_workflow_is_409_and_does_not_spawn(self, tmp_path: Path, monkeypatch) -> None:
+        """An edit to a step the resume restores (g1, before the gate) refuses with the CLI's text and
+        the structured fields; `hash_known` and the `refusal` literal stay on the 409."""
         self._home(tmp_path, monkeypatch)
         wf = self._paused_wf(tmp_path)
         token = self._pause(wf)
-        wf.write_text(wf.read_text(encoding="utf-8") + "\n<!-- edited since the pause -->\n", encoding="utf-8")
+        wf.write_text(wf.read_text(encoding="utf-8").replace('"g1-value"', '"g1-value-2"'), encoding="utf-8")
         with patch("pflow.ui.server.subprocess.Popen") as popen:
             response = _client().post("/api/resume", json={"run": token, "approve": "yes"})
         assert response.status_code == 409
@@ -1452,27 +1498,88 @@ class TestResumeEndpoint:
         assert body["hash_known"] is True
         # The refusal's own text rides `errors[0]` — the browser's ack panel renders it verbatim (#721).
         (diagnostic,) = body["errors"]
-        assert "restores the saved output of 'g1' and resumes at 'gated'" in diagnostic["message"]
-        assert "pass --force to resume" in diagnostic["suggestions"][0]
+        assert diagnostic["message"].startswith("'g1' was edited. Resume re-runs nothing before 'gated'")
+        assert diagnostic["suggestions"][1].startswith("Pass --force to resume anyway")
+        assert diagnostic["context"]["changed_steps"] == ["g1"]
+        assert diagnostic["context"]["resume_point"] == "gated"
         popen.assert_not_called()
 
+    def test_an_edit_after_the_resume_point_spawns(self, tmp_path: Path, monkeypatch) -> None:
+        self._home(tmp_path, monkeypatch)
+        wf = self._paused_wf(tmp_path)
+        token = self._pause(wf)
+        wf.write_text(
+            wf.read_text(encoding="utf-8") + "\n### after\n\nAfter the gate.\n\n- type: shell\n- command: true\n",
+            encoding="utf-8",
+        )
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": token, "approve": "yes"})
+        assert response.status_code == 200, response.text
+        popen.assert_called_once()
+
     def test_stale_refusal_of_a_started_step_carries_the_re_fire_line(self, tmp_path: Path, monkeypatch) -> None:
-        """An edited workflow whose failed entry already started: the stale body's suggestion says
-        --force re-fires it — the line the browser ack must show before "Resume anyway" (#721)."""
+        """An edited upstream step while the failed entry already started: the stale body's suggestion
+        says --force re-fires it — the line the browser ack must show before "Resume anyway" (#721)."""
         self._home(tmp_path, monkeypatch)
         wf = tmp_path / "failing.pflow.md"
-        wf.write_text(_FAILING_WF, encoding="utf-8")
+        wf.write_text(_PREP_THEN_FAILING_WF, encoding="utf-8")
         failed = CliRunner(mix_stderr=False).invoke(cli, [str(wf)])
         assert failed.exit_code == 1, failed.stderr
-        wf.write_text(_FAILING_WF.replace("exit 7", "exit 0"), encoding="utf-8")
+        wf.write_text(_PREP_THEN_FAILING_WF.replace("echo prep", "echo prep-2"), encoding="utf-8")
         with patch("pflow.ui.server.subprocess.Popen") as popen:
             response = _client().post("/api/resume", json={"run": str(wf)})
         assert response.status_code == 409
         body = response.json()
         assert body["refusal"] == "stale_workflow"
         (diagnostic,) = body["errors"]
-        assert "--force also re-runs 'boom' (a shell step that already started" in diagnostic["suggestions"][0]
+        assert "--force also re-runs 'boom' (a shell step that already started" in diagnostic["suggestions"][1]
         popen.assert_not_called()
+
+    def test_validator_only_error_in_an_edited_workflow_is_400_with_every_error(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Resume no longer needs --force for an edit after the resume point, so an edit that only the
+        full validator rejects reaches the pre-flight — which runs the child's own validation."""
+        self._home(tmp_path, monkeypatch)
+        wf = self._paused_wf(tmp_path)
+        token = self._pause(wf)
+        wf.write_text(
+            wf.read_text(encoding="utf-8")
+            + "\n### after\n\nAfter.\n\n- type: write-file\n- file_path: x.txt\n- content: ${nope} ${nada}\n",
+            encoding="utf-8",
+        )
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": token, "approve": "yes"})
+        assert response.status_code == 400, response.text
+        body = response.json()
+        assert "refusal" not in body
+        messages = " ".join(error["message"] for error in body["errors"])
+        assert "nope" in messages and "nada" in messages
+        popen.assert_not_called()
+
+    def test_relative_sub_workflow_and_new_optional_input_pass_the_preflight(self, tmp_path: Path, monkeypatch) -> None:
+        """The pre-flight validates like the child: a relative `./child.pflow.md` resolves against the
+        workflow file, and a newly declared optional input gets its default — neither is a false 400."""
+        self._home(tmp_path, monkeypatch)
+        wf = self._paused_wf(tmp_path)
+        token = self._pause(wf)
+        (tmp_path / "child.pflow.md").write_text(
+            "# Child\n\nOne step.\n\n## Steps\n\n### inner\n\nInner.\n\n- type: shell\n- command: true\n",
+            encoding="utf-8",
+        )
+        wf.write_text(
+            wf.read_text(encoding="utf-8").replace(
+                "## Steps\n", "## Inputs\n\n### tone\n\nOptional.\n\n- type: string\n- default: calm\n\n## Steps\n"
+            )
+            + "\n### after\n\nAfter.\n\n- type: workflow\n- workflow: ./child.pflow.md\n"
+            + "\n### last\n\nUse the input.\n\n- type: shell\n- env:\n    TONE: ${tone}\n\n"
+            + '```shell command\necho "$TONE"\n```\n',
+            encoding="utf-8",
+        )
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": token, "approve": "yes"})
+        assert response.status_code == 200, response.text
+        popen.assert_called_once()
 
     def test_unanswered_paused_is_409_answer_required_with_the_masked_gate(self, tmp_path: Path, monkeypatch) -> None:
         self._home(tmp_path, monkeypatch)
