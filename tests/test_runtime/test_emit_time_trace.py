@@ -1518,7 +1518,7 @@ def _write(path: Path, text: str) -> Path:
     return path
 
 
-def _batched_host_ir(item_workflows: list[Path], *, parallel: bool = False) -> dict:
+def _batched_host_ir(item_workflows: list[Path], *, parallel: bool = False, max_concurrent: int = 10) -> dict:
     """``host`` runs ``item.wf`` per item (a heterogeneous batch, so one item can be gated)."""
     items = [{"wf": str(wf), "tag": chr(ord("a") + i)} for i, wf in enumerate(item_workflows)]
     return {
@@ -1528,7 +1528,9 @@ def _batched_host_ir(item_workflows: list[Path], *, parallel: bool = False) -> d
                 "id": "host",
                 "type": "workflow",
                 "params": {"workflow": "${item.wf}", "inputs": {"tag": "${item.tag}"}},
-                "batch": {"items": items, "parallel": parallel},
+                "batch": {"items": items, "parallel": True, "max_concurrent": max_concurrent}
+                if parallel
+                else {"items": items, "parallel": False},
             }
         ],
         "edges": [],
@@ -1647,15 +1649,21 @@ def test_nested_hosts_pair_their_starts_under_their_parent_host(tmp_path, monkey
 
 
 @pytest.mark.trace_files
-def test_batched_host_stopped_by_an_item_gate_pairs_its_start_and_keeps_completed_items(tmp_path, monkeypatch):
+@pytest.mark.parametrize("parallel", [False, True])
+def test_batched_host_stopped_by_an_item_gate_pairs_its_start_and_keeps_completed_items(
+    tmp_path, monkeypatch, parallel
+):
     """Item 0's child completes; item 1's child hits an approval gate with no human channel. The host's
-    start is paired on the gate arm, and its event carries item 0 — the batch trace that arm drains."""
+    start is paired on the gate arm, and its event carries item 0 — the batch trace that arm drains.
+    The parallel case runs ONE worker: still the worker path (the gate raises in a pool thread and
+    crosses back through its future), but FIFO, so item 0's trace is captured before item 1 starts."""
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     plain = _write(tmp_path / "fire.pflow.md", _FIRE_CHILD)
     gated = _write(tmp_path / "gated.pflow.md", _GATED_CHILD)
 
-    stopped = _run_ir(_batched_host_ir([plain, gated]))
+    stopped = _run_ir(_batched_host_ir([plain, gated], parallel=parallel, max_concurrent=1))
     assert not stopped.success
+    assert stopped.errors[0].context["parallel_batch"] is parallel  # the gate fired in a pool worker
     lines = _read_lines(stopped.trace._stream_path)
     assert _pairs(lines, "node.start") == [("host", 0, None)]
     _assert_every_start_paired(lines)
@@ -1664,9 +1672,9 @@ def test_batched_host_stopped_by_an_item_gate_pairs_its_start_and_keeps_complete
     assert load_trace_file(stopped.trace._stream_path)["final_status"] == "failed"
 
     # The same batch without the gate records both items: the gated run kept exactly the completed one.
-    ungated = _run_ir(_batched_host_ir([plain, plain]))
+    ungated = _run_ir(_batched_host_ir([plain, plain], parallel=parallel))
     [full_host] = [ln for ln in _read_lines(ungated.trace._stream_path) if ln["kind"] == "event"]
-    assert [item["index"] for item in full_host["batch_items"]] == [0, 1]
+    assert sorted(item["index"] for item in full_host["batch_items"]) == [0, 1]
 
 
 @pytest.mark.trace_files

@@ -1,0 +1,88 @@
+Executing workflow (6 nodes):
+  resolve-cwd... ✓ 0.0s
+  load-lenses... ✓ 0.0s
+  run-codex... 2/2 184.8s
+  run-claude... 0/0 0.0s
+  collect... ✓ 0.0s
+  merge... ✓ 31.0s
+
+✓ Workflow completed in 215.912s
+
+💰 Cost: subscription (3 agent calls) · API-equivalent: $18.1063
+   Total LLM calls: 3
+
+ℹ️ Advisories:
+  ℹ [run-claude] Batch 'run-claude' ran with 0 items (input list was empty).
+    → Expected when iterating a drained queue or a filter that matched nothing. If items were expected, check the node that produces this batch's list.
+
+Workflow trace saved: /Users/andfal/.pflow/debug/workflow-trace-4953d2b5-run-review-lenses-20261008-030105-248449.json
+
+Workflow output (The consolidated review report — the workflow's product. The caller (the gate-runner / deep-review flow) verifies and adjudicates from here.):
+
+# Merged Review Report
+
+## Convergent findings
+
+No defect was independently reported by both lenses.
+
+**Convergent clean coverage:** Both lenses independently reviewed frame ownership and completion pairing, batch and nested workflows, gates, loops, caching, `--only`, resume readers, and the unchanged D1b preflight carve-out. Both reported no concrete regression in those areas.
+
+## Critical
+
+None reported by either lens.
+
+## Warnings
+
+None reported by either lens.
+
+## Suggestions
+
+### Add a streamed parallel child-gate-stop assertion
+
+**Lens:** `review-feature-interactions` · **Provider:** codex
+
+The new stopped-batch test at [tests/test_runtime/test_emit_time_trace.py:1650](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/tests/test_runtime/test_emit_time_trace.py:1650) exercises sequential execution. Existing parallel tests cover approved streaming execution and noninteractive failure status, but do not assert start/completion pairing on the worker-exception path.
+
+Add a controlled case where one item completes before another hits a gate, asserting both the host’s paired ID and preservation of the completed item.
+
+**Lens classification:** A test gap, not an observed implementation defect.
+
+## Verified clean
+
+### `review-silent-failures`
+
+- **Frame ownership:** `begin_node()` reserves once for run-scoped collectors, including non-streaming runs. `descend()` consumes the matching node-and-parent frame and retains fallback reservation on mismatch.
+- **Completion paths:** Normal completion, API warnings, ordinary exceptions, and child gates receive `start_frame`; prep/compile and post-descent failures retain host correlation.
+- **Gate boundaries:** Child gates close host frames and drain completed batch-item traces. Originating approvals reserve nothing; originating escalations already have completion events. Neither duplicates the host.
+- **Batch and nesting:** Sequential and parallel items retain buffered collectors. Empty batches, partial/all failures, compile errors, and child error actions follow existing visible outcome paths without another host reservation.
+- **Loops, `--only`, and resume:** Each executed visit gets a fresh frame; cached/restored records create no false starts. Snapshot exclusion and durable-pause restrictions remain intact.
+- **Trace readers:** Reconstruction, `_dangling_top_level_starts`, `_attempt_consumed_work`, `entry_never_started`, `_resolve_incomplete_entry`, `run_tailer`, and `final_events_by_node` preserve their inspected contracts. Starts stay outside output/status aggregation; matching terminal IDs close them; dangling batched-host starts identify interrupted entries and consume resume attempts.
+- **D1b:** The workflow-type preflight carve-out remains untouched, correctly deferred to P3.
+- **Additional checks:** No production path was found that consumes a completed visit’s stale pending frame or turns a persistence failure into silent success.
+
+The lens reported no concrete silent-failure regression in P1.
+
+### `review-feature-interactions`
+
+- **Abstraction boundaries:** No new storage or execution boundary. `_pending_start` hands a frame from the engine to `WorkflowExecutor.descend()`. Batch descendants retain buffered collectors; the run collector owns the batch host’s frame.
+- **Frame lifecycle:** Reservation follows the owner-thread assertion, including without streaming. Descent matches node and enclosing-parent frame; mismatch and direct-call fallback remain. Every affected completion site passes `start_frame`, and production host visits replace stale pending state before descent. Reference: [src/pflow/runtime/workflow_trace.py:879](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/runtime/workflow_trace.py:879).
+- **Batch × nesting:** Sequential and parallel hosts receive one run-scoped frame; item descendants remain uncorrelated buffered events. Inspected tests cover both modes, nested hosts, and a batched host inside another host.
+- **Gates × nesting × loops:** Child gates close host frames and drain batch traces. Originating approvals precede reservation; originating escalations follow completion and avoid duplicate recording. Existing `test_looping_gated_host_keeps_first_iteration_event` and `test_host_own_escalation_records_host_once` cover these distinctions. Reference: [src/pflow/runtime/engine/engine.py:1665](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/runtime/engine/engine.py:1665).
+- **Failures × in-memory runs:** New tests cover prep failure, pre-descent compilation failure, and post failure after children record, with streaming enabled and disabled. The post-failure case checks that `tree()` retains the child beneath the failed host.
+- **Loops × caching × `--only`:** Executed iterations reserve fresh frames. Cache hits and restored re-records bypass `begin_node`; `--only` uses the shared execution path once. Same-node `loop` plus `batch` remains rejected by compiler and validation.
+- **Resume and readers:** The inspected readers accommodate host starts through ID matching, top-level filtering, and exclusion of start markers from terminal events. New CLI tests cover interrupted batched hosts and interrupted attempts containing restored upstream events.
+- **D1b:** The preflight carve-out remains deliberately unchanged for P1; narrowing belongs to P3.
+- **MCP:** `workflow_execute` streams through the shared runner; `registry_run` disables tracing. Both use the same run-scoped reservation logic.
+
+The lens reported no blocking feature-interaction or silent trace-loss regression in P1.
+
+## Coverage
+
+| Lens | Provider | Scope and method |
+|---|---|---|
+| `review-silent-failures` | codex | Task 180 P1, `bf04dc50..2ebd151a`, excluding `.taskmaster` changes and `uv.lock`; reviewed against §3 D1/D1b and §5 P1. Static review; tests read, not executed. |
+| `review-feature-interactions` | codex | Task 180 P1, `bf04dc50..2ebd151a`, excluding `.taskmaster` changes and `uv.lock`. Static review; no tests executed or files written. |
+
+**Failed-lens coverage gaps:** None supplied; both listed lenses produced reviews.
+
+**Verification limits:** Test execution results, P1 mutation checks, and test/check handoff results remain unverified by these reviews. The parallel child-gate-stop pairing coverage gap is recorded under Suggestions.
