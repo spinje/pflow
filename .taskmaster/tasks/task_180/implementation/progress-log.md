@@ -213,3 +213,9 @@
 - Verified: `make check` exit 0; `make test` **10684 passed, 0 failed** (+1).
 - Deviations/surprises: the fix also corrects the `--force` parenthetical, which named the error-route target as skipped (same root: the `skipped` set).
 - Next: orchestrator commits; completion.
+
+## [2026-10-08] task-orchestrator — completion gate closed
+- Gate: reading battery (9 lenses, codex fan-out, partition in the gate-runner's entry) → 0 Critical / 6 Warning (W1 W2 W4 W5 W6 fixed, W3 skipped pre-existing → follow-up) + S1 (typed `StepIdentityChanges`, applied on my direction) + S2; `review-falsifier` (direct, Opus, on `b1eca16a`) → 0 broken / 47 claim groups held, 1 Suggestion fixed (`a1e85f92`).
+- Verified at `a1e85f92`: `make check` green; `make test-all-local` **10736 passed, 2 skipped**; Task-159 baseline **76/11, identical drift set and identical drift bodies** (diff = timestamps/paths only) → delta zero vs the base. Real surface: 16 rows via `uv run pflow` (P3 entry + falsifier), web refusal rows 3 + 14 driven (P4 entry; shots in the orchestrator scratchpad).
+- Follow-up candidates for the main orchestrator (not built): W3 web panel offers "Resume anyway" when the resume point is gone; replay banner overlaps the refusal panel title at 760×560; screenshot-tool items ×3 (P4 entry); failed `--only` prints an unusable resume hint (pre-existing); a batched host stopped by a child gate resumes as "marked failed but has no failed step" (pre-existing); child-file identity (plan §7); input-reuse advisory (row 9 option c); between-nodes insertion after `last_completed` refuses although it would run (ruling-refinement candidate).
+- Next: spec → done, `create-task-review`, `create-pr`.

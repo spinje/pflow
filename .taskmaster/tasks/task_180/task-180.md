@@ -8,7 +8,10 @@ enough in the trace to tell an edit to the failed step (or anything after it) fr
 step whose saved output is being restored, and refuse only the second.
 
 ## Status
-in progress
+done
+
+## Completed
+2026-10-08
 
 ## Priority
 
