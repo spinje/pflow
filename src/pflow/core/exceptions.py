@@ -1698,10 +1698,10 @@ def _rerouted_lead(node_id: str, now: list[Route], before: list[Route], skipped:
     """The "now continues to" lead: names the new targets resume would skip, else says what the step
     led to before (with the route's action when it is not the default)."""
     before_targets = {target for _, target in before}
-    never_ran = list(dict.fromkeys(t for _, t in now if t not in before_targets and t in skipped))
+    never_ran = [(action, t) for action, t in now if t not in before_targets and t in skipped]
     if never_ran:
         them = "it" if len(never_ran) == 1 else "them"
-        return f"'{node_id}' now continues to {_quoted(never_ran)}, which never ran — resume would skip {them}."
+        return f"'{node_id}' now continues to {_routes_text(never_ran)}, which never ran — resume would skip {them}."
     if not now:
         return f"'{node_id}' now ends the workflow instead of continuing to {_routes_text(before)}."
     was = _routes_text(before) if before else "ending the workflow"

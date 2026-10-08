@@ -617,3 +617,23 @@ def test_a_forced_attempt_records_the_workflow_it_ran_with(home, tmp_path, wf):
     _edit(wf, (_TYPO, _FIX))
     _passes(attempt.group(1))
     assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "# hello"  # not "# hello!"
+
+
+def test_an_added_on_error_route_to_a_new_step_refuses_naming_the_action_without_a_skip_claim(home, tmp_path, wf):
+    """A restored step that GAINS an ``on-error`` route still refuses (it now leads somewhere else), but
+    the new target is only an error path of a step that succeeded — it would not have run in an
+    uninterrupted run either, so the refusal names the action and claims no skip."""
+    exec_id = _fail(wf)
+    _edit(
+        wf,
+        ("- type: shell\n", "- type: shell\n- on-error: alert\n"),
+        (_TYPO, _FIX + "\n- next: end"),
+    )
+    wf.write_text(
+        wf.read_text(encoding="utf-8")
+        + "\n### alert\n\nAlert.\n\n- type: shell\n- next: end\n\n```shell command\necho alert\n```\n",
+        encoding="utf-8",
+    )
+    combined = _refused(exec_id)
+    assert "'produce' now continues to 'shape', 'alert' on error instead of 'shape'." in combined
+    assert "skip" not in combined and "never ran" not in combined

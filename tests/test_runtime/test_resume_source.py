@@ -1162,6 +1162,9 @@ def test_stale_workflow_error_reroute_names_the_routes_action() -> None:
     """An added error route to the same target must not read "continues to 'shape' instead of 'shape'"."""
     err = _stale(rerouted={"produce": ([("default", "shape"), ("error", "shape")], _to("shape"))})
     assert str(err).startswith("'produce' now continues to 'shape', 'shape' on error instead of 'shape'.")
+    # The skipped form names the action too: a router's named route is not its main flow.
+    named = _stale(rerouted={"route": ([("x", "b")], _to("a"))}, skipped=frozenset({"b"}))
+    assert str(named).startswith("'route' now continues to 'b' on 'x', which never ran — resume would skip it.")
 
 
 def test_stale_workflow_error_for_a_missing_resume_point_offers_no_force() -> None:

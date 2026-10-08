@@ -226,9 +226,10 @@ def _identity_changes(
     new_start = (current["start"], recorded.get("start")) if current["start"] != recorded.get("start") else None
     # A new route or start step is SKIPPED when the resume neither restores it nor reaches it from
     # where it continues (a plain between-nodes source continues at its last step's current successors).
+    # An error route is not: the restored step succeeded, so an uninterrupted run would not take it either.
     continues_from = [resumes_at] if resumes_at is not None else _successors(now, source.last_completed_node_id)
     reached = {*restored, *_reachable(now, continues_from)}
-    candidates = {target for now_edges, _ in rerouted.values() for _, target in now_edges}
+    candidates = {target for now_edges, _ in rerouted.values() for action, target in now_edges if action != "error"}
     if new_start is not None:
         candidates.add(new_start[0])
     changes = dataclasses.replace(
