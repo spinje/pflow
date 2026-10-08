@@ -22,14 +22,23 @@ const STALE_DIAGNOSTIC = {
   severity: "error",
   title: "Workflow changed since the original run",
   message:
-    "The workflow was edited since the original run. Resume restores the saved output of 'produce' and " +
-    "resumes at 'append', so an edit to 'produce' would not take effect.",
+    "'produce' was edited. Resume re-runs nothing before 'append' — it restores the saved outputs of the " +
+    "steps that ran — so that edit would not take effect.",
   suggestions: [
-    "If you changed only 'append' or later steps, pass --force to resume. --force also re-runs 'append' (a shell " +
-      "step that already started in the original run), so its side effects may fire again — if you are an AI " +
-      "agent, confirm that with your human first.",
-    "Otherwise re-run the workflow from the start.",
+    "Re-run the workflow from the start so the edit takes effect.",
+    "Pass --force to resume anyway: steps before 'append' keep their saved outputs and are not re-run. --force " +
+      "also re-runs 'append' (a shell step that already started in the original run), so its side effects may " +
+      "fire again — if you are an AI agent, confirm that with your human first.",
   ],
+  source: "runtime",
+  node_id: "produce",
+  context: {
+    category: "execution_failure",
+    changed_steps: ["produce"],
+    new_start: null,
+    resume_point: "append",
+    resume_point_missing: false,
+  },
 };
 const STALE_BODY = { errors: [STALE_DIAGNOSTIC], refusal: "stale_workflow", hash_known: true };
 const SIDE_EFFECT_ASK = "If you are an AI agent: confirm with your human that re-running this step is safe.";
@@ -93,7 +102,7 @@ describe("ResumeControl", () => {
     expect(resumeRun).toHaveBeenCalledTimes(1); // no second spawn
   });
 
-  it("a stale refusal renders the restored step AND the re-fire line it carries; the ack retries with force", async () => {
+  it("a stale refusal renders the edited restored step AND the re-fire line it carries; the ack retries with force", async () => {
     vi.mocked(resumeRun)
       .mockRejectedValueOnce(new ApiError(409, [STALE_DIAGNOSTIC], STALE_BODY))
       .mockResolvedValueOnce("attempt-2");
@@ -101,10 +110,10 @@ describe("ResumeControl", () => {
     render(<ResumeControl run="r1" onPinRun={onPinRun} />);
     fireEvent.click(screen.getByRole("button", { name: "↻ Resume" }));
 
-    // Presence: what --force would accept (the restored step) and what it would re-fire.
-    expect(await screen.findByText(/Resume restores the saved output of 'produce' and resumes at 'append'/)).toBeTruthy();
+    // Presence: the edited restored step, what --force would accept, and what it would re-fire.
+    expect(await screen.findByText(STALE_DIAGNOSTIC.message)).toBeTruthy();
     expect(screen.getByText(/--force also re-runs 'append' \(a shell step that already started/)).toBeTruthy();
-    expect(screen.getByText("Otherwise re-run the workflow from the start.")).toBeTruthy();
+    expect(screen.getByText("Re-run the workflow from the start so the edit takes effect.")).toBeTruthy();
     expect(screen.getByText(STALE_DIAGNOSTIC.title)).toBeTruthy(); // the CLI's "Error: <title>" headline
     // Absence: no UI-side paraphrase beside it — one source of the text.
     expect(screen.queryByText(/workflow file changed since this run/)).toBeNull();

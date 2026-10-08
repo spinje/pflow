@@ -79,12 +79,6 @@ class WorkflowExecutor(BaseNode):
     # default would change their fallback behavior.
     node_id: str = ""
 
-    # The sub-workflow host's reserved correlation frame on the run-scoped collector path.
-    # Declared at class level so the per-run reset (exec) and the descent assignment (_open_child_trace)
-    # are plain assignments — not annotation-redefinitions — and so the engine's getattr read is safe
-    # even when exec never ran (e.g. a parallel-batch original node).
-    _host_frame: Any = None
-
     # Closed top-level schema for workflow nodes. The validator's unknown-param
     # step (Step 8) reads this attribute to reject unknown top-level fields at
     # parse time, matching the closure it applies to every other node via
@@ -376,11 +370,6 @@ class WorkflowExecutor(BaseNode):
         # via getattr at _execute_batch_item). Parallel batch is unaffected
         # because workers deep-copy the node.
         self._child_trace_events: list[dict[str, Any]] | None = None
-        # Reset the host correlation frame too: a run-scoped frame from a
-        # prior sequential-batch iteration must not leak into a later item's host event (nor its
-        # deepcopy in a parallel worker). The deepcopy path always uses a buffered child collector, so this is
-        # inert plain data there; no __deepcopy__ hook needed.
-        self._host_frame = None
 
         # Prep captured a recoverable failure — surface it through the same
         # success=False dict shape exec's own failure paths use. post() then
@@ -445,7 +434,7 @@ class WorkflowExecutor(BaseNode):
         # asserts the owner thread BEFORE pushing, so a routing violation fails loud here — not masked by
         # the except below as a sub-workflow failure.
         if run_collector is not None:
-            self._host_frame = run_collector.descend(self.node_id)
+            run_collector.descend(self.node_id)
 
         try:
             result = engine.run(compiled, child_storage)
@@ -477,11 +466,10 @@ class WorkflowExecutor(BaseNode):
                 fallback_summary=f"Sub-workflow execution failed: {e!s}",
             )
         finally:
-            # Balance the descent push (guarded by _host_frame: pop ONLY if we actually descended — so a
-            # CompilationError before the descent, or the buffered path, never over-pops). The frame is already
-            # captured into self._host_frame for the parent engine; popping just restores the stack depth —
-            # the frame is plain data and stays valid after the pop.
-            if run_collector is not None and self._host_frame is not None:
+            # Balance the descent push. The descend right above this try ran exactly when run_collector is
+            # set; the buffered path never descends, so it never pops. The engine already holds the frame
+            # (begin_node's reservation) — popping only restores the stack depth.
+            if run_collector is not None:
                 run_collector.ascend()
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:

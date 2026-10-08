@@ -114,6 +114,11 @@ author's values, never the engine's keys) carries `lossy` (`_sanitize_for_json`)
 seeds it and a gate whose resume would seed it does not pause. Keep both keys opt-in:
 fixture-parity tests compare key sets.
 
+Step identity (2.9.0): the meta line's `step_identity` is what resume's edit check
+compares. Its recipe, and why it is not the memo `config_hash`, live at
+`core/workflow_id.step_identity`; changing what it hashes follows the rule in the
+`TRACE_FORMAT_VERSION` history comment.
+
 `workflow_trace._iter_workflow_traces` excludes `only_node` traces but must not
 filter `final_status`: snapshot loading and cache analysis own different status
 policies, including analysis fallback to non-successful runs.

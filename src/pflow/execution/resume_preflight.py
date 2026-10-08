@@ -14,9 +14,9 @@ Two deliberate scope boundaries:
   CLI resume runs the workflow moments later (a resumed tail reaching an LLM node needs the
   settings-stored keys in ``os.environ``); pre-flight makes no LLM call, and the server must not be
   coupled to settings I/O through this seam.
-- **No compile.** The server wraps this with the exact compile its spawned child will do (mirroring
-  ``/api/run``'s ``_preflight``); the CLI compiles in-process moments later and surfaces the error
-  interactively — a compile here would just run it twice there.
+- **No compile.** The server wraps this with ``WorkflowRunner.preflight`` — the validate + compile its
+  spawned child will do (as ``/api/run``'s ``_preflight`` does); the CLI compiles in-process moments later
+  and surfaces the error interactively — a compile here would just run it twice there.
 
 Known micro-reorder vs. the pre-extraction CLI: ``_approval_answer``'s contradiction
 UsageError (``--approve no`` + ``--auto-approve <same node>``) now fires AFTER the identity gate

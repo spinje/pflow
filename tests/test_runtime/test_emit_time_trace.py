@@ -427,10 +427,9 @@ def test_host_recorded_after_ascend_with_frame_keeps_children_linked(tmp_path, m
 def test_old_path_sequential_batch_of_subworkflows_stays_nested(tmp_path, mock_llm_client, monkeypatch):
     """OLD-path preservation for a SEQUENTIAL batch (distinct instance-reuse path from parallel).
 
-    A sequential batch reuses the SAME WorkflowExecutor instance across items, so the ``_host_frame``
-    reset at exec() top is load-bearing against leakage. Items take the OLD buffer path (no correlation
-    keys), nesting under ``batch_items[*].events``; the run collector's host stack stays balanced (the OLD
-    path never descends).
+    A sequential batch reuses the SAME WorkflowExecutor instance across items, so no per-item trace state
+    may leak between them. Items take the OLD buffer path (no correlation keys), nesting under
+    ``batch_items[*].events``; the run collector's host stack stays balanced (the OLD path never descends).
     """
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     mock_llm_client.set_response(MODEL, None, {"response": "ok"}, cost_usd=0.01)

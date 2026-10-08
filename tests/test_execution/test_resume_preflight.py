@@ -75,7 +75,7 @@ class TestSideEffectVerdict:
         assert refusal.execution_id == "exec-1"
 
     def test_entry_removed_from_workflow_is_none(self) -> None:
-        # K removed/renamed (hash gate bypassed) — the engine refuses with a K-removed error
+        # K removed/renamed (identity gate bypassed) — the engine refuses with a K-removed error
         # before any node runs, so no side effect fires; nothing to confirm.
         resolved = _resolved([{"id": "other", "type": "shell"}])
         assert _side_effect_refusal(resolved, _source(), force=False) is None
