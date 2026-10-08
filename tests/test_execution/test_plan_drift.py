@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from pflow.core.exceptions import PflowError
 from pflow.execution.formatters.plan_formatter import format_plan_text
 from pflow.execution.plan import build_plan
 from pflow.execution.result import RunnerConfig
@@ -3678,3 +3679,69 @@ def test_cached_gated_node_not_stamped_and_engine_skips_gate(tmp_path) -> None:
     shared2: dict[str, Any] = {"__gate_resolver__": approve, "__memoization_cache__": cache}
     WorkflowEngine().run(compiled, shared2)
     assert prompts == ["gated-cached"], "cache hit must not re-gate"
+
+
+# --- Task 180 D11: one pre-trace step for the dry-run and the web pre-flights -------------------
+
+_PREFLIGHT_WF = """# Preflight
+
+Two inputs, one step.
+
+## Inputs
+
+### name
+
+Required.
+
+- type: string
+
+### tone
+
+Optional.
+
+- type: string
+- default: calm
+
+## Steps
+
+### save
+
+Save it.
+
+- type: write-file
+- file_path: out.txt
+- content: ${name} ${tone}@EXTRA@
+"""
+
+
+@pytest.mark.parametrize(
+    ("extra", "params", "error_type"),
+    [
+        (" ${nope}", {"name": "x"}, "WorkflowValidationError"),  # only the full validator rejects it
+        ("", {}, "SchemaValidationError"),  # missing required input — the compile's input check
+    ],
+    ids=["validator-only", "missing-input"],
+)
+def test_plan_and_preflight_refuse_the_same_pre_trace_error(tmp_path, extra, params, error_type) -> None:
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(_PREFLIGHT_WF.replace("@EXTRA@", extra), encoding="utf-8")
+    with pytest.raises(PflowError) as via_plan:
+        WorkflowRunner().plan(str(wf), params, RunnerConfig())
+    with pytest.raises(PflowError) as via_preflight:
+        WorkflowRunner().preflight(str(wf), params)
+    assert type(via_plan.value).__name__ == type(via_preflight.value).__name__ == error_type
+    assert str(via_plan.value) == str(via_preflight.value)
+
+
+def test_preflight_compiles_with_the_params_the_run_uses_and_never_mutates_the_callers(tmp_path) -> None:
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(_PREFLIGHT_WF.replace("@EXTRA@", ""), encoding="utf-8")
+    params = {"name": "x"}
+    prepared = WorkflowRunner().preflight(str(wf), params)
+    assert params == {"name": "x"}
+    assert prepared.params["tone"] == "calm"  # declared default filled
+    assert prepared.params["_pflow_workflow_file"] == str(wf.resolve())
+    assert not any(str(value).startswith("__pflow_declared_") for value in prepared.params.values())
+    assert list(prepared.compiled.node_configs) == ["save"]
+    plan = WorkflowRunner().plan(str(wf), params, RunnerConfig())
+    assert [entry.node_id for entry in plan.entries] == ["save"]

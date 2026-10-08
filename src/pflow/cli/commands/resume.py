@@ -329,7 +329,7 @@ def resume_run(
 
         gate_answer = _build_gate_answer(approve, choose)
         target, cli_params = _split_target_and_params(args)
-        # Every click-free refusal gate (load ladder → hash gate → between-nodes entry →
+        # Every click-free refusal gate (load ladder → identity gate → between-nodes entry →
         # side-effect verdict) lives in preflight_resume — shared with the UI server's
         # POST /api/resume (Task 176), which must refuse exactly as this command does.
         pf = preflight_resume(target, gate_answer=gate_answer, force=force)

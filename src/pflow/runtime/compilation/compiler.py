@@ -18,6 +18,7 @@ from typing import Any
 
 from pflow.core.diagnostic import Severity
 from pflow.core.exceptions import CompilationError
+from pflow.core.ir_schema import start_node_id
 from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
 from pflow.core.node import Node
 from pflow.core.prompt_cache import CacheBlockIR, CacheChunkIR
@@ -205,24 +206,11 @@ def _wire_nodes(nodes: dict[str, Any], edges: list[dict[str, Any]]) -> None:
 
 
 def _get_start_node(nodes: dict[str, Any], ir_dict: dict[str, Any]) -> Any:
-    """Identify the start node for the flow.
-
-    This function determines which node should be the entry point for the flow.
-    Currently uses the first node in the nodes array as a simple fallback.
-
-    Args:
-        nodes: Dictionary of instantiated nodes
-        ir_dict: The IR dictionary (for future start_node field support)
-
-    Returns:
-        The node to use as flow start
+    """Return the instantiated node the flow starts at (``ir_schema.start_node_id``'s rule).
 
     Raises:
-        CompilationError: If no nodes exist to start from
+        CompilationError: If no nodes exist, or the start step names no node
     """
-    logger.debug("Identifying start node", extra={"phase": "start_detection"})
-
-    # Check if we have any nodes at all
     if not nodes:
         raise CompilationError(
             "Cannot create flow with no nodes",
@@ -230,32 +218,18 @@ def _get_start_node(nodes: dict[str, Any], ir_dict: dict[str, Any]) -> Any:
             suggestion="Add at least one node to the workflow",
         )
 
-    # Future: Check for explicit start_node field
-    start_node_id = ir_dict.get("start_node")
-
-    # Fallback: Use first node in the nodes array
-    if not start_node_id and ir_dict.get("nodes"):
-        start_node_id = ir_dict["nodes"][0]["id"]
-        logger.debug(
-            "Using first node as start (no explicit start_node specified)",
-            extra={"phase": "start_detection", "start_node_id": start_node_id},
-        )
-
-    if not start_node_id or start_node_id not in nodes:
+    start_id = start_node_id(ir_dict)
+    if start_id is None or start_id not in nodes:
         # This shouldn't happen with valid IR, but handle gracefully
         raise CompilationError(
             "Could not determine start node",
             phase="start_detection",
-            details={"start_node_id": start_node_id, "available_nodes": list(nodes.keys())},
+            details={"start_node_id": start_id, "available_nodes": list(nodes.keys())},
             suggestion="Ensure at least one node exists in the workflow",
         )
 
-    logger.debug(
-        "Start node identified",
-        extra={"phase": "start_detection", "start_node_id": start_node_id},
-    )
-
-    return nodes[start_node_id]
+    logger.debug("Start node identified", extra={"phase": "start_detection", "start_node_id": start_id})
+    return nodes[start_id]
 
 
 # ---------------------------------------------------------------------------

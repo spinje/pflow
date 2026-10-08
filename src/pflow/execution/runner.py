@@ -28,9 +28,9 @@ from pflow.core.exceptions import (
 )
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.core.workflow.status import WorkflowStatus
-from pflow.core.workflow_id import synthesize_inline_workflow_id, workflow_content_hash
+from pflow.core.workflow_id import step_identity, synthesize_inline_workflow_id, workflow_content_hash
 
-from .result import ExecutionResult, Plan, ResolvedWorkflow, RunnerConfig, ValidationResult
+from .result import ExecutionResult, Plan, PreparedWorkflow, ResolvedWorkflow, RunnerConfig, ValidationResult
 from .workflow_resolver import resolve_workflow
 
 if TYPE_CHECKING:
@@ -215,6 +215,9 @@ class WorkflowRunner:
                 # Stamped into the trace `meta` line; the replay tailer compares it to the current file's
                 # digest to flag a stale (different-version) run.
                 content_hash=content_hash,
+                # Per-step identity from the same pristine IR — what `pflow resume` checks the steps it
+                # restores against (an edit elsewhere no longer refuses the resume).
+                step_identity=step_identity(resolved.ir),
                 # None for every normal run (mint a UUID); a `pflow ui` ▶ launch forces it so
                 # the browser can pin the overlay to the exact run it spawned.
                 execution_id=config.execution_id,
@@ -521,37 +524,28 @@ class WorkflowRunner:
         _check_resume_entry(resume_source, "plan")
 
         from pflow.execution.plan import build_plan
-        from pflow.registry import Registry
-        from pflow.runtime import compile_workflow
         from pflow.runtime.cache import MemoizationCache
 
-        params = dict(params)
-
-        validation_diags: list[Diagnostic] = []
-        resolved = self._prepare_workflow(workflow, params, validation_diags)
-
+        prepared = self.preflight(workflow, params)
+        resolved, params = prepared.resolved, prepared.params
         cache = MemoizationCache(read_enabled=config.cache_enabled)
-        registry = Registry()
-
-        self._strip_placeholders(params)
-        compiled = compile_workflow(resolved.ir, registry=registry, initial_params=params)
 
         workflow_name = (
             resolved.file_path if resolved.file_path else (str(workflow) if isinstance(workflow, str) else "<workflow>")
         )
         plan = build_plan(
-            compiled,
+            prepared.compiled,
             params,
             cache,
-            registry,
+            prepared.registry,
             workflow_name=workflow_name,
             only_node=config.only_node,
             **_resume_kwargs(resume_source),
             _parent_workflow_file=resolved.file_path,
         )
 
-        if validation_diags:
-            plan = replace(plan, diagnostics=[*plan.diagnostics, *validation_diags])
+        if prepared.diagnostics:
+            plan = replace(plan, diagnostics=[*plan.diagnostics, *prepared.diagnostics])
 
         # Task 159 F3.3: append the dry-run cache nudge when actionable
         # opportunities exist (silent on optimal plans). Per DD#36, --dry-run
@@ -561,6 +555,26 @@ class WorkflowRunner:
             plan = replace(plan, diagnostics=[*plan.diagnostics, cache_nudge])
 
         return plan
+
+    def preflight(self, workflow: str | dict[str, Any] | ResolvedWorkflow, params: dict[str, Any]) -> PreparedWorkflow:
+        """Everything a run does before its trace exists — resolve, fill declared inputs, validate with
+        the full ``WorkflowValidator``, compile — and nothing after it: no trace, no execution.
+
+        ``plan()`` and the web UI's run and resume pre-flights share it, so a workflow that would die
+        before writing its trace (a validator-only error, a missing input, an unknown node type) is
+        refused up front with the run's own error — ``WorkflowValidationError`` carries every error.
+        ``params`` is copied, never mutated.
+        """
+        from pflow.registry import Registry
+        from pflow.runtime import compile_workflow
+
+        params = dict(params)
+        diagnostics: list[Diagnostic] = []
+        resolved = self._prepare_workflow(workflow, params, diagnostics)
+        self._strip_placeholders(params)
+        registry = Registry()
+        compiled = compile_workflow(resolved.ir, registry=registry, initial_params=params)
+        return PreparedWorkflow(resolved, compiled, params, registry, diagnostics)
 
     def _build_cache_nudge(
         self,

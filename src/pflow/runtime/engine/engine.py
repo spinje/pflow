@@ -108,7 +108,7 @@ def _gate_pausable(request: Any, config: NodeConfig, node: Any, action: Any) -> 
     ``resume_preflight._resolve_between_nodes_entry`` (execution/resume_preflight.py)
     KIND-for-kind, so the producer never emits a token the resume path bounces.
     The CLI-side refusals stay as belt-and-braces — the workflow can be edited
-    between pause and resume (hash gate + ``--force``).
+    between pause and resume (identity gate + ``--force``).
     """
     if request.kind == GATE_KIND_APPROVAL:
         return True
@@ -1263,8 +1263,9 @@ class WorkflowEngine:
         resolved_params: dict | None = None
         batch_trace_items: list | None = None
         child_trace_events: list | None = None
-        host_frame: Any = None  # Task 172: a sub-workflow host's reserved correlation (run-scoped)
-        start_frame: Any = None  # Task 173: a leaf's node.start correlation (reserved seq, reused at completion)
+        # begin_node's frame (reserved seq, reused by every completion record); a sub-workflow host's
+        # descend() takes this same frame over, so it is the host's correlation too. None = buffer collector.
+        start_frame: Any = None
         # Task 171: bound BEFORE the try so the gate except arm can pass it to
         # _gate_pausable — an approval gate raises at step 7.5, before step 9
         # assigns it (arguments are evaluated eagerly; an unbound local would
@@ -1359,13 +1360,12 @@ class WorkflowEngine:
             # 8. Progress callback (node_start)
             call_start_callback(config.node_id, shared)
 
-            # 8.5 Task 173 (node.start): flush a live in-flight marker the overlay tailer renders as
-            # `running`, reserving this node's seq for its completion event to reuse. Skipped for
-            # sub-workflow hosts (WorkflowExecutor reserves via descend(); host node.start is deferred
-            # L2) and a no-op unless the collector is run-scoped + streaming. The returned frame MUST
-            # reach every completion record below (step 16 / api-warning / except) so the seq is reused,
-            # never re-taken — keeping on-disk event seqs identical to a run without node.start.
-            if self.trace is not None and config.node_type_name != "WorkflowExecutor":
+            # 8.5 node.start: every node that begins reserves its seq (and, when streaming, writes the
+            # marker the overlay renders `running` and resume reads as "this step began") — sub-workflow
+            # hosts too, batched or not (Task 180); a host's descend() takes this frame over. None for a
+            # buffer collector. The frame MUST reach every completion record below (step 16 / api-warning
+            # / except / the gate arm) so the seq is reused, never re-taken.
+            if self.trace is not None:
                 start_frame = self.trace.begin_node(config.node_id, config.node_type_name)
 
             # 9. Execute: batch or single
@@ -1395,12 +1395,10 @@ class WorkflowEngine:
                 store = NamespacedSharedStore(shared, config.node_id) if config.namespaced else shared
                 action = node._run(store)
 
-                # Read child trace events + host correlation frame from WorkflowExecutor.
-                # `_child_trace_events` is set only on the OLD buffer path (events to embed);
-                # `_host_frame` only on the NEW run-collector path (its reserved seq/parent_id).
+                # Child trace events from WorkflowExecutor — set only on the OLD buffer path (events to
+                # embed); on the run-collector path the children recorded flat under start_frame.
                 if config.node_type_name == "WorkflowExecutor":
                     child_trace_events = getattr(node, "_child_trace_events", None)
-                    host_frame = getattr(node, "_host_frame", None)
 
             # 10. API warning detection. Only run it on a clean-success verdict — see
             # _CLEAN_SUCCESS_ACTIONS. A node that returned an error action (GH #474) or a
@@ -1430,7 +1428,7 @@ class WorkflowEngine:
                     config.node_type_name,
                     node.params,
                     recovered=node.successors.get("error") is not None,
-                    frame=host_frame or start_frame,
+                    frame=start_frame,
                 )
 
             # 10.5 Escalation detection (Task 125). Non-batch, clean-success only:
@@ -1505,7 +1503,7 @@ class WorkflowEngine:
                 self.trace,
                 success=not is_error_action,
                 error=trace_error,
-                frame=host_frame or start_frame,
+                frame=start_frame,
             )
 
             # 17. Completion callback
@@ -1644,32 +1642,27 @@ class WorkflowEngine:
                     if lossy is not None and isinstance(gate_exc, GateNotInteractiveError):
                         gate_exc.lossy_seed = lossy
 
-                # Code-review fix: a sub-workflow HOST's own completion event is
-                # normally recorded at step 16 below, reusing the seq
-                # WorkflowExecutor.exec() reserved via trace.descend(). Re-raising
-                # here means node._run() never returns, so step 16 never runs —
-                # the reserved seq gets no event. If a SIBLING step inside that
-                # sub-workflow already recorded before the gate fired, its event's
-                # parent_id now points at nothing: an in-memory tree() rebuild
-                # (finalize(), or any caller of collect_llm_calls()) raises
-                # "orphan event" — silently losing the run's own trace file (or
-                # crashing a caller that hits tree() directly). Recording the
-                # host's event here closes the reservation. success=True: the
-                # WorkflowExecutor node itself didn't error — the run's
-                # denied/failed verdict is carried independently by gate_outcome
-                # above, not by this per-node flag. Fires once per nesting level
-                # (each ancestor's own _execute_node catches this exception and
-                # checks its own node's _host_frame as it re-raises in turn).
-                # Batch hosts stay None here: batch-item children run under
-                # buffered collectors (descend() is never called on that path).
+                # A sub-workflow HOST's completion event is normally recorded at
+                # step 16, reusing the seq begin_node reserved (and its start line).
+                # Re-raising here means node._run() never returns, so step 16 never
+                # runs — the reserved seq would get no event: a child that already
+                # recorded under it orphans (tree() raises "orphan event", losing the
+                # run's own trace file) and the host's node.start dangles. Recording
+                # the host's event here closes the reservation — batched hosts too,
+                # whose items ran under buffered collectors and never descended
+                # (drain their completed items' trace here, the only drain this path
+                # gets). success=True: the
+                # WorkflowExecutor node itself didn't error — the run's denied/failed
+                # verdict is carried by gate_outcome above, not by this per-node
+                # flag. Fires once per nesting level (each ancestor's own
+                # _execute_node catches this exception as it re-raises in turn).
                 #
                 # Only for a gate from the CHILD (`not originating`): a gate at THIS
-                # level fired either before exec (7.5 approval — this visit reserved
-                # no frame; `_host_frame` still holds a PREVIOUS loop iteration's, and
-                # recording would overwrite that iteration's event, #659) or after
-                # step 16 already consumed the frame (17.7 escalation).
-                host_frame = getattr(node, "_host_frame", None)
-                if host_frame is not None and not originating:
+                # level fired either before begin_node (7.5 approval — start_frame is
+                # None this visit; #659 was recording a previous iteration's frame
+                # here) or after step 16 already consumed start_frame (17.7
+                # escalation — recording again would write the host twice).
+                if start_frame is not None and not originating:
                     record_trace(
                         config.node_id,
                         config.node_type_name,
@@ -1677,12 +1670,12 @@ class WorkflowEngine:
                         start_time,
                         shared_keys_before,
                         last_resolutions,
-                        batch_trace_items,
+                        _collect_batch_trace(shared, config.node_id) if config.batch_config else None,
                         child_trace_events,
                         node.params,
                         self.trace,
                         success=True,
-                        frame=host_frame,
+                        frame=start_frame,
                     )
             raise
 
@@ -1715,7 +1708,7 @@ class WorkflowEngine:
                 node.params,
                 self.trace,
                 error=e,
-                frame=host_frame or start_frame,
+                frame=start_frame,
             )
 
             call_completion_callback(config.node_id, shared, "error", duration_ms, error=e)

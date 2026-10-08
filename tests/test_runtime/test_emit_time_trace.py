@@ -23,7 +23,7 @@ from pflow.core.markdown_parser import parse_markdown
 from pflow.core.trace_io import BLOB_SENTINEL, load_trace_file, substitute_refs
 from pflow.core.workflow.graph import build_graph, render_react_flow
 from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
-from pflow.core.workflow_id import workflow_content_hash
+from pflow.core.workflow_id import step_identity, workflow_content_hash
 from pflow.execution import WorkflowRunner
 from pflow.execution.result import RunnerConfig
 from pflow.execution.workflow_resolver import resolve_workflow
@@ -427,10 +427,9 @@ def test_host_recorded_after_ascend_with_frame_keeps_children_linked(tmp_path, m
 def test_old_path_sequential_batch_of_subworkflows_stays_nested(tmp_path, mock_llm_client, monkeypatch):
     """OLD-path preservation for a SEQUENTIAL batch (distinct instance-reuse path from parallel).
 
-    A sequential batch reuses the SAME WorkflowExecutor instance across items, so the ``_host_frame``
-    reset at exec() top is load-bearing against leakage. Items take the OLD buffer path (no correlation
-    keys), nesting under ``batch_items[*].events``; the run collector's host stack stays balanced (the OLD
-    path never descends).
+    A sequential batch reuses the SAME WorkflowExecutor instance across items, so no per-item trace state
+    may leak between them. Items take the OLD buffer path (no correlation keys), nesting under
+    ``batch_items[*].events``; the run collector's host stack stays balanced (the OLD path never descends).
     """
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     mock_llm_client.set_response(MODEL, None, {"response": "ok"}, cost_usd=0.01)
@@ -1317,8 +1316,8 @@ def test_runtime_event_refs_join_onto_the_static_graph(tmp_path, monkeypatch):
     assert child_ref in runtime_refs, "the producer must emit the nested child's descent path"
     assert child_ref in start_refs, "the nested child's node.start must carry the same descent path (running join)"
     assert child_ref in graph_refs, "the renderer must expose the same descent path (the join target)"
-    # Task 173 P2: the sub-workflow HOST now emits its OWN node.start (via descend) so its group lights
-    # `running` while the body runs — assert it joins (a top-level host → empty ancestor_path).
+    # The sub-workflow HOST emits its OWN node.start (the engine begins it like any step) so its group
+    # lights `running` while the body runs — assert it joins (a top-level host → empty ancestor_path).
     host_ref = ("call-child", (), None)
     assert host_ref in start_refs, "the sub-workflow host must emit a node.start (so its group lights running)"
     assert host_ref in graph_refs, "the host's node.start must join the static graph's host node"
@@ -1378,6 +1377,39 @@ def test_producer_stamps_content_hash_equal_to_the_resolved_ir_digest(tmp_path, 
     meta = _read_lines(result.trace._stream_path)[0]
     assert meta["kind"] == "meta"
     assert meta["content_hash"] == workflow_content_hash(resolve_workflow(str(wf)).ir)
+
+
+@pytest.mark.trace_files
+def test_meta_records_the_step_identity_of_every_top_level_step_and_only_those(tmp_path, monkeypatch):
+    """Task 180 (2.9.0): a REAL run's meta line carries ``step_identity`` of the resolved IR — one entry per
+    top-level step (a sub-workflow's own steps never appear: resume seeds top-level steps only) — beside an
+    unchanged ``content_hash``, on the first line of the file."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    child = tmp_path / "child.pflow.md"
+    child.write_text(
+        "# Child\n\nOne step.\n\n## Steps\n\n### inner\n\nInner step.\n\n- type: shell\n- command: echo in\n",
+        encoding="utf-8",
+    )
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        "# WF\n\nA shell step, then a sub-workflow.\n\n## Steps\n\n"
+        "### prep\n\nPrepare.\n\n- type: shell\n- command: echo hi\n\n"
+        "### call-child\n\nDelegate.\n\n- type: workflow\n- workflow: ./child.pflow.md\n",
+        encoding="utf-8",
+    )
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig())
+    assert result.success
+    lines = _read_lines(result.trace._stream_path)
+    assert [ln["node_id"] for ln in lines if ln["kind"] == "event"] == ["prep", "inner", "call-child"]
+    meta = lines[0]
+    assert meta["kind"] == "meta"
+    resolved_ir = resolve_workflow(str(wf)).ir
+    assert meta["step_identity"] == step_identity(resolved_ir)
+    assert meta["step_identity"]["start"] == "prep"
+    assert list(meta["step_identity"]["steps"]) == ["prep", "call-child"]
+    assert meta["step_identity"]["steps"]["prep"]["next"] == [["default", "call-child"]]
+    assert meta["content_hash"] == workflow_content_hash(resolved_ir)
+    assert load_trace_file(result.trace._stream_path)["step_identity"] == meta["step_identity"]
 
 
 @pytest.mark.trace_files
@@ -1450,7 +1482,7 @@ parallel: true
     result = _run(parent, cache_enabled=False)
     assert result.success, "a worker tripping the no-lock owner-thread assert would fail the run"
     collector = result.trace
-    # seq stays gap-free on the run collector (the batch host is a WorkflowExecutor → no node.start; its
+    # seq stays gap-free on the run collector (the batch host reserves one seq when it begins; its
     # items are inline on the buffer path, contributing no run-collector seq).
     seqs = sorted(e["seq"] for e in collector.events)
     assert seqs == list(range(len(seqs))), f"run-collector seq must stay gap-free: {seqs}"
@@ -1502,3 +1534,308 @@ def test_loop_node_events_carry_their_iteration_and_nothing_else_does(tmp_path, 
     children = [e for e in events if e.get("parent_id") is not None]
     assert [e["node_id"] for e in children] == ["inner"]
     assert "iteration" not in children[0]
+
+
+# --- Task 180: every step that begins writes a paired top-level node.start ----------------------------
+
+_FIRE_CHILD = (
+    "# Fire\n\nEcho a tag.\n\n## Inputs\n\n### tag\n\nThe tag.\n\n- type: string\n\n## Steps\n\n"
+    '### fire\n\nEcho it.\n\n- type: shell\n- env:\n    TAG: ${tag}\n\n```shell command\necho "fired $TAG"\n```\n'
+)
+_GATED_CHILD = _FIRE_CHILD.replace("- type: shell\n", "- type: shell\n- approval: required\n")
+
+
+def _write(path: Path, text: str) -> Path:
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _batched_host_ir(item_workflows: list[Path], *, parallel: bool = False, max_concurrent: int = 10) -> dict:
+    """``host`` runs ``item.wf`` per item (a heterogeneous batch, so one item can be gated)."""
+    items = [{"wf": str(wf), "tag": chr(ord("a") + i)} for i, wf in enumerate(item_workflows)]
+    return {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "host",
+                "type": "workflow",
+                "params": {"workflow": "${item.wf}", "inputs": {"tag": "${item.tag}"}},
+                "batch": {"items": items, "parallel": True, "max_concurrent": max_concurrent}
+                if parallel
+                else {"items": items, "parallel": False},
+            }
+        ],
+        "edges": [],
+    }
+
+
+def _run_ir(ir: dict, *, trace_enabled: bool = True):
+    return WorkflowRunner().run(ir, {}, config=RunnerConfig(cache_enabled=False, trace_enabled=trace_enabled))
+
+
+def _pairs(lines: list[dict], kind: str) -> list[tuple[str, int, int | None]]:
+    return [(ln["node_id"], ln["id"], ln["parent_id"]) for ln in lines if ln["kind"] == kind]
+
+
+def _assert_every_start_paired(lines: list[dict]) -> None:
+    """One ``node.start`` per terminal ``event`` and vice versa, at the same id, node and parent — so no
+    start dangles, no step lacks one, and no step began twice. Event ids are gap-free from 0."""
+    starts, events = _pairs(lines, "node.start"), _pairs(lines, "event")
+    assert sorted(starts) == sorted(events), f"starts {starts} != events {events}"
+    assert sorted(i for _, i, _ in events) == list(range(len(events))), f"event seqs not gap-free: {events}"
+
+
+@pytest.mark.trace_files
+@pytest.mark.parametrize("parallel", [False, True])
+def test_batched_host_writes_one_paired_top_level_start(tmp_path, monkeypatch, parallel):
+    """A batched ``workflow`` step writes exactly one top-level ``node.start`` at its event's id; its
+    items stay on the buffered path (no correlation keys, no start lines of their own)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    child = _write(tmp_path / "fire.pflow.md", _FIRE_CHILD)
+    result = _run_ir(_batched_host_ir([child, child], parallel=parallel))
+    assert result.success
+    lines = _read_lines(result.trace._stream_path)
+
+    assert _pairs(lines, "node.start") == [("host", 0, None)]
+    assert _pairs(lines, "event") == [("host", 0, None)]
+    [host] = [ln for ln in lines if ln["kind"] == "event"]
+    assert sorted(item["index"] for item in host["batch_items"]) == [0, 1]  # parallel: completion order
+    assert not any("id" in item or "parent_id" in item for item in host["batch_items"])
+
+
+@pytest.mark.trace_files
+def test_non_batched_host_writes_exactly_one_start_per_visit(tmp_path, monkeypatch):
+    """The engine begins the host and the host's descend takes that frame over: one start for the
+    host (not one from begin_node plus one from descend), its child nested under it, seqs gap-free."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    child = _write(tmp_path / "fire.pflow.md", _FIRE_CHILD)
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {"id": "host", "type": "workflow", "params": {"workflow": str(child), "inputs": {"tag": "one"}}},
+            {"id": "after", "type": "shell", "params": {"command": "echo after"}},
+        ],
+        "edges": [{"from": "host", "to": "after"}],
+    }
+    result = _run_ir(ir)
+    assert result.success
+    lines = _read_lines(result.trace._stream_path)
+
+    assert _pairs(lines, "node.start") == [("host", 0, None), ("fire", 1, 0), ("after", 2, None)]
+    _assert_every_start_paired(lines)
+
+
+@pytest.mark.trace_files
+def test_looping_host_writes_one_paired_start_per_iteration(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    child = _write(
+        tmp_path / "judge.pflow.md",
+        "# Judge\n\nAnother round?\n\n## Inputs\n\n### i\n\nThe iteration.\n\n- type: integer\n\n"
+        "## Outputs\n\n### more\n\nWhether to continue.\n\n- type: boolean\n- source: ${judge.result}\n\n"
+        "## Steps\n\n### judge\n\nDecide.\n\n- type: code\n- inputs:\n    i: ${i}\n\n"
+        "```python code\ni: int\nresult: bool = i < 3\n```\n",
+    )
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "host",
+                "type": "workflow",
+                "params": {"workflow": str(child), "inputs": {"i": "${__iteration__}"}},
+                "loop": {"while": "${host.more}", "max_iterations": 5},
+            }
+        ],
+        "edges": [],
+    }
+    result = _run_ir(ir)
+    assert result.success
+    lines = _read_lines(result.trace._stream_path)
+
+    host_starts = [(i, p) for n, i, p in _pairs(lines, "node.start") if n == "host"]
+    assert host_starts == [(0, None), (2, None), (4, None)]
+    assert [ln["iteration"] for ln in lines if ln["kind"] == "event" and ln["node_id"] == "host"] == [1, 2, 3]
+    _assert_every_start_paired(lines)
+
+
+@pytest.mark.trace_files
+def test_nested_hosts_pair_their_starts_under_their_parent_host(tmp_path, monkeypatch):
+    """A host inside a host: the inner start nests under the outer host's seq. Regression guard — a
+    non-batched host already wrote its start through descend before Task 180."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    leaf = _write(tmp_path / "fire.pflow.md", _FIRE_CHILD)
+    middle = _write(
+        tmp_path / "middle.pflow.md",
+        f"# Middle\n\nCalls the leaf.\n\n## Steps\n\n### inner\n\nCall it.\n\n- type: workflow\n- workflow: {leaf}\n"
+        "- inputs:\n    tag: deep\n",
+    )
+    ir = {"ir_version": "0.1.0", "nodes": [{"id": "outer", "type": "workflow", "params": {"workflow": str(middle)}}]}
+    result = _run_ir(ir)
+    assert result.success
+    lines = _read_lines(result.trace._stream_path)
+
+    assert _pairs(lines, "node.start") == [("outer", 0, None), ("inner", 1, 0), ("fire", 2, 1)]
+    _assert_every_start_paired(lines)
+    disk = load_trace_file(result.trace._stream_path)
+    assert result.trace.tree() == disk["nodes"]
+    assert disk["nodes_executed"] == 1
+
+
+@pytest.mark.trace_files
+@pytest.mark.parametrize("parallel", [False, True])
+def test_batched_host_stopped_by_an_item_gate_pairs_its_start_and_keeps_completed_items(
+    tmp_path, monkeypatch, parallel
+):
+    """Item 0's child completes; item 1's child hits an approval gate with no human channel. The host's
+    start is paired on the gate arm, and its event carries item 0 — the batch trace that arm drains.
+    The parallel case runs ONE worker: still the worker path (the gate raises in a pool thread and
+    crosses back through its future), but FIFO, so item 0's trace is captured before item 1 starts."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    plain = _write(tmp_path / "fire.pflow.md", _FIRE_CHILD)
+    gated = _write(tmp_path / "gated.pflow.md", _GATED_CHILD)
+
+    stopped = _run_ir(_batched_host_ir([plain, gated], parallel=parallel, max_concurrent=1))
+    assert not stopped.success
+    assert stopped.errors[0].context["parallel_batch"] is parallel  # the gate fired in a pool worker
+    lines = _read_lines(stopped.trace._stream_path)
+    assert _pairs(lines, "node.start") == [("host", 0, None)]
+    _assert_every_start_paired(lines)
+    [host] = [ln for ln in lines if ln["kind"] == "event"]
+    assert [(item["index"], item["status"]) for item in host["batch_items"]] == [(0, "success")]
+    assert load_trace_file(stopped.trace._stream_path)["final_status"] == "failed"
+
+    # The same batch without the gate records both items: the gated run kept exactly the completed one.
+    ungated = _run_ir(_batched_host_ir([plain, plain], parallel=parallel))
+    [full_host] = [ln for ln in _read_lines(ungated.trace._stream_path) if ln["kind"] == "event"]
+    assert sorted(item["index"] for item in full_host["batch_items"]) == [0, 1]
+
+
+@pytest.mark.trace_files
+def test_batched_host_inside_a_host_stopped_by_a_grandchild_gate_pairs_both_starts(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    plain = _write(tmp_path / "fire.pflow.md", _FIRE_CHILD)
+    gated = _write(tmp_path / "gated.pflow.md", _GATED_CHILD)
+    middle = _write(
+        tmp_path / "middle.pflow.md",
+        "# Middle\n\nA batched host.\n\n## Steps\n\n### fan\n\nRun a child per item.\n\n- type: workflow\n"
+        "- workflow: ${item.wf}\n- inputs:\n    tag: ${item.tag}\n- batch:\n"
+        f'    items: [{{"wf": "{plain.as_posix()}", "tag": "a"}}, {{"wf": "{gated.as_posix()}", "tag": "b"}}]\n',
+    )
+    ir = {"ir_version": "0.1.0", "nodes": [{"id": "outer", "type": "workflow", "params": {"workflow": str(middle)}}]}
+    result = _run_ir(ir)
+    assert not result.success
+    lines = _read_lines(result.trace._stream_path)
+
+    assert _pairs(lines, "node.start") == [("outer", 0, None), ("fan", 1, 0)]
+    _assert_every_start_paired(lines)
+    assert lines[-1]["kind"] == "run.complete"
+    disk = load_trace_file(result.trace._stream_path)
+    assert [(n["node_id"], [c["node_id"] for c in n["sub_workflow_events"]]) for n in disk["nodes"]] == [
+        ("outer", ["fan"])
+    ]
+
+
+@pytest.mark.trace_files
+@pytest.mark.parametrize(
+    ("child_name", "error_fragment"),
+    [
+        ("missing.pflow.md", "Sub-workflow file not found"),  # prep error → returned → step 16
+        ("broken.pflow.md", "not found in registry"),  # CompilationError before descend → except arm
+    ],
+)
+def test_host_failing_before_it_descends_pairs_its_start(tmp_path, monkeypatch, child_name, error_fragment):
+    """The child path is computed at run time, so validation cannot reject it up front."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    _write(tmp_path / "broken.pflow.md", "# Broken\n\nUnknown type.\n\n## Steps\n\n### x\n\nNope.\n\n- type: no-such\n")
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {"id": "pick", "type": "code", "params": {"code": f"result: str = {str(tmp_path / child_name)!r}"}},
+            {"id": "host", "type": "workflow", "params": {"workflow": "${pick.result}"}},
+        ],
+        "edges": [{"from": "pick", "to": "host"}],
+    }
+    result = _run_ir(ir)
+    assert not result.success
+    lines = _read_lines(result.trace._stream_path)
+
+    assert _pairs(lines, "node.start") == [("pick", 0, None), ("host", 1, None)]
+    _assert_every_start_paired(lines)
+    [host] = [ln for ln in lines if ln["kind"] == "event" and ln["node_id"] == "host"]
+    assert host["status"] == "failed" and error_fragment in host["error"]
+
+
+@pytest.mark.trace_files
+@pytest.mark.parametrize("trace_enabled", [True, False])
+def test_host_whose_post_raises_after_descend_keeps_its_child_linked(tmp_path, monkeypatch, trace_enabled):
+    """The host fails in ``post`` after its child recorded under it: the except arm reuses the frame the
+    host began with, so the child is not orphaned — streamed or in memory (``--no-trace``), where the
+    seq is reserved too but nothing reaches disk."""
+    from pflow.core.exceptions import PflowError
+    from pflow.runtime.workflow_executor import WorkflowExecutor
+
+    def _raise(*_args, **_kwargs):
+        raise PflowError("exposing child outputs failed")
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(WorkflowExecutor, "_expose_child_outputs", _raise)
+    child = _write(tmp_path / "fire.pflow.md", _FIRE_CHILD)
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [{"id": "host", "type": "workflow", "params": {"workflow": str(child), "inputs": {"tag": "x"}}}],
+    }
+    result = _run_ir(ir, trace_enabled=trace_enabled)
+    assert not result.success
+    collector = result.trace
+
+    assert [(e["node_id"], e["id"], e["parent_id"], e["status"]) for e in collector.events] == [
+        ("fire", 1, 0, "success"),
+        ("host", 0, None, "failed"),
+    ]
+    [host] = collector.tree()
+    assert [c["node_id"] for c in host["sub_workflow_events"]] == ["fire"]
+    debug_files = list((tmp_path / ".pflow" / "debug").glob("*")) if (tmp_path / ".pflow" / "debug").exists() else []
+    if trace_enabled:
+        assert len(debug_files) == 1
+        _assert_every_start_paired(_read_lines(debug_files[0]))
+    else:
+        assert debug_files == [], "an in-memory run writes no trace file, so no node.start line"
+
+
+@pytest.mark.trace_files
+def test_descend_takes_over_only_the_frame_begun_for_that_host(tmp_path, monkeypatch):
+    """Collector contract: ``descend`` reuses the pending ``begin_node`` frame only for the same node at
+    the same nesting; otherwise (and with nothing pending) it reserves a fresh seq and writes its own
+    start. A buffer collector's ``begin_node`` reserves nothing."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    c = WorkflowTraceCollector("wf", workflow_path="wf.pflow.md", is_run_scoped=True, stream_to_disk=True)
+    c.start_streaming()
+
+    begun = c.begin_node("host", "WorkflowExecutor")  # seq 0
+    assert c.descend("host") is begun  # taken over: no new seq, no second start
+    c.ascend()
+    c.begin_node("a", "ShellNode")  # seq 1, pending for "a"
+    other = c.descend("host")  # different node → fresh seq 2 + its own start
+    c.ascend()
+    nested = c.descend("outer")  # nothing pending → fresh seq 3
+    c.begin_node("host", "WorkflowExecutor")  # seq 4 under outer
+    c.ascend()
+    top = c.descend("host")  # same node, different parent → fresh seq 5
+    c.ascend()
+    path = c.finalize()
+
+    assert (begun.seq, other.seq, nested.seq, top.seq) == (0, 2, 3, 5)
+    assert (top.parent_id, top.ancestor_path) == (None, [])
+    assert _pairs(_read_lines(path), "node.start") == [
+        ("host", 0, None),
+        ("a", 1, None),
+        ("host", 2, None),
+        ("outer", 3, None),
+        ("host", 4, 3),
+        ("host", 5, None),
+    ]
+
+    buffer = WorkflowTraceCollector("child")
+    assert buffer.begin_node("x", "ShellNode") is None
+    assert buffer._seq_counter == 0
+    in_memory = WorkflowTraceCollector("wf", is_run_scoped=True)
+    assert in_memory.begin_node("x", "ShellNode").seq == 0  # reserved in memory, nothing streamed

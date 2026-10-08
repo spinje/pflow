@@ -203,7 +203,7 @@ def test_resume_after_entry_node_removed_is_a_typed_refusal(tmp_path, flaky_step
     wf = _write_three_step_workflow(tmp_path)
     _, source = _fail_then_load(wf, flaky_step2)
 
-    # Edit the workflow: rename K. (The CLI's content-hash gate would refuse
+    # Edit the workflow: rename K. (The CLI's identity gate would refuse
     # first; this pins the engine's own guard for --force / library callers.)
     wf.write_text(wf.read_text(encoding="utf-8").replace("step2", "step2-renamed"), encoding="utf-8")
     result = _resume(wf, source)

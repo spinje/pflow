@@ -45,12 +45,10 @@ Keep these non-obvious contracts:
 - `/api/version` fingerprints source paths and mtimes, falling back to entry-file paths when
   graph building fails so polling survives invalid edits. `/api/source` derives its file set
   from the full GraphModel, not representative/truncated RFGraph nodes.
-- Run and resume handlers do blocking resolution/compile preflight through `asyncio.to_thread`,
-  then use the single detached `Popen` seam. The server observes the child trace; it does not
-  host execution or infer success from the spawn. A UI launch forces the minted execution ID
-  through `PFLOW_EXECUTION_ID` so the browser pins the exact run.
-  Known limit: a forced resume can still die before trace creation when an edit introduces a
-  validator-only error; compile preflight does not run the full validator.
+- Run and resume handlers run the child's pre-trace steps (`WorkflowRunner.preflight`: validate +
+  compile) through `asyncio.to_thread`, then use the single detached `Popen` seam. The server
+  observes the child trace; it does not host execution or infer success from the spawn. A UI
+  launch forces the minted execution ID through `PFLOW_EXECUTION_ID` so the browser pins the exact run.
 - Runtime data joins the current graph through structural refs (`node_id`, `ancestor_path`,
   and `port`). React Flow flat IDs are positional render IDs and may change after rebuilds.
 - Run-input and gate responses are server-redacted. Do not move secret masking exclusively to

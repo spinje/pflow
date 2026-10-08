@@ -1002,22 +1002,20 @@ async def visibility(request: Request) -> Response:
 
 
 def _preflight(workflow_key: str, tokens: tuple[str, ...]) -> None:
-    """Compile EXACTLY what the spawn will run — off the event loop (run via ``asyncio.to_thread``).
+    """Run EXACTLY the pre-trace steps the spawn will — off the event loop (run via ``asyncio.to_thread``).
 
     The whole point: convert the silent *pre-trace-failure class* (a run that dies before it writes its
-    ``meta`` line shows nothing on the overlay) into a clean ``400`` at the endpoint. ``compile_workflow``
-    runs ``prepare_inputs`` internally (the same 5-tier input resolution + missing-required check the real
-    run does) AND instantiates every node, so a missing required input, an unknown node type, or a bad
-    param all surface here. We don't reuse the displayed tab's graph — an auto-update may have edited the
-    file, or an agent may POST directly — so we re-resolve from disk. A fresh ``Registry`` per compile is
-    the project rule (``runner`` does the same). Raises ``PflowError`` on any pre-trace failure; the
-    handler maps it to ``400`` with diagnostics."""
+    ``meta`` line shows nothing on the overlay) into a clean ``400`` at the endpoint. ``WorkflowRunner.preflight``
+    is the run's own pre-trace step (full validator, input defaults, compile), so a validator error, a
+    missing required input, an unknown node type, or a bad param all surface here. We don't reuse the
+    displayed tab's graph — an auto-update may have edited the file, or an agent may POST directly — so we
+    re-resolve from disk. Raises ``PflowError`` on any pre-trace failure; the handler maps it to ``400``
+    with diagnostics."""
     from pflow.cli.param_parsing import parse_workflow_params
-    from pflow.runtime import compile_workflow
+    from pflow.execution.runner import WorkflowRunner
 
-    resolved = resolve_workflow(workflow_key)
     typed_params = parse_workflow_params(tokens)  # infer_type per token — channel A (form == CLI)
-    compile_workflow(resolved.ir, Registry(), initial_params=typed_params)
+    WorkflowRunner().preflight(resolve_workflow(workflow_key), typed_params)
 
 
 async def run(request: Request) -> Response:
@@ -1230,14 +1228,10 @@ async def resume(request: Request) -> Response:
 
     **No silent no-ops** (the task's hard rule): the spawn is detached with every stream DEVNULL'd, so
     every refusal a spawned non-TTY resume could hit MUST be caught here first — ``preflight_resume``
-    (the CLI's exact refusal gates, `execution/resume_preflight.py`) plus the very compile the child
-    will run (mirroring ``/api/run``'s ``_preflight``: without it, a force-resume of an edited-broken
-    workflow dies BEFORE writing its meta line and the pinned id never materializes — a misleading
-    `run-not-found` instead of a clean 400). Known residual (deep-review 2026-07-12, shared with
-    ``/api/run``'s compile-only ``_preflight`` by the same Task-175 decision): the child also runs the
-    full ``WorkflowValidator`` pre-meta, so a ``--force`` resume of a workflow edited to carry a
-    validator-only ERROR (one ``compile_workflow`` doesn't raise) still dies silently; without
-    ``force`` the content-hash gate makes this unreachable. A side-effecting entry's verdict is RAISED here — the
+    (the CLI's exact refusal gates, `execution/resume_preflight.py`) plus the child's own pre-trace
+    steps (``WorkflowRunner.preflight``, as ``/api/run``'s ``_preflight``: without it, a resume of an
+    edited-broken workflow dies BEFORE writing its meta line and the pinned id never materializes — a
+    misleading `run-not-found` instead of a clean 400). A side-effecting entry's verdict is RAISED here — the
     non-TTY spawn would refuse, so we do; the client retries with ``force: true`` only after an
     explicit ack dialog (the server NEVER adds ``--force`` itself). Shape rules + the two deliberate
     server-stricter asymmetries: see ``_parse_resume_body``.
@@ -1263,16 +1257,16 @@ async def resume(request: Request) -> Response:
 
     def _resume_preflight() -> None:
         from pflow.execution.resume_preflight import preflight_resume
-        from pflow.runtime import compile_workflow
+        from pflow.execution.runner import WorkflowRunner
 
         pf = preflight_resume(run_target, gate_answer=gate_answer, force=force)
         if pf.side_effect_refusal is not None:
             raise pf.side_effect_refusal  # a non-TTY spawn would refuse — so we do
-        # The exact compile the spawned child will do (CompilationError → the 400 arm).
-        compile_workflow(pf.resolved.ir, Registry(), initial_params=dict(pf.source.inputs or {}))
+        # The spawned child's own pre-trace steps (validation/compile errors → the 400 arm).
+        WorkflowRunner().preflight(pf.resolved, dict(pf.source.inputs or {}))
 
     try:
-        await asyncio.to_thread(_resume_preflight)  # blocking trace read + compile — off the hub loop
+        await asyncio.to_thread(_resume_preflight)  # blocking trace read + validate/compile — off the hub loop
     except PflowError as exc:
         return _resume_refusal_response(exc)
 

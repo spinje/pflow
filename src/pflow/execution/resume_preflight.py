@@ -14,12 +14,12 @@ Two deliberate scope boundaries:
   CLI resume runs the workflow moments later (a resumed tail reaching an LLM node needs the
   settings-stored keys in ``os.environ``); pre-flight makes no LLM call, and the server must not be
   coupled to settings I/O through this seam.
-- **No compile.** The server wraps this with the exact compile its spawned child will do (mirroring
-  ``/api/run``'s ``_preflight``); the CLI compiles in-process moments later and surfaces the error
-  interactively — a compile here would just run it twice there.
+- **No compile.** The server wraps this with ``WorkflowRunner.preflight`` — the validate + compile its
+  spawned child will do (as ``/api/run``'s ``_preflight`` does); the CLI compiles in-process moments later
+  and surfaces the error interactively — a compile here would just run it twice there.
 
 Known micro-reorder vs. the pre-extraction CLI: ``_approval_answer``'s contradiction
-UsageError (``--approve no`` + ``--auto-approve <same node>``) now fires AFTER the content-hash gate
+UsageError (``--approve no`` + ``--auto-approve <same node>``) now fires AFTER the identity gate
 instead of before (the CLI primes delivery off the returned source). Both outcomes are refusals and
 no test pins the old order; do not contort the seam to preserve it.
 """
@@ -35,6 +35,7 @@ from pflow.core.exceptions import (
     ResumeSideEffectConfirmationError,
     ResumeSourceMissingError,
     ResumeStaleWorkflowError,
+    StepIdentityChanges,
     WorkflowNotFoundError,
 )
 
@@ -75,19 +76,20 @@ def preflight_resume(
 ) -> ResumePreflight:
     """Everything a resume refuses on, in CLI order, with zero click.
 
-    ``load_resume_source`` ladder → content-hash stale gate → between-nodes entry resolution
+    ``load_resume_source`` ladder → workflow-identity gate → between-nodes entry resolution
     (``entry_node_id is None``) → side-effect verdict (constructed, not raised). Raises
     ``ResumeSourceError`` subclasses / ``ResumeStaleWorkflowError`` / ``ResumeNotResumableError``
     exactly as the CLI does today.
     """
     source, resolved = _load_source_and_workflow(target, gate_answer=gate_answer)
-    # The stale-workflow gate applies to --dry-run too (preview mirrors what a
-    # real resume would do), but the side-effect confirmation does NOT: a
-    # dry-run never runs K, so nothing can fire.
-    _check_content_hash(resolved, source, force=force)
+    # The identity gate applies to --dry-run too (preview mirrors what a real
+    # resume would do), but the side-effect confirmation does NOT: a dry-run
+    # never runs K, so nothing can fire.
+    denying = gate_answer is not None and gate_answer.get("approve") is False
+    _check_workflow_identity(resolved, source, force=force, denying=denying)
     # A between-nodes source — a killed-between-nodes incomplete run (Decision 7)
     # or a paused escalation (Task 171) — has no entry yet: resolve the
-    # unambiguous successor against the (hash-checked) workflow.
+    # unambiguous successor against the (identity-checked) workflow.
     if source.entry_node_id is None:
         source = _resolve_between_nodes_entry(resolved, source)
     return ResumePreflight(
@@ -158,38 +160,152 @@ def _load_source_and_workflow(
     return load_resume_source(workflow_path=workflow_path_id(resolved), gate_answer=gate_answer), resolved
 
 
-def _check_content_hash(resolved: ResolvedWorkflow, source: ResumeSource, *, force: bool) -> None:
-    """Refuse a resume whose workflow changed since the failed run, unless --force (§E step 3).
+def _check_workflow_identity(
+    resolved: ResolvedWorkflow, source: ResumeSource, *, force: bool, denying: bool = False
+) -> None:
+    """Refuse a resume that an edit since the original run would make wrong, unless --force (§E step 3).
 
-    The refusal names what --force would accept: the restored steps, where resume continues, and —
-    when --force would also waive the side-effect confirmation — that the step re-runs. A
-    between-nodes source has no entry yet (its successor is resolved after this gate) unless its
-    last step loops: that step continues (its next iteration), so it is named as the resume point.
+    Resume restores the saved outputs of the steps that ran before its resume point, so it refuses
+    when one of them was edited (its definition minus prose), removed, or now leads somewhere else,
+    when the workflow now starts at a different step, when the resume point itself is gone, or when a
+    paused approval step being approved was edited since its preview (the answer covers what the human
+    saw; a denial runs nothing, so ``denying`` skips that one check).
+    Everything at or after the resume point is free to change. A trace without per-step identity
+    (recorded by an older pflow) falls back to the whole-workflow hash — any edit refuses.
     """
     if force:
         return
-    from pflow.core.workflow_id import workflow_content_hash
+    # Where the resume continues: the entry, or a between-nodes loop step's next iteration. A plain
+    # between-nodes source has no resume point yet (its successor is resolved after this gate).
+    resumes_at = source.entry_node_id
+    if resumes_at is None and _node_has_loop(resolved.ir, source.last_completed_node_id):
+        resumes_at = source.last_completed_node_id
+    if source.step_identity is None:
+        from pflow.core.workflow_id import workflow_content_hash
+
+        if workflow_content_hash(resolved.ir) == source.content_hash:
+            return
+        changes = None
+    else:
+        changes = _identity_changes(resolved.ir, source, resumes_at, denying=denying)
+        if not changes:
+            return
+    rerun = _side_effect_refusal(resolved, source, force=False) if resumes_at is not None else None
+    raise ResumeStaleWorkflowError(
+        hash_known=source.step_identity is not None or source.content_hash is not None,
+        entry_node_id=resumes_at,
+        entry_iteration=source.entry_iteration,
+        after_node_id=source.last_completed_node_id,
+        rerun_node_type=rerun.node_type if rerun is not None else None,
+        execution_id=source.execution_id,
+        trace_path=str(source.path),
+        changes=changes,
+    )
+
+
+def _identity_changes(
+    ir: dict[str, Any], source: ResumeSource, resumes_at: str | None, *, denying: bool = False
+) -> StepIdentityChanges | None:
+    """What changed among the steps the resume depends on (``None`` = nothing). Fail-closed: a
+    checked step the recorded map lacks counts as edited."""
+    from pflow.core.workflow_id import step_identity
     from pflow.runtime.resume_source import restored_node_ids
 
-    current_hash = workflow_content_hash(resolved.ir)
-    # A missing source hash (a run predating Task-173 hash tracking) is treated as
-    # a mismatch — we cannot prove the workflow is unchanged — but the error says
-    # exactly that, never claiming an edit that may not have happened.
-    if current_hash != source.content_hash:
-        resumes_at = source.entry_node_id
-        if resumes_at is None and _node_has_loop(resolved.ir, source.last_completed_node_id):
-            resumes_at = source.last_completed_node_id
-        rerun = _side_effect_refusal(resolved, source, force=False) if resumes_at is not None else None
-        raise ResumeStaleWorkflowError(
-            hash_known=source.content_hash is not None,
-            restored=[node_id for node_id in restored_node_ids(source) if node_id != resumes_at],
-            entry_node_id=resumes_at,
-            entry_iteration=source.entry_iteration,
-            after_node_id=source.last_completed_node_id,
-            rerun_node_type=rerun.node_type if rerun is not None else None,
-            execution_id=source.execution_id,
-            trace_path=str(source.path),
-        )
+    recorded: dict[str, Any] = source.step_identity or {}
+    current = step_identity(ir)
+    now, then = current["steps"], recorded["steps"]
+    resume_point = resumes_at or source.last_completed_node_id
+    # Checked first, alone: a renamed resume point must not be blamed on its predecessor's `next`.
+    if resume_point is not None and resume_point not in now:
+        return StepIdentityChanges(resume_point_missing=True)
+    restored = [node_id for node_id in restored_node_ids(source) if node_id != resumes_at]
+    # A paused approval step is the resume point, yet checked when approved: `--approve yes` is consent
+    # to the version the human saw. Only its definition — where it leads is downstream of the resume.
+    approval = source.paused_node_id if source.paused_node_id == source.entry_node_id and not denying else None
+    rerouted = {node_id: edges for node_id in restored if (edges := _rerouted(now, then, node_id))}
+    new_start = (current["start"], recorded.get("start")) if current["start"] != recorded.get("start") else None
+    # A new route or start step is SKIPPED when the resume neither restores it nor reaches it from
+    # where it continues (a plain between-nodes source continues at its last step's current successors).
+    # An error route is not: the restored step succeeded, so an uninterrupted run would not take it either.
+    continues_from = [resumes_at] if resumes_at is not None else _successors(now, source.last_completed_node_id)
+    reached = {*restored, *_reachable(now, continues_from)}
+    candidates = {target for now_edges, _ in rerouted.values() for action, target in now_edges if action != "error"}
+    if new_start is not None:
+        candidates.add(new_start[0])
+    changes = dataclasses.replace(
+        _definition_changes(now, then, restored, approval),
+        rerouted=rerouted,
+        new_start=new_start,
+        skipped=frozenset(candidates - reached),
+    )
+    return changes or None
+
+
+def _successors(steps: dict[str, Any], node_id: str | None) -> list[str]:
+    step = steps.get(node_id) if node_id is not None else None
+    return [target for _, target in step["next"]] if step is not None else []
+
+
+def _reachable(steps: dict[str, Any], starts: list[str]) -> set[str]:
+    """Every step the current graph reaches from ``starts`` (inclusive), over any route."""
+    seen: set[str] = set()
+    frontier = list(starts)
+    while frontier:
+        node_id = frontier.pop()
+        if node_id not in seen:
+            seen.add(node_id)
+            frontier.extend(_successors(steps, node_id))
+    return seen
+
+
+def _definition_changes(
+    now: dict[str, Any], then: dict[str, Any], restored: list[str], approval: str | None
+) -> StepIdentityChanges:
+    """Restored steps removed or edited, and an edited paused approval step."""
+
+    def edited(node_id: str) -> bool:
+        step = then.get(node_id)
+        return not isinstance(step, dict) or step.get("hash") != now[node_id]["hash"]
+
+    edits = tuple(node_id for node_id in restored if node_id in now and edited(node_id))
+    return StepIdentityChanges(
+        removed=tuple(node_id for node_id in restored if node_id not in now),
+        edited=edits,
+        cache_edited=frozenset(n for n in edits if _chunk_content_changed(then.get(n), now[n])),
+        approved_edited=approval if approval is not None and edited(approval) else None,
+    )
+
+
+def _chunk_content_changed(recorded: Any, current: dict[str, Any]) -> bool:
+    """Whether a ``## Cache`` chunk the step uses both then and now changed its content (a different
+    selection of chunks is an edit to the step, not to a chunk)."""
+    before = recorded.get("cache") if isinstance(recorded, dict) else None
+    after = current.get("cache")
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return False
+    return any(name in before and before[name] != digest for name, digest in after.items())
+
+
+def _rerouted(
+    now: dict[str, Any], then: dict[str, Any], node_id: str
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]] | None:
+    """``(now, recorded)`` ``(action, target)`` routes when ``node_id``'s recorded ``next`` differs, else
+    ``None`` (also when it is gone or unrecorded — those count as removed / edited)."""
+    step = then.get(node_id)
+    if node_id not in now or not isinstance(step, dict) or step.get("next") == now[node_id]["next"]:
+        return None
+    return _routes(now[node_id]["next"]), _routes(step.get("next"))
+
+
+def _routes(next_steps: Any) -> list[tuple[str, str]]:
+    """The well-formed ``(action, target)`` pairs of a recorded/current ``next`` list, in order."""
+    if not isinstance(next_steps, list):
+        return []
+    return [
+        (pair[0], pair[1])
+        for pair in next_steps
+        if isinstance(pair, list) and len(pair) == 2 and all(isinstance(part, str) for part in pair)
+    ]
 
 
 def _node_registry_type(ir: dict[str, Any], node_id: str | None) -> str | None:
@@ -223,19 +339,12 @@ def _single_default_successor(ir: dict[str, Any], node_id: str) -> str | None:
     Named-action and ``error`` edges are not default routes (they encode branches /
     failure handling, not the success fall-through the killed-between-nodes case
     needs). Zero default edges (terminal / conditional-only) or more than one →
-    None (ambiguous). ``from``/``to`` and ``source``/``target`` edge spellings are
-    both accepted (the compiler supports both).
+    None (ambiguous).
     """
-    targets: list[str] = []
-    for edge in ir.get("edges", []):
-        source = edge.get("from") or edge.get("source")
-        if source != node_id or edge.get("action", "default") != "default":
-            continue
-        target = edge.get("to") or edge.get("target")
-        if isinstance(target, str):
-            targets.append(target)
-    unique = list(dict.fromkeys(targets))
-    return unique[0] if len(unique) == 1 else None
+    from pflow.core.ir_schema import outgoing_edges
+
+    targets = {target for action, target in outgoing_edges(ir).get(node_id, []) if action == "default"}
+    return targets.pop() if len(targets) == 1 else None
 
 
 def _resolve_between_nodes_entry(resolved: ResolvedWorkflow, source: ResumeSource) -> ResumeSource:
@@ -256,7 +365,8 @@ def _resolve_between_nodes_entry(resolved: ResolvedWorkflow, source: ResumeSourc
     construction — the engine's ``_gate_pausable`` never stamps ``paused`` for
     code/terminal escalations. They stay as belt-and-braces for the one path
     that can still reach them: the workflow was EDITED between pause and resume
-    (hash gate bypassed with ``--force``). The message speaks the source's real
+    (identity gate bypassed with ``--force``, or the edit is to a loop step that is
+    itself the resume point, which the gate leaves free). The message speaks the source's real
     state ("is paused" vs "was interrupted") so an edited-workflow refusal never
     misdescribes a pause as a crash.
     """
@@ -333,9 +443,10 @@ def _side_effect_refusal(
     before node.start; an escalation's entry is its never-run successor), so there is no re-fire
     risk — and the answer flag is itself the human's consent. A failed K the source run proves never
     started (``entry_never_started`` — e.g. a template typo) skips it too (#690): nothing fired —
-    except a sub-workflow K, whose start the trace does not always record. K's type is read from the CURRENT
+    except a sub-workflow K on a trace without ``step_identity``, which predates every host writing
+    ``node.start``. K's type is read from the CURRENT
     resolved IR (registry vocabulary), never from a trace event; ``None`` type means K was
-    removed/renamed since the run (only reachable if the hash gate was bypassed) — the engine
+    removed/renamed since the run (only reachable if the identity gate was bypassed) — the engine
     refuses with a K-removed error before any node runs, so no side effect fires.
     """
     if force or source.paused_node_id is not None:
@@ -349,9 +460,9 @@ def _side_effect_refusal(
         return None
     from pflow.runtime.resume_source import entry_never_started
 
-    # The engine skips begin_node for WorkflowExecutor, and a BATCHED host never descends, so a
-    # sub-workflow K that ran can lack node.start — no proof either way. Task 180 deletes this.
-    if node_type not in _WORKFLOW_EXECUTOR_TYPES and entry_never_started(source):
+    # A batched sub-workflow host wrote no node.start before the trace recorded step_identity.
+    predates_host_start = source.step_identity is None and node_type in _WORKFLOW_EXECUTOR_TYPES
+    if not predates_host_start and entry_never_started(source):
         return None
     return ResumeSideEffectConfirmationError(
         str(entry),

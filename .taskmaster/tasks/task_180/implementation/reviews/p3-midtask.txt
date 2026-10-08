@@ -1,0 +1,210 @@
+Executing workflow (6 nodes):
+  resolve-cwd... ✓ 0.0s
+  load-lenses... ✓ 0.0s
+  run-codex... 2/2 179.6s
+  run-claude... 0/0 0.0s
+  collect... ✓ 0.0s
+  merge... ✓ 86.1s
+
+✓ Workflow completed in 265.835s
+
+💰 Cost: subscription (3 agent calls) · API-equivalent: $10.5617
+   Total LLM calls: 3
+
+ℹ️ Advisories:
+  ℹ [run-claude] Batch 'run-claude' ran with 0 items (input list was empty).
+    → Expected when iterating a drained queue or a filter that matched nothing. If items were expected, check the node that produces this batch's list.
+
+Workflow trace saved: /Users/andfal/.pflow/debug/workflow-trace-4953d2b5-run-review-lenses-20261008-034216-563588.json
+
+Workflow output (The consolidated review report — the workflow's product. The caller (the gate-runner / deep-review flow) verifies and adjudicates from here.):
+
+# Merged Review Report
+
+Scope: Task 180 P2+P3, `efee7428..c225baac -- src tests`. Both lenses performed static, read-only review; neither executed tests or wrote files.
+
+## Convergent findings
+
+### Warning — Unconditional insertion text misstates what forced resume executes
+
+**Lenses:** `review-agent-ux` W1; `review-silent-failures` UX handoff (no severity assigned).
+
+**Location:** [exceptions.py:1555](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/core/exceptions.py:1555)
+
+Every refusal offers:
+
+> “(an inserted step is skipped).”
+
+Both lenses identify that an insertion immediately after a plain between-node source executes under `--force`. UX additionally notes that the parenthetical asserts an insertion even for ordinary command edits.
+
+The UX recommendation is to include the parenthetical only when the refusal identifies a step resume actually skips, preferably naming it: “Step 'prepare' will be skipped.” Preserve the separate side-effect sentence. UX W4, below, also challenges the evidence used to establish skipping.
+
+Both lenses distinguish this text correction from changing the ruled refusal policy; changing the between-node insertion outcome remains a **user-level decision**.
+
+### Warning — Common explanation incorrectly says approval edits and between-node insertions cannot take effect
+
+**Finding:** `review-agent-ux` W2.
+**Code-area convergence:** `review-silent-failures` independently flags misleading forced-resume wording for between-node insertions in the same diagnostic area. This remains a distinct defect from the unconditional parenthetical above.
+
+**Locations:** [exceptions.py:1539](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/core/exceptions.py:1539), [exceptions.py:1565](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/core/exceptions.py:1565)
+
+Row 14’s correct approval lead is followed by:
+
+> “so that edit would not take effect.”
+
+Forced resume executes the **edited** approval step, as the [existing approval test asserts](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/tests/test_cli/test_paused_cli.py:257). The explanation is also false for insertion after a between-node pause, where resume selects the current successor.
+
+UX reports that this can prompt an unnecessary full rerun or mislead an agent about which approved command executes. Its proposed explanations are:
+
+- Approval: “Resume would execute the edited 'deploy'; the earlier approval does not cover that version.” The force suggestion should describe accepting the edited version.
+- Between nodes: “Resume would continue at 'check' using the saved outputs through 'esc'.”
+
+When combined with restored-step edits, avoid the collective assertion “those edits would not take effect.” The pre-hash fallback should offer a neutral full-rerun remedy instead of referring to a definite “edit.”
+
+### Suggestion — Keep row 13’s additional reroute lead
+
+**Lenses:** `review-agent-ux` suggestion; `review-silent-failures` row-13 observation and UX handoff.
+
+**Location:** [resume_preflight.py:223](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/execution/resume_preflight.py:223)
+
+Both lenses identify the removed-step lead:
+
+> “‘shape’ is no longer in the workflow (resume would still restore its saved output).”
+
+It is followed by:
+
+> “‘produce’ now continues to ‘save’ instead of ‘shape’.”
+
+Silent-failures records that the first lead matches the ruling table’s parenthetical but differs from its shorter refusal-block sentence, and that the additional reroute lead is true. UX recommends keeping the second lead: removal alone does not describe the surviving graph’s rewiring, the detail agrees with `changed_steps: ["shape", "produce"]`, and combining leads follows the ruled instruction.
+
+## Critical
+
+Neither lens reported critical findings.
+
+- **`review-silent-failures`:** No unforced path was found that silently restores a changed step outside the explicitly accepted limits.
+- **`review-agent-ux`:** No messages preventing diagnosis were found.
+
+## Warnings
+
+### W3 — Routing actions are discarded, producing self-contradictory leads
+
+**Lens:** `review-agent-ux`
+
+**Locations:** [resume_preflight.py:269](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/execution/resume_preflight.py:269), [exceptions.py:1596](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/core/exceptions.py:1596)
+
+For restored `produce`, retain its default route to `shape` and add `on-error: shape`. Give `shape` an explicit `next: save` to make the branch syntax valid. Identity detects the additional error edge, but `_targets()` reduces both edge lists to `["shape"]`, yielding:
+
+> “‘produce’ now continues to ‘shape’ instead of ‘shape’.”
+
+The message does not identify the changed routing declaration. UX recommends preserving action information, for example:
+
+> “‘produce’ now routes errors to ‘shape’; previously it had no error route.”
+
+The refusal should remain; the diagnostic representation needs changing.
+
+### W4 — Being outside the restored set does not establish that a target will be skipped
+
+**Lens:** `review-agent-ux`
+
+**Location:** [resume_preflight.py:220](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/execution/resume_preflight.py:220)
+
+Recorded path: `produce → shape → save → notify`, failing at `save`. Edit `produce` to point to `notify` and fix `save`.
+
+Because `notify` is neither restored nor the resume point, the diagnostic says:
+
+> “‘produce’ now continues to ‘notify’, which never ran — resume would skip it.”
+
+Forced resume starts at `save`, whose unchanged successor is `notify`, so **`notify` runs**. An agent could incorrectly conclude that its side effects will not occur.
+
+UX recommends retaining the reroute refusal, using the factual “instead of 'shape'” lead when skipping is not established, and scoping any skip claim to the bypassed route rather than asserting that the target cannot execute later.
+
+### W5 — Changing `prompt_cache` selection is described as editing chunk content
+
+**Lens:** `review-agent-ux`
+
+**Locations:** [workflow_id.py:99](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/core/workflow_id.py:99), [resume_preflight.py:256](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/execution/resume_preflight.py:256)
+
+The auxiliary hash covers the selected chunk mapping. Removing `prompt_cache`, or selecting another unchanged chunk, changes that hash and produces:
+
+> “‘summarize’ was edited (a `## Cache` chunk it uses changed).”
+
+The selection changed without any chunk-content change, directing debugging to the wrong authoring location.
+
+UX recommends distinguishing selection changes from content changes, or wording that covers both, while preserving row 10’s specific lead when chunk content actually changed.
+
+## Suggestions
+
+### Clarify the identity loader’s validation contract
+
+**Lens:** `review-silent-failures`
+
+**Location:** [resume_source.py:963](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/runtime/resume_source.py:963)
+
+The documentation says malformed maps fall back wholesale. A valid outer envelope containing malformed step entries actually survives loading; missing `start` also survives.
+
+Preflight safely refuses these when relevant, but the documentation obscures which layer provides protection. The recommendation is to describe envelope validation separately from per-step checking.
+
+## Verified clean
+
+### All 16 ruled outcomes — independently reported by both lenses
+
+Both lenses report that the inspected implementation matches all 16 ruled refuse/pass outcomes. Passing the identity gate does not waive separate side-effect confirmation.
+
+| Row | Reported behavior and evidence |
+|---|---|
+| 1 | **Pass:** Fixing `save` produces no stale-workflow refusal. |
+| 2 | **Pass:** Restored-step prose changes, including `shape`, produce no stale refusal. |
+| 3 | **Refuse:** “‘produce’ was edited.” |
+| 4 | **Refuse:** “‘shape’ now continues to ‘prepare’, which never ran — resume would skip it.” |
+| 5 | **Refuse:** “The workflow now starts at ‘banner’, which never ran — resume would skip it.” |
+| 6 | **Refuse:** “‘produce’ now continues to ‘save’ instead of ‘shape’.” |
+| 7 | **Pass:** Appended `notify` executes after `save`. |
+| 8 | **Pass:** Downstream routing changes produce no stale refusal. |
+| 9 | **Pass:** Changed input defaults do not replace recorded inputs; CLI `KEY=VALUE` overrides remain effective. |
+| 10 | **Refuse:** “‘summarize’ was edited (a `## Cache` chunk it uses changed).” |
+| 11 | **Pass identity gate:** A loop-step edit applies from resumed iteration N; earlier iterations remain restored. Separate side-effect confirmation still applies. |
+| 12 | **Refuse:** “The resume point ‘save’ is no longer in the workflow.” No predecessor blame. |
+| 13 | **Refuse:** Removed `shape` is identified, including restoration of its saved output, followed by the accurate `produce` reroute lead. The wording observations are preserved under convergence. |
+| 14 | **Refuse:** “‘deploy’ was edited after it was approved — the approval covered the earlier version.” UX W2 qualifies the subsequent explanation. |
+| 15 | **Pass, accepted limit:** Child-file edits remain outside the identity check; saved host output stays restored. |
+| 16 | **Refuse on whole-workflow mismatch:** “This run was recorded by an older pflow version that did not record each step’s definition, so resume cannot tell which step changed.” |
+
+Both lenses cite the [main row tests](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/tests/test_cli/test_resume_identity.py:144), [loop case](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/tests/test_cli/test_resume_cli.py:1406), and [approval case](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/tests/test_cli/test_paused_cli.py:257). These assertions derive from reading implementation and tests, not independent execution of the full matrix.
+
+### `review-silent-failures`
+
+- **Missing or malformed recorded steps:** Definition comparison refuses absent entries, non-dictionaries, and absent or unequal hashes. Removed steps are identified separately. [resume_preflight.py:246](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/execution/resume_preflight.py:246)
+- **Malformed routing and start:** Raw `next` inequality triggers rerouting before target extraction. Even `([], [])` remains a truthy tuple, so empty extracted targets do not erase refusal. Missing/null `start` differs from a valid current start. Shared step IDs do not let a foreign map conceal a checked definition, route, or start difference. [resume_preflight.py:223](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/execution/resume_preflight.py:223)
+- **Between-node, loop, and attempt sources:** Checks use `restored_node_ids`; loop resume points and failed-recovered steps are deliberately excluded as ruled. Attempt traces use recorded workflow start rather than surviving events. Between-node insertion still refuses.
+- **D1b:** Missing identity conservatively retains the workflow-host carve-out. This is an era proxy, not strict equivalence: malformed/new maps may also load as `None`. Production streaming records host start before batch execution; write failure disables subsequent streaming. No ordinary started-host omission was found in the P3 dependency.
+- **Whole-hash fallback:** Equal hashes pass; different hashes refuse with `hash_known=True`; absent content hashes refuse with `hash_known=False`. `--force` remains the explicit waiver. [resume_preflight.py:178](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/execution/resume_preflight.py:178)
+- **Hash recipe:** Definitions retain policy fields and referenced cache chunks while excluding prose/provenance. Edge normalization preserves action changes and implicit/explicit default equivalence. No additional semantic omission or unedited-resume instability was found within the ruled recipe.
+- **UI preflight:** The shared primitive preserves parameters, workflow-file context, defaults, and placeholder stripping. Validation errors propagate without first-error wrapping; `WorkflowValidationError`, `CompilationError`, and `SchemaValidationError` reach existing HTTP 400 handlers. [runner.py:559](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/execution/runner.py:559), [server.py:1131](/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity/src/pflow/ui/server.py:1131)
+- **Additional checks:** Attempt-map restamping after `--force` preserves the accepted precision limit. UI scan caching drops identity only from its cached metadata; resume independently reloads the trace.
+- **Overall assertion:** No new silent wrong-result path or silent-failure warning was identified in P2/P3.
+
+### `review-agent-ux`
+
+- Missing resume points offer **rerun or restore the step**, rather than ineffective `--force`.
+- Structured diagnostics preserve `changed_steps`, `new_start`, `resume_point`, and `resume_point_missing`. Fallback `changed_steps: null` correctly denotes unknown, distinct from an empty list.
+- HTTP refusals preserve **409**, `refusal: "stale_workflow"`, `hash_known`, and diagnostic messages, suggestions, and context.
+- CLI `At: node 'X'` identifies a sole changed step or missing resume point; multiple changes do not receive a misleading single location.
+- Between-node “up to and including” and loop “iteration N” wording correctly distinguish restored work from continuation.
+- D1b retains the older-host confirmation safeguard. Shared runner preflight preserves full validation diagnostics before HTTP spawning.
+- **Overall assertion:** Ruled decisions and structured output are sound in inspected paths. The five warnings concern message accuracy and do not require changing ruled refuse/pass outcomes.
+
+## Coverage
+
+| Lens | Provider | Review supplied |
+|---|---|---|
+| `review-silent-failures` | codex | Yes — static, read-only inspection |
+| `review-agent-ux` | codex | Yes — static, read-only inspection |
+
+**Failed or missing lenses:** None listed in the supplied gaps input.
+
+**Verification limits explicitly reported:**
+
+- Neither lens executed tests or performed runtime verification.
+- UX inspected changed hunks and relevant surrounding paths, not every unchanged section of all large files; it performed no browser verification.
+- The complete 16-row CLI/dry-run/HTTP execution matrix remains the caller’s verification responsibility.
+- Silent-failures does not independently certify logged test, mutation, or screenshot results.

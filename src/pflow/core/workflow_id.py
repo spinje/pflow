@@ -20,6 +20,8 @@ import hashlib
 import json
 from typing import Any
 
+from pflow.core.ir_schema import outgoing_edges, start_node_id
+
 
 def canonical_ir_digest(ir: dict[str, Any]) -> str:
     """The order-insensitive content fingerprint of a (resolved) workflow IR.
@@ -69,6 +71,50 @@ def workflow_content_hash(ir: dict[str, Any]) -> str:
     return canonical_ir_digest(_strip_source_provenance(ir))
 
 
+def step_identity(ir: dict[str, Any]) -> dict[str, Any]:
+    """Each top-level step's identity — what resume checks before restoring a step's saved output.
+
+    ``{"start": <start step>, "steps": {node_id: {"hash": <md5>, "next": [[action, target], ...]}}}``,
+    written on the trace's ``meta`` line (2.9.0). A step's ``hash`` covers its definition minus prose:
+    every node key except ``purpose`` and source provenance, plus the ``## Cache`` chunks it lists in
+    ``prompt_cache`` (they render into its prompt) — which a step that uses any also gets one by one,
+    as ``cache`` (chunk name → hash). ``## Inputs`` are not part of any step — a resume reuses the recorded input values.
+    ``next`` is the step's ``ir_schema.outgoing_edges``, so an insertion or reroute shows on the
+    predecessor without touching its hash.
+
+    Static on purpose — not the engine's per-visit memo ``config_hash``, which varies with loop
+    iteration and leaves out ``loop``/``retry``/``approval`` and edges. What this hashes is part of the
+    trace format (``runtime/workflow_trace.TRACE_FORMAT_VERSION``).
+    """
+    chunks = {
+        item["name"]: item
+        for item in (ir.get("cache") or {}).get("items") or []
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    }
+    edges = outgoing_edges(ir)
+    steps: dict[str, dict[str, Any]] = {}
+    for node in ir.get("nodes") or []:
+        node_id = str(node["id"])
+        definition = _strip_source_provenance({key: value for key, value in node.items() if key != "purpose"})
+        # Unvalidated IR (resume computes this before validation): a malformed `prompt_cache` still counts
+        # through the node's own hash; only a list of chunk names selects chunks.
+        selected = node.get("prompt_cache")
+        used_chunks = _strip_source_provenance({
+            name: chunks[name]
+            for name in (selected if isinstance(selected, list) else [])
+            if isinstance(name, str) and name in chunks
+        })
+        step: dict[str, Any] = {
+            "hash": canonical_ir_digest({"node": definition, "cache": used_chunks}),
+            "next": [list(pair) for pair in edges.get(node_id, [])],
+        }
+        if used_chunks:
+            # Each chunk alone too, so a refusal can say the edit was to a `## Cache` chunk's content.
+            step["cache"] = {name: canonical_ir_digest(chunk) for name, chunk in used_chunks.items()}
+        steps[node_id] = step
+    return {"start": start_node_id(ir), "steps": steps}
+
+
 def synthesize_inline_workflow_id(ir: dict[str, Any]) -> str:
     """Produce a stable synthetic ``_pflow_workflow_file`` for inline runs.
 
@@ -98,4 +144,4 @@ def synthesize_inline_workflow_id(ir: dict[str, Any]) -> str:
     return f"ir-hash:{canonical_ir_digest(ir)}"
 
 
-__all__ = ["canonical_ir_digest", "synthesize_inline_workflow_id", "workflow_content_hash"]
+__all__ = ["canonical_ir_digest", "step_identity", "synthesize_inline_workflow_id", "workflow_content_hash"]

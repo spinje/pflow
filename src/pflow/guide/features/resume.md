@@ -53,7 +53,7 @@ Behavior worth knowing:
 - **A token is consumed by its answer.** The resumed attempt supersedes the paused run; a second answer refuses and names the newer attempt. Each later gate in the same workflow pauses again as a **new** token.
 - **An answer covers one gate, once.** `--approve yes` approves the paused gate only — it is not a standing approval for that step. A paused **loop** step runs the paused iteration on the answer; its next iteration is a new action that pauses again with a new token (the pause output names it: `Loop iteration 2`). Pass `--auto-approve <step>` to approve every remaining iteration at once.
 - **Resuming without an answer flag refuses** and shows the pending question with the exact command; `--approve`/`--choose` on a run that is not paused refuses too.
-- The **edited-workflow refusal** and `--force` (below) apply to paused resumes the same as failed ones. Input overrides (`KEY=VALUE`) work the same way.
+- The **edited-workflow refusal** and `--force` (below) apply to paused resumes the same as failed ones, with one addition: editing the paused approval step after approving it refuses — the approval covered the version the human saw. Input overrides (`KEY=VALUE`) work the same way.
 
 ## Overriding inputs
 
@@ -73,13 +73,18 @@ The failed step runs **again** from the start (for a loop step: the failed itera
 - A **side-effecting** failed step (`shell` / `code` / `agent` / file operations / `mcp`; `http` too — even reads touch external systems):
   - At a terminal, resume asks for confirmation before re-running the step (default No).
   - **For AI agents** (no terminal): resume **refuses with a clear error** rather than silently repeating the side effect. Confirm with your human that re-running the step is safe, then re-run with `--force`.
-- A failed step that **never started** — it failed resolving its `${...}` templates (a typo, a missing field) before it ran — resumes without confirmation: nothing fired. A batch step whose item failed that way had already started (earlier items ran), so it still asks, and a sub-workflow (`workflow`) step always asks.
+- A failed step that **never started** — it failed resolving its `${...}` templates (a typo, a missing field) before it ran — resumes without confirmation: nothing fired. A batch step whose item failed that way had already started (earlier items ran), so it still asks.
 
 `--force` bypasses this confirmation **and** the edited-workflow check below.
 
 ## Other behavior worth knowing
 
-- **Edited workflow → refusal.** If the workflow file changed since the original run, resume refuses: restored steps keep their saved outputs, so an edit to them would not take effect. The refusal names the restored steps and where resume continues — if you changed only the failed step or later steps, `--force` resumes; otherwise re-run from the start. Because `--force` also skips the side-effect confirmation, the refusal says so when the failed step already started and may re-fire.
+- **Edited workflow → refusal only when the edit touches a restored step.** Edits at or after the resume point (the failed step and everything after it), and description prose anywhere, resume without `--force` — fix the failed step, then resume. Resume refuses, naming what changed, when you edit a step whose saved output it restores (anything but its description: parameters, code blocks, settings such as `batch`/`loop`/`retry`, a `## Cache` chunk it uses), remove one, change where one goes next (including inserting a step on the path before the resume point), make the workflow start at a different step, remove the resume point, or edit a paused approval step after approving it. Re-run from the start so the edit takes effect, or pass `--force` to resume anyway: restored steps keep their saved outputs and are not re-run, and the refusal names any inserted step resume would skip. Because `--force` also skips the side-effect confirmation, the refusal says so when the resume point already started and may re-fire. `--force` stays this one waiver of both checks; narrower flags, if ever added, come beside it.
+  - **Stopped between steps** (a run killed between two steps, an answered escalation): resume continues at the next step of the *current* workflow, so a step inserted right after the last completed step still refuses, and under `--force` it runs.
+  - **Inputs:** editing an `## Inputs` default does not affect a resume — the original run's input values are reused. Pass `KEY=VALUE` to change one.
+  - **A loop step at the resume point:** an edit applies from the resumed iteration on; its completed iterations keep their saved outputs.
+  - **Not checked:** a step that failed and recovered through `on-error` is not restored and never re-runs, so an edit to it — or a step inserted right after it — passes silently (a reference to that inserted step fails as unresolved). Edits inside a `workflow` step's child file are not seen either: a restored sub-workflow step keeps its saved output.
+  - **Runs recorded by an older pflow** did not record each step's definition, so any edit refuses, description prose included; the refusal says so.
 - **Loop steps continue where they stopped.** A paused or failed loop step resumes at the iteration where it stopped; completed iterations never re-run, and carry, condition, and cap behave exactly as in an uninterrupted run. Each later gated iteration pauses again as a new token. Saved runs that predate loop position restart the loop at iteration 1 and say so (an info advisory, also in `--dry-run`).
 - **Downstream approval gates re-prompt.** Resume does not inherit prior approvals — each execution is a new action. `--auto-approve <step>` still works.
 - **Top-level granularity.** A failure *inside* a sub-workflow re-runs the **whole** sub-workflow step — restoration works only at the top level of the parent workflow. The cross-run cache softens the cost of re-running its inner steps.

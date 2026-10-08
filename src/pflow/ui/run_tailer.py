@@ -76,7 +76,9 @@ def _read_meta(path: Path) -> dict[str, Any] | None:
     # _SCAN_CACHE for the process lifetime per trace. Drop `inputs` — it's raw + potentially large (a
     # multi-KB text input, retained for every run in ~/.pflow/debug), and NO cache consumer reads it:
     # run_node's read_run_inputs / _io_detail re-read the file via _read_trace_lines. Keeps the cache small.
+    # `step_identity` (a hash per step, Task 180) is resume-only and likewise never read from the cache.
     line.pop("inputs", None)
+    line.pop("step_identity", None)
     return line
 
 

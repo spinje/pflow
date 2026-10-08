@@ -241,9 +241,25 @@ describe("GateCallout — refusal states (never silence)", () => {
           409,
           [
             {
+              severity: "error",
+              title: "Workflow changed since the original run",
               message:
-                "The workflow was edited since the original run. Resume restores the saved output of 'prep' and resumes at 'gate'.",
-              suggestions: ["If you changed only 'gate' or later steps, pass --force to resume."],
+                "'deploy' was edited after it was approved — the approval covered the earlier version. Resuming " +
+                "would run the edited 'deploy' under that earlier approval.",
+              suggestions: [
+                "Re-run the workflow from the start so 'deploy' asks for approval again.",
+                "Pass --force to resume anyway: steps before 'deploy' keep their saved outputs and are not re-run, " +
+                  "and the edited 'deploy' runs under the earlier approval.",
+              ],
+              source: "runtime",
+              node_id: "deploy",
+              context: {
+                category: "execution_failure",
+                changed_steps: ["deploy"],
+                new_start: null,
+                resume_point: "deploy",
+                resume_point_missing: false,
+              },
             },
           ],
           { refusal: "stale_workflow", hash_known: true },
@@ -255,8 +271,8 @@ describe("GateCallout — refusal states (never silence)", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
     // The ack panel speaks the server's words (#721), not a UI paraphrase.
-    expect(await screen.findByText(/Resume restores the saved output of 'prep' and resumes at 'gate'/)).toBeTruthy();
-    expect(screen.getByText(/pass --force to resume/)).toBeTruthy();
+    expect(await screen.findByText(/'deploy' was edited after it was approved/)).toBeTruthy();
+    expect(screen.getByText(/Pass --force to resume anyway: .* the edited 'deploy' runs under the earlier approval/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Resume anyway" }));
 
     await waitFor(() => expect(resumeRun).toHaveBeenLastCalledWith({ run: "r1", approve: "yes", force: true }));

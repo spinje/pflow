@@ -1,5 +1,7 @@
 """Tests for workflow IR schema validation."""
 
+from typing import Any
+
 import pytest
 
 from pflow.core import FLOW_IR_SCHEMA, validate_ir
@@ -1261,3 +1263,30 @@ class TestBatchConfigPhase2:
         with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "nodes[0]" in exc_info.value.path
+
+
+# ── start_node_id: the one start-step rule (Task 180) ───────────────────────────────────────────
+
+
+@pytest.mark.parametrize(("start_node", "expected"), [(None, "a"), ("b", "b")])
+def test_start_node_id_is_the_rule_the_compiler_and_the_graph_both_use(start_node: str | None, expected: str) -> None:
+    from pflow.core.ir_schema import start_node_id
+    from pflow.core.workflow.graph import build_graph
+    from pflow.registry import Registry
+    from pflow.runtime import compile_workflow
+
+    ir: dict[str, Any] = {
+        "ir_version": "0.1.0",
+        "inputs": {"x": {"type": "string", "required": False, "default": "1"}},
+        "nodes": [
+            {"id": "a", "type": "shell", "params": {"command": "true"}},
+            {"id": "b", "type": "shell", "params": {"command": "true"}},
+        ],
+        "edges": [{"from": "b", "to": "a"}] if start_node else [{"from": "a", "to": "b"}],
+    }
+    if start_node:
+        ir["start_node"] = start_node
+    assert start_node_id(ir) == expected
+    assert compile_workflow(ir, Registry()).start_node.node_id == expected
+    inputs_container = next(c for c in build_graph(ir).containers if c.kind == "input_wrapper")
+    assert inputs_container.annotations["start_node"] == expected
