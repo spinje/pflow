@@ -36,7 +36,7 @@ class TestMalformedTemplateDetection:
                 {
                     "id": "test-node",
                     "type": "shell",
-                    "params": {"command": "echo ${variable"},
+                    "params": {"command": "cat", "stdin": "echo ${variable"},
                 }
             ],
             "enable_namespacing": True,
@@ -58,7 +58,7 @@ class TestMalformedTemplateDetection:
                 {
                     "id": "test-node",
                     "type": "shell",
-                    "params": {"command": "echo ${}"},
+                    "params": {"command": "cat", "stdin": "echo ${}"},
                 }
             ],
             "enable_namespacing": True,
@@ -79,7 +79,7 @@ class TestMalformedTemplateDetection:
                 {
                     "id": "test-node",
                     "type": "shell",
-                    "params": {"command": "echo ${ }"},
+                    "params": {"command": "cat", "stdin": "echo ${ }"},
                 }
             ],
             "enable_namespacing": True,
@@ -104,7 +104,7 @@ class TestMalformedTemplateDetection:
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo ${node1.result} and ${unclosed"},
+                    "params": {"command": "cat", "stdin": "echo ${node1.result} and ${unclosed"},
                 },
             ],
             "enable_namespacing": True,
@@ -132,7 +132,7 @@ class TestMalformedTemplateDetection:
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo ${node1.result}"},
+                    "params": {"command": "cat", "stdin": "echo ${node1.result}"},
                 },
             ],
             "enable_namespacing": True,
@@ -159,7 +159,7 @@ class TestMalformedTemplateDetection:
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo ${node1.response.field.nested}"},
+                    "params": {"command": "cat", "stdin": "echo ${node1.response.field.nested}"},
                 },
             ],
             "enable_namespacing": True,
@@ -257,7 +257,7 @@ class TestMalformedTemplateEdgeCases:
                 {
                     "id": "test-node",
                     "type": "shell",
-                    "params": {"command": "echo ${{node.field}}"},
+                    "params": {"command": "cat", "stdin": "echo ${{node.field}}"},
                 }
             ],
             "enable_namespacing": True,
@@ -277,7 +277,7 @@ class TestMalformedTemplateEdgeCases:
                 {
                     "id": "test-node",
                     "type": "shell",
-                    "params": {"command": 'echo "$${NAME:-world} $${#X} $${PRICE}"'},
+                    "params": {"command": "cat", "stdin": 'echo "$${NAME:-world} $${#X} $${PRICE}"'},
                 }
             ],
             "enable_namespacing": True,
@@ -295,7 +295,7 @@ class TestMalformedTemplateEdgeCases:
                 {
                     "id": "test-node",
                     "type": "shell",
-                    "params": {"command": "echo $${NAME:-world} ${unclosed"},
+                    "params": {"command": "cat", "stdin": "echo $${NAME:-world} ${unclosed"},
                 }
             ],
             "enable_namespacing": True,
@@ -315,7 +315,7 @@ class TestMalformedTemplateEdgeCases:
                 {
                     "id": "test-node",
                     "type": "shell",
-                    "params": {"command": "echo ${first ${second"},
+                    "params": {"command": "cat", "stdin": "echo ${first ${second"},
                 }
             ],
             "enable_namespacing": True,
@@ -340,7 +340,7 @@ class TestMalformedTemplateEdgeCases:
                 {
                     "id": "node1",
                     "type": "shell",
-                    "params": {"command": "echo ${a[${i}] ?? b[${i}]}"},
+                    "params": {"command": "cat", "stdin": "echo ${a[${i}] ?? b[${i}]}"},
                 }
             ],
             "enable_namespacing": True,
@@ -366,12 +366,13 @@ class TestIssuePassCoversEverySurface:
         return sorted(e.context["path"] for e in errors if "Malformed template syntax" in e.message)
 
     def test_every_surface_reports_at_its_path(self):
+        """A shell command is not a surface (ADR-0016): its malformed-looking ``${`` is sh's."""
         workflow_ir = {
             "nodes": [
                 {
                     "id": "a",
                     "type": "shell",
-                    "params": {"command": "echo ${a.b.0}", "env": {"X": ["${}"]}},
+                    "params": {"command": "cat; echo ${NAME:-x} ${}", "stdin": "echo ${a.b.0}", "env": {"X": ["${}"]}},
                     "batch": {"items": ["${unclosed", "ok"]},
                 },
                 {
@@ -386,7 +387,7 @@ class TestIssuePassCoversEverySurface:
             "cache": {"items": [{"name": "p.x.0", "var": "p.x.0", "prose_before": "Empty ${} here"}]},
         }
         assert self._malformed_paths(workflow_ir) == sorted([
-            "nodes[id=a].params.command",
+            "nodes[id=a].params.stdin",
             "nodes[id=a].params.env.X[0]",
             "nodes[id=a].batch.items[0]",
             "nodes[id=loop].loop.while",
@@ -405,7 +406,7 @@ class TestIssuePassCoversEverySurface:
                 {
                     "id": "a",
                     "type": "shell",
-                    "params": {"command": "echo $${HOME} ${a.stdout}", "env": {"X": ['${"v"}']}},
+                    "params": {"command": "cat", "stdin": "echo $${HOME} ${a.stdout}", "env": {"X": ['${"v"}']}},
                     "batch": {"items": ["${a.stdout}", "ok"]},
                 },
             ],
@@ -429,7 +430,9 @@ class TestIssuePassCoversEverySurface:
         assert errors[0].context["path"] == "cache.items[name=a.stdout].prose_before"
 
     def test_malformed_literal_operand_gets_targeted_guidance(self):
-        workflow_ir = {"nodes": [{"id": "a", "type": "shell", "params": {"command": "echo ${x ?? [1,2]}"}}]}
+        workflow_ir = {
+            "nodes": [{"id": "a", "type": "shell", "params": {"command": "cat", "stdin": "echo ${x ?? [1,2]}"}}]
+        }
         errors, _warnings = split_template_diagnostics(workflow_ir, {}, create_mock_registry(_SHELL))
         assert len(errors) == 1
         assert errors[0].message.startswith("Malformed literal operand in '${x ?? [1,2]}'")
@@ -437,7 +440,9 @@ class TestIssuePassCoversEverySurface:
     def test_malformed_template_suggestion_names_the_issue_and_the_fixes(self):
         """A digit segment is the strict-grammar shape an agent most often writes; the
         suggestion names the offending text and the bracket-index repair."""
-        workflow_ir = {"nodes": [{"id": "a", "type": "shell", "params": {"command": "echo ${c.stdout.0}"}}]}
+        workflow_ir = {
+            "nodes": [{"id": "a", "type": "shell", "params": {"command": "cat", "stdin": "echo ${c.stdout.0}"}}]
+        }
         errors, _warnings = split_template_diagnostics(workflow_ir, {}, create_mock_registry(_SHELL))
         assert [e.suggestions for e in errors] == [
             [

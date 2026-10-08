@@ -1,56 +1,16 @@
-"""Template type validation (Passes 6, 7, and 9).
+"""Template type validation (Passes 6 and 9).
 
 Pass 6: Validates template variable types match parameter expectations.
-Pass 7: Blocks structured data (dict/list) in shell command parameters.
 Pass 9: Validates code-node input annotations against template source types.
 """
 
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
-from pflow.core.templates import (
-    CONTAINER_TYPES,
-    Reference,
-    TemplateResolver,
-    is_type_compatible,
-    parse,
-)
-from pflow.core.types import outer_base_type
+from pflow.core.templates import TemplateResolver, is_type_compatible
+from pflow.core.workflow.template_surfaces import template_params
 from pflow.registry import Registry
 from pflow.runtime.template_validation.type_checker import get_parameter_type, infer_template_type
-
-# Types that are safe in shell commands (string-like or unknown type)
-# When a union contains one of these, runtime coercion to string is acceptable.
-_SHELL_SAFE_TYPES = {"str", "string", "any"}
-
-
-def _is_shell_safe_type(inferred_type: str, blocked_types: frozenset[str]) -> tuple[bool, str | None]:
-    """Check if a type is safe for shell command embedding.
-
-    Args:
-        inferred_type: The inferred type string (may be union like "dict|str")
-        blocked_types: Set of blocked type names
-
-    Returns:
-        Tuple of (is_safe, blocked_type_if_not_safe)
-        - (True, None) if type is safe
-        - (False, "dict") if blocked, with the first blocked type
-    """
-    # Split union and get base type for each component
-    type_parts = [t.strip() for t in inferred_type.split("|")]
-    base_types = [outer_base_type(t) for t in type_parts]
-
-    # Tier 1: If union contains a safe base type (str, string, any), allow it
-    if any(t in _SHELL_SAFE_TYPES for t in base_types):
-        return (True, None)
-
-    # Check if any base type is blocked
-    blocked_parts = [t for t in base_types if t in blocked_types]
-    if blocked_parts:
-        return (False, blocked_parts[0])
-
-    return (True, None)
-
 
 # ---------------------------------------------------------------------------
 # Pass 6: Type matching
@@ -75,9 +35,8 @@ def validate_template_types(
     for node in workflow_ir.get("nodes", []):
         node_type = node.get("type")
         node_id = node.get("id")
-        params = node.get("params", {})
 
-        for param_name, param_value in params.items():
+        for param_name, param_value in template_params(node).items():
             expected_type = get_parameter_type(node_type, param_name, registry)
             _check_param_type(param_name, param_value, expected_type, node_id, workflow_ir, node_outputs, diagnostics)
 
@@ -148,157 +107,6 @@ def _check_string_template_types(
                     },
                 )
             )
-
-
-# ---------------------------------------------------------------------------
-# Pass 7: Shell command types
-# ---------------------------------------------------------------------------
-
-
-def _build_quoted_templates(command: str) -> set[str]:
-    """The references of every expression exactly wrapped in single quotes
-    (``'${var}'``) — the shell escape hatch for structured types.
-
-    ``'${a} ${b}'``, ``'prefix ${var}'`` and an escaped ``'$${var}'`` are not
-    wrapped. Every operand counts, so ``'${a ?? b}'`` exempts both ``a`` and ``b``;
-    literal operands need no type-coercion exemption.
-    """
-    return {
-        operand.raw
-        for expression in parse(command).expressions
-        if command[expression.span[0] - 1 : expression.span[0]] == "'"
-        and command[expression.span[1] : expression.span[1] + 1] == "'"
-        for operand in expression.operands
-        if isinstance(operand, Reference)
-    }
-
-
-def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict[str, Any]) -> list[Diagnostic]:
-    """Block dict/list types in shell command parameters.
-
-    Shell commands cannot safely handle JSON embedded in command strings
-    due to shell escaping issues. This check runs BEFORE template resolution
-    to catch the problem at validation time rather than runtime.
-
-    The general type checker allows dict/list → str (for LLM prompts, HTTP bodies),
-    but shell commands are special - embedded JSON breaks shell parsing.
-
-    Validation has three tiers:
-    1. Fix 0: Extract base types from generics (list[dict] → list) before checking
-    2. Tier 1: Auto-allow unions containing safe types (str, string, any)
-    3. Tier 2: Allow templates wrapped in single quotes '${var}' as an escape hatch
-
-    Args:
-        workflow_ir: Workflow IR
-        node_outputs: Node output metadata from registry
-
-    Returns:
-        Diagnostics for structured data in shell commands
-    """
-    diagnostics: list[Diagnostic] = []
-
-    for node in workflow_ir.get("nodes", []):
-        node_type = node.get("type")
-        node_id = node.get("id")
-
-        # Only check shell nodes
-        if node_type != "shell":
-            continue
-
-        params = node.get("params", {})
-        command = params.get("command", "")
-
-        # Skip if command has no templates
-        if not isinstance(command, str) or not TemplateResolver.has_templates(command):
-            continue
-
-        # Tier 2: Find templates exactly wrapped in single quotes (escape hatch)
-        # Pattern '${var}' signals user accepts runtime coercion to string
-        quoted_templates = _build_quoted_templates(command)
-
-        # Check each template in the command and collect blocked ones
-        templates = TemplateResolver.extract_variables(command)
-        blocked_templates: list[tuple[str, str]] = []  # (template, type)
-
-        for template in templates:
-            # Tier 2: Skip if template is quoted (user accepts coercion)
-            if template in quoted_templates:
-                continue
-
-            inferred_type = infer_template_type(template, workflow_ir, node_outputs)
-
-            # Skip if cannot infer type (will be caught by path validation)
-            if not inferred_type:
-                continue
-
-            # Check if type is safe (handles Fix 0 and Tier 1)
-            is_safe, blocked_type = _is_shell_safe_type(inferred_type, CONTAINER_TYPES)
-            if not is_safe and blocked_type:
-                blocked_templates.append((template, blocked_type))
-
-        # Generate a single consolidated error if any templates are blocked
-        if blocked_templates:
-            display_cmd = command if len(command) <= 60 else command[:57] + "..."
-
-            if len(blocked_templates) == 1:
-                # Single template - simple case
-                template, blocked_type = blocked_templates[0]
-                diagnostics.append(
-                    Diagnostic(
-                        severity=Severity.ERROR,
-                        source="validator",
-                        title="Validation Error",
-                        node_id=node_id,
-                        message=(
-                            f"Shell node '{node_id}': cannot use ${{{template}}} (type: {blocked_type}) "
-                            f"in command parameter — embedded {blocked_type} breaks shell parsing."
-                        ),
-                        suggestions=[
-                            f"Access a specific field: ${{{template}.fieldname}}",
-                            f'Use stdin for the whole object: stdin: "${{{template}}}", command: "jq \'.field\'"',
-                            f"Quote the template to accept JSON coercion: '${{{template}}}'",
-                        ],
-                        context={
-                            "category": "validation",
-                            "path": f"nodes[id={node_id}].params.command",
-                            "template": f"${{{template}}}",
-                            "blocked_type": blocked_type,
-                            "shell_command": display_cmd,
-                        },
-                    )
-                )
-            else:
-                # Multiple templates - need different approach
-                template_list = ", ".join(f"${{{t}}} ({typ})" for t, typ in blocked_templates)
-                diagnostics.append(
-                    Diagnostic(
-                        severity=Severity.ERROR,
-                        source="validator",
-                        title="Validation Error",
-                        node_id=node_id,
-                        message=(
-                            f"Shell node '{node_id}': multiple structured data templates in command: "
-                            f"{template_list}. Shell commands can only receive ONE data source via stdin."
-                        ),
-                        suggestions=[
-                            "Use temp files: write each data source via write-file nodes, then read in shell.",
-                            "Process each data source in separate shell nodes, then combine results.",
-                            "Pass one via stdin and reference another via file.",
-                            "Quote the template to accept JSON coercion: '${var}'",
-                        ],
-                        context={
-                            "category": "validation",
-                            "path": f"nodes[id={node_id}].params.command",
-                            "shell_command": display_cmd,
-                            "blocked_templates": [
-                                {"template": f"${{{template_name}}}", "type": blocked_type_name}
-                                for template_name, blocked_type_name in blocked_templates
-                            ],
-                        },
-                    )
-                )
-
-    return diagnostics
 
 
 def _infer_missing_annotation_type(

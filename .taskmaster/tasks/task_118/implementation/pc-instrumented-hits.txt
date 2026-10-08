@@ -1,0 +1,585 @@
+# Task 118 PC1 — instrumented suite hits (unconverted tree, head a296ceca + PD)
+#
+# A temporary hook in `split_params` and `iter_node_surfaces` logged (PYTEST_CURRENT_TEST, node id, param)
+# whenever a shell.command / code.code value held an Expression or a `$${` escape
+# (`TemplateResolver.has_templates`). Run: `make test` (10504 passed) + `make test-e2e` (52 passed / 2 skipped).
+# Hook removed afterwards; `git diff` on both files empty. 3462 raw hits (both sites, repeated per run).
+# The 13 hits without PYTEST_CURRENT_TEST came from subprocess children and are attributed by node id.
+#
+# Format: <file>  [<n> tests]  <note>
+#           <test id>: <node.param>, ...
+# Notes: PC1 = a hit produced by a corpus file PC1 converts (examples/guide/docs) — clears with PC1;
+#        T3 = §6 retired-behaviour site (left for PB); no note = a test-local site → PC2 converts it.
+
+tests/test_cli/test_approval_gate_cli.py  [9 tests]  PC2
+    TestAutoApprove::test_auto_approve_skips_prompt_and_is_visible: guarded-step.command
+    TestAutoApprove::test_unmatched_id_notes_nested_possibility_and_closest_match: guarded-step.command
+    TestCtrlCAtGate::test_ctrl_c_at_gate_prompt_exits_130_and_step_never_runs: guarded-step.command
+    TestDeniedExit::test_approved_gate_runs_step_and_exits_0: guarded-step.command
+    TestDeniedExit::test_denied_gate_exits_3_never_ran_step_no_failure_tag: guarded-step.command
+    TestDeniedExit::test_denied_gate_json_mode_emits_denied_document: guarded-step.command
+    TestNonInteractive::test_only_on_ungated_target_does_not_warn_about_unreachable_gates: guarded-step.command
+    TestNonInteractive::test_print_flag_suppresses_preflight_warnings: guarded-step.command
+    TestNonInteractive::test_warns_at_start_then_fails_at_gate_exit_1: guarded-step.command
+
+tests/test_cli/test_cli_error_boundary.py  [1 tests]  PC2
+    <subprocess child; body at :44>: echo.command
+
+tests/test_cli/test_dry_run.py  [2 tests]  PC2
+    test_dry_run_exits_one_on_missing_required_input: echo.command
+    test_dry_run_text_output_contains_boundary_divider: b.command
+
+tests/test_cli/test_dual_mode_stdin.py  [3 tests]  PC2
+    TestDualModeStdinBehavior::test_empty_stdin_treated_as_no_input: echo1.command
+    TestDualModeStdinBehavior::test_file_workflow_with_stdin_data_routes_to_input: test_echo.command
+    TestRealShellIntegration::test_pipe_data_to_workflow_file_creates_expected_output: test_echo.command
+
+tests/test_cli/test_enhanced_error_output.py  [4 tests]  PC2
+    TestEnhancedErrorOutput::test_degraded_large_batch_output_compacts_failed_item_in_stdout: process.command
+    TestEnhancedErrorOutput::test_large_batch_item_failure_does_not_dump_payload_to_text_stderr: fail-batch.command
+    TestEnhancedErrorOutput::test_large_batch_item_json_uses_compact_batch_error_details: fail-batch.command
+    TestEnhancedErrorOutput::test_template_error_shows_context: consumer.command
+
+tests/test_cli/test_main.py  [2 tests]  PC2
+    test_markdown_workflow_with_parameters: echo1.command
+    test_stdin_with_file_workflow: echo1.command
+
+tests/test_cli/test_nested_workflow_cli.py  [6 tests]  PC2
+    TestNestedWorkflowCLI::test_nested_workflow_e2e: show.command, transform.command
+    TestNestedWorkflowCLI::test_nested_workflow_missing_input_error: show.command, transform.command
+    TestNestedWorkflowCLI::test_nested_workflow_relative_path: show.command, transform.command
+    TestNestedWorkflowCLI::test_nested_workflow_validate_only: show.command, transform.command
+    TestNestedWorkflowCLI::test_saved_workflow_with_relative_nested_child: show.command, transform.command
+    TestNestedWorkflowCLI::test_three_level_nesting_with_relative_paths: show.command, transform.command
+
+tests/test_cli/test_paused_cli.py  [5 tests]  PC2
+    test_approve_on_escalation_refuses_with_the_right_flag: after.command
+    test_escalation_on_edited_final_step_gets_paused_specific_refusal: after.command
+    test_escalation_pause_choose_answers_and_completes: after.command
+    test_refork_recipe_pauses_and_resumes_non_interactively: after.command
+    test_restored_only_paused_attempt_supersedes_its_source: gated.command
+
+tests/test_cli/test_resume_cli.py  [32 tests]  PC2
+    test_batch_step_failing_template_resolution_still_needs_confirmation: each.command
+    test_batched_sub_workflow_host_still_needs_confirmation: fire.command
+    test_dry_run_json_carries_resume_block: step2.command, step3.command
+    test_dry_run_plans_the_tail_only: step2.command, step3.command
+    test_dry_run_still_refuses_stale_workflow: step2.command, step3.command
+    test_entry_restored_by_a_resumed_attempt_still_needs_confirmation: k.command
+    test_failed_run_hint_survives_print_mode: step2.command, step3.command
+    test_failed_run_json_document_carries_resume_fields: step2.command, step3.command
+    test_failed_run_json_document_omits_resume_fields_under_no_trace: step2.command, step3.command
+    test_failed_run_omits_hint_under_no_trace: step2.command, step3.command
+    test_failed_run_prints_resume_hint: step2.command, step3.command
+    test_failed_run_with_no_trace_is_a_clear_missing_error: step2.command, step3.command
+    test_incomplete_between_nodes_resumes_at_successor_e2e: step2.command, step3.command
+    test_incomplete_killed_mid_node_resumes_at_that_node_e2e: step2.command, step3.command
+    test_json_refusal_shape: step2.command, step3.command
+    test_key_value_overrides_meta_inputs: step2.command, step3.command
+    test_killed_between_loop_iterations_continues_with_the_engine_decision_e2e: winner.command
+    test_llm_failed_node_resumes_without_confirmation: tail.command
+    test_nothing_to_resume_when_run_succeeded: step2.command, step3.command
+    test_resume_by_execution_id_reenters_and_completes: step2.command, step3.command
+    test_resume_by_workflow_path: step2.command, step3.command
+    test_resume_honors_pflow_execution_id_env: step2.command, step3.command
+    test_side_effect_force_bypass_runs: step2.command, step3.command
+    test_side_effect_non_tty_hard_error_names_node_type_and_force: step2.command, step3.command
+    test_side_effect_tty_confirm_no_cancels: step2.command, step3.command
+    test_side_effect_tty_confirm_yes_runs: step2.command, step3.command
+    test_stale_hash_force_override_runs: step2.command, step3.command
+    test_stale_hash_refusal_after_edit: step2.command, step3.command
+    test_stale_refusal_names_a_between_iterations_loop_step_as_the_resume_point: winner.command
+    test_step_that_began_on_an_earlier_visit_still_needs_confirmation: save.command
+    test_stray_flag_after_target_is_usage_error: step2.command, step3.command
+    test_uuid_shaped_saved_name_resolves_as_workflow: step2.command, step3.command
+
+tests/test_cli/test_resume_no_hang_subprocess.py  [1 tests]  PC2
+    <subprocess child; body at :65>: boom.command
+
+tests/test_cli/test_run_node.py  [1 tests]  PC2
+    test_cli_json_run_records_json_output_result_on_run_complete: greet.command
+
+tests/test_cli/test_run_tailer.py  [1 tests]  PC2
+    test_round_trip_real_runner_unedited_not_stale_edited_stale: greet.command
+
+tests/test_cli/test_ui.py  [1 tests]  PC2
+    TestSourceEndpoint::test_valid_workflow_returns_source_files_with_root_after_inputs: greet.command
+
+tests/test_cli/test_ui_interaction_server.py  [26 tests]  PC2
+    TestHostGuard::test_guard_also_covers_read_endpoints: done.command
+    TestHostGuard::test_loopback_hosts_pass_the_guard: done.command
+    TestInteractionEndpoints::test_clear_replaces_the_latched_focus_with_a_higher_epoch: done.command
+    TestInteractionEndpoints::test_focus_latches_the_point_even_with_no_live_windows: done.command
+    TestInteractionEndpoints::test_focus_resolves_and_broadcasts_to_matching_windows: done.command
+    TestInteractionEndpoints::test_not_found_and_ambiguous_targets_are_not_broadcast: done.command
+    TestInteractionEndpoints::test_point_build_runs_off_the_hub_event_loop: done.command
+    TestNarrationPacingRendezvous::test_a_stale_ended_beacon_does_not_free_the_current_clip: done.command
+    TestNarrationPacingRendezvous::test_a_stale_started_beacon_does_not_reanchor_pacing: done.command
+    TestNarrationPacingRendezvous::test_caption_only_say_does_not_mark_narration_busy: done.command
+    TestNarrationPacingRendezvous::test_clear_resets_the_rendezvous: done.command
+    TestNarrationPacingRendezvous::test_delivered_audio_say_sets_the_remaining_window: done.command
+    TestNarrationPacingRendezvous::test_ended_beacon_clears_the_window: done.command
+    TestNarrationPacingRendezvous::test_started_beacon_reanchors_to_real_playback: done.command
+    TestNarrationPacingRendezvous::test_unparseable_audio_bytes_degrade_to_zero_not_a_stall: done.command
+    TestNarrationPacingRendezvous::test_zero_window_say_does_not_mark_narration_busy: done.command
+    TestResumeEndpoint::test_choose_on_a_real_escalation_maps_to_its_flag: after.command
+    TestRunEndpoint::test_declared_inputs_become_one_argv_token_each_injection_safe: echo.command
+    TestRunEndpoint::test_missing_required_input_is_400_with_diagnostics_and_does_not_spawn: echo.command
+    TestRunEndpoint::test_spawn_invoked_with_expected_detached_argv: done.command
+    TestSayEndpoint::test_say_broadcasts_point_then_caption_with_audio: done.command
+    TestSayEndpoint::test_say_failed_resolve_does_not_broadcast_or_store_audio: done.command
+    TestSayEndpoint::test_say_frame_uses_frame_verb: done.command
+    TestSayEndpoint::test_say_point_is_replayed_to_a_reconnecting_window_but_the_caption_is_not: done.command
+    TestSayEndpoint::test_say_without_audio_omits_audio_url: done.command
+    test_events_replays_the_latched_point_to_a_new_connection: done.command
+
+tests/test_cli/test_unified_error_output.py  [1 tests]  PC2
+    TestStructuredFieldPreservation::test_missing_required_input_preserves_path_and_suggestion: n1.command
+
+tests/test_cli/test_unknown_flag_handling.py  [1 tests]  PC2
+    TestUnknownFlagCLI::test_key_value_param_not_rejected: echo.command
+
+tests/test_cli/test_validate_only.py  [7 tests]  PC2
+    TestFailurePathShowsWarnings::test_failed_workflow_shows_parser_warning_in_error_output: use-it.command
+    TestValidateOnlySkipsPrepareInputs::test_validate_only_skips_prepare_inputs: test.command
+    TestValidateOnlyTemplateValidation::test_validate_only_catches_invalid_template_references: process.command
+    TestValidateOnlyWithComplexWorkflows::test_validate_only_catches_forward_references: node1.command, node2.command
+    TestValidateOnlyWithComplexWorkflows::test_validate_only_with_multiple_nodes_and_edges: node2.command, node3.command
+    TestValidateOnlyWithoutInputValues::test_validate_only_works_without_input_values: fetch.command
+    TestValidationErrorDiagnosticShape::test_text_validation_failure_renders_diagnostic_fields: fetch.command
+
+tests/test_cli/test_workflow_resolution.py  [1 tests]  PC2
+    TestWorkflowResolutionCLI::test_parameter_validation_with_missing_required_inputs: n1.command
+
+tests/test_core/test_approval_field.py  [3 tests]  PC2
+    TestCompiler::test_batch_host_gate_is_a_compilation_error: n.command
+    TestSchemaAndValidation::test_batch_host_gate_rejected_by_validator: n.command
+    TestSchemaAndValidation::test_gate_inside_subworkflow_validated_recursively: fan.command
+
+tests/test_core/test_file_resolver_integration.py  [2 tests]  PC2 (test-local file-loaded bodies: process.sh :270, greet.sh :325)
+    TestFileResolverWithParser::test_compile_ir_detects_templates_in_file_content: process.command
+    TestFileResolverWithParser::test_nested_workflow_file_refs_resolve_from_child_dir: greet.command
+
+tests/test_core/test_loop_validation.py  [3 tests]  PC2
+    test_bare_iteration_allowed: c.command
+    test_iteration_path_access_rejected: c.command
+    test_shell_carry_key_referenced_via_nested_path_no_warning: c.command
+
+tests/test_core/test_prompt_cache_validation.py  [1 tests]  PC2
+    test_v6_subworkflow_invalid_on_non_llm_via_real_validator: bad-step.command
+
+tests/test_core/test_react_flow_contract_fixtures.py  [1 tests]  PC1: react-flow fixtures from examples (PC1 regen)
+    test_committed_contract_fixture_matches_live_renderer[prompt-caching-multi-chunk]: session_context.command
+
+tests/test_core/test_sub_workflow_validation.py  [31 tests]  PC2
+    TestBatchItemValidation::test_alias_collision_with_reserved_keys_does_not_crash[__index__]: echo.command
+    TestBatchItemValidation::test_alias_collision_with_reserved_keys_does_not_crash[i]: echo.command
+    TestBatchItemValidation::test_alias_collision_with_reserved_keys_does_not_crash[inputs]: echo.command
+    TestBatchItemValidation::test_alias_collision_with_reserved_keys_does_not_crash[item]: echo.command
+    TestBatchItemValidation::test_alias_collision_with_reserved_keys_does_not_crash[workflow]: echo.command
+    TestBatchItemValidation::test_custom_alias_honored: echo.command
+    TestBatchItemValidation::test_custom_alias_via_markdown_round_trip: echo.command
+    TestBatchItemValidation::test_hetero_workflows_with_invariant_inputs_checks_each_child: echo.command
+    TestBatchItemValidation::test_heterogeneous_batch_validates_each_child: echo.command
+    TestBatchItemValidation::test_inline_item_missing_required_rejected: echo.command
+    TestBatchItemValidation::test_inline_item_undeclared_input_rejected: echo.command
+    TestBatchItemValidation::test_invariant_inputs_batch_path_points_at_params_not_items: echo.command
+    TestBatchItemValidation::test_item_load_error_carries_batch_item_index: echo.command
+    TestBatchItemValidation::test_mixed_static_and_template_items: echo.command
+    TestBatchItemValidation::test_nested_batch_grandchild_bug_caught_with_provenance: echo.command
+    TestBatchItemValidation::test_scalar_items_workflow_template_no_false_positive: echo.command
+    TestBatchItemValidation::test_two_items_same_bug_both_survive_runner_dedup: echo.command
+    TestInputsMappingRequiredCheck::test_inputs_dict_mapping_satisfies_required_check: echo-it.command
+    TestInputsMappingRequiredCheck::test_inputs_dict_partial_coverage_detected: echo-it.command
+    TestInputsMappingRequiredCheck::test_inputs_template_mapping_skips_required_check: echo-it.command
+    TestNonDictInputsShape::test_non_dict_inputs_list_rejected: echo.command
+    TestNonDictInputsShape::test_non_dict_inputs_literal_string_rejected: echo.command
+    TestSavedWorkflowName::test_saved_workflow_name_validated: a.command
+    TestSubWorkflowDataFlowError::test_sub_workflow_data_flow_error_caught: step-a.command
+    TestSubWorkflowDiagnosticsCarrySeeAlso::test_missing_required_input_diagnostic_see_also_sub_workflows: echo.command
+    TestSubWorkflowDiagnosticsCarrySeeAlso::test_non_dict_inputs_diagnostic_see_also_sub_workflows: echo.command
+    TestSubWorkflowDiagnosticsCarrySeeAlso::test_undeclared_extras_diagnostic_see_also_sub_workflows: echo.command
+    TestUndeclaredExtras::test_storage_mode_param_rejected: echo.command
+    TestUndeclaredExtras::test_workflow_extras_in_inputs_rejected: echo.command
+    TestUndeclaredExtras::test_workflow_extras_top_level_rejected: echo.command
+    TestUndeclaredExtras::test_workflow_extras_with_template_inputs_deferred: echo.command
+
+tests/test_core/test_validation_utils.py  [3 tests]  PC2
+    test_analyze_cache_agrees_with_validate_only_on_relative_child_outputs: show.command
+    test_save_and_validate_only_accept_correct_relative_child_output: show.command
+    test_save_and_validate_only_agree_on_relative_child_outputs: show.command
+
+tests/test_core/test_workflow_data_flow.py  [32 tests]  PC2
+    TestArrayAccessValidation::test_array_access_with_forward_reference_fails: early.command
+    TestArrayAccessValidation::test_array_access_with_nonexistent_node_fails: process.command
+    TestArrayAccessValidation::test_undefined_input_with_array_access_fails: process.command
+    TestArrayAccessValidation::test_valid_array_access_passes: process.command
+    TestArrayAccessValidation::test_valid_dotted_array_access_passes: process.command
+    TestBatchDataFlowValidation::test_batch_custom_alias_dotted_reference: process.command
+    TestBatchDataFlowValidation::test_batch_dunder_index_valid: process.command
+    TestBatchDataFlowValidation::test_batch_dunder_index_with_nested_template: first.command, second.command
+    TestBatchDataFlowValidation::test_batch_item_deeply_nested_dotted_reference: process.command
+    TestBatchDataFlowValidation::test_batch_item_dotted_reference_valid: process.command
+    TestBatchDataFlowValidation::test_batch_multiple_dotted_references_in_command: process.command
+    TestBatchDataFlowValidation::test_dunder_index_invalid_without_batch: process.command
+    TestCacheVarRoots::test_coalesce_var_from_dict_ir_is_rejected: b.command, p.command
+    TestCacheVarRoots::test_declared_inner_root_is_clean: b.command, p.command
+    TestCacheVarRoots::test_inner_batch_alias_is_batch_scoped: b.command, p.command
+    TestCacheVarRoots::test_inner_root_must_exist: b.command, p.command
+    TestCacheVarRoots::test_issue_var_is_left_to_the_issue_pass: b.command, p.command
+    TestCacheVarRoots::test_literal_var_is_rejected: b.command, p.command
+    TestImprovedErrorMessages::test_batch_aliases_listed_as_declared_inputs: process.command
+    TestImprovedErrorMessages::test_no_inputs_message_when_truly_empty: echo.command
+    TestImprovedErrorMessages::test_undefined_ref_lists_declared_inputs: fetch.command
+    TestImprovedErrorMessages::test_undefined_ref_no_inputs_declared: echo.command
+    TestReservedInternalKeyReferences::test_bare_index_in_batch_is_valid: n1.command
+    TestReservedInternalKeyReferences::test_bare_reserved_key_emits_reserved_key_error: n1.command
+    TestReservedInternalKeyReferences::test_cache_hits_reference_emits_reserved_key_error: n1.command
+    TestReservedInternalKeyReferences::test_execution_reference_emits_reserved_key_error: n1.command
+    TestReservedInternalKeyReferences::test_failures_reference_emits_reserved_key_error: n1.command
+    TestReservedInternalKeyReferences::test_index_path_access_emits_integer_error: n1.command
+    TestReservedInternalKeyReferences::test_non_underscore_typo_still_non_existent_node: n1.command
+    TestReservedInternalKeyReferences::test_single_underscore_reserved_falls_through: n1.command
+    TestValidateDataFlow::test_shell_command_with_invalid_pflow_template: fetch.command
+    TestValidateDataFlow::test_shell_command_with_mixed_syntax: fetch.command
+
+tests/test_core/test_workflow_validator.py  [2 tests]  PC2
+    TestWorkflowValidator::test_workflow_auto_outputs_resolve_in_templates: use_output.command
+    TestWorkflowValidator::test_workflow_dynamic_outputs_no_false_errors: use_output.command
+
+tests/test_core/test_workflow_validator_code_param.py  [1 tests]  PC2
+    test_string_code_is_accepted[${upstream.stdout}]: run.code
+
+tests/test_docs/test_example_validation.py  [1 tests]  PC1: examples/ (PC1 converts; clears on its own)
+    TestExampleValidation::test_valid_examples_pass_full_validation: announce.command, api_caller.command, branch-setup.command, combine.command, correlate-batch.command, cost_report.command, count.command, echo-it.command, emit.command, format_report.command, greet_users.command, notifier.command, process-batch.command, report.command, session_context.command, transform.command, uppercase.command
+
+tests/test_docs/test_guide_example_validation.py  [3 tests]  PC1: guide/docs/MCP fences (PC1) + the drifted_node_ref harness case (PC1 edit 1)
+    TestInlineExampleValidation::test_examples_pass_validation[guide]: combine.command, take-and-write.command, transform.command
+    TestInlineExampleValidation::test_negative_cases_still_fail[docs]: b.command
+    TestInlineExampleValidation::test_negative_cases_still_fail[guide]: b.command
+
+tests/test_execution/test_plan.py  [1 tests]  PC2
+    test_build_plan_partial_cache_after_config_edit_marks_boundary_and_downstream: b.command, c.command
+
+tests/test_execution/test_plan_batch_sub_workflow.py  [10 tests]  PC2
+    test_first_item_template_miss_under_continue_is_a_per_item_warning[False]: echo.command
+    test_first_item_template_miss_under_continue_is_a_per_item_warning[True]: echo.command
+    test_first_item_template_miss_under_fail_fast_still_fails_the_plan: echo.command
+    test_plan_batch_sub_workflow_branching_child_reports_correct_per_node_status: fast.command, slow.command
+    test_plan_batch_sub_workflow_detects_partial_cache_per_item: echo.command
+    test_plan_batch_sub_workflow_empty_items_produces_empty_sub_plan: echo.command
+    test_plan_batch_sub_workflow_non_dict_per_item_inputs_emits_warning: echo.command
+    test_plan_batch_sub_workflow_non_list_items_surfaces_error: echo.command
+    test_plan_batch_sub_workflow_populates_outputs_for_downstream_resolution: echo.command, post.command
+    test_plan_batch_sub_workflow_unresolved_per_item_inputs_emits_warning: echo.command
+
+tests/test_execution/test_plan_drift.py  [14 tests]  PC2
+    test_engine_and_planner_paused_approval_entry_state_match: guarded.command
+    test_engine_and_planner_resume_entry_state_match: last.command, middle.command
+    test_engine_and_planner_walk_entry_state_match: last.command, middle.command
+    test_plan_batch_sub_workflow_output_shape_matches_engine: echo.command
+    test_plan_batch_sub_workflow_preserves_child_approval_flag: gated-echo.command
+    test_plan_bfs_recurses_into_sub_workflow_carrying_child_stats: child-work.command
+    test_plan_downstream_batch_respects_depth_guard: echo.command
+    test_plan_downstream_bfs_detects_sub_workflow_cycle: upstream.command
+    test_plan_downstream_linear_subworkflow_reports_exact_cost_basis: child-a.command, child-b.command
+    test_plan_heterogeneous_batch_sub_workflow_per_item_cache: do-a.command, do-b.command
+    test_plan_sub_workflow_downstream_templates_resolve: combine.command, make.command, pick.command
+    test_plan_sub_workflow_plain_format_source_resolves: combine.command, pick.command
+    test_plan_sub_workflow_undeclared_outputs_fallback: compute.command, use.command
+    test_plan_summary_execute_by_type_aggregates_across_nested: child-shell.command
+
+tests/test_execution/test_runner.py  [5 tests]  PC2
+    test_child_parser_warning_survives_prep_failure: run.command
+    test_declared_defaults_applied_without_user_params: greet.command
+    test_exception_annotations_survive_full_pipeline: consumer.command
+    test_user_params_override_declared_defaults: greet.command
+    test_validation_error_prevents_compilation: a.command, b.command
+
+tests/test_integration/test_branch_convergence.py  [6 tests]  PC2
+    TestBranchConvergenceCoalesce::test_shell_node_coalesce_high_branch: use-result.command
+    TestBranchConvergenceCoalesce::test_shell_node_coalesce_low_branch: use-result.command
+    TestCoalesceInWorkflowOutputs::test_coalesced_output_other_branch: use-result.command
+    TestCoalesceInWorkflowOutputs::test_coalesced_output_resolves_to_executed_branch: use-result.command
+    TestOutputResolutionErrors::test_coalesce_output_resolves_on_unexecuted_branch: use-result.command
+    TestOutputResolutionErrors::test_non_coalesce_output_errors_on_unexecuted_branch: use-result.command
+
+tests/test_integration/test_cli_mcp_parity.py  [7 tests]  PC2
+    test_dotted_output_key_json_mode_end_to_end: echo-items.command
+    test_dotted_output_key_resolves_end_to_end: echo-items.command
+    test_empty_input_batch_emits_non_degrading_info_advisory: consume.command
+    test_mcp_auto_approve_pre_approves_off_main_thread: guarded-step.command
+    test_mcp_gated_workflow_pauses_by_path_but_fails_inline: guarded-step.command
+    test_only_batch_node_compact_summary_end_to_end: echo-items.command
+    test_only_batch_node_runtime_empty_items_emits_compact_summary: consume.command
+
+tests/test_integration/test_conditional_branching.py  [1 tests]  PC2
+    TestFullPipeline::test_pipeline_template_resolution_in_branch_targets: premium-path.command, standard-path.command
+
+tests/test_integration/test_failed_node_invariant.py  [5 tests]  PC2
+    test_child_batch_failure_strips_raw_item_from_carried_bundle: faninner.command
+    test_fail_fast_batch_preserves_batch_metadata_in_failures: fail_fast_batch.command
+    test_large_item_fail_fast_batch_preserves_full_item_with_compact_summary: fail_fast_batch.command
+    test_parallel_batch_subworkflow_failures_attributed_per_item: inner.command
+    test_strict_template_error_in_child_surfaces_unresolved_references: consumer.command
+
+tests/test_integration/test_inputs_forwarding_e2e.py  [1 tests]  PC2
+    TestInputsForwardingEndToEnd::test_inputs_dict_forwarding_to_child: echo-it.command
+
+tests/test_integration/test_iteration_pattern.py  [1 tests]  PC2
+    test_sub_workflow_batch_iteration_reads_fresh_filesystem_state: take-and-write.command
+
+tests/test_integration/test_json_nested_access_e2e.py  [9 tests]  PC2
+    TestJsonNestedAccessE2E::test_deep_nested_json_access: use-deep.command
+    TestJsonNestedAccessE2E::test_invalid_json_graceful_fallback: try-access.command
+    TestJsonNestedAccessE2E::test_json_array_access: use-array.command
+    TestJsonNestedAccessE2E::test_mixed_object_array_access: use-mixed.command
+    TestJsonNestedAccessE2E::test_shell_json_output_nested_access: test-nested.command
+    TestJsonNestedAccessE2E::test_terminal_access_returns_raw_string: use-raw.command
+    TestRealWorldPatterns::test_curl_api_pattern: process-response.command
+    TestRealWorldPatterns::test_jq_output_pattern: use-jq.command
+    TestRealWorldPatterns::test_recursive_json_parsing: access-deep.command
+
+tests/test_integration/test_loop_config.py  [1 tests]  PC2
+    test_shell_carry_threads_into_command_text_across_rounds: c.command
+
+tests/test_integration/test_prompt_cache_multi_chunk.py  [1 tests]  PC1: loads examples/core/prompt-caching-multi-chunk (PC1)
+    test_multi_chunk_workflow_emits_per_chunk_markers_end_to_end: session_context.command
+
+tests/test_integration/test_sigpipe_regression.py  [5 tests]  PC2
+    TestRealWorldPatterns::test_image_description_workflow_pattern: extract-images.command
+    TestRealWorldPatterns::test_multiple_conditional_shells_in_sequence: step1.command, step2.command
+    TestWorkflowBooleanParameterExecution::test_workflow_boolean_default_false: process.command
+    TestWorkflowBooleanParameterExecution::test_workflow_with_skip_flag_false: conditional-process.command
+    TestWorkflowBooleanParameterExecution::test_workflow_with_skip_flag_true: conditional-process.command
+
+tests/test_integration/test_task153_extras_stderr_agent_ux.py  [1 tests]  PC2
+    TestExtrasDiagnosticStderrAgentUX::test_extras_diagnostic_renders_with_fuzzy_suggestion_and_available_fields: echo.command
+
+tests/test_integration/test_template_parity.py  [1 tests]  PC2
+    test_example_nested_index_runs_unchanged: correlate-batch.command, process-batch.command
+
+tests/test_integration/test_template_resolution_hardening.py  [12 tests]  PC2
+    TestConfigurationHierarchy::test_default_strict_mode_when_not_specified: test.command
+    TestConfigurationHierarchy::test_permissive_mode_still_fails_compilation_for_unknown_templates: test.command
+    TestEnhancedErrorMessages::test_error_shows_available_outputs_for_invalid_field: consumer.command
+    TestIssue95Prevention::test_empty_stdout_causes_failure_not_literal_template: consumer.command
+    TestIssue95Prevention::test_issue_6_json_status_field_not_null_on_failure: will-fail.command
+    TestIssue95Prevention::test_issue_95_nonexistent_field_fails_before_api_call: api-call.command
+    TestIssue95Prevention::test_unresolved_template_fails_before_external_api_strict_mode: external-api-call.command
+    TestMultipleTemplateErrors::test_first_error_stops_execution_strict_mode: node1.command, node2.command
+    TestMultipleTemplateErrors::test_multiple_template_errors_all_captured_at_compilation: node1.command, node2.command
+    TestTriStateStatus::test_failed_status_for_strict_mode: node-with-error.command
+    TestTriStateStatus::test_invalid_template_caught_at_compilation_in_permissive_mode: node-with-missing-template.command
+    TestTriStateStatus::test_success_status_for_perfect_workflow: consumer.command
+
+tests/test_mcp_server/test_execution_workflow.py  [1 tests]  PC2
+    TestExecuteWorkflowErrors::test_large_batch_failure_text_uses_compact_item_summary: fail-batch.command
+
+tests/test_mcp_server/test_mcp_warnings.py  [2 tests]  PC2
+    TestValidationWarningsPropagateToResult::test_real_nested_str_access_produces_validation_warning: process.command
+    TestValidationWarningsPropagateToResult::test_warning_dict_has_correct_node_metadata: process.command
+
+tests/test_mcp_server/test_registry_template.py  [1 tests]  PC2
+    test_runner_resolves_template_in_single_node_ir: shell.command
+
+tests/test_mcp_server/test_validation_service.py  [5 tests]  PC2
+    TestValidationCorrectBehavior::test_accepts_workflow_with_valid_templates: echo-node.command
+    TestValidationCorrectBehavior::test_invalid_markdown_surfaces_parser_info_advisory: echo.command
+    TestValidationFalsePositives::test_detects_unused_declared_inputs: test-node.command
+    TestValidationFalsePositives::test_rejects_circular_dependency: node-a.command, node-b.command
+    TestValidationFalsePositives::test_rejects_undefined_template_variable: test-node.command
+
+tests/test_runtime/test_approval_gate.py  [5 tests]  PC2
+    TestApprovalGate::test_approved_gate_continues_and_previews_resolved_params: b.command
+    TestApprovalGate::test_broken_resolver_return_type_is_loud: b.command
+    TestApprovalGate::test_no_resolver_fails_loudly_with_payload: b.command
+    TestGateResolverFailure::test_resolver_crash_at_approval_gate_is_gate_scoped: b.command
+    TestRunnerBoundary::test_noninteractive_gate_through_runner_keeps_payload_diagnostics: b.command
+
+tests/test_runtime/test_batch_node.py  [5 tests]  PC2
+    TestBatchSubWorkflowErrorPropagationIntegration::test_batch_continue_all_success_errors_is_empty_list: fetch.command
+    TestBatchSubWorkflowErrorPropagationIntegration::test_batch_errors_consumed_by_downstream_code_node_as_list: fetch.command
+    TestBatchSubWorkflowErrorPropagationIntegration::test_batch_workflow_partial_failure_parallel: check.command
+    TestBatchSubWorkflowErrorPropagationIntegration::test_batch_workflow_partial_failure_with_continue: check.command
+    TestBatchSubWorkflowErrorPropagationIntegration::test_downstream_batch_iterates_only_successes: step1.command, step2.command
+
+tests/test_runtime/test_cache_integration.py  [3 tests]  PC2
+    test_cached_output_flows_through_template_resolution: consumer.command
+    test_key_value_override_cache_interaction: step-1.command
+    test_template_input_change_invalidation: step-1.command
+
+tests/test_runtime/test_cache_opt_out.py  [1 tests]  PC2
+    TestPerNodeCacheOptOut::test_mixed_cache_settings: process.command
+
+tests/test_runtime/test_compile_once_regression.py  [3 tests]  PC2
+    test_each_batch_item_produces_distinct_output: echo.command
+    test_parallel_batch_items_produce_distinct_output: echo.command
+    test_resolved_defaults_do_not_leak_between_batch_items: echo.command
+
+tests/test_runtime/test_gate_trace.py  [6 tests]  PC2
+    TestGateIterationRecorded::test_non_loop_approval_lines_carry_no_iteration: b.command
+    TestGateTraceEvents::test_approved_run_emits_pause_and_resolution_and_stays_readable: b.command
+    TestGateTraceEvents::test_denied_run_trailer_says_denied_and_node_absent: b.command
+    TestGateTraceEvents::test_gated_approved_run_is_a_valid_only_snapshot_source: b.command
+    TestGateTraceEvents::test_noninteractive_gate_trailer_says_paused_not_success: b.command
+    TestGateTraceEvents::test_resolver_crash_emits_error_resolution_and_trailer_says_failed: b.command
+
+tests/test_runtime/test_initial_params_override_removal.py  [3 tests]  PC2
+    TestSharedStoreIsOnlyDataSource::test_defaults_seeded_into_shared_store: greet.command
+    TestSharedStoreIsOnlyDataSource::test_upstream_node_output_available_for_downstream: consumer.command
+    TestSharedStoreIsOnlyDataSource::test_user_param_available_via_shared_store: greet.command
+
+tests/test_runtime/test_memoization_integration.py  [1 tests]  PC2
+    test_memo_cache_miss_on_different_input: diff-input.command
+
+tests/test_runtime/test_meta_inputs.py  [4 tests]  PC2
+    test_meta_inputs_on_eager_meta_line_before_node_events: greet.command
+    test_meta_inputs_present_for_inline_content_run: echo.command
+    test_meta_inputs_records_required_input_value_not_placeholder: greet.command
+    test_meta_inputs_records_user_and_default_values: greet.command
+
+tests/test_runtime/test_null_defaults.py  [4 tests]  PC2
+    TestNullDefaults::test_empty_string_default: test.command
+    TestNullDefaults::test_null_default_preserves_none_in_simple_template: test.command
+    TestNullDefaults::test_null_in_complex_template: test.command
+    TestNullDefaults::test_override_null_default_with_provided_value: test.command
+
+tests/test_runtime/test_only_snapshot.py  [6 tests]  PC2
+    test_only_coalesce_silently_uses_snapshot_branch: report.command
+    test_only_does_not_seed_a_recovered_failure_upstream: report.command
+    test_only_subworkflow_target_reruns_whole_child: echo.command
+    test_planner_execute_verdict_matches_engine_executing: target.command
+    test_planner_only_seeds_resolved_content_from_interned_trace: target.command
+    test_real_degraded_batch_snapshot_warns_in_run_and_plan: fetch.command, summarize.command
+
+tests/test_runtime/test_prepare_inputs_extras.py  [1 tests]  PC2
+    TestValidateOnlyGap::test_validate_only_does_not_catch_root_extras: echo.command
+
+tests/test_runtime/test_prompt_cache_dict.py  [1 tests]  PC2
+    test_subworkflow_isolation_via_monkeypatch: echo.command
+
+tests/test_runtime/test_prompt_cache_hash.py  [1 tests]  PC1: golden hashes over examples (PC1, D14)
+    test_golden_baseline_hashes_match: api_caller.command, copy-folder.command, create-worktree.command, greet_users.command, launch-cli.command, launch-cursor.command, notifier.command, output-status.command
+
+tests/test_runtime/test_resume_engine.py  [15 tests]  PC2
+    test_attempt_trace_restored_events_and_aggregates: step3.command
+    test_both_primary_and_fallback_fail_resumes_at_the_primary_e2e: primary.command
+    test_incomplete_tail_ending_in_unrecovered_failure_reenters_at_the_failure: boom.command
+    test_incomplete_tail_killed_before_the_error_handler_reenters_at_the_recovered_primary: primary.command, use.command
+    test_only_after_successful_resume_seeds_from_attempt_trace: step3.command
+    test_recovered_failure_upstream_is_not_seeded: primary.command, use.command
+    test_refused_attempt_does_not_wedge_the_chain: step3.command
+    test_restored_large_output_reinterns_blob_and_round_trips: step3.command
+    test_restored_subworkflow_and_batch_hosts_are_childless_and_reseed: fan.command, k.command
+    test_resume_after_entry_node_removed_is_a_typed_refusal: step3.command
+    test_resume_at_a_sub_workflow_host_reruns_the_whole_host: inner.command, post.command
+    test_resume_of_a_resume_seeds_from_newest_attempt_alone: step3.command
+    test_resume_reenters_at_failed_node_and_skips_upstream: step3.command
+    test_resumed_run_visibility_json_and_text: step3.command
+    test_resuming_a_superseded_attempt_is_refused: step3.command
+
+tests/test_runtime/test_template_escape.py  [4 tests]  T3: §6: 4×T3 + escape tests retargeted to stdin (T2) in PC2
+    test_docs_escape_example_prints_literal_template: print_price.command
+    test_escape_and_reference_of_same_name_in_different_steps_do_not_interact: literal.command, run.command
+    test_escape_in_batch_step_resolves_per_item: run.command
+    test_escape_with_shell_parameter_expansion_reaches_the_shell: run.command
+
+tests/test_runtime/test_template_validation/test_array_notation.py  [8 tests]  PC2
+    TestBatchResultsIndexAccessGate::test_batch_field_suggestion_includes_index_for_fail_fast: batch.command
+    TestBatchResultsIndexAccessGate::test_batch_field_suggestion_omits_index_for_continue: batch.command
+    TestBatchResultsIndexAccessGate::test_dynamic_index_access_blocked_with_continue: batch.command
+    TestBatchResultsIndexAccessGate::test_errors_array_index_access_allowed_with_continue: batch.command
+    TestBatchResultsIndexAccessGate::test_index_access_allowed_with_fail_fast: batch.command
+    TestBatchResultsIndexAccessGate::test_index_access_blocked_with_continue: batch.command
+    TestBatchResultsIndexAccessGate::test_nested_index_template_blocked_with_continue: batch.command, consumer.command
+    TestBatchResultsIndexAccessGate::test_whole_array_access_allowed_with_continue: batch.command
+
+tests/test_runtime/test_template_validation/test_batch_item_validation.py  [3 tests]  PC2
+    TestBatchItemFieldValidation::test_coalesce_in_items_template: a-fallback.command
+    TestBatchItemFieldValidation::test_error_shows_available_fields: process.command
+    TestBatchItemFieldValidation::test_multiple_batch_nodes_validated_independently: step-b.command
+
+tests/test_runtime/test_template_validation/test_literal_operands.py  [6 tests]  PC2
+    TestLiteralOperandValidation::test_bare_literal_validates_clean: consumer.command
+    TestLiteralOperandValidation::test_literal_does_not_produce_no_valid_source: consumer.command
+    TestLiteralOperandValidation::test_literal_null_operand_validates_clean: consumer.command
+    TestLiteralOperandValidation::test_literal_number_operand_validates_clean: consumer.command
+    TestLiteralOperandValidation::test_literal_string_operand_validates_clean: consumer.command
+    TestMalformedLiteralOperand::test_single_question_in_string_literal_is_allowed: consumer.command
+
+tests/test_runtime/test_template_validation/test_malformed.py  [7 tests]  PC2
+    TestIssuePassCoversEverySurface::test_well_formed_surfaces_are_clean: a.command
+    TestMalformedTemplateDetection::test_multiple_templates_one_malformed: node2.command
+    TestMalformedTemplateDetection::test_nested_templates_valid: node2.command
+    TestMalformedTemplateDetection::test_valid_templates_no_false_positives: node2.command
+    TestMalformedTemplateEdgeCases::test_coalesce_with_nested_indices_not_malformed: node1.command
+    TestMalformedTemplateEdgeCases::test_dollar_escape_of_any_content_is_not_a_template: test-node.command
+    TestMalformedTemplateEdgeCases::test_malformed_template_beside_an_escape_is_still_detected: test-node.command
+
+tests/test_runtime/test_template_validation/test_types.py  [28 tests]  T3: §6 T3 (Pass 7) — untouched in PC, PB deletes/replaces
+    TestShellCommandGenericTypes::test_shell_allows_quoted_generic_type: shell-node.command
+    TestShellCommandGenericTypes::test_shell_blocks_list_dict_generic: shell-node.command
+    TestShellCommandQuoteEscape::test_double_quoted_template_not_escaped: shell-node.command
+    TestShellCommandQuoteEscape::test_error_message_suggests_quote_escape: shell-node.command
+    TestShellCommandQuoteEscape::test_mixed_quoted_and_unquoted: shell-node.command
+    TestShellCommandQuoteEscape::test_multiple_quoted_templates: shell-node.command
+    TestShellCommandQuoteEscape::test_quoted_dict_list_union_allowed: shell-node.command
+    TestShellCommandQuoteEscape::test_quoted_dict_template_allowed: shell-node.command
+    TestShellCommandQuoteEscape::test_quoted_nested_field_access_with_array_indices: shell-node.command
+    TestShellCommandQuoteEscape::test_quoted_with_prefix_not_escaped: shell-node.command
+    TestShellCommandQuoteEscape::test_unquoted_dict_template_blocked: shell-node.command
+    TestShellCommandRegressions::test_pure_dict_still_blocked_unquoted: shell-node.command
+    TestShellCommandRegressions::test_pure_list_still_blocked_unquoted: shell-node.command
+    TestShellCommandRegressions::test_str_type_still_allowed: shell-node.command
+    TestShellCommandUnionTypes::test_shell_allows_any_type: shell-node.command
+    TestShellCommandUnionTypes::test_shell_allows_dict_any_union: shell-node.command
+    TestShellCommandUnionTypes::test_shell_allows_list_str_union: shell-node.command
+    TestShellCommandUnionTypes::test_shell_blocks_dict_list_union: shell-node.command
+    TestShellCommandValidationTiming::test_dict_in_shell_command_fails_at_compile_time: shell-node.command
+    TestShellCommandValidationTiming::test_dict_in_shell_command_without_validation_fails_at_runtime: shell-node.command
+    TestShellCommandValidationTiming::test_list_in_shell_command_fails_at_compile_time: shell-node.command
+    TestTypeValidationIntegration::test_shell_command_allows_nested_string_field_from_dict: shell-node.command
+    TestTypeValidationIntegration::test_shell_command_allows_string_type: shell-node.command
+    TestTypeValidationIntegration::test_shell_command_allows_union_with_str: shell-node.command
+    TestTypeValidationIntegration::test_shell_command_blocks_dict_type: shell-node.command
+    TestTypeValidationIntegration::test_shell_command_blocks_list_type: shell-node.command
+    TestTypeValidationIntegration::test_shell_command_blocks_workflow_input_dict: shell-node.command
+    test_shell_blocks_multiple_structured_templates_preserves_structure: shell-node.command
+
+tests/test_runtime/test_template_validation/test_union_types.py  [11 tests]  PC2
+    TestUnionTypeEdgeCases::test_empty_union_component: node2.command
+    TestUnionTypeValidation::test_any_str_union_no_warning: node2.command
+    TestUnionTypeValidation::test_case_insensitive_union_types: node2.command
+    TestUnionTypeValidation::test_dict_any_union_no_warning: node2.command
+    TestUnionTypeValidation::test_dict_object_union_allows_nested_access: node2.command
+    TestUnionTypeValidation::test_dict_str_int_union_allows_nested_access: node2.command
+    TestUnionTypeValidation::test_dict_str_union_allows_nested_access: process.command
+    TestUnionTypeValidation::test_pure_any_type_no_warning: node2.command
+    TestUnionTypeValidation::test_single_type_backward_compatibility: node2.command
+    TestUnionTypeValidation::test_str_int_union_allows_nested_access_with_warning: node2.command
+    TestUnionTypeValidation::test_whitespace_in_union_types: node2.command
+
+tests/test_runtime/test_template_validation/test_validator.py  [2 tests]  PC2
+    TestBatchTemplateValidation::test_nested_index_template_not_flagged_as_malformed: first-batch.command, second-batch.command
+    TestInputsContextTemplateValidation::test_inputs_key_on_non_code_node: consumer.command
+
+tests/test_runtime/test_trace_integration.py  [9 tests]  PC2
+    TestBatchNodeTraceEvents::test_batch_items_appear_in_trace_event: processor.command
+    TestFailedBatchItemsInTrace::test_failed_item_has_error_in_trace: processor.command
+    TestFailedBatchItemsInTrace::test_succeeded_batch_persists_items_when_post_exec_step_raises: batch-node.command
+    TestParallelBatchSubWorkflowTrace::test_dynamic_subworkflow_batch_records_canonical_workflow_path: child-shell.command
+    TestParallelBatchTraceCapture::test_parallel_batch_captures_per_item_template_resolutions: greeter.command
+    TestTemplateResolutionsInTrace::test_template_resolutions_propagate_to_trace: echo.command
+    TestTemplateResolutionsOnError::test_template_resolution_error_captured_in_trace_with_partial_resolutions: consumer.command
+    TestTemplateResolutionsOnError::test_unresolved_template_raises_with_context: broken-node.command
+    TestTraceToReportFormatCompatibility::test_batch_trace_produces_valid_report: processor.command
+
+tests/test_runtime/test_workflow_executor/test_ir_cache.py  [2 tests]  PC2
+    test_heterogeneous_batch_loads_correct_child_ir: echo.command
+    test_heterogeneous_batch_parallel: echo.command
+
+tests/test_runtime/test_workflow_executor/test_prep_error_action.py  [3 tests]  PC2
+    TestPrepFailureRoutesThroughErrorAction::test_batch_continue_past_prep_error: echo.command
+    TestPrepFailureRoutesThroughErrorAction::test_parallel_batch_continue_past_prep_error: echo.command
+    TestPrepFailureRoutesThroughErrorAction::test_sequential_batch_prep_error_does_not_inherit_prior_item_trace: echo.command

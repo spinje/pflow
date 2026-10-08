@@ -18,9 +18,11 @@ Text to convert.
 Convert input to uppercase.
 
 - type: shell
+- env:
+    TEXT: ${text}
 
 ```command
-echo "${text}" | tr '[:lower:]' '[:upper:]'
+echo "$TEXT" | tr '[:lower:]' '[:upper:]'
 ```
 
 ## Outputs

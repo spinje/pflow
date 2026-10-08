@@ -35,7 +35,10 @@ class TestJsonNestedAccessE2E:
                 {
                     "id": "test-nested",
                     "type": "shell",
-                    "params": {"command": "echo 'iso value: ${output-json.stdout.iso}'"},
+                    "params": {
+                        "command": "echo 'iso value: '\"$OUTPUT_JSON_STDOUT_ISO\"",
+                        "env": {"OUTPUT_JSON_STDOUT_ISO": "${output-json.stdout.iso}"},
+                    },
                 },
             ],
             "edges": [{"from": "output-json", "to": "test-nested"}],
@@ -62,7 +65,10 @@ class TestJsonNestedAccessE2E:
                 {
                     "id": "use-deep",
                     "type": "shell",
-                    "params": {"command": "echo 'Name: ${deep-json.stdout.data.user.name}'"},
+                    "params": {
+                        "command": "echo 'Name: '\"$DEEP_JSON_STDOUT_DATA_USER_NAME\"",
+                        "env": {"DEEP_JSON_STDOUT_DATA_USER_NAME": "${deep-json.stdout.data.user.name}"},
+                    },
                 },
             ],
             "edges": [{"from": "deep-json", "to": "use-deep"}],
@@ -87,7 +93,10 @@ class TestJsonNestedAccessE2E:
                 {
                     "id": "use-array",
                     "type": "shell",
-                    "params": {"command": "echo 'First ID: ${array-json.stdout[0].id}'"},
+                    "params": {
+                        "command": "echo 'First ID: '\"$ARRAY_JSON_STDOUT_0_ID\"",
+                        "env": {"ARRAY_JSON_STDOUT_0_ID": "${array-json.stdout[0].id}"},
+                    },
                 },
             ],
             "edges": [{"from": "array-json", "to": "use-array"}],
@@ -113,7 +122,11 @@ class TestJsonNestedAccessE2E:
                     "id": "use-mixed",
                     "type": "shell",
                     "params": {
-                        "command": "echo 'First: ${mixed-json.stdout.items[0].name}, Count: ${mixed-json.stdout.count}'"
+                        "command": "echo 'First: '\"$MIXED_JSON_STDOUT_ITEMS_0_NAME\"', Count: '\"$MIXED_JSON_STDOUT_COUNT\"",
+                        "env": {
+                            "MIXED_JSON_STDOUT_ITEMS_0_NAME": "${mixed-json.stdout.items[0].name}",
+                            "MIXED_JSON_STDOUT_COUNT": "${mixed-json.stdout.count}",
+                        },
                     },
                 },
             ],
@@ -140,7 +153,10 @@ class TestJsonNestedAccessE2E:
                 {
                     "id": "use-raw",
                     "type": "shell",
-                    "params": {"command": "echo 'Raw: ${json-output.stdout}'"},
+                    "params": {
+                        "command": "echo 'Raw: '\"$JSON_OUTPUT_STDOUT\"",
+                        "env": {"JSON_OUTPUT_STDOUT": "${json-output.stdout}"},
+                    },
                 },
             ],
             "edges": [{"from": "json-output", "to": "use-raw"}],
@@ -167,7 +183,10 @@ class TestJsonNestedAccessE2E:
                     "id": "try-access",
                     "type": "shell",
                     # This template won't resolve - the ${...} stays as-is
-                    "params": {"command": "echo 'Value: ${not-json.stdout.field}'"},
+                    "params": {
+                        "command": "echo 'Value: '\"$NOT_JSON_STDOUT_FIELD\"",
+                        "env": {"NOT_JSON_STDOUT_FIELD": "${not-json.stdout.field}"},
+                    },
                 },
             ],
             "edges": [{"from": "not-json", "to": "try-access"}],
@@ -199,7 +218,12 @@ class TestRealWorldPatterns:
                     "id": "process-response",
                     "type": "shell",
                     "params": {
-                        "command": "echo 'User ${api-call.stdout.data.name} (ID: ${api-call.stdout.data.user_id}) - Status: ${api-call.stdout.status}'"
+                        "command": "echo 'User '\"$API_CALL_STDOUT_DATA_NAME\"' (ID: '\"$API_CALL_STDOUT_DATA_USER_ID\"') - Status: '\"$API_CALL_STDOUT_STATUS\"",
+                        "env": {
+                            "API_CALL_STDOUT_DATA_NAME": "${api-call.stdout.data.name}",
+                            "API_CALL_STDOUT_DATA_USER_ID": "${api-call.stdout.data.user_id}",
+                            "API_CALL_STDOUT_STATUS": "${api-call.stdout.status}",
+                        },
                     },
                 },
             ],
@@ -231,7 +255,10 @@ class TestRealWorldPatterns:
                 {
                     "id": "use-jq",
                     "type": "shell",
-                    "params": {"command": "echo 'Date: ${jq-format.stdout.date}'"},
+                    "params": {
+                        "command": "echo 'Date: '\"$JQ_FORMAT_STDOUT_DATE\"",
+                        "env": {"JQ_FORMAT_STDOUT_DATE": "${jq-format.stdout.date}"},
+                    },
                 },
             ],
             "edges": [{"from": "jq-format", "to": "use-jq"}],
@@ -259,7 +286,10 @@ class TestRealWorldPatterns:
                 {
                     "id": "access-deep",
                     "type": "shell",
-                    "params": {"command": "echo 'Inner: ${nested-json.stdout.wrapper.inner}'"},
+                    "params": {
+                        "command": "echo 'Inner: '\"$NESTED_JSON_STDOUT_WRAPPER_INNER\"",
+                        "env": {"NESTED_JSON_STDOUT_WRAPPER_INNER": "${nested-json.stdout.wrapper.inner}"},
+                    },
                 },
             ],
             "edges": [{"from": "nested-json", "to": "access-deep"}],

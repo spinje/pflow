@@ -1,0 +1,19 @@
+{
+  "exit_code": 0,
+  "nodes": [
+    {
+      "exit_code": 0,
+      "path": "emit",
+      "status": "success",
+      "stderr": "",
+      "stdout": "hello world"
+    },
+    {
+      "exit_code": 0,
+      "path": "count",
+      "status": "success",
+      "stderr": "",
+      "stdout": "11"
+    }
+  ]
+}

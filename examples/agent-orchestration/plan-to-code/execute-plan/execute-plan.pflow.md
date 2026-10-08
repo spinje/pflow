@@ -142,12 +142,12 @@ Create (or reset) the work branch off the base branch, once, before any implemen
 - type: shell
 - cwd: ${repo_dir}
 - next: plan-review-fix
-- inputs:
-    work_branch: ${work_branch}
-    base_branch: ${base_branch}
+- env:
+    WORK_BRANCH: ${work_branch}
+    BASE_BRANCH: ${base_branch}
 
 ```shell command
-git checkout -B "${work_branch}" "${base_branch}"
+git checkout -B "$WORK_BRANCH" "$BASE_BRANCH"
 ```
 
 ### plan-review-fix

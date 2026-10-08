@@ -255,7 +255,7 @@ class TestBatchResultsIndexAccessGate:
                 {
                     "id": "batch",
                     "type": "shell",
-                    "params": {"command": "echo ${item}"},
+                    "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                     "batch": {"items": ["a", "b"], "error_handling": "continue"},
                 },
                 {
@@ -283,7 +283,7 @@ class TestBatchResultsIndexAccessGate:
                 {
                     "id": "batch",
                     "type": "shell",
-                    "params": {"command": "echo ${item}"},
+                    "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                     "batch": {"items": ["a", "b"], "error_handling": "continue"},
                 },
                 {
@@ -309,7 +309,7 @@ class TestBatchResultsIndexAccessGate:
                 {
                     "id": "batch",
                     "type": "shell",
-                    "params": {"command": "echo ${item}"},
+                    "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                     "batch": {"items": ["a", "b"]},
                 },
                 {
@@ -333,7 +333,7 @@ class TestBatchResultsIndexAccessGate:
                 {
                     "id": "batch",
                     "type": "shell",
-                    "params": {"command": "echo ${item}"},
+                    "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                     "batch": {"items": ["a", "b"], "error_handling": "continue"},
                 },
                 {
@@ -357,13 +357,13 @@ class TestBatchResultsIndexAccessGate:
                 {
                     "id": "batch",
                     "type": "shell",
-                    "params": {"command": "echo ${item}"},
+                    "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                     "batch": {"items": ["a", "b"], "error_handling": "continue"},
                 },
                 {
                     "id": "consumer",
-                    "type": "shell",
-                    "params": {"command": "echo ${batch.results[${__index__}].stdout}"},
+                    "type": "llm",
+                    "params": {"prompt": "Mine: ${batch.results[${__index__}].stdout}"},
                     "batch": {"items": ["x", "y"]},
                 },
             ],
@@ -382,7 +382,7 @@ class TestBatchResultsIndexAccessGate:
                 {
                     "id": "batch",
                     "type": "shell",
-                    "params": {"command": "echo ${item}"},
+                    "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                     "batch": {"items": ["a", "b"], "error_handling": "continue"},
                 },
                 {
@@ -406,7 +406,7 @@ class TestBatchResultsIndexAccessGate:
                 {
                     "id": "batch",
                     "type": "shell",
-                    "params": {"command": "echo ${item}"},
+                    "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                     "batch": {"items": ["a", "b"], "error_handling": "continue"},
                 },
                 {
@@ -435,7 +435,7 @@ class TestBatchResultsIndexAccessGate:
                 {
                     "id": "batch",
                     "type": "shell",
-                    "params": {"command": "echo ${item}"},
+                    "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                     "batch": {"items": ["a", "b"]},
                 },
                 {

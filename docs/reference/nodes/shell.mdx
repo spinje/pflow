@@ -14,10 +14,10 @@ The shell node runs commands with pipes, redirects, and standard shell features.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `command` | str | Yes | - | Shell command, or path to an external script file (e.g., `./scripts/build.sh`) |
+| `command` | str | Yes | - | Shell command (plain POSIX sh — pflow never fills in `${...}` there), or path to an external script file (e.g., `./scripts/build.sh`) |
 | `stdin` | any | No | - | Input data for the command |
 | `cwd` | str | No | Current dir | Working directory |
-| `env` | dict | No | `{}` | Additional environment variables |
+| `env` | dict | No | `{}` | Values bound as environment variables; the command reads them as `"$NAME"` |
 | `timeout` | int | No | `30` | Maximum execution time in seconds |
 | `ignore_errors` | bool | No | `false` | Continue workflow on non-zero exit |
 
@@ -32,13 +32,40 @@ The shell node runs commands with pipes, redirects, and standard shell features.
 | `exit_code` | int | Exit code (0=success, -1=timeout, -2=execution failure) |
 | `error` | str | Error message (only on timeout/failure) |
 
-## Using stdin for data
+## Passing values to the command
 
 <Warning>
-  **Always use `stdin` for data, not command interpolation.** Shell escaping breaks on special characters in JSON, and `stdin` handles any data type safely.
+  **Commands are no longer templated.** A command written with a template variable inside it (`echo "${name}"`) now fails validation; the error names the `env:` line that replaces it.
 </Warning>
 
-**Correct** - data via stdin:
+The command is plain POSIX sh. pflow never fills in `${...}` inside it, so `$HOME`, `${HOME}`, `${NAME:-default}` and `${#NAME}` mean what they mean to the shell. Values reach the command as environment variables bound in `env:` — template variables resolve there like in any parameter:
+
+````markdown
+### fetch-item
+
+Fetch one page of items from the API.
+
+- type: shell
+- env:
+    ENDPOINT: ${endpoint}
+    LIMIT: ${limit}
+
+```shell command
+curl -s "https://api.example.com/$ENDPOINT?limit=$LIMIT"
+```
+````
+
+A bound value is data: quotes, `$`, backticks and newlines in it are never interpreted by the shell. Name each variable in UPPER_SNAKE for its content and always double-quote the reference (`"$ENDPOINT"`).
+
+- **Every value binds as text.** A number becomes `3`, a boolean `True`/`False`, null an empty string, an object or array JSON text (`{"a": 1}`). A string bound directly arrives unchanged. Quote a literal YAML value whose exact text matters (`VERSION: "1.10"`, not `1.10`).
+- **Names** use letters, digits and underscores and don't start with a digit. Setting a name the shell relies on (`PATH`, `HOME`, `IFS`, `ENV`, `BASH_ENV`, `PS4`, `LD_PRELOAD`) draws a validation warning.
+- **Secrets are masked by name.** Approval previews, the web UI, error output and `pflow report` hide a value whose name contains the word `TOKEN`, `SECRET`, `PASSWORD`, `AUTH`, `CREDENTIAL` or `API_KEY`. Keep those words out of names for ordinary data, or the person approving the node can't see it.
+- **The environment has a size limit.** On macOS it is about 1 MB for the arguments and the whole environment together; on Linux one value can be at most 128 KiB. A value over the limit, or one containing a NUL byte, fails before the command starts. Pass large data through `stdin` instead.
+
+## Using stdin for large data
+
+`stdin` pipes a value of any size or shape to the command. Use it for API responses and other data a tool reads from a stream:
+
 ````markdown
 ### process
 
@@ -49,19 +76,6 @@ Process the API response with jq.
 
 ```shell command
 jq -r '.data.name'
-```
-````
-
-**Wrong** - data in command (will break on special characters):
-````markdown
-### process
-
-Process the API response with jq.
-
-- type: shell
-
-```shell command
-echo '${api.response}' | jq
 ```
 ````
 
@@ -78,50 +92,31 @@ echo '${api.response}' | jq
 ## Validation and error handling
 
 <Info>
-  **Your agent handles this.** pflow validates commands when the workflow is created, not at runtime. If structured data ends up in a command string, the error message tells your agent exactly what to move to `stdin` and why.
+  **Your agent handles this.** pflow validates commands when the workflow is created. If a command still contains a template variable, the error tells your agent the `env:` line to add.
 </Info>
 
-The shell node validates that dicts and lists aren't embedded directly in command strings (which would break shell parsing). Data should go through `stdin` instead:
+A `${...}` in the command that names a value pflow knows about — a workflow input, another node's output, the batch item — is an error, because the shell would expand it to something else (usually nothing):
 
-````markdown
-### process
+````text
+Step 'fetch': the command contains ${endpoint} (line 22 of the workflow file) — a pflow reference (workflow input 'endpoint'). A shell command is plain sh: pflow never fills in ${…} there.
+  At: node 'fetch', nodes[id=fetch].params.command:22
 
-Process the API response with jq.
-
-- type: shell
-- stdin: ${api.response}
-
-```shell command
-jq -r '.data.name'
-```
+To fix this:
+  1. Bind the value and read it as a shell variable: add `- env: {ENDPOINT: ${endpoint}}` to the step, then replace ${endpoint} with "$ENDPOINT" (${ENDPOINT} where a letter, digit or _ follows; inside single quotes sh expands nothing — close them around it: '…'"$ENDPOINT"'…').
+  2. Only if the command itself assigns `endpoint` (a shell variable of your own): write $endpoint without braces, or rename it.
 ````
 
-<Accordion title="Technical details">
-  When a workflow is created, pflow checks if command templates contain dict or list variables. If found, you'll see an error like:
+A name pflow doesn't know (`${HOME}`, a variable the command sets itself) is the shell's and isn't checked. `$${` is an error too: there is nothing to escape in a shell command.
 
-  ````
-  Shell node 'process': cannot use ${api.response} (type: object) in command parameter.
-
-  PROBLEM: Object data embedded in shell commands breaks shell parsing. Dict/list
-  data contains special characters (quotes, braces, spaces) that break command syntax.
-
-  FIX: Move data to stdin, keep command simple:
-    - stdin: ${api.response}
-    ```shell command
-    jq '.field'
-    ```
-  ````
-
-  This validation happens at workflow creation time (compile-time), not during execution, so you get immediate feedback.
-
-  **Why this matters:** Shell parsers expect text, and JSON data contains special characters (`{`, `}`, `"`, spaces) that have meaning to the shell. Even with careful quoting, it's fragile. The `stdin` approach is safer and more reliable.
-</Accordion>
+When a shell node fails, the error output shows the command and the values it bound in `env:`, with secrets masked by name.
 
 ## Security
 
 <Warning>
   Commands run directly on your system without sandboxing. While dangerous patterns are blocked, the shell node has full access to your filesystem and network. Sandboxed execution is planned for a future release.
 </Warning>
+
+The dangerous-command check reads the command text only. It cannot see what a variable will hold — guard destructive commands yourself (`[ -n "$DIR" ] || exit 1`).
 
 <Tip>
   **You're in control.** Your agent asks before running workflows, and you can inspect the workflow to see exactly what commands will execute. If you need stronger restrictions, you can disable shell entirely with `pflow settings deny shell` - but this significantly limits pflow's capabilities since shell is often used for data processing and filtering.
@@ -203,7 +198,7 @@ Run the deployment script.
 
 - type: shell
 - env:
-    ENV: production
+    DEPLOY_ENV: production
     DEBUG: "false"
 - timeout: 120
 

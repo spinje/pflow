@@ -154,15 +154,16 @@ describe("SourcePane", () => {
     const { container } = renderPane({ source: { root: ROOT_FILE, files: { [ROOT_FILE]: text } } });
 
     // Instant tier (no await): section heading, kind-colored type value, muted
-    // key, and the teal body ref all reach the DOM before shiki resolves.
+    // key, and the teal body-value ref all reach the DOM before shiki resolves.
     expect(container.querySelector(".src-content .src-section")).toBeTruthy();
     expect(container.querySelector(".src-content .src-type")).toBeTruthy();
     expect(container.querySelector(".src-content .src-key")).toBeTruthy();
-    expect(container.querySelector(".src-content .src-ref")).toBeTruthy();
+    expect(sourceLine(container, 5).querySelector(".src-ref")?.textContent).toBe("${data}");
 
-    // Async tier: the fence content line (line 8) starts as instant plain text
-    // + a class-only `.src-ref`, then swaps to the shiki token span (inline
-    // style) once highlighting resolves — verbatim content preserved.
+    // Async tier: the fence content line (line 8) starts as instant plain text —
+    // its `${repo}` is the shell's own, never tealed (Task 118) — then swaps to
+    // the shiki token span (inline style) once highlighting resolves.
+    expect(sourceLine(container, 8).querySelector(".src-ref")).toBeNull();
     expect(sourceLine(container, 8).querySelector("span[style]")).toBeNull();
     await waitFor(() => expect(sourceLine(container, 8).querySelector("span[style]")).toBeTruthy());
     expect(sourceLine(container, 8).textContent).toContain("echo ${repo}");

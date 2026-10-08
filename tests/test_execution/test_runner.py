@@ -27,8 +27,8 @@ def test_validation_error_prevents_compilation():
     """
     workflow_ir = {
         "nodes": [
-            {"id": "a", "type": "shell", "params": {"command": "echo ${b.stdout}"}},
-            {"id": "b", "type": "shell", "params": {"command": "echo ${a.stdout}"}},
+            {"id": "a", "type": "shell", "params": {"command": 'echo "$B_STDOUT"', "env": {"B_STDOUT": "${b.stdout}"}}},
+            {"id": "b", "type": "shell", "params": {"command": 'echo "$A_STDOUT"', "env": {"A_STDOUT": "${a.stdout}"}}},
         ],
         "edges": [
             {"from": "a", "to": "b"},
@@ -627,7 +627,11 @@ def test_declared_defaults_applied_without_user_params():
             "greeting": {"type": "string", "default": "hello-from-default", "description": "A greeting"},
         },
         "nodes": [
-            {"id": "greet", "type": "shell", "params": {"command": "echo ${greeting}"}},
+            {
+                "id": "greet",
+                "type": "shell",
+                "params": {"command": 'echo "$GREETING"', "env": {"GREETING": "${greeting}"}},
+            },
         ],
         "edges": [],
     }
@@ -650,7 +654,11 @@ def test_user_params_override_declared_defaults():
             "greeting": {"type": "string", "default": "hello-from-default", "description": "A greeting"},
         },
         "nodes": [
-            {"id": "greet", "type": "shell", "params": {"command": "echo ${greeting}"}},
+            {
+                "id": "greet",
+                "type": "shell",
+                "params": {"command": 'echo "$GREETING"', "env": {"GREETING": "${greeting}"}},
+            },
         ],
         "edges": [],
     }
@@ -816,7 +824,8 @@ def test_child_parser_warning_survives_prep_failure(tmp_path: Path):
         "Use the input.\n\n"
         "- type: shell\n"
         "- cache: false\n"
-        "- command: echo ${required_value}\n",
+        "- env: { REQUIRED_VALUE: ${required_value} }\n"
+        '- command: echo "$REQUIRED_VALUE"\n',
         encoding="utf-8",
     )
 
@@ -829,7 +838,11 @@ def test_child_parser_warning_survives_prep_failure(tmp_path: Path):
     result = WorkflowRunner().run(str(parent_workflow), {}, RunnerConfig())
 
     assert result.success is False
-    assert any(diagnostic.severity == Severity.ERROR for diagnostic in result.diagnostics)
+    assert any(
+        diagnostic.severity == Severity.ERROR
+        and "requires input 'required_value' but it is not provided" in diagnostic.message
+        for diagnostic in result.diagnostics
+    ), [diagnostic.message for diagnostic in result.diagnostics]
     parser_warnings = [
         diagnostic
         for diagnostic in result.diagnostics
@@ -1057,7 +1070,7 @@ def test_exception_annotations_survive_full_pipeline():
                 "id": "consumer",
                 "type": "shell",
                 "params": {
-                    "command": "${producer.stdout}",
+                    "command": "echo consumer",
                     "cwd": "${producer.stdout.nested}",
                 },
             },

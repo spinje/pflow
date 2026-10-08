@@ -64,7 +64,7 @@ result: dict = {}     # required on result too
 ## Template placement
 
 <Warning>
-  **Templates go in `inputs`, never in the code block.** The code block is literal Python — `${var}` isn't valid Python syntax, so putting templates there causes a parse error.
+  **Template variables go in `inputs`, never in the code block.** The code block is plain Python: pflow never fills in `${var}` there, and each `inputs` key becomes a Python variable. A `${var}` in a string that names a value pflow knows about (`"${name}".upper()`) fails validation, and the message names the `inputs` binding to use.
 </Warning>
 
 ````markdown

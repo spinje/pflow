@@ -268,7 +268,10 @@ class TestWorkflowResolutionCLI:
                     {
                         "id": "n1",
                         "type": "shell",
-                        "params": {"command": "cat ${file} > ${output}"},
+                        "params": {
+                            "command": 'cat "$FILE" > "$OUTPUT"',
+                            "env": {"FILE": "${file}", "OUTPUT": "${output}"},
+                        },
                     }
                 ],
                 "edges": [],

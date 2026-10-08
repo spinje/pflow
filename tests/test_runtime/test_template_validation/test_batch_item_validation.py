@@ -254,7 +254,7 @@ class TestBatchItemFieldValidation:
                     "id": "step-b",
                     "type": "shell",
                     "batch": {"items": "${data}"},
-                    "params": {"command": "echo ${item}"},
+                    "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                 },
                 {
                     "id": "use-a",
@@ -378,7 +378,7 @@ class TestBatchItemFieldValidation:
                     "id": "a-fallback",
                     "type": "shell",
                     "batch": {"items": "${data}"},
-                    "params": {"command": "echo ${item}"},
+                    "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                 },
                 {
                     "id": "analyze",
@@ -456,7 +456,7 @@ class TestBatchItemFieldValidation:
                     "id": "process",
                     "type": "shell",
                     "batch": {"items": "${data}"},
-                    "params": {"command": "echo ${item}"},
+                    "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                 },
                 {
                     "id": "analyze",

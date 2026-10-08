@@ -51,6 +51,15 @@ FENCE = re.compile(
 )
 INLINE_PARAM = re.compile(r"^[ \t]*- (?P<param>command|code):[ \t]*(?P<body>.+)$", re.MULTILINE)
 SINGLE_QUOTED = re.compile(r"'[^'\n]*\$\{[^'\n]*'")
+# Tests that keep an old-form body ON PURPOSE (PB): they assert the leftover/escape error,
+# that a consumer skips a body, or (trace_report) read a legacy trace's resolved command.
+ALLOWED_FILES = (
+    "tests/test_integration/test_code_body_consumers.py",
+    "tests/test_integration/test_code_body_leftovers.py",
+    "tests/test_runtime/test_template_validation/test_types.py",
+    "tests/test_core/test_graph_build.py",
+    "tests/test_core/test_trace_report.py",
+)
 
 
 @dataclass
@@ -243,6 +252,8 @@ def main() -> int:
         if path != Path(__file__).resolve():
             scan_python(path, sites, totals)
 
+    allowed = [s for s in sites if s.file in ALLOWED_FILES]
+    sites = [s for s in sites if s.file not in ALLOWED_FILES]
     by_area: Counter[tuple[str, str, str]] = Counter((_area(s.file), s.corpus, s.param) for s in sites)
     files_by_area: dict[tuple[str, str, str], set[str]] = {}
     for s in sites:
@@ -252,6 +263,7 @@ def main() -> int:
     for key in sorted(by_area):
         print(f"{by_area[key]:5d} sites in {len(files_by_area[key]):3d} files  {key[0]:40s} {key[1]:18s} {key[2]}")
     print(f"{len(sites):5d} TOTAL in {len({s.file for s in sites})} files")
+    print(f"{len(allowed):5d} allowlisted negative-fixture sites in {len({s.file for s in allowed})} files (ALLOWED_FILES)")
 
     print("\n== bodies seen (templated or not) ==")
     for key in sorted(totals):

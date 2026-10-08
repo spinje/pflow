@@ -38,7 +38,10 @@ Convert the body to uppercase using the same sub-workflow.
 Combine the processed title and body.
 
 - type: shell
+- env:
+    TITLE: ${process_title.result}
+    BODY: ${process_body.result}
 
 ```command
-printf "Title: %s\nBody: %s" "${process_title.result}" "${process_body.result}"
+printf "Title: %s\nBody: %s" "$TITLE" "$BODY"
 ```

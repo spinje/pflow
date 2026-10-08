@@ -486,7 +486,10 @@ def _make_coalesce_ir(route_to_low: bool = True) -> dict:
             {
                 "id": "use-result",
                 "type": "shell",
-                "params": {"command": "echo Result: ${branch-high.stdout ?? branch-low.stdout}"},
+                "params": {
+                    "command": 'echo Result: "$BRANCH_HIGH_STDOUT_BRANCH_LOW_STDOUT"',
+                    "env": {"BRANCH_HIGH_STDOUT_BRANCH_LOW_STDOUT": "${branch-high.stdout ?? branch-low.stdout}"},
+                },
             },
         ],
         "edges": [

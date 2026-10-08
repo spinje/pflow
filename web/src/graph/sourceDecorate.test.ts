@@ -85,11 +85,11 @@ describe("decorateLinesSync", () => {
     expect(firstWithClass(lines[0]!, "src-section")).toBeTruthy();
   });
 
-  it("teals every ${ref}, in body values AND inside fence content", () => {
+  it("teals a ${ref} in a body value, never inside a shell fence (a body holds no refs)", () => {
     const inputsRefs = spansWithClass(lines[12]!, "src-ref"); // body dict ref
     expect(inputsRefs.map(textOf)).toEqual(["${fetch-data.stdout}"]);
-    const fenceRefs = spansWithClass(lines[7]!, "src-ref"); // ${repo_dir} inside the fence
-    expect(fenceRefs.map(textOf)).toEqual(["${repo_dir}"]);
+    expect(spansWithClass(lines[7]!, "src-ref")).toEqual([]); // the shell's own ${repo_dir}
+    expect(lineText(lines[7]!)).toBe("echo hi ${repo_dir}");
   });
 
   it("colors the fence info string: language word kind-colored, role word muted", () => {
@@ -208,5 +208,60 @@ describe("buildDecoratedLines", () => {
     expect(spansWithClass(lines[0]!, "tok-markdown").length).toBe(0);
     expect(spansWithClass(lines[2]!, "tok-markdown").length).toBe(0);
     expect(firstWithClass(lines[2]!, "src-key")).toBeTruthy();
+  });
+});
+
+describe("${…} teal is the same in every tier: Template text yes, a code fence no", () => {
+  // A shell body's `${HOME}` is the shell's own text (Task 118); the prompt's and the
+  // ungrammared `text content` fence's `${up.stdout}` are References. The instant tier
+  // and the full tier's fail-closed fallback must agree with the full tier's success.
+  const SRC = [
+    "```shell command", // 1
+    'echo "${HOME}" "$DATA"', // 2
+    "```", // 3
+    "````prompt", // 4
+    "Summarize ${up.stdout}", // 5
+    "````", // 6
+    "```text content", // 7
+    "Got ${up.stdout}", // 8
+    "```", // 9
+  ].join("\n");
+  const tok = (code: string, lang: string, extraLine: boolean): Root => ({
+    type: "root",
+    children: [
+      {
+        type: "element",
+        tagName: "pre",
+        properties: {},
+        children: [
+          {
+            type: "element",
+            tagName: "code",
+            properties: {},
+            children: [...code.split("\n"), ...(extraLine ? [""] : [])].map((l) => ({
+              type: "element",
+              tagName: "span",
+              properties: { className: ["line"] },
+              children: [{ type: "element", tagName: "span", properties: { className: [`tok-${lang}`] }, children: [{ type: "text", value: l }] }],
+            })),
+          },
+        ],
+      },
+    ],
+  });
+  const tiers: [string, () => Promise<ElementContent[][]>][] = [
+    ["instant tier", () => Promise.resolve(decorateLinesSync(SRC))],
+    ["full tier, highlighted", () => buildDecoratedLines(SRC, (c, l) => Promise.resolve(tok(c, l, false)))],
+    ["full tier, null highlight", () => buildDecoratedLines(SRC, () => Promise.resolve(null))],
+    ["full tier, line-count mismatch", () => buildDecoratedLines(SRC, (c, l) => Promise.resolve(tok(c, l, true)))],
+  ];
+
+  it.each(tiers)("%s", async (_tier, decorate) => {
+    const lines = await decorate();
+    expect(lines.length).toBe(9);
+    expect(lineText(lines[1]!)).toBe('echo "${HOME}" "$DATA"');
+    expect(spansWithClass(lines[1]!, "src-ref")).toEqual([]);
+    expect(spansWithClass(lines[4]!, "src-ref").map(textOf)).toEqual(["${up.stdout}"]);
+    expect(spansWithClass(lines[7]!, "src-ref").map(textOf)).toEqual(["${up.stdout}"]);
   });
 });

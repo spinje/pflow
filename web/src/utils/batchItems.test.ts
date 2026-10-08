@@ -58,7 +58,33 @@ describe("resolveBatchItems", () => {
     expect(resolveBatchItems("${item.prompt}", "item", null)).toBeNull(); // no items (dynamic batch)
     expect(resolveBatchItems("${item.prompt}", "item", [])).toBeNull();
     expect(resolveBatchItems("${content}", "item", ANALYZE_ITEMS)).toBeNull(); // no alias ref
-    expect(resolveBatchItems(42, "item", ANALYZE_ITEMS)).toBeNull(); // non-string value
+    expect(resolveBatchItems(42, "item", ANALYZE_ITEMS)).toBeNull(); // a scalar with no leaf
+    expect(resolveBatchItems({ GREETING: "${content}", N: 3 }, "item", ANALYZE_ITEMS)).toBeNull(); // dict, no alias ref
+  });
+
+  // A batch shell step binds per-item values through `env:` (Task 118) — a dict param.
+  const GREET_ITEMS = [
+    { name: "ada", greeting: "hi" },
+    { name: "bob", greeting: "hey" },
+  ];
+
+  it("substitutes the alias in a dict's string leaves, rendered as the param's JSON", () => {
+    const out = resolveBatchItems({ GREETING: "${item.greeting}", MODE: "${shared.mode}" }, "item", GREET_ITEMS);
+    expect(out).toEqual([
+      { label: "name: ada", value: JSON.stringify({ GREETING: "hi", MODE: "${shared.mode}" }, null, 2) },
+      { label: "name: bob", value: JSON.stringify({ GREETING: "hey", MODE: "${shared.mode}" }, null, 2) },
+    ]);
+  });
+
+  it("never substitutes a key, even one that looks like a ref", () => {
+    const out = resolveBatchItems({ "${item.name}": "${item.greeting}" }, "item", GREET_ITEMS);
+    expect(out?.map((r) => JSON.parse(r.value))).toEqual([{ "${item.name}": "hi" }, { "${item.name}": "hey" }]);
+  });
+
+  it("substitutes a leaf nested in a list", () => {
+    const out = resolveBatchItems({ args: ["--to", "${item.name}"] }, "item", GREET_ITEMS);
+    expect(out?.map((r) => JSON.parse(r.value))).toEqual([{ args: ["--to", "ada"] }, { args: ["--to", "bob"] }]);
+    expect(out?.map((r) => r.label)).toEqual(["greeting: hi", "greeting: hey"]); // the read field drops out
   });
 
   it("renders a non-dict item value via fullValue and labels it by index", () => {

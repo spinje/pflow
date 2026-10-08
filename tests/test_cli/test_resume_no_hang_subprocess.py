@@ -60,9 +60,11 @@ echo "upstream"
 Side-effecting step that fails unless mode=ok.
 
 - type: shell
+- env:
+    MODE: ${mode}
 
 ```shell command
-test "${mode}" = "ok" && echo "boom-ok"
+test "$MODE" = "ok" && echo "boom-ok"
 ```
 """
 

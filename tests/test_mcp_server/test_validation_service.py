@@ -63,7 +63,8 @@ class TestValidationFalsePositives:
                     "id": "test-node",
                     "type": "shell",  # Valid node type
                     "params": {
-                        "command": "${undefined_variable}"  # ❌ Invalid - not in inputs
+                        "command": '"$UNDEFINED_VARIABLE"',
+                        "env": {"UNDEFINED_VARIABLE": "${undefined_variable}"},  # ❌ Invalid - not in inputs
                     },
                 }
             ],
@@ -92,12 +93,18 @@ class TestValidationFalsePositives:
                 {
                     "id": "node-a",
                     "type": "shell",
-                    "params": {"command": "${node-b.stdout}"},  # Depends on B
+                    "params": {
+                        "command": '"$NODE_B_STDOUT"',
+                        "env": {"NODE_B_STDOUT": "${node-b.stdout}"},
+                    },  # Depends on B
                 },
                 {
                     "id": "node-b",
                     "type": "shell",
-                    "params": {"command": "${node-a.stdout}"},  # Depends on A ❌ Cycle!
+                    "params": {
+                        "command": '"$NODE_A_STDOUT"',
+                        "env": {"NODE_A_STDOUT": "${node-a.stdout}"},
+                    },  # Depends on A ❌ Cycle!
                 },
             ],
             "edges": [{"from": "node-a", "to": "node-b"}, {"from": "node-b", "to": "node-a"}],
@@ -127,7 +134,10 @@ class TestValidationFalsePositives:
                 {
                     "id": "test-node",
                     "type": "shell",
-                    "params": {"command": "echo ${used_input}"},  # Only uses one input
+                    "params": {
+                        "command": 'echo "$USED_INPUT"',
+                        "env": {"USED_INPUT": "${used_input}"},
+                    },  # Only uses one input
                 }
             ],
             "edges": [],
@@ -212,7 +222,8 @@ class TestValidationCorrectBehavior:
             "Echo something.\n\n"
             "- type: shell\n"
             "- cache: false\n"
-            "- command: echo ${nonexistent.stdout}\n",  # undefined ref -> validation ERROR
+            "- env: { NONEXISTENT_STDOUT: ${nonexistent.stdout} }\n"  # undefined ref -> validation ERROR
+            '- command: echo "$NONEXISTENT_STDOUT"\n',
             encoding="utf-8",
         )
 
@@ -231,7 +242,7 @@ class TestValidationCorrectBehavior:
                 {
                     "id": "echo-node",
                     "type": "shell",
-                    "params": {"command": "echo ${message}"},  # ✅ Valid - in inputs
+                    "params": {"command": 'echo "$MESSAGE"', "env": {"MESSAGE": "${message}"}},  # ✅ Valid - in inputs
                 }
             ],
             "edges": [],

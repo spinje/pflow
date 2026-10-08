@@ -329,7 +329,7 @@ def _create_node_and_config(
 
     # Build type cache and split params
     expected_types = build_type_cache(interface_metadata)
-    template_params, static_params = split_params(params, expected_types)
+    template_params, static_params = split_params(params, expected_types, node_type)
 
     # Set ONLY static params on bare node at compile time
     if static_params:

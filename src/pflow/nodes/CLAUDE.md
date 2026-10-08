@@ -6,7 +6,7 @@ instrumentation; see `runtime/engine/CLAUDE.md`.
 ## Inputs, outputs, and lifecycle
 
 Author-provided inputs—static or resolved from `${...}`—arrive in `self.params`
-before `prep()`. Do not read author inputs from `shared` as a fallback: a same-name
+before `prep()`; a code body (`shell.command`, `code.code`) arrives verbatim. Do not read author inputs from `shared` as a fallback: a same-name
 fallback picked up namespace dicts (node IDs matching param names; bug class removed
 2025-12). `shared` still carries injected runtime infrastructure such as MCP
 pools/cancellation, and `post()` writes node outputs there.
@@ -44,7 +44,7 @@ this sense.
 |---|---|
 | Lifecycle/retry primitives | `src/pflow/core/node.py` |
 | Shell and HTTP behavior | `shell/shell.py`, `http/http.py` |
-| Shell `env:` binding (names, value → text, the OS size refusal) | `shell/env_binding.py` — `prep()` binds, so every entry path binds alike; the validator and compiler reuse `env_problems` |
+| Shell `env:` binding (names, value → text, the OS size refusal, the failing step's `env` record) | `shell/env_binding.py` — `prep()` binds, so every entry path binds alike; the validator and compiler reuse `env_problems`; `post()` records `displayable_env` on failure |
 | LLM invocation and schema handling | `llm/llm.py`, `llm/schema_validation.py` |
 | File operations | `file/` (one implementation per operation) |
 | Python code execution and next-action routing | `python/python_code.py:PythonCodeNode` |

@@ -48,7 +48,7 @@ def test_plan_batch_sub_workflow_populates_outputs_for_downstream_resolution(tmp
                     "id": "echo",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": "printf ${value}"},
+                    "params": {"command": 'printf "$VALUE"', "env": {"VALUE": "${value}"}},
                 }
             ],
             "edges": [],
@@ -73,7 +73,10 @@ def test_plan_batch_sub_workflow_populates_outputs_for_downstream_resolution(tmp
                     "id": "post",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": "printf '${fanout.results[0].out}-${fanout.count}'"},
+                    "params": {
+                        "command": 'printf "$FANOUT_RESULTS_0_OUT"\'-\'"$FANOUT_COUNT"',
+                        "env": {"FANOUT_RESULTS_0_OUT": "${fanout.results[0].out}", "FANOUT_COUNT": "${fanout.count}"},
+                    },
                 },
             ],
             "edges": [{"from": "fanout", "to": "post"}],
@@ -110,7 +113,7 @@ def test_plan_batch_sub_workflow_detects_partial_cache_per_item(tmp_path) -> Non
                     "id": "echo",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": "printf ${value}"},
+                    "params": {"command": 'printf "$VALUE"', "env": {"VALUE": "${value}"}},
                 }
             ],
             "edges": [],
@@ -168,7 +171,7 @@ def test_plan_batch_sub_workflow_empty_items_produces_empty_sub_plan(tmp_path) -
                     "id": "echo",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": "printf ${value}"},
+                    "params": {"command": 'printf "$VALUE"', "env": {"VALUE": "${value}"}},
                 }
             ],
             "edges": [],
@@ -217,7 +220,7 @@ def test_plan_batch_sub_workflow_non_list_items_surfaces_error(tmp_path) -> None
                     "id": "echo",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": "printf ${value}"},
+                    "params": {"command": 'printf "$VALUE"', "env": {"VALUE": "${value}"}},
                 }
             ],
             "edges": [],
@@ -436,9 +439,11 @@ Fast branch target.
 - type: shell
 - cache: true
 - next: end
+- env:
+    VALUE: ${value}
 
 ```shell command
-printf 'fast-${value}'
+printf 'fast-'"$VALUE"
 ```
 
 ### slow
@@ -446,9 +451,11 @@ Slow branch target.
 - type: shell
 - cache: true
 - next: end
+- env:
+    VALUE: ${value}
 
 ```shell command
-printf 'slow-${value}'
+printf 'slow-'"$VALUE"
 ```
 """,
         encoding="utf-8",
@@ -518,7 +525,7 @@ def test_plan_batch_sub_workflow_non_dict_per_item_inputs_emits_warning(tmp_path
                     "id": "echo",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": "printf ${value}"},
+                    "params": {"command": 'printf "$VALUE"', "env": {"VALUE": "${value}"}},
                 }
             ],
             "edges": [],
@@ -568,7 +575,14 @@ def test_plan_batch_sub_workflow_unresolved_per_item_inputs_emits_warning(tmp_pa
     write_workflow_file(
         {
             "inputs": {"value": {"type": "string"}},
-            "nodes": [{"id": "echo", "type": "shell", "cache": True, "params": {"command": "printf ${value}"}}],
+            "nodes": [
+                {
+                    "id": "echo",
+                    "type": "shell",
+                    "cache": True,
+                    "params": {"command": 'printf "$VALUE"', "env": {"VALUE": "${value}"}},
+                }
+            ],
             "edges": [],
         },
         child_path,
@@ -605,7 +619,9 @@ def _write_first_item_bad_batch(tmp_path, batch: dict):
     write_workflow_file(
         {
             "inputs": {"value": {"type": "string"}},
-            "nodes": [{"id": "echo", "type": "shell", "params": {"command": "printf ${value}"}}],
+            "nodes": [
+                {"id": "echo", "type": "shell", "params": {"command": 'printf "$VALUE"', "env": {"VALUE": "${value}"}}}
+            ],
             "edges": [],
         },
         child_path,

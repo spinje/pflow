@@ -101,7 +101,8 @@ def test_heterogeneous_batch_loads_correct_child_ir(tmp_path: Path) -> None:
     child_a.write_text(
         "# Child A\n\nA child that needs input a.\n\n"
         "## Inputs\n\n### a\n\nInput a.\n\n- type: string\n- required: true\n\n"
-        "## Steps\n\n### echo\n\nEcho a.\n\n- type: shell\n- command: echo a_is_${a}\n",
+        "## Steps\n\n### echo\n\nEcho a.\n\n- type: shell\n- env: { A: ${a} }\n"
+        '- command: echo a_is_"$A"\n',
         encoding="utf-8",
     )
 
@@ -110,7 +111,8 @@ def test_heterogeneous_batch_loads_correct_child_ir(tmp_path: Path) -> None:
     child_b.write_text(
         "# Child B\n\nA child that needs input b.\n\n"
         "## Inputs\n\n### b\n\nInput b.\n\n- type: string\n- required: true\n\n"
-        "## Steps\n\n### echo\n\nEcho b.\n\n- type: shell\n- command: echo b_is_${b}\n",
+        "## Steps\n\n### echo\n\nEcho b.\n\n- type: shell\n- env: { B: ${b} }\n"
+        '- command: echo b_is_"$B"\n',
         encoding="utf-8",
     )
 
@@ -173,14 +175,16 @@ def test_heterogeneous_batch_parallel(tmp_path: Path) -> None:
     child_a.write_text(
         "# Child A\n\nA child.\n\n"
         "## Inputs\n\n### a\n\nInput a.\n\n- type: string\n- required: true\n\n"
-        "## Steps\n\n### echo\n\nEcho.\n\n- type: shell\n- command: echo a_is_${a}\n",
+        "## Steps\n\n### echo\n\nEcho.\n\n- type: shell\n- env: { A: ${a} }\n"
+        '- command: echo a_is_"$A"\n',
         encoding="utf-8",
     )
     child_b = tmp_path / "child-b.pflow.md"
     child_b.write_text(
         "# Child B\n\nA child.\n\n"
         "## Inputs\n\n### b\n\nInput b.\n\n- type: string\n- required: true\n\n"
-        "## Steps\n\n### echo\n\nEcho.\n\n- type: shell\n- command: echo b_is_${b}\n",
+        "## Steps\n\n### echo\n\nEcho.\n\n- type: shell\n- env: { B: ${b} }\n"
+        '- command: echo b_is_"$B"\n',
         encoding="utf-8",
     )
 

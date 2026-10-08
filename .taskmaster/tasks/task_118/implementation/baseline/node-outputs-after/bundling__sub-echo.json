@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "nodes": [
+    {
+      "exit_code": 0,
+      "path": "uppercase",
+      "status": "success",
+      "stderr": "",
+      "stdout": "HELLO"
+    }
+  ]
+}

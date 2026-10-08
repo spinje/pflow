@@ -57,7 +57,7 @@ To feed one iteration's output into the next, add `carry:` — a map of `body-in
 
 `carry:` reads exactly like `inputs:` — the key is the body input (where the value goes), the value is where it comes from (`${this-node-id.output}`). An input listed in `carry:` evolves each round; an input that appears only in `inputs:` (a constant) is passed unchanged every round.
 
-When the body is a `shell` or `llm` node, reference the carried key as `${key}` in its `command`/`prompt` text — that's how the carried value reaches the body. (`workflow` and `code` bodies receive it automatically as a declared input.)
+When the body is an `llm` node, reference the carried key as `${key}` in its prompt — that's how the carried value reaches the body. A `shell` body binds it in `env:` (`env: {STATE: ${state}}`) and reads `"$STATE"` — the command never sees `inputs:` directly. (`workflow` and `code` bodies receive it automatically as a declared input.)
 
 After the loop, the node's output is the final iteration's output: downstream, `${run-rounds.survivors}` is the last round's survivors.
 

@@ -1,0 +1,887 @@
+same benign  examples/agent-orchestration/plan-to-code/execute-plan/execute-plan.pflow.md :: branch-setup
+DIFF hostile examples/agent-orchestration/plan-to-code/execute-plan/execute-plan.pflow.md :: branch-setup
+same benign  examples/batch-test-parallel.pflow.md :: greet_users
+DIFF hostile examples/batch-test-parallel.pflow.md :: greet_users
+same benign  examples/batch-test.pflow.md :: greet_users
+DIFF hostile examples/batch-test.pflow.md :: greet_users
+same benign  examples/bundling/sub-echo.pflow.md :: uppercase
+DIFF hostile examples/bundling/sub-echo.pflow.md :: uppercase
+same benign  examples/core/prompt-caching-multi-chunk.pflow.md :: session_context
+DIFF hostile examples/core/prompt-caching-multi-chunk.pflow.md :: session_context
+same benign  examples/core/stateful-loop-tournament.pflow.md :: announce
+DIFF hostile examples/core/stateful-loop-tournament.pflow.md :: announce
+same benign  examples/core/stdin-echo.pflow.md :: echo-it
+DIFF hostile examples/core/stdin-echo.pflow.md :: echo-it
+same benign  examples/core/stdout-result.pflow.md :: emit
+DIFF hostile examples/core/stdout-result.pflow.md :: emit
+same benign  examples/core/stdout-result.pflow.md :: count
+DIFF hostile examples/core/stdout-result.pflow.md :: count
+same benign  examples/core/template-variables.pflow.md :: api_caller
+DIFF hostile examples/core/template-variables.pflow.md :: api_caller
+same benign  examples/core/template-variables.pflow.md :: notifier
+DIFF hostile examples/core/template-variables.pflow.md :: notifier
+same benign  examples/nested/document-processor.pflow.md :: combine
+DIFF hostile examples/nested/document-processor.pflow.md :: combine
+same benign  examples/nested/to-uppercase.pflow.md :: transform
+DIFF hostile examples/nested/to-uppercase.pflow.md :: transform
+DIFF benign  examples/nodes/agent/claude-basic.pflow.md :: report
+DIFF hostile examples/nodes/agent/claude-basic.pflow.md :: report
+DIFF benign  examples/nodes/agent/claude-debug.pflow.md :: format_report
+DIFF hostile examples/nodes/agent/claude-debug.pflow.md :: format_report
+DIFF benign  examples/nodes/agent/claude-git-workflow.pflow.md :: cost_report
+DIFF hostile examples/nodes/agent/claude-git-workflow.pflow.md :: cost_report
+same benign  examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: resolve-repo
+DIFF hostile examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: resolve-repo
+DIFF benign  examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: get-commits
+DIFF hostile examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: get-commits
+DIFF benign  examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: get-docs-diff
+DIFF hostile examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: get-docs-diff
+DIFF benign  examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: fetch-pr-data
+DIFF hostile examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: fetch-pr-data
+DIFF benign  examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: get-file-changes
+DIFF hostile examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: get-file-changes
+same benign  examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: save-changelog
+DIFF hostile examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: save-changelog
+DIFF benign  examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: output-summary
+DIFF hostile examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: output-summary
+same benign  examples/real-workflows/git-worktree-task-creator/workflow.pflow.md :: create-worktree
+DIFF hostile examples/real-workflows/git-worktree-task-creator/workflow.pflow.md :: create-worktree  (values not seen verbatim in NEW: ['BASE', 'OVERWRITE'])
+same benign  examples/real-workflows/git-worktree-task-creator/workflow.pflow.md :: copy-folder
+DIFF hostile examples/real-workflows/git-worktree-task-creator/workflow.pflow.md :: copy-folder  (values not seen verbatim in NEW: ['ROOT', 'WORKTREE'])
+same benign  examples/real-workflows/git-worktree-task-creator/workflow.pflow.md :: output-status
+same hostile examples/real-workflows/git-worktree-task-creator/workflow.pflow.md :: output-status
+same benign  examples/real-workflows/git-worktree-task-creator/workflow.pflow.md :: launch-cursor
+same hostile examples/real-workflows/git-worktree-task-creator/workflow.pflow.md :: launch-cursor  (values not seen verbatim in NEW: ['OPEN_CURSOR'])
+same benign  examples/real-workflows/git-worktree-task-creator/workflow.pflow.md :: launch-cli
+same hostile examples/real-workflows/git-worktree-task-creator/workflow.pflow.md :: launch-cli  (values not seen verbatim in NEW: ['OPEN_CLI'])
+same benign  examples/real-workflows/release-announcements/workflow.pflow.md :: create-summary
+DIFF hostile examples/real-workflows/release-announcements/workflow.pflow.md :: create-summary
+same benign  examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: seed
+DIFF hostile examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: seed
+same benign  examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: append
+DIFF hostile examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: append
+same benign  examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: insert
+DIFF hostile examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: insert
+same benign  examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: corrupt
+DIFF hostile examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: corrupt
+same benign  examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: cleanup
+DIFF hostile examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: cleanup
+same benign  examples/real-workflows/vision-scraper/workflow.pflow.md :: compute-filename
+DIFF hostile examples/real-workflows/vision-scraper/workflow.pflow.md :: compute-filename  (values not seen verbatim in NEW: ['TARGET_URL'])
+same benign  examples/real-workflows/vision-scraper/workflow.pflow.md :: extract-images
+DIFF hostile examples/real-workflows/vision-scraper/workflow.pflow.md :: extract-images  (values not seen verbatim in NEW: ['DESCRIBE_IMAGES'])
+same benign  examples/real-workflows/vision-scraper/workflow.pflow.md :: append-analyses
+DIFF hostile examples/real-workflows/vision-scraper/workflow.pflow.md :: append-analyses
+same benign  examples/test-nested-index.pflow.md :: process-batch
+DIFF hostile examples/test-nested-index.pflow.md :: process-batch
+same benign  examples/test-nested-index.pflow.md :: correlate-batch
+DIFF hostile examples/test-nested-index.pflow.md :: correlate-batch
+
+
+==== differences ====
+
+### hostile examples/agent-orchestration/plan-to-code/execute-plan/execute-plan.pflow.md :: branch-setup
+--- OLD
+exit=0
+--stdout--
+<git [checkout] [-B] [it's q  \ back 0] [it's q  \ back 1]>
+stdin{}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<git [checkout] [-B] [it's "q" $5 \ back 0] [it's "q" $5 \ back 1]>
+stdin{}
+--stderr--
+
+
+### hostile examples/batch-test-parallel.pflow.md :: greet_users
+--- OLD
+exit=0
+--stdout--
+Hello, it's q  \ back 0!
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+Hello, it's "q" $5 \ back 0!
+--stderr--
+
+
+### hostile examples/batch-test.pflow.md :: greet_users
+--- OLD
+exit=0
+--stdout--
+Hello, it's q  \ back 0!
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+Hello, it's "q" $5 \ back 0!
+--stderr--
+
+
+### hostile examples/bundling/sub-echo.pflow.md :: uppercase
+--- OLD
+exit=0
+--stdout--
+<tr [[:lower:]] [[:upper:]]>
+stdin{it's q  \ back 0
+}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<tr [[:lower:]] [[:upper:]]>
+stdin{it's "q" $5 \ back 0
+}
+--stderr--
+
+
+### hostile examples/core/prompt-caching-multi-chunk.pflow.md :: session_context
+--- OLD
+exit=0
+--stdout--
+Session it's q  \ back 0: editorial style is concise, formal, no emoji.
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+Session it's "q" $5 \ back 0: editorial style is concise, formal, no emoji.
+--stderr--
+
+
+### hostile examples/core/stateful-loop-tournament.pflow.md :: announce
+--- OLD
+exit=0
+--stdout--
+Winner: it's q  \ back 0
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+Winner: it's "q" $5 \ back 0
+--stderr--
+
+
+### hostile examples/core/stdin-echo.pflow.md :: echo-it
+--- OLD
+exit=0
+--stdout--
+Received: it's q  \ back 0
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+Received: it's "q" $5 \ back 0
+--stderr--
+
+
+### hostile examples/core/stdout-result.pflow.md :: emit
+--- OLD
+exit=0
+--stdout--
+it's q  \ back 0
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+it's "q" $5 \ back 0
+--stderr--
+
+
+### hostile examples/core/stdout-result.pflow.md :: count
+--- OLD
+exit=0
+--stdout--
+<tr [-d] [ ]>
+stdin{<wc [-c]>
+stdin{it's q  \ back 0}
+}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<tr [-d] [ ]>
+stdin{<wc [-c]>
+stdin{it's "q" $5 \ back 0}
+}
+--stderr--
+
+
+### hostile examples/core/template-variables.pflow.md :: api_caller
+--- OLD
+exit=0
+--stdout--
+<curl [-s] [-H] [Authorization: Bearer it's q  \ back 0] [it's q  \ back 1]>
+stdin{}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<curl [-s] [-H] [Authorization: Bearer it's "q" $5 \ back 0] [it's "q" $5 \ back 1]>
+stdin{}
+--stderr--
+
+
+### hostile examples/core/template-variables.pflow.md :: notifier
+--- OLD
+exit=0
+--stdout--
+Notification: Process completed for it's q  \ back 0 — sent to it's q  \ back 1
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+Notification: Process completed for it's "q" $5 \ back 0 — sent to it's "q" $5 \ back 1
+--stderr--
+
+
+### hostile examples/nested/document-processor.pflow.md :: combine
+--- OLD
+exit=0
+--stdout--
+Title: it's q  \ back 0
+Body: it's q  \ back 1--stderr--
+
+--- NEW
+exit=0
+--stdout--
+Title: it's "q" $5 \ back 0
+Body: it's "q" $5 \ back 1--stderr--
+
+
+### hostile examples/nested/to-uppercase.pflow.md :: transform
+--- OLD
+exit=0
+--stdout--
+<tr [[:lower:]] [[:upper:]]>
+stdin{it's q  \ back 0
+}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<tr [[:lower:]] [[:upper:]]>
+stdin{it's "q" $5 \ back 0
+}
+--stderr--
+
+
+### benign examples/nodes/agent/claude-basic.pflow.md :: report
+--- OLD
+exit=1
+--stdout--
+--stderr--
+/bin/sh: Code generated and saved to fibonacci.py\n\nExecution cost: ${generate.llm_usage.cost_usd}\nDuration: v0 with spacesms\nTokens used: v1 with spaces input, v2 with spaces output: bad substitution
+
+--- NEW
+exit=0
+--stdout--
+Code generated and saved to fibonacci.py
+
+Execution cost: $${generate.llm_usage.cost_usd}
+Duration: v0 with spacesms
+Tokens used: v1 with spaces input, v2 with spaces output
+--stderr--
+
+
+### hostile examples/nodes/agent/claude-basic.pflow.md :: report
+--- OLD
+exit=1
+--stdout--
+--stderr--
+/bin/sh: Code generated and saved to fibonacci.py\n\nExecution cost: ${generate.llm_usage.cost_usd}\nDuration: it's : bad substitution
+
+--- NEW
+exit=0
+--stdout--
+Code generated and saved to fibonacci.py
+
+Execution cost: $${generate.llm_usage.cost_usd}
+Duration: it's "q" $5 \ back 0ms
+Tokens used: it's "q" $5 \ back 1 input, it's "q" $5 \ back 2 output
+--stderr--
+
+
+### benign examples/nodes/agent/claude-debug.pflow.md :: format_report
+--- OLD
+exit=1
+--stdout--
+--stderr--
+/bin/sh: DEBUG ANALYSIS REPORT\n========================\n\n**Error Type:** v0 with spaces\n**Confidence:** v1 with spaces/10\n\n## Root Cause\nv2 with spaces\n\n## Immediate Fix\nv3 with spaces\n\n## Code Fix\nv4 with spaces\n\n## Long-term Solution\nv5 with spaces\n\n## Prevention Tips\nv6 with spaces\n\n---\nAnalysis cost: ${analyze_error.llm_usage.cost_usd}: bad substitution
+
+--- NEW
+exit=0
+--stdout--
+DEBUG ANALYSIS REPORT
+========================
+
+**Error Type:** v0 with spaces
+**Confidence:** v1 with spaces/10
+
+## Root Cause
+v2 with spaces
+
+## Immediate Fix
+v3 with spaces
+
+## Code Fix
+v4 with spaces
+
+## Long-term Solution
+v5 with spaces
+
+## Prevention Tips
+v6 with spaces
+
+---
+Analysis cost: $${analyze_error.llm_usage.cost_usd}
+--stderr--
+
+
+### hostile examples/nodes/agent/claude-debug.pflow.md :: format_report
+--- OLD
+exit=1
+--stdout--
+--stderr--
+/bin/sh:  $5 \ back 6\n\n---\nAnalysis cost: ${analyze_error.llm_usage.cost_usd}: bad substitution
+
+--- NEW
+exit=0
+--stdout--
+DEBUG ANALYSIS REPORT
+========================
+
+**Error Type:** it's "q" $5 \ back 0
+**Confidence:** it's "q" $5 \ back 1/10
+
+## Root Cause
+it's "q" $5 \ back 2
+
+## Immediate Fix
+it's "q" $5 \ back 3
+
+## Code Fix
+it's "q" $5 \ back 4
+
+## Long-term Solution
+it's "q" $5 \ back 5
+
+## Prevention Tips
+it's "q" $5 \ back 6
+
+---
+Analysis cost: $${analyze_error.llm_usage.cost_usd}
+--stderr--
+
+
+### benign examples/nodes/agent/claude-git-workflow.pflow.md :: cost_report
+--- OLD
+exit=1
+--stdout--
+--stderr--
+/bin/sh: Workflow Cost Report:\n- Analysis: ${analyze_changes.llm_usage.cost_usd} (v0 with spacesms)\n- PR Generation: ${generate_pr.llm_usage.cost_usd} (v1 with spacesms): bad substitution
+
+--- NEW
+exit=0
+--stdout--
+Workflow Cost Report:
+- Analysis: $${analyze_changes.llm_usage.cost_usd} (v0 with spacesms)
+- PR Generation: $${generate_pr.llm_usage.cost_usd} (v1 with spacesms)
+--stderr--
+
+
+### hostile examples/nodes/agent/claude-git-workflow.pflow.md :: cost_report
+--- OLD
+exit=1
+--stdout--
+--stderr--
+/bin/sh: Workflow Cost Report:\n- Analysis: ${analyze_changes.llm_usage.cost_usd} (it's : bad substitution
+
+--- NEW
+exit=0
+--stdout--
+Workflow Cost Report:
+- Analysis: $${analyze_changes.llm_usage.cost_usd} (it's "q" $5 \ back 0ms)
+- PR Generation: $${generate_pr.llm_usage.cost_usd} (it's "q" $5 \ back 1ms)
+--stderr--
+
+
+### hostile examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: resolve-repo
+--- OLD
+exit=2
+--stdout--
+--stderr--
+/bin/sh: -c: line 0: syntax error near unexpected token `else'
+/bin/sh: -c: line 0: `if [ -n 'it's "q" $5 \ back 0' ]; then printf '%s' 'it's "q" $5 \ back 0'; else git remote get-url origin 2>/dev/null | sed -E 's|.*github.com[:/]||' | sed 's/.git$//' | tr -d '\n'; fi'
+
+--- NEW
+exit=0
+--stdout--
+it's "q" $5 \ back 0--stderr--
+
+
+### benign examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: get-commits
+--- OLD
+exit=0
+--stdout--
+<jq [-s] [.]>
+stdin{<jq [-n] [--arg] [sha] [<git [log] [v0] [with] [spaces..HEAD] [--first-parent] [--format=%H] [--arg] [short] [%h] [--arg] [subj] [%s] [--arg] [author] [%an] [--arg] [date] [%aI]>] [{sha: $sha, short_sha: $short, subject: $subj, author: $author, date: $date}]>
+stdin{stdin{}
+}
+}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<jq [-s] [.]>
+stdin{<jq [-n] [--arg] [sha] [<git [log] [v0 with spaces..HEAD] [--first-parent] [--format=%H] [--arg] [short] [%h] [--arg] [subj] [%s] [--arg] [author] [%an] [--arg] [date] [%aI]>] [{sha: $sha, short_sha: $short, subject: $subj, author: $author, date: $date}]>
+stdin{stdin{}
+}
+}
+--stderr--
+
+
+### hostile examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: get-commits
+--- OLD
+exit=2
+--stdout--
+--stderr--
+/bin/sh: -c: line 0: unexpected EOF while looking for matching `''
+/bin/sh: -c: line 1: syntax error: unexpected end of file
+
+--- NEW
+exit=0
+--stdout--
+<jq [-s] [.]>
+stdin{<jq [-n] [--arg] [sha] [<git [log] [it's "q" $5 \ back 0..HEAD] [--first-parent] [--format=%H] [--arg] [short] [%h] [--arg] [subj] [%s] [--arg] [author] [%an] [--arg] [date] [%aI]>] [{sha: $sha, short_sha: $short, subject: $subj, author: $author, date: $date}]>
+stdin{stdin{}
+}
+}
+--stderr--
+
+
+### benign examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: get-docs-diff
+--- OLD
+exit=0
+--stdout--
+<head [-200]>
+stdin{<git [diff] [v0] [with] [spaces..HEAD] [--] [docs/]>
+stdin{}
+}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<head [-200]>
+stdin{<git [diff] [v0 with spaces..HEAD] [--] [docs/]>
+stdin{}
+}
+--stderr--
+
+
+### hostile examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: get-docs-diff
+--- OLD
+exit=2
+--stdout--
+--stderr--
+/bin/sh: -c: line 0: unexpected EOF while looking for matching `''
+/bin/sh: -c: line 1: syntax error: unexpected end of file
+
+--- NEW
+exit=0
+--stdout--
+<head [-200]>
+stdin{<git [diff] [it's "q" $5 \ back 0..HEAD] [--] [docs/]>
+stdin{}
+}
+--stderr--
+
+
+### benign examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: fetch-pr-data
+--- OLD
+exit=0
+--stdout--
+<gh [pr] [view] [v0] [with] [spaces] [--repo] [v1 with spaces] [--json] [title,body,url]>
+stdin{}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<gh [pr] [view] [v0 with spaces] [--repo] [v1 with spaces] [--json] [title,body,url]>
+stdin{}
+--stderr--
+
+
+### hostile examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: fetch-pr-data
+--- OLD
+exit=0
+--stdout--
+<gh [pr] [view] [its "q" $5 \ back 0 --repo its "q" $5 \ back 1] [--json] [title,body,url]>
+stdin{}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<gh [pr] [view] [it's "q" $5 \ back 0] [--repo] [it's "q" $5 \ back 1] [--json] [title,body,url]>
+stdin{}
+--stderr--
+
+
+### benign examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: get-file-changes
+--- OLD
+exit=0
+--stdout--
+<jq [-R] [-s] [split("\n") | map(select(length > 0))]>
+stdin{<git [diff-tree] [--no-commit-id] [--name-only] [-r] [v0] [with] [spaces]>
+stdin{}
+}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<jq [-R] [-s] [split("\n") | map(select(length > 0))]>
+stdin{<git [diff-tree] [--no-commit-id] [--name-only] [-r] [v0 with spaces]>
+stdin{}
+}
+--stderr--
+
+
+### hostile examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: get-file-changes
+--- OLD
+exit=2
+--stdout--
+--stderr--
+/bin/sh: -c: line 0: syntax error near unexpected token `('
+/bin/sh: -c: line 0: `git diff-tree --no-commit-id --name-only -r it's "q" $5 \ back 0 2>/dev/null | jq -R -s 'split("\n") | map(select(length > 0))''
+
+--- NEW
+exit=0
+--stdout--
+<jq [-R] [-s] [split("\n") | map(select(length > 0))]>
+stdin{<git [diff-tree] [--no-commit-id] [--name-only] [-r] [it's "q" $5 \ back 0]>
+stdin{}
+}
+--stderr--
+
+
+### hostile examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: save-changelog
+--- OLD
+exit=2
+--stdout--
+--stderr--
+/bin/sh: -c: line 0: syntax error near unexpected token `}'
+/bin/sh: -c: line 0: `changelog=$(cat); if [ -f 'it's "q" $5 \ back 0' ]; then { echo "$changelog"; echo ''; cat 'it's "q" $5 \ back 0'; } > /tmp/changelog.tmp && mv /tmp/changelog.tmp 'it's "q" $5 \ back 0'; else echo "$changelog" > 'it's "q" $5 \ back 0'; fi && echo 'Updated: it's "q" $5 \ back 0''
+
+--- NEW
+exit=0
+--stdout--
+Updated: it's "q" $5 \ back 0
+--stderr--
+
+
+### benign examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: output-summary
+--- OLD
+exit=0
+--stdout--
+<jq [-r] [(.version | gsub("[\\n\\r]"; "")) as $v | (.bump | gsub("[\\n\\r]"; "")) as $b | (.internal | if type == "string" then fromjson else . end) as $int | (.user_facing | if type == "string" then fromjson else . end) as $uf | "\n=== Changelog Generated ===\nVersion: " + $v + "\nVersion bump: " + $b + "\nUser-facing entries: " + ($uf | length | tostring) + "\nSkipped (internal): " + ($int | length | tostring) + "\n\nFiles updated:\n- v0 with spaces\n- releases/" + $v + "-context.md\n\nReview the context file before committing."]>
+stdin{line one
+line two
+}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<jq [-r] [--arg] [changelog_path] [v0 with spaces] [(.version | gsub("[\\n\\r]"; "")) as $v | (.bump | gsub("[\\n\\r]"; "")) as $b | (.internal | if type == "string" then fromjson else . end) as $int | (.user_facing | if type == "string" then fromjson else . end) as $uf | "\n=== Changelog Generated ===\nVersion: " + $v + "\nVersion bump: " + $b + "\nUser-facing entries: " + ($uf | length | tostring) + "\nSkipped (internal): " + ($int | length | tostring) + "\n\nFiles updated:\n- " + $changelog_path + "\n- releases/" + $v + "-context.md\n\nReview the context file before committing."]>
+stdin{line one
+line two
+}
+--stderr--
+
+
+### hostile examples/real-workflows/generate-changelog-simple/workflow.pflow.md :: output-summary
+--- OLD
+exit=2
+--stdout--
+--stderr--
+/bin/sh: -c: line 0: unexpected EOF while looking for matching `"'
+/bin/sh: -c: line 1: syntax error: unexpected end of file
+
+--- NEW
+exit=0
+--stdout--
+<jq [-r] [--arg] [changelog_path] [it's "q" $5 \ back 0] [(.version | gsub("[\\n\\r]"; "")) as $v | (.bump | gsub("[\\n\\r]"; "")) as $b | (.internal | if type == "string" then fromjson else . end) as $int | (.user_facing | if type == "string" then fromjson else . end) as $uf | "\n=== Changelog Generated ===\nVersion: " + $v + "\nVersion bump: " + $b + "\nUser-facing entries: " + ($uf | length | tostring) + "\nSkipped (internal): " + ($int | length | tostring) + "\n\nFiles updated:\n- " + $changelog_path + "\n- releases/" + $v + "-context.md\n\nReview the context file before committing."]>
+stdin{line one
+line two
+}
+--stderr--
+
+
+### hostile examples/real-workflows/git-worktree-task-creator/workflow.pflow.md :: create-worktree
+--- OLD
+exit=2
+--stdout--
+<mkdir [-p] [<dirname [<TMP>/re po-worktrees/feat-equivalence-probe]>
+stdin{}
+<TMP>/re po-worktrees/feat-equivalence-probe]>
+stdin{}
+--stderr--
+/bin/sh: -c: line 16: unexpected EOF while looking for matching `"'
+/bin/sh: -c: line 18: syntax error: unexpected end of file
+
+--- NEW
+exit=1
+--stdout--
+<mkdir [-p] [<dirname [<TMP>/re po-worktrees/feat-equivalence-probe]>
+stdin{}
+<TMP>/re po-worktrees/feat-equivalence-probe]>
+stdin{}
+<git [show-ref] [--verify] [--quiet] [refs/heads/feat/equivalence-probe]>
+stdin{}
+--stderr--
+ERROR: branch 'feat/equivalence-probe' already exists -- refusing to overwrite. A different task may have produced the same name, or you're re-running the same task. Pass overwrite=true to reset it, or give a more specific task_description.
+
+
+### hostile examples/real-workflows/git-worktree-task-creator/workflow.pflow.md :: copy-folder
+--- OLD
+exit=2
+--stdout--
+--stderr--
+/bin/sh: -c: line 0: unexpected EOF while looking for matching `''
+/bin/sh: -c: line 1: syntax error: unexpected end of file
+
+--- NEW
+exit=0
+--stdout--
+--stderr--
+Warning: folder 'it's "q" $5 \ back 0' not found under repo root, skipping
+
+
+### hostile examples/real-workflows/release-announcements/workflow.pflow.md :: create-summary
+--- OLD
+exit=2
+--stdout--
+--stderr--
+/bin/sh: -c: line 0: unexpected EOF while looking for matching `)'
+/bin/sh: -c: line 1: syntax error: unexpected end of file
+
+--- NEW
+exit=0
+--stdout--
+## Release Announcements for it's "q" $5 \ back 0 vit's "q" $5 \ back 1
+
+✓ Posted to Slack: #it's "q" $5 \ back 2
+✓ Posted to Discord: channel it's "q" $5 \ back 3
+✓ X post saved to: it's "q" $5 \ back 4
+
+To post to X, run:
+pflow registry run mcp-twitter-x-TWITTER_CREATION_OF_A_POST text="$(cat it's "q" $5 \ back 4)"
+--stderr--
+
+
+### hostile examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: seed
+--- OLD
+exit=0
+--stdout--
+<python3 [-] [it's q  \ back 0]>
+stdin{import sys
+content = "# Live Reload Probe\n\nThrowaway workflow for the live-reload skill check.\n\n## Steps\n\n### greet\n\nGreet the world to begin the run.\n\n- type: shell\n- command: echo hello\n\n### done\n\nFinalize and report completion of the run.\n\n- type: shell\n- command: echo done\n"
+open(sys.argv[1], "w", encoding="utf-8").write(content)
+}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<python3 [-] [it's "q" $5 \ back 0]>
+stdin{import sys
+content = "# Live Reload Probe\n\nThrowaway workflow for the live-reload skill check.\n\n## Steps\n\n### greet\n\nGreet the world to begin the run.\n\n- type: shell\n- command: echo hello\n\n### done\n\nFinalize and report completion of the run.\n\n- type: shell\n- command: echo done\n"
+open(sys.argv[1], "w", encoding="utf-8").write(content)
+}
+--stderr--
+
+
+### hostile examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: append
+--- OLD
+exit=0
+--stdout--
+<python3 [-] [it's q  \ back 0]>
+stdin{import sys
+block = "\n### tail\n\nAppended tail step for the in-place check.\n\n- type: shell\n- command: echo tail\n"
+open(sys.argv[1], "a", encoding="utf-8").write(block)
+}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<python3 [-] [it's "q" $5 \ back 0]>
+stdin{import sys
+block = "\n### tail\n\nAppended tail step for the in-place check.\n\n- type: shell\n- command: echo tail\n"
+open(sys.argv[1], "a", encoding="utf-8").write(block)
+}
+--stderr--
+
+
+### hostile examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: insert
+--- OLD
+exit=0
+--stdout--
+<python3 [-] [it's q  \ back 0]>
+stdin{import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+block = "### middle\n\nRELOADMARKER inserted-before step for the remap check.\n\n- type: shell\n- command: echo middle\n\n"
+s = s.replace("### done", block + "### done", 1)
+open(p, "w", encoding="utf-8").write(s)
+}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<python3 [-] [it's "q" $5 \ back 0]>
+stdin{import sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8").read()
+block = "### middle\n\nRELOADMARKER inserted-before step for the remap check.\n\n- type: shell\n- command: echo middle\n\n"
+s = s.replace("### done", block + "### done", 1)
+open(p, "w", encoding="utf-8").write(s)
+}
+--stderr--
+
+
+### hostile examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: corrupt
+--- OLD
+exit=0
+--stdout--
+<python3 [-] [it's q  \ back 0]>
+stdin{import sys
+content = "# Broken\n\n## Steps\n\n### x\n\nA step with an unknown type.\n\n- type: nonexistent_type_zzz\n"
+open(sys.argv[1], "w", encoding="utf-8").write(content)
+}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<python3 [-] [it's "q" $5 \ back 0]>
+stdin{import sys
+content = "# Broken\n\n## Steps\n\n### x\n\nA step with an unknown type.\n\n- type: nonexistent_type_zzz\n"
+open(sys.argv[1], "w", encoding="utf-8").write(content)
+}
+--stderr--
+
+
+### hostile examples/real-workflows/screenshot-pflow-web-ui/live-reload.pflow.md :: cleanup
+--- OLD
+exit=0
+--stdout--
+<rm [-f] [it's q  \ back 0]>
+stdin{}
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+<rm [-f] [it's "q" $5 \ back 0]>
+stdin{}
+--stderr--
+
+
+### hostile examples/real-workflows/vision-scraper/workflow.pflow.md :: compute-filename
+--- OLD
+exit=2
+--stdout--
+--stderr--
+/bin/sh: -c: line 2: syntax error near unexpected token `else'
+/bin/sh: -c: line 2: `else'
+
+--- NEW
+exit=0
+--stdout--
+it's "q" $5 \ back 0--stderr--
+
+
+### hostile examples/real-workflows/vision-scraper/workflow.pflow.md :: extract-images
+--- OLD
+exit=2
+--stdout--
+--stderr--
+/bin/sh: -c: line 0: syntax error near unexpected token `"q"'
+/bin/sh: -c: line 0: `case 'it's "q" $5 \ back 0' in'
+
+--- NEW
+exit=0
+--stdout--
+<jq [-Rs] [split("\n") | map(select(. != ""))]>
+stdin{<grep [-o] [https://[^)]*]>
+stdin{<grep [Image [0-9]]>
+stdin{line one
+line two
+}
+}
+}
+--stderr--
+
+
+### hostile examples/real-workflows/vision-scraper/workflow.pflow.md :: append-analyses
+--- OLD
+exit=2
+--stdout--
+--stderr--
+/bin/sh: -c: line 6: unexpected EOF while looking for matching `''
+/bin/sh: -c: line 7: syntax error: unexpected end of file
+
+--- NEW
+exit=0
+--stdout--
+it's "q" $5 \ back 0
+--stderr--
+
+
+### hostile examples/test-nested-index.pflow.md :: process-batch
+--- OLD
+exit=0
+--stdout--
+Processing user it's q  \ back 0 (index 0) with score it's q  \ back 1
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+Processing user it's "q" $5 \ back 0 (index 0) with score it's "q" $5 \ back 1
+--stderr--
+
+
+### hostile examples/test-nested-index.pflow.md :: correlate-batch
+--- OLD
+exit=0
+--stdout--
+it's q  \ back 0: it's q  \ back 1 (it's q  \ back 2)
+--stderr--
+
+--- NEW
+exit=0
+--stdout--
+it's "q" $5 \ back 0: it's "q" $5 \ back 1 (it's "q" $5 \ back 2)
+--stderr--

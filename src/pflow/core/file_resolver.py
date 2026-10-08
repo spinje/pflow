@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from pflow.core.workflow.template_surfaces import param_mode
 from pflow.core.yaml_utils import safe_load_preserving_templates
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,18 @@ def is_file_reference(value: Any) -> bool:
     return False
 
 
+def is_param_file_reference(node_type: str | None, key: str, value: Any) -> bool:
+    """``is_file_reference`` for one param (or batch-item key) of a node of ``node_type``.
+
+    A body (``param_mode`` → ``"body"``) holding a ``$`` is a command, never a path:
+    ``./scripts/$NAME.sh`` reads a shell variable. Every param walk that detects file
+    references asks this, never ``is_file_reference`` directly.
+    """
+    if param_mode(node_type, key) == "body" and isinstance(value, str) and "$" in value:
+        return False
+    return is_file_reference(value)
+
+
 def is_workflow_file_reference(value: str) -> bool:
     """Detect if a workflow param value is a file path (vs. a saved workflow name).
 
@@ -139,10 +152,11 @@ def resolve_file_references(ir_dict: dict[str, Any], base_dir: Path) -> dict[str
         params = node.get("params", {})
         if not isinstance(params, dict):
             continue
+        node_type = node.get("type")
         for key, value in list(params.items()):
             if key not in FILE_RESOLVABLE_PARAMS:
                 continue
-            if is_file_reference(value):
+            if is_param_file_reference(node_type, key, value):
                 content = _read_file(value, base_dir, node_id, key)
                 if key in YAML_PARSED_PARAMS:
                     params[key] = safe_load_preserving_templates(content)
@@ -189,7 +203,7 @@ def _resolve_batch_file_references(
                     for key, value in list(item.items()):
                         if key not in FILE_RESOLVABLE_PARAMS:
                             continue
-                        if is_file_reference(value):
+                        if is_param_file_reference(node.get("type"), key, value):
                             content = _read_file(value, base_dir, node_id, f"batch.items[{i}].{key}")
                             if key in YAML_PARSED_PARAMS:
                                 item[key] = safe_load_preserving_templates(content)
@@ -243,21 +257,22 @@ def has_file_references(ir_dict: dict[str, Any]) -> list[str]:
     for node in ir_dict.get("nodes", []):
         if not isinstance(node, dict):
             continue
-        _collect_param_file_refs(node.get("params", {}), found)
-        _collect_batch_file_refs(node.get("batch"), found)
+        node_type = node.get("type")
+        _collect_param_file_refs(node_type, node.get("params", {}), found)
+        _collect_batch_file_refs(node_type, node.get("batch"), found)
     return found
 
 
-def _collect_param_file_refs(params: Any, found: list[str]) -> None:
+def _collect_param_file_refs(node_type: str | None, params: Any, found: list[str]) -> None:
     """Collect file references from node params."""
     if not isinstance(params, dict):
         return
     for key, value in params.items():
-        if key in FILE_RESOLVABLE_PARAMS and is_file_reference(value):
+        if key in FILE_RESOLVABLE_PARAMS and is_param_file_reference(node_type, key, value):
             found.append(value)
 
 
-def _collect_batch_file_refs(batch: Any, found: list[str]) -> None:
+def _collect_batch_file_refs(node_type: str | None, batch: Any, found: list[str]) -> None:
     """Collect file references from batch config."""
     if isinstance(batch, str) and is_file_reference(batch):
         found.append(batch)
@@ -266,7 +281,7 @@ def _collect_batch_file_refs(batch: Any, found: list[str]) -> None:
         if isinstance(items, list):
             for item in items:
                 if isinstance(item, dict):
-                    _collect_param_file_refs(item, found)
+                    _collect_param_file_refs(node_type, item, found)
 
 
 def get_base_dir(initial_params: dict[str, Any]) -> Path:

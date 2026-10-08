@@ -77,7 +77,16 @@ required: [error_type, root_cause, immediate_fix, long_term_solution, prevention
 Format the debug analysis into a readable report.
 
 - type: shell
+- env:
+    ERROR_TYPE: ${analyze_error.result.error_type}
+    CONFIDENCE: ${analyze_error.result.confidence}
+    ROOT_CAUSE: ${analyze_error.result.root_cause}
+    IMMEDIATE_FIX: ${analyze_error.result.immediate_fix}
+    CODE_SNIPPET: ${analyze_error.result.code_snippet}
+    LONG_TERM_SOLUTION: ${analyze_error.result.long_term_solution}
+    PREVENTION_TIPS: ${analyze_error.result.prevention_tips}
+    COST: ${analyze_error.llm_usage.cost_usd}
 
 ```text command
-echo "DEBUG ANALYSIS REPORT\n========================\n\n**Error Type:** ${analyze_error.result.error_type}\n**Confidence:** ${analyze_error.result.confidence}/10\n\n## Root Cause\n${analyze_error.result.root_cause}\n\n## Immediate Fix\n${analyze_error.result.immediate_fix}\n\n## Code Fix\n${analyze_error.result.code_snippet}\n\n## Long-term Solution\n${analyze_error.result.long_term_solution}\n\n## Prevention Tips\n${analyze_error.result.prevention_tips}\n\n---\nAnalysis cost: $${analyze_error.llm_usage.cost_usd}"
+echo "DEBUG ANALYSIS REPORT\n========================\n\n**Error Type:** $ERROR_TYPE\n**Confidence:** $CONFIDENCE/10\n\n## Root Cause\n$ROOT_CAUSE\n\n## Immediate Fix\n$IMMEDIATE_FIX\n\n## Code Fix\n$CODE_SNIPPET\n\n## Long-term Solution\n$LONG_TERM_SOLUTION\n\n## Prevention Tips\n$PREVENTION_TIPS\n\n---\nAnalysis cost: \$$COST"
 ```

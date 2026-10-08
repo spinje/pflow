@@ -16,7 +16,7 @@ from pflow.core.json_utils import try_parse_json
 from pflow.core.param_coercion import coerce_param_for_node
 from pflow.core.templates import CONTAINER_TYPES, LIST_TYPES, Reference, Resolution, TemplateResolver, parse, resolve
 from pflow.core.types import outer_base_type
-from pflow.core.workflow.template_surfaces import binds_as_text
+from pflow.core.workflow.template_surfaces import binds_as_text, param_mode
 
 from .template_errors import (
     build_json_parse_error_message,
@@ -99,10 +99,13 @@ def parses_leaves(template_config: TemplateConfig, key: str) -> bool:
 def split_params(
     params: dict[str, Any],
     expected_types: dict[str, str],
+    node_type: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Separate params into template_params and static_params.
 
-    Only params TemplateResolver.has_templates detects are ever resolved; an
+    A body (``param_mode`` → ``"body"``) is static whatever it contains — decided
+    before ``has_templates``, so a ``$${`` in a shell command reaches sh unchanged.
+    Otherwise only params TemplateResolver.has_templates detects are ever resolved; an
     undetected template stays a literal in static_params.
     Static params get type coercion via coerce_param_for_node.
     _source_line keys are kept in static_params (nodes read them for error
@@ -112,6 +115,7 @@ def split_params(
     Args:
         params: Node parameters to classify
         expected_types: param_key -> expected type mapping
+        node_type: the node's type, for ``param_mode`` (``None`` — no param is a body)
 
     Returns:
         (template_params, static_params)
@@ -120,7 +124,7 @@ def split_params(
     static_params: dict[str, Any] = {}
 
     for key, value in params.items():
-        if TemplateResolver.has_templates(value):
+        if param_mode(node_type, key) != "body" and TemplateResolver.has_templates(value):
             template_params[key] = value
         else:
             expected_type = expected_types.get(key)

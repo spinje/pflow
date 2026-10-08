@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import { ParamBlock } from "./ReadPanel";
+import { highlight } from "../utils/highlight";
 import type { BatchSpec, RFParam } from "../types";
 
 // Keep CodeBlock SYNCHRONOUS (highlight → null = legacy plain-text paint), so the
@@ -52,6 +53,32 @@ describe("ParamBlock — batch-alias expansion", () => {
     expect(screen.getByText("EMOTIONAL prompt body")).toBeTruthy();
     expect(screen.getByText("focus: details")).toBeTruthy();
     expect(screen.getByText("DETAILS prompt body")).toBeTruthy();
+  });
+
+  it("a code body's ${item.x} is never expanded; the same read in a Template param is", () => {
+    // Task 118: a shell `command` / code `code` is plain code — its `${item.prompt}`
+    // is the shell's/Python's own text. `stdin` on the same shell node still expands.
+    for (const [kind, name] of [["shell", "command"], ["code", "code"]] as const) {
+      render(<ParamBlock param={param({ name, value: "echo ${item.prompt}" })} kind={kind} batch={literalBatch()} />);
+      expect(screen.queryByRole("button", { name: /items/ })).toBeNull();
+      cleanup();
+    }
+    render(<ParamBlock param={param({ name: "stdin", value: "${item.prompt}" })} kind="shell" batch={literalBatch()} />);
+    expect(screen.getByRole("button", { name: /2 items/ })).toBeTruthy();
+  });
+
+  it("expands a dict env per item, with the param's JSON rendering", () => {
+    render(<ParamBlock param={param({ name: "env", value: { PROMPT: "${item.prompt}" } })} kind="shell" batch={literalBatch()} />);
+    fireEvent.click(screen.getByRole("button", { name: /2 items/ }));
+    expect(screen.getByText("focus: emotional")).toBeTruthy();
+    const values = [...document.querySelectorAll(".batch-item .read-param-value")].map((el) => el.textContent);
+    expect(values).toEqual([
+      JSON.stringify({ PROMPT: "EMOTIONAL prompt body" }, null, 2),
+      JSON.stringify({ PROMPT: "DETAILS prompt body" }, null, 2),
+    ]);
+    // colored as JSON, like the un-expanded dict (an item's value is text, so the
+    // language must come from the param's value, not the item's)
+    expect(highlight).toHaveBeenCalledWith(values[0], "json");
   });
 
   it("shows no expander when the value does not read the batch alias", () => {

@@ -16,6 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from pflow.core.exceptions import NodeError
+from pflow.core.security_utils import redact_sensitive
 from pflow.core.templates import to_string
 
 # Upper-cased name -> what replacing it does to the command. Compared case-insensitively
@@ -138,6 +139,27 @@ def merge_env(inherited: Mapping[str, str], bound: Mapping[str, str], *, ignore_
     return merged
 
 
+_DISPLAY_CAP = 200  # characters per value — the failure block's `Command:` cap
+
+
+def displayable_env(bound: Mapping[str, str]) -> dict[str, str]:
+    """The copy of the bound values a failing step records beside ``command``.
+
+    Display-safe at the source, because this one record reaches every failure surface
+    (the error block, JSON and MCP errors, a failed batch item's or sub-workflow's error
+    record): masked by name, each value capped at 200 characters naming its full length,
+    newlines shown as ``\\n``. Full values stay in the trace for ``pflow report``.
+    """
+    return {name: _display_value(value) for name, value in redact_sensitive(dict(bound)).items()}
+
+
+def _display_value(text: str) -> str:
+    shown = text[:_DISPLAY_CAP].replace("\n", "\\n")
+    if len(text) <= _DISPLAY_CAP:
+        return shown
+    return f"{shown}… ({len(text):,} chars — full value: pflow report)"
+
+
 def oversized_error(bound: Mapping[str, str], command: str) -> EnvBindingError:
     """The OS refused to start the command (E2BIG): name the largest bound value and the command."""
     sizes = []
@@ -190,7 +212,7 @@ def _name_fix(key: object) -> str:
         # The key was a YAML word (null, yes, off, …) — its spelling is lost, so never suggest one back.
         kind = "null" if key is None else "boolean"
         return f"YAML read this key as a {kind}, not text: quote the key so it stays the name you wrote."
-    suggestion = _suggest_name(_as_written(key))
+    suggestion = suggest_env_name(_as_written(key))
     return (
         "Use letters, digits and underscores, not starting with a digit — "
         f'e.g. {suggestion} — and read it as "${suggestion}" in the command.'
@@ -206,8 +228,10 @@ def _as_written(key: object) -> str:
     return str(key)
 
 
-def _suggest_name(name: str) -> str:
-    suggestion = re.sub(r"[^A-Za-z0-9_]", "_", name).upper() or "VALUE"
+def suggest_env_name(text: str) -> str:
+    """An ``env:`` name for ``text`` (a key, a reference): upper-cased, every run of other
+    characters one ``_``; ``_VALUE`` appended when it lands on an ``AMBIENT_NAMES`` name."""
+    suggestion = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_").upper() or "VALUE"
     if suggestion[0].isdigit():
         suggestion = f"VAR_{suggestion}"
     return f"{suggestion}_VALUE" if suggestion in AMBIENT_NAMES else suggestion

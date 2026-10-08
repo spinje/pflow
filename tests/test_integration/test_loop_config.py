@@ -1112,9 +1112,9 @@ def test_diagnose_carry_ref_walks_parsed_segments() -> None:
     assert dx("${other.a}", "n", {"a": 1}) is None  # not a self reference
 
 
-def test_shell_carry_threads_into_command_text_across_rounds(tmp_path) -> None:
-    """End-to-end parity: for a SHELL body the carried value reaches the body ONLY via the
-    command text (`${state}`), not `inputs:`. Assert the carried stdout accumulates across
+def test_shell_carry_threads_into_env_across_rounds(tmp_path) -> None:
+    """End-to-end parity: for a SHELL body the carried value reaches the body ONLY via a
+    reference bound in `env:` (`STATE: ${state}`), not `inputs:`. Assert the carried stdout accumulates across
     rounds — an inert carry would re-use the seed and every round would be identical ("ab").
 
     Closes the one parity claim that was previously proven by construction + validation but
@@ -1132,7 +1132,9 @@ Append a char to the carried stdout each round.
 - type: shell
 - inputs:
     state: a
-- command: printf '%s' "${state}b"
+- env:
+    STATE: ${state}
+- command: printf '%s' "$STATE"b
 
 - loop:
     carry:
@@ -1143,7 +1145,7 @@ Append a char to the carried stdout each round.
     r = _run(tmp_path, body)
     assert r.success, r.errors
     assert r.shared_after["__execution__"]["node_visit_counts"]["c"] == 3
-    # seed "a" → "ab" → "abb" → "abbb": the prior round's stdout threaded into the command.
+    # seed "a" → "ab" → "abb" → "abbb": the prior round's stdout threaded into the bound env value.
     assert r.shared_after["c"]["stdout"].strip() == "abbb"
 
 

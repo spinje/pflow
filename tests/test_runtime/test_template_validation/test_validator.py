@@ -963,15 +963,16 @@ class TestBatchTemplateValidation:
                     "id": "first-batch",
                     "type": "shell",
                     "batch": {"items": "${items}"},
-                    "params": {"command": "echo ${item}"},
+                    "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                 },
                 {
                     "id": "second-batch",
                     "type": "shell",
                     "batch": {"items": "${items}"},
                     "params": {
+                        "command": "cat",
                         # Nested index template - should not be flagged as malformed
-                        "command": "echo ${first-batch.results[${__index__}].stdout}"
+                        "stdin": "${first-batch.results[${__index__}].stdout}",
                     },
                 },
             ],
@@ -1055,7 +1056,7 @@ class TestBatchWorkflowNodeValidation:
             f"# Child {name}\n\nChild workflow for template validation tests.\n\n"
             f"## Inputs\n\n### text\n\nInput text.\n\n- type: string\n- required: true\n\n"
             f"## Steps\n\n### step\n\nEcho input.\n\n"
-            f"- type: shell\n\n```shell command\necho ${{text}}\n```\n\n"
+            f'- type: shell\n- env:\n    TEXT: ${{text}}\n\n```shell command\necho "$TEXT"\n```\n\n'
             f"## Outputs\n\n{outputs_md}\n",
             encoding="utf-8",
         )
@@ -1440,7 +1441,8 @@ class TestInputsContextTemplateValidation:
                     "type": "shell",
                     "params": {
                         "inputs": {"output": "${upstream.stdout}"},
-                        "command": "echo ${output}",
+                        "command": 'echo "$OUTPUT"',
+                        "env": {"OUTPUT": "${output}"},
                     },
                 },
             ],

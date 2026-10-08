@@ -383,7 +383,8 @@ A saved workflow with a forward reference.
 First step referencing future step.
 
 - type: shell
-- command: echo ${b.stdout}
+- stdin: ${b.stdout}
+- command: cat
 
 ### b
 
@@ -498,7 +499,8 @@ A child that references a non-existent node.
 First step that references a non-existent node.
 
 - type: shell
-- command: echo ${nonexistent-node.stdout}
+- stdin: ${nonexistent-node.stdout}
+- command: cat
 """,
         )
 
@@ -1022,7 +1024,10 @@ The value field for the child.
 Echo the provided input values.
 
 - type: shell
-- command: echo "${name}=${value}"
+- env:
+    NAME: ${name}
+    VALUE: ${value}
+- command: echo "$NAME=$VALUE"
 """,
         )
 
@@ -1073,7 +1078,10 @@ The value field for the child.
 Echo the provided input values.
 
 - type: shell
-- command: echo "${name}=${value}"
+- env:
+    NAME: ${name}
+    VALUE: ${value}
+- command: echo "$NAME=$VALUE"
 """,
         )
 
@@ -1128,7 +1136,10 @@ The value field for the child.
 Echo the provided input values.
 
 - type: shell
-- command: echo "${name}=${value}"
+- env:
+    NAME: ${name}
+    VALUE: ${value}
+- command: echo "$NAME=$VALUE"
 """,
         )
 
@@ -1163,12 +1174,14 @@ class TestUndeclaredExtras:
         inputs_block = "\n\n".join(
             f"### {name}\n\nInput {name}.\n\n- type: string\n- required: true" for name in input_names
         )
-        refs = " ".join(f"${{{name}}}" for name in input_names)
+        env = ", ".join(f"{name.upper()}: ${{{name}}}" for name in input_names)
+        refs = " ".join(f'"${name.upper()}"' for name in input_names)
         write_pflow_md(
             path,
             f"# Child\n\nA child declaring {', '.join(input_names)}.\n\n"
             f"## Inputs\n\n{inputs_block}\n\n"
-            f"## Steps\n\n### echo\n\nUse all declared inputs.\n\n- type: shell\n- command: echo {refs}\n",
+            f"## Steps\n\n### echo\n\nUse all declared inputs.\n\n- type: shell\n"
+            f"- env: {{ {env} }}\n- command: echo {refs}\n",
         )
 
     def test_workflow_extras_top_level_rejected(self, tmp_path: Path) -> None:
@@ -1348,7 +1361,8 @@ class TestNonDictInputsShape:
             path,
             "# Child\n\nA child.\n\n"
             "## Inputs\n\n### known_field\n\nInput.\n\n- type: string\n- required: true\n\n"
-            "## Steps\n\n### echo\n\nEcho.\n\n- type: shell\n- command: echo ${known_field}\n",
+            "## Steps\n\n### echo\n\nEcho.\n\n- type: shell\n"
+            '- env: { KNOWN_FIELD: ${known_field} }\n- command: echo "$KNOWN_FIELD"\n',
         )
 
     def test_non_dict_inputs_literal_string_rejected(self, tmp_path: Path) -> None:
@@ -1406,12 +1420,14 @@ class TestBatchItemValidation:
         inputs_block = "\n\n".join(
             f"### {name}\n\nInput {name}.\n\n- type: string\n- required: true" for name in input_names
         )
-        refs = " ".join(f"${{{name}}}" for name in input_names)
+        env = ", ".join(f"{name.upper()}: ${{{name}}}" for name in input_names)
+        refs = " ".join(f'"${name.upper()}"' for name in input_names)
         write_pflow_md(
             path,
             f"# Child\n\nA child declaring {', '.join(input_names)}.\n\n"
             f"## Inputs\n\n{inputs_block}\n\n"
-            f"## Steps\n\n### echo\n\nEcho inputs.\n\n- type: shell\n- command: echo {refs}\n",
+            f"## Steps\n\n### echo\n\nEcho inputs.\n\n- type: shell\n"
+            f"- env: {{ {env} }}\n- command: echo {refs}\n",
         )
 
     def _hetero_batch_ir(self, items: list, alias: str = "item") -> dict:
@@ -2019,7 +2035,8 @@ class TestSubWorkflowDiagnosticsCarrySeeAlso:
             path,
             "# Child\n\nA child.\n\n"
             "## Inputs\n\n### known_field\n\nInput.\n\n- type: string\n- required: true\n\n"
-            "## Steps\n\n### echo\n\nEcho.\n\n- type: shell\n- command: echo ${known_field}\n",
+            "## Steps\n\n### echo\n\nEcho.\n\n- type: shell\n"
+            '- env: { KNOWN_FIELD: ${known_field} }\n- command: echo "$KNOWN_FIELD"\n',
         )
 
     def test_non_dict_inputs_diagnostic_see_also_sub_workflows(self, tmp_path: Path) -> None:

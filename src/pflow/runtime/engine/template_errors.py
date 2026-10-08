@@ -296,7 +296,7 @@ def _find_peer_nodes_with_field(root: str, var: str, context: dict[str, Any], ma
     return candidates
 
 
-_SHELL_DISPLAY_FIELDS = ("exit_code", "command", "stdout", "stderr")
+_SHELL_DISPLAY_FIELDS = ("exit_code", "command", "env", "stdout", "stderr")
 _HTTP_DISPLAY_FIELDS = (
     "status_code",
     "url",

@@ -4,6 +4,10 @@ The validator's template checks (the Issue pass, reference extraction, the data-
 root check) each walk ``iter_template_surfaces`` instead of their own copy of "where
 templates live", so a new location (Task 100's ``batch.initial``) is one line here and
 every check sees it.
+
+How a param's text is read is decided here too, keyed on (node type, param): a code
+body (``shell.command``, ``code.code`` — ``param_mode`` → ``"body"``) is never a
+surface, and every other param walk asks ``param_mode`` or iterates ``template_params``.
 """
 
 from __future__ import annotations
@@ -17,8 +21,40 @@ from pflow.core.templates import Template, parse
 
 SurfaceKind = typing.Literal["param", "batch_items", "loop", "carry", "output_source", "cache_var", "cache_prose"]
 
+ParamMode = typing.Literal["template", "body"]
+BodyLanguage = typing.Literal["sh", "python"]
+
+# (node type, param) -> the language of a param that holds plain code — see ``param_mode``.
+# TypeScript mirror: web/src/utils/format.ts::isCodeBody — change both together.
+_BODIES: dict[tuple[str, str], BodyLanguage] = {("shell", "command"): "sh", ("code", "code"): "python"}
 # (node type, param) pairs whose values bind as text — see ``binds_as_text``.
 _BINDS_AS_TEXT: frozenset[tuple[str, str]] = frozenset({("shell", "env")})
+
+
+def param_mode(node_type: str | None, key: str) -> ParamMode:
+    """How pflow reads one param's text: ``"template"`` (the default — ``${…}`` is a
+    Template) or ``"body"`` (plain code in another language — never scanned, validated
+    or resolved; values reach it through the node's own binding, ADR-0016)."""
+    return "body" if (node_type, key) in _BODIES else "template"
+
+
+def template_params(node: dict[str, Any]) -> dict[str, Any]:
+    """A node's params minus its bodies — the params pflow reads as Templates."""
+    params = node.get("params")
+    if not isinstance(params, dict):
+        return {}
+    node_type = node.get("type")
+    return {key: value for key, value in params.items() if param_mode(node_type, key) != "body"}
+
+
+def code_bodies(node: dict[str, Any]) -> Iterator[tuple[str, BodyLanguage, str]]:
+    """``(param, language, text)`` for each string body of a node (at most one today)."""
+    params = node.get("params")
+    node_type = node.get("type")
+    for key, value in (params if isinstance(params, dict) else {}).items():
+        language = _BODIES.get((node_type, key)) if isinstance(node_type, str) else None
+        if language is not None and isinstance(value, str):
+            yield key, language, value
 
 
 def binds_as_text(node_type: str | None, key: str) -> bool:
@@ -87,8 +123,7 @@ def iter_template_surfaces(workflow_ir: dict[str, Any]) -> Iterator[TemplateSurf
 def iter_node_surfaces(node: dict[str, Any]) -> Iterator[TemplateSurface]:
     """One node's surfaces: its params, ``batch.items``, loop fields, and carry values."""
     node_id = node.get("id")
-    params = node.get("params")
-    for key, value in (params if isinstance(params, dict) else {}).items():
+    for key, value in template_params(node).items():
         yield TemplateSurface("param", node_id, key, value)
     batch = node.get("batch")
     if isinstance(batch, dict) and batch.get("items") is not None:

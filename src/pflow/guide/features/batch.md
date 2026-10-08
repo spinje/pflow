@@ -17,13 +17,15 @@ Analyze each file.
 Fetch each URL in parallel.
 
 - type: shell
+- env:
+    URL: ${item}
 - batch:
     items: ${urls}
     parallel: true
     max_concurrent: 40
 
 ```shell command
-curl -s '${item}'
+curl -s "$URL"
 ```
 ````
 
@@ -135,7 +137,7 @@ items:
 parallel: true
 ```
 ````
-Any `${item.field}` template works in any param — not just prompt/command.
+Any `${item.field}` template works in any param — not just the prompt. A shell step binds it in `env:` (`URL: ${item.url}`), a code step in `inputs:`; their command and code never hold it.
 
 **Correlating parallel arrays (zip)**: when two batches ran over aligned inputs and you need each row of one alongside the matching row of the other, there are two ways — pick by how much you trust the alignment:
 

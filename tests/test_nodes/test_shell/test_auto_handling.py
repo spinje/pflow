@@ -180,7 +180,7 @@ class TestAutoHandlingWhich:
 
         action = node.post(
             {},
-            {"command": command, "ignore_errors": False, "strip_newline": True},
+            {"command": command, "env": {}, "ignore_errors": False, "strip_newline": True},
             {
                 "exit_code": 127,
                 "stdout": "",

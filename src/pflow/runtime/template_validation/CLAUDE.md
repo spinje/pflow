@@ -8,11 +8,11 @@ run these passes.
 
 | Symptom or change | Owner |
 |---|---|
-| Malformed template (the one Issue pass), unused input, loop condition | `validator.py` |
+| Malformed template (the one Issue pass), unused input, unread step `inputs:` key, loop condition | `validator.py` |
 | Which references a pass checks, and how (the operand classifier) | `operands.py` |
 | Where templates live in the IR (params, `batch.items`, loop, carry, outputs, cache) | `core/workflow/template_surfaces.py` |
 | Missing node output/path, diagnostic field suggestions | `path_validation.py` |
-| Parameter type, shell JSON coercion, code-input annotation | `type_validation.py` |
+| Parameter type, code-input annotation | `type_validation.py` |
 | `${item.field}` against inferred item structure | `batch_item_validation.py` |
 | Type inference (compatibility: `core/templates.py::is_type_compatible`) | `type_checker.py` |
 | Index into declared structure, dotted display, safe display | `utils.py::descend_index`, `dotted_parts`, `sanitize_for_display` |
@@ -53,9 +53,15 @@ useful unknown-type error with a validator exception.
   is a coarse first-character check for already-parsed operands, not a
   literal validator.
 
-Type, shell, and code-annotation passes (6, 7, 9) read params independently
-through `TemplateResolver.extract_variables`; they do not consume the operand
-iterator. When adding a template-bearing location, inspect those passes too.
+Type and code-annotation passes (6, 9) read params independently through
+`TemplateResolver.extract_variables` — Pass 6 over `template_params`, so a code
+body never reaches it; they do not consume the operand iterator. When adding a
+template-bearing location, inspect those passes too.
+
+A code body (`template_surfaces.param_mode` → `"body"`) is not a surface: no pass
+here reads it. Leftover `${…}` and `$${` in a body are `core/workflow/data_flow.py`'s
+("Code bodies"); their in-scope roots join unused-input accounting through
+`body_reference_roots`.
 
 ## Output metadata and limits
 
@@ -109,10 +115,6 @@ a dynamic index are not separators). An index — `[N]` or `[${…}]` — descen
 by `utils.descend_index` in both Pass 5 and `infer_template_type`: batch
 `items` or a list field's `structure` is the element; `any` indexes to an
 unknown element; a string indexes only as a JSON array at runtime (WARNING).
-
-Shell validation rejects dict/list interpolation in `command` unless the
-quoted-template opt-in (`'${var}'`) is present. This is JSON-coercion/type-check
-behavior, not a general shell-injection safety guarantee.
 
 Type compatibility is `core/templates.is_type_compatible` (template flow, not a
 literal-value check): string → dict/list is allowed because runtime parses JSON

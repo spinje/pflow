@@ -594,7 +594,7 @@ def test_fail_fast_batch_preserves_batch_metadata_in_failures():
                 "purpose": "Batch where item 1 fails; fail_fast stops at first failure.",
                 # Use item value in the command so each item executes differently.
                 # Items 0 and 2 succeed; item 1 fails with exit 9.
-                "params": {"command": 'test "${item}" != "boom" || exit 9'},
+                "params": {"command": 'test "$ITEM" != "boom" || exit 9', "env": {"ITEM": "${item}"}},
                 "batch": {
                     "items": ["ok0", "boom", "ok2"],
                     "error_handling": "fail_fast",
@@ -637,7 +637,10 @@ def test_large_item_fail_fast_batch_preserves_full_item_with_compact_summary():
                 "id": "fail_fast_batch",
                 "type": "shell",
                 "purpose": "Fail one oversized batch item.",
-                "params": {"command": 'echo "forced batch failure for ${item.label}" >&2; exit 1'},
+                "params": {
+                    "command": 'echo "forced batch failure for $ITEM_LABEL" >&2; exit 1',
+                    "env": {"ITEM_LABEL": "${item.label}"},
+                },
                 "batch": {
                     "items": [large_item],
                     "error_handling": "fail_fast",
@@ -1612,9 +1615,11 @@ The per-item message.
 Echo the message and fail so the value is captured in the failure record.
 
 - type: shell
+- env:
+    MSG: ${msg}
 
 ```shell command
-echo "got:${msg}"; exit 3
+echo "got:$MSG"; exit 3
 ```
 """,
         encoding="utf-8",
@@ -1863,9 +1868,11 @@ Reference the failed producer's stdout — unresolved at runtime in strict mode.
 
 - type: shell
 - next: end
+- env:
+    PRODUCER_STDOUT: ${producer.stdout}
 
 ```shell command
-echo "${producer.stdout}"
+echo "$PRODUCER_STDOUT"
 ```
 """,
         encoding="utf-8",
@@ -1929,9 +1936,11 @@ Fail per item so the child batch archives raw item inputs.
     items: ["SENSITIVE-AAA", "SENSITIVE-BBB"]
     as: it
     error_handling: continue
+- env:
+    IT: ${it}
 
 ```shell command
-echo "${it}"; exit 1
+echo "$IT"; exit 1
 ```
 """,
         encoding="utf-8",

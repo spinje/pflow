@@ -52,7 +52,13 @@ class TestNullDefaults:
         """Test that null defaults are stored in resolved_defaults at compile time."""
         workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "test", "type": "shell", "params": {"command": "${input_value}"}}],
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "shell",
+                    "params": {"command": '"$INPUT_VALUE"', "env": {"INPUT_VALUE": "${input_value}"}},
+                }
+            ],
             "edges": [],  # Empty edges array required
             "inputs": {
                 "input_value": {
@@ -76,7 +82,13 @@ class TestNullDefaults:
         """Test that empty string defaults are preserved in resolved_defaults."""
         workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo ${input_value}"}}],
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "shell",
+                    "params": {"command": 'echo "$INPUT_VALUE"', "env": {"INPUT_VALUE": "${input_value}"}},
+                }
+            ],
             "edges": [],
             "inputs": {
                 "input_value": {
@@ -100,7 +112,13 @@ class TestNullDefaults:
         """Test that null becomes empty string in complex templates."""
         workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo Value: ${input_value}"}}],
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "shell",
+                    "params": {"command": 'echo Value: "$INPUT_VALUE"', "env": {"INPUT_VALUE": "${input_value}"}},
+                }
+            ],
             "edges": [],
             "inputs": {
                 "input_value": {"description": "Test input", "required": False, "type": "string", "default": None}
@@ -215,7 +233,13 @@ class TestNullDefaults:
         """
         workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo ${input_value}"}}],
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "shell",
+                    "params": {"command": 'echo "$INPUT_VALUE"', "env": {"INPUT_VALUE": "${input_value}"}},
+                }
+            ],
             "edges": [],
             "inputs": {"input_value": {"description": "Test input", "required": False, "default": None}},
         }

@@ -62,7 +62,7 @@ class TestTemplateResolutionsInTrace:
                 {
                     "id": "echo",
                     "type": "shell",
-                    "params": {"command": "printf '%s' 'Hello ${name}'"},
+                    "params": {"command": "printf '%s' 'Hello '\"$NAME\"", "env": {"NAME": "${name}"}},
                 },
             ],
             "edges": [],
@@ -82,9 +82,7 @@ class TestTemplateResolutionsInTrace:
             "template_resolutions missing from trace event — engine may not be passing last_resolutions to record_trace"
         )
         resolutions = event["template_resolutions"]
-        assert "command" in resolutions
-        assert resolutions["command"]["template"] == "printf '%s' 'Hello ${name}'"
-        assert resolutions["command"]["resolved"] == "printf '%s' 'Hello World'"
+        assert resolutions == {"env": {"template": {"NAME": "${name}"}, "resolved": {"NAME": "World"}}}
 
         # Node output should be namespaced
         assert "node_output" in event
@@ -107,7 +105,7 @@ class TestBatchNodeTraceEvents:
                 {
                     "id": "processor",
                     "type": "shell",
-                    "params": {"command": "printf '%s' '${item}'"},
+                    "params": {"command": "printf '%s' \"$ITEM\"", "env": {"ITEM": "${item}"}},
                     "batch": {"items": "${data}", "as": "item"},
                 },
             ],
@@ -158,7 +156,7 @@ class TestTraceToReportFormatCompatibility:
                 {
                     "id": "processor",
                     "type": "shell",
-                    "params": {"command": "printf '%s' '${item}'"},
+                    "params": {"command": "printf '%s' \"$ITEM\"", "env": {"ITEM": "${item}"}},
                     "batch": {"items": "${data}", "as": "item"},
                 },
             ],
@@ -231,7 +229,7 @@ class TestParallelBatchTraceCapture:
                 {
                     "id": "greeter",
                     "type": "shell",
-                    "params": {"command": "printf '%s' '${item}'"},
+                    "params": {"command": "printf '%s' \"$ITEM\"", "env": {"ITEM": "${item}"}},
                     "batch": {"items": "${data}", "as": "item", "parallel": True},
                 },
             ],
@@ -247,17 +245,17 @@ class TestParallelBatchTraceCapture:
         assert len(batch_items) == 2
 
         # Parallel batch items may complete in any order — match by content
-        resolved_commands = set()
+        resolved_values = set()
         for item in batch_items:
             assert item["status"] == "success"
             # Template resolutions captured from per-item resolution
             resolutions = item.get("template_resolutions", {})
-            assert "command" in resolutions, (
-                "template_resolutions missing 'command' — "
-                "per-item template resolution may not be captured in batch trace"
+            assert "env" in resolutions, (
+                "template_resolutions missing 'env' — per-item template resolution may not be captured in batch trace"
             )
-            resolved_commands.add(resolutions["command"]["resolved"])
-        assert resolved_commands == {"printf '%s' 'alice'", "printf '%s' 'bob'"}
+            assert resolutions["env"]["template"] == {"ITEM": "${item}"}
+            resolved_values.add(resolutions["env"]["resolved"]["ITEM"])
+        assert resolved_values == {"alice", "bob"}
 
 
 class TestFailedBatchItemsInTrace:
@@ -271,7 +269,7 @@ class TestFailedBatchItemsInTrace:
                 {
                     "id": "processor",
                     "type": "shell",
-                    "params": {"command": "test '${item}' != 'bad' && echo ok || exit 1"},
+                    "params": {"command": "test \"$ITEM\" != 'bad' && echo ok || exit 1", "env": {"ITEM": "${item}"}},
                     "batch": {"items": "${data}", "as": "item", "error_handling": "continue"},
                 },
             ],
@@ -454,7 +452,7 @@ class TestFailedBatchItemsInTrace:
                     "id": "batch-node",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": "echo ok-${item}"},
+                    "params": {"command": 'echo ok-"$ITEM"', "env": {"ITEM": "${item}"}},
                     "batch": {"items": "${data}", "as": "item"},
                 },
             ],
@@ -568,7 +566,7 @@ class TestTemplateResolutionsOnError:
                 {
                     "id": "broken-node",
                     "type": "shell",
-                    "params": {"command": "echo Summarize ${fetch.result.messages}"},
+                    "params": {"command": "cat", "stdin": "${fetch.result.messages}"},
                 },
             ],
             "edges": [],
@@ -661,7 +659,8 @@ class TestTemplateResolutionsOnError:
                     "id": "consumer",
                     "type": "shell",
                     "params": {
-                        "command": "${producer.stdout}",  # resolves
+                        "command": "cat",
+                        "stdin": "${producer.stdout}",  # resolves
                         "cwd": "${nonexistent.path}",  # fails
                     },
                 },
@@ -693,9 +692,9 @@ class TestTemplateResolutionsOnError:
         assert consumer_event["status"] == "failed"
         assert "template_resolutions" in consumer_event
         resolutions = consumer_event["template_resolutions"]
-        # The 'command' param should be resolved (it was processed before 'cwd' failed)
-        assert "command" in resolutions
-        assert resolutions["command"]["template"] == "${producer.stdout}"
+        # The 'stdin' param should be resolved (it was processed before 'cwd' failed)
+        assert "stdin" in resolutions
+        assert resolutions["stdin"]["template"] == "${producer.stdout}"
 
 
 # --------------------------------------------------------------------------
@@ -912,7 +911,8 @@ class TestParallelBatchSubWorkflowTrace:
             "## Steps\n\n"
             "### child-shell\n\nShell call inside the child.\n\n"
             "- type: shell\n"
-            "- command: printf '%s' '${value}'\n",
+            "- env: { VALUE: ${value} }\n"
+            "- command: printf '%s' \"$VALUE\"\n",
             encoding="utf-8",
         )
         parent_path = Path(tmp_path) / "parent.pflow.md"

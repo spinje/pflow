@@ -79,9 +79,11 @@ echo "Glossary: 'lede' = first sentence; 'nut graf' = thesis paragraph; 'kicker'
 Per-session context, scoped by ${session_id}.
 
 - type: shell
+- env:
+    SESSION_ID: ${session_id}
 
 ```command
-echo "Session ${session_id}: editorial style is concise, formal, no emoji."
+echo "Session $SESSION_ID: editorial style is concise, formal, no emoji."
 ```
 
 ### summarize

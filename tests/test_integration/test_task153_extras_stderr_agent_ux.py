@@ -49,9 +49,11 @@ Lyrics string.
 Echo the lyrics.
 
 - type: shell
+- env:
+    LYRICS: ${lyrics}
 
 ```shell command
-echo "lyrics=${lyrics}"
+echo "lyrics=$LYRICS"
 ```
 
 ## Outputs

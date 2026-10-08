@@ -27,11 +27,11 @@ def _registry():
     })
 
 
-def _ir(command: str) -> dict:
+def _ir(stdin: str) -> dict:
     return {
         "nodes": [
             {"id": "producer", "type": "shell", "params": {"command": "echo hi"}},
-            {"id": "consumer", "type": "shell", "params": {"command": command}},
+            {"id": "consumer", "type": "shell", "params": {"command": "cat", "stdin": stdin}},
         ],
         "edges": [{"from": "producer", "to": "consumer"}],
         "enable_namespacing": True,

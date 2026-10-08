@@ -435,9 +435,11 @@ Notify for each item.
 
 - type: shell
 - on-error: handle-error
+- env:
+    ITEM: ${item}
 
 ```shell command
-echo "${item}"
+echo "$ITEM"
 ```
 
 ```yaml batch

@@ -118,7 +118,12 @@ Save the generated PR description to a template file.
 Display a cost report for the workflow execution.
 
 - type: shell
+- env:
+    ANALYSIS_COST: ${analyze_changes.llm_usage.cost_usd}
+    ANALYSIS_DURATION_MS: ${analyze_changes.llm_usage.duration_ms}
+    PR_COST: ${generate_pr.llm_usage.cost_usd}
+    PR_DURATION_MS: ${generate_pr.llm_usage.duration_ms}
 
 ```text command
-echo "Workflow Cost Report:\n- Analysis: $${analyze_changes.llm_usage.cost_usd} (${analyze_changes.llm_usage.duration_ms}ms)\n- PR Generation: $${generate_pr.llm_usage.cost_usd} (${generate_pr.llm_usage.duration_ms}ms)"
+echo "Workflow Cost Report:\n- Analysis: \$$ANALYSIS_COST ($ANALYSIS_DURATION_MS""ms)\n- PR Generation: \$$PR_COST ($PR_DURATION_MS""ms)"
 ```

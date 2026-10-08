@@ -17,6 +17,8 @@ Fetch a list of users from JSONPlaceholder API.
 Greet each user by name.
 
 - type: shell
+- env:
+    NAME: ${user.name}
 
 ```yaml batch
 items: ${fetch_users.response}
@@ -24,5 +26,5 @@ as: user
 ```
 
 ```shell command
-echo "Hello, ${user.name}!"
+echo "Hello, $NAME!"
 ```

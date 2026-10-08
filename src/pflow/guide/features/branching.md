@@ -66,9 +66,11 @@ Handle small batches.
 
 - type: shell
 - next: end
+- env:
+    COUNT: ${classify.result}
 
 ```shell command
-echo "Small batch: ${classify.result} items"
+echo "Small batch: $COUNT items"
 ```
 
 ### bulk-process
@@ -77,9 +79,11 @@ Handle large batches.
 
 - type: shell
 - next: end
+- env:
+    COUNT: ${classify.result}
 
 ```shell command
-echo "Large batch: ${classify.result} items"
+echo "Large batch: $COUNT items"
 ```
 ````
 
@@ -105,9 +109,11 @@ Handle category A.
 
 - type: shell
 - next: end
+- env:
+    CATEGORY: ${route.result}
 
 ```shell command
-echo "A: ${route.result}"
+echo "A: $CATEGORY"
 ```
 
 ### path-b
@@ -116,9 +122,11 @@ Handle category B.
 
 - type: shell
 - next: end
+- env:
+    CATEGORY: ${route.result}
 
 ```shell command
-echo "B: ${route.result}"
+echo "B: $CATEGORY"
 ```
 ````
 
