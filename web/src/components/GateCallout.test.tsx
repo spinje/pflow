@@ -219,32 +219,49 @@ describe("GateCallout — refusal states (never silence)", () => {
     expect(onPinRun).toHaveBeenCalledWith("run-9");
   });
 
-  it("a stale-workflow refusal asks for an ack, then retries the SAME answer with force: true", async () => {
+  it("a stale-workflow refusal shows the server's diagnostic, then retries the SAME answer with force: true", async () => {
     vi.mocked(fetchGate).mockResolvedValue(APPROVAL);
     vi.mocked(resumeRun)
       .mockRejectedValueOnce(
-        new ApiError(409, [{ message: "workflow changed" }], { refusal: "stale_workflow", hash_known: true }),
+        new ApiError(
+          409,
+          [
+            {
+              message:
+                "The workflow was edited since the original run. Resume restores the saved output of 'prep' and resumes at 'gate'.",
+              suggestions: ["If you changed only 'gate' or later steps, pass --force to resume."],
+            },
+          ],
+          { refusal: "stale_workflow", hash_known: true },
+        ),
       )
       .mockResolvedValueOnce("attempt-2");
     const onPinRun = vi.fn();
     render(<GateCallout run="r1" onPinRun={onPinRun} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(screen.getByText(/workflow file changed since this run paused/)).toBeTruthy());
+    // The ack panel speaks the server's words (#721), not a UI paraphrase.
+    expect(await screen.findByText(/Resume restores the saved output of 'prep' and resumes at 'gate'/)).toBeTruthy();
+    expect(screen.getByText(/pass --force to resume/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Resume anyway" }));
 
     await waitFor(() => expect(resumeRun).toHaveBeenLastCalledWith({ run: "r1", approve: "yes", force: true }));
     await waitFor(() => expect(onPinRun).toHaveBeenCalledWith("attempt-2"));
   });
 
-  it("hash_known=false renders the cannot-verify wording (pre-content-hash trace, edge ledger #3)", async () => {
+  it("hash_known=false shows the server's cannot-verify diagnostic (pre-content-hash trace, edge ledger #3)", async () => {
     vi.mocked(fetchGate).mockResolvedValue(APPROVAL);
     vi.mocked(resumeRun).mockRejectedValue(
-      new ApiError(409, [{ message: "no hash" }], { refusal: "stale_workflow", hash_known: false }),
+      new ApiError(
+        409,
+        [{ message: "Cannot verify the workflow is unchanged — this run predates workflow-hash tracking." }],
+        { refusal: "stale_workflow", hash_known: false },
+      ),
     );
     render(<GateCallout run="r1" onPinRun={vi.fn()} />);
     fireEvent.click(await screen.findByRole("button", { name: "Approve" }));
-    await waitFor(() => expect(screen.getByText(/Cannot verify the workflow is unchanged/)).toBeTruthy());
+    expect(await screen.findByText(/predates workflow-hash tracking/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Resume anyway" })).toBeTruthy();
   });
 
   it("any other refusal renders the server's diagnostics inline (DR-6)", async () => {

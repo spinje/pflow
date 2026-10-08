@@ -1132,8 +1132,10 @@ _RESUME_REFUSALS: dict[type[PflowError], str] = {
 def _resume_refusal_response(exc: PflowError) -> Response:
     """Map a pre-flight refusal to its 4xx: 404 missing source · 409 every other ResumeSourceError
     (the resume is well-formed but refused) · 400 any other PflowError (parity with `/api/run`'s
-    pre-flight arm). Diagnostics plus the `refusal` discriminator, plus kind-specific extras the
-    panel acts on (`newer_execution_id` / `node_id`+`node_type` / `hash_known`)."""
+    pre-flight arm). Diagnostics plus the `refusal` discriminator, plus kind-specific machine-readable
+    extras (`newer_execution_id` / `node_id`+`node_type` / `hash_known`). The browser's ack panel
+    renders the diagnostics' own message + suggestions (the CLI's text); only `newer_execution_id`
+    drives a browser action — the other extras are for programmatic callers."""
     if isinstance(exc, ResumeSourceMissingError):
         status = 404
     elif isinstance(exc, ResumeSourceError):

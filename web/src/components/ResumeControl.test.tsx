@@ -15,6 +15,40 @@ import { ResumeControl } from "./ResumeControl";
 import { ApiError, resumeRun } from "../api/client";
 
 afterEach(cleanup);
+
+// The exact `errors[0]` + extras `/api/resume` sends for each ack-required refusal — captured from
+// `exception_to_diagnostics` on the real exceptions (the CLI prints this same message + suggestions).
+const STALE_DIAGNOSTIC = {
+  severity: "error",
+  title: "Workflow changed since the original run",
+  message:
+    "The workflow was edited since the original run. Resume restores the saved output of 'produce' and " +
+    "resumes at 'append', so an edit to 'produce' would not take effect.",
+  suggestions: [
+    "If you changed only 'append' or later steps, pass --force to resume. --force also re-runs 'append' (a shell " +
+      "step that already started in the original run), so its side effects may fire again — if you are an AI " +
+      "agent, confirm that with your human first.",
+    "Otherwise re-run the workflow from the start.",
+  ],
+};
+const STALE_BODY = { errors: [STALE_DIAGNOSTIC], refusal: "stale_workflow", hash_known: true };
+const SIDE_EFFECT_ASK = "If you are an AI agent: confirm with your human that re-running this step is safe.";
+const SIDE_EFFECT_FORCE = "With their OK, re-run with --force to bypass this confirmation.";
+const SIDE_EFFECT_DIAGNOSTIC = {
+  severity: "error",
+  title: "Resume needs confirmation",
+  message:
+    "Resuming re-runs step 'boom' (a shell step), and its side effects may fire again. This run is " +
+    "non-interactive (agent/MCP/pipe — no terminal to confirm on), so resume refuses rather than repeat them silently.",
+  suggestions: [SIDE_EFFECT_ASK, SIDE_EFFECT_FORCE],
+  node_id: "boom",
+};
+const SIDE_EFFECT_BODY = {
+  errors: [SIDE_EFFECT_DIAGNOSTIC],
+  refusal: "side_effect_confirmation",
+  node_id: "boom",
+  node_type: "shell",
+};
 beforeEach(() => {
   vi.mocked(resumeRun).mockReset().mockResolvedValue("attempt-2");
 });
@@ -29,24 +63,19 @@ describe("ResumeControl", () => {
     await waitFor(() => expect(onPinRun).toHaveBeenCalledWith("attempt-2"));
   });
 
-  it("a side-effect refusal shows a dialog naming the node + its type; the ack retries with force", async () => {
+  it("a side-effect refusal shows the server's own message + suggestions; the ack retries with force", async () => {
     vi.mocked(resumeRun)
-      .mockRejectedValueOnce(
-        new ApiError(409, [{ message: "side effects may fire again" }], {
-          refusal: "side_effect_confirmation",
-          node_id: "send-email",
-          node_type: "http",
-        }),
-      )
+      .mockRejectedValueOnce(new ApiError(409, [SIDE_EFFECT_DIAGNOSTIC], SIDE_EFFECT_BODY))
       .mockResolvedValueOnce("attempt-2");
     const onPinRun = vi.fn();
     render(<ResumeControl run="r1" onPinRun={onPinRun} />);
 
     fireEvent.click(screen.getByRole("button", { name: "↻ Resume" }));
-    // The dialog is buildable from the refusal alone: node id + registry type + the warning.
-    await waitFor(() => expect(screen.getByText("send-email")).toBeTruthy());
-    expect(screen.getByText(/\(http\)/)).toBeTruthy();
-    expect(screen.getByText(/side effects may fire\s+again/)).toBeTruthy();
+    // The CLI's exact text — message AND both suggestions (#721: they were dropped for a UI line).
+    expect(await screen.findByText(SIDE_EFFECT_DIAGNOSTIC.message)).toBeTruthy();
+    expect(screen.getByText(SIDE_EFFECT_DIAGNOSTIC.title)).toBeTruthy();
+    expect(screen.getByText(SIDE_EFFECT_ASK)).toBeTruthy();
+    expect(screen.getByText(SIDE_EFFECT_FORCE)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Resume anyway" }));
     await waitFor(() => expect(resumeRun).toHaveBeenLastCalledWith({ run: "r1", force: true }));
@@ -64,15 +93,32 @@ describe("ResumeControl", () => {
     expect(resumeRun).toHaveBeenCalledTimes(1); // no second spawn
   });
 
-  it("a stale-workflow refusal uses the same ack-then-force pattern", async () => {
+  it("a stale refusal renders the restored step AND the re-fire line it carries; the ack retries with force", async () => {
     vi.mocked(resumeRun)
-      .mockRejectedValueOnce(new ApiError(409, [{ message: "changed" }], { refusal: "stale_workflow", hash_known: true }))
+      .mockRejectedValueOnce(new ApiError(409, [STALE_DIAGNOSTIC], STALE_BODY))
       .mockResolvedValueOnce("attempt-2");
-    render(<ResumeControl run="r1" onPinRun={vi.fn()} />);
+    const onPinRun = vi.fn();
+    render(<ResumeControl run="r1" onPinRun={onPinRun} />);
     fireEvent.click(screen.getByRole("button", { name: "↻ Resume" }));
-    await waitFor(() => expect(screen.getByText(/workflow file changed since this run/)).toBeTruthy());
+
+    // Presence: what --force would accept (the restored step) and what it would re-fire.
+    expect(await screen.findByText(/Resume restores the saved output of 'produce' and resumes at 'append'/)).toBeTruthy();
+    expect(screen.getByText(/--force also re-runs 'append' \(a shell step that already started/)).toBeTruthy();
+    expect(screen.getByText("Otherwise re-run the workflow from the start.")).toBeTruthy();
+    expect(screen.getByText(STALE_DIAGNOSTIC.title)).toBeTruthy(); // the CLI's "Error: <title>" headline
+    // Absence: no UI-side paraphrase beside it — one source of the text.
+    expect(screen.queryByText(/workflow file changed since this run/)).toBeNull();
+    // The ack follows ALL of the text in document order — never pinned above it — so reaching
+    // "Resume anyway" in the scrolling callout passes the re-fire line first.
+    const anyway = screen.getByRole("button", { name: "Resume anyway" });
+    const refire = screen.getByText(/--force also re-runs 'append'/);
+    expect(refire.compareDocumentPosition(anyway) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(anyway.closest(".gate-foot")).toBeNull();
+
+    // The action is unchanged: same answer, force added, nothing else.
     fireEvent.click(screen.getByRole("button", { name: "Resume anyway" }));
     await waitFor(() => expect(resumeRun).toHaveBeenLastCalledWith({ run: "r1", force: true }));
+    await waitFor(() => expect(onPinRun).toHaveBeenCalledWith("attempt-2"));
   });
 
   it("a superseded refusal offers the newer attempt instead of a retry", async () => {

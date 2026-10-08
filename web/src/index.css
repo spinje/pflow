@@ -2665,6 +2665,8 @@ button.say-affordance {
   font-size: 12px;
   color: var(--text-muted);
   line-height: 1.45;
+  /* Server refusal text names step ids verbatim; an unbreakable snake_case id must wrap, not clip. */
+  overflow-wrap: anywhere;
 }
 /* An ack-required warning (stale workflow / side effects may re-fire) — amber, matching the
    paused/stopped palette. `code` inside names the node. */

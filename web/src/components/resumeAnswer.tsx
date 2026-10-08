@@ -7,19 +7,19 @@
 //
 // `force: true` is sent ONLY from the ack dialog's "Resume anyway" (the server never adds it);
 // the dialog covers both ack-required refusals — stale workflow and side-effect re-fire — and
-// names whichever one triggered it (edge ledger #6: force skips both when they co-occur).
+// shows the refusal's OWN diagnostics (#721): the server's message + suggestions say what
+// --force would accept and re-fire, the same text the CLI prints. Never a UI paraphrase — the
+// refusal wording changes server-side and the browser must follow it unedited.
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { ApiError, resumeRun } from "../api/client";
 import type { ApiErrorEntry } from "../types";
 
 export type ResumeAnswerPayload = { approve?: "yes" | "no"; choose?: string };
 
-// The ack-required refusals, carrying the answer to retry with force after the explicit ack.
-type ResumeConfirm =
-  | { kind: "side_effect"; nodeId: string; nodeType: string; retry: ResumeAnswerPayload }
-  | { kind: "stale"; hashKnown: boolean; retry: ResumeAnswerPayload };
+// An ack-required refusal: its diagnostics, plus the answer to retry with force after the ack.
+type ResumeConfirm = { kind: "confirm"; errors: ApiErrorEntry[]; retry: ResumeAnswerPayload };
 
 export interface ResumeAnswer {
   // Disable-while-in-flight: a double-clicked Approve would spawn twice — the second child
@@ -64,18 +64,8 @@ export function useResumeAnswer(run: string, onPinRun: (runId: string) => void):
           setSuperseded(err.body.newer_execution_id);
           return;
         }
-        if (refusal === "stale_workflow") {
-          // hash_known=false: a pre-content-hash trace — we cannot even verify it's unchanged.
-          setConfirm({ kind: "stale", hashKnown: err.body?.hash_known !== false, retry: answer });
-          return;
-        }
-        if (refusal === "side_effect_confirmation") {
-          setConfirm({
-            kind: "side_effect",
-            nodeId: typeof err.body?.node_id === "string" ? err.body.node_id : "the failed step",
-            nodeType: typeof err.body?.node_type === "string" ? err.body.node_type : "unknown",
-            retry: answer,
-          });
+        if (refusal === "stale_workflow" || refusal === "side_effect_confirmation") {
+          setConfirm({ kind: "confirm", errors: err.errors, retry: answer });
           return;
         }
         setErrors(err.errors);
@@ -115,7 +105,7 @@ export function GateErrors({ errors }: { errors: ApiErrorEntry[] }): JSX.Element
 
 // The two refusal panels with an ACTION (everything else is GateErrors): superseded → offer the
 // newer attempt; stale/side-effect → ack then retry the SAME answer with force. `context` picks
-// the surface-true wording — a gate answer vs a bare resume ("answered" vs "resumed").
+// the superseded line's surface-true wording — a gate answer vs a bare resume ("answered" vs "resumed").
 export function RefusalNotice({ answer, context }: { answer: ResumeAnswer; context: "gate" | "resume" }): JSX.Element | null {
   const { refusal, submitting } = answer;
   if (refusal === null) return null;
@@ -137,25 +127,23 @@ export function RefusalNotice({ answer, context }: { answer: ResumeAnswer; conte
     );
   }
 
+  // The server's diagnostics verbatim, in the CLI's order — title (amber: an ack, not an error),
+  // message, each suggestion. The "pass --force" suggestion is what "Resume anyway" sends.
   return (
     <>
-      <p className="gate-note gate-warn">
-        {refusal.kind === "side_effect" ? (
-          <>
-            Resuming re-runs <code>{refusal.nodeId}</code> ({refusal.nodeType}) — its side effects may fire
-            again.
-          </>
-        ) : refusal.hashKnown ? (
-          context === "gate" ? (
-            "The workflow file changed since this run paused — the resumed steps may not match what was approved."
-          ) : (
-            "The workflow file changed since this run — the resumed steps may differ from what originally ran."
-          )
-        ) : (
-          // The WHY, matching the CLI's wording: no hash to compare means the trace predates tracking.
-          "Cannot verify the workflow is unchanged — this run predates workflow-hash tracking, so the resumed steps may not match the current file."
-        )}
-      </p>
+      {refusal.errors.map((entry, i) => (
+        <Fragment key={i}>
+          {entry.title && <p className="gate-note gate-warn">{entry.title}</p>}
+          {entry.message && <p className="gate-note">{entry.message}</p>}
+          {entry.suggestions?.map((suggestion, j) => (
+            <p key={j} className="gate-note">
+              {suggestion}
+            </p>
+          ))}
+        </Fragment>
+      ))}
+      {/* After the text, never pinned above it: reaching "Resume anyway" scrolls past every line
+          of what --force would accept and re-fire (#721 — the ack must not be answerable blind). */}
       <div className="gate-actions">
         <button type="button" className="gate-btn" disabled={submitting} onClick={answer.cancelConfirm}>
           Cancel
