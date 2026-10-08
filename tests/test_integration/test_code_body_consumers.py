@@ -24,6 +24,7 @@ from pflow.core.workflow.dependency_discovery import discover_dependencies
 from pflow.core.workflow.graph.build import build_graph
 from pflow.core.workflow.graph.model import EdgeKind
 from pflow.core.workflow.graph.renderers.react_flow import render_react_flow
+from pflow.core.workflow.save_service import save_workflow_with_options
 from pflow.mcp_server.services.execution_service import ExecutionService
 from pflow.registry import Registry
 from pflow.runtime.engine.template_resolution import split_params
@@ -231,6 +232,38 @@ def _file_references(_registry: Registry, tmp: Path) -> None:
     templated_prompt = {"nodes": [{"id": "l", "type": "llm", "params": {"prompt": "./prompts/${var}.md"}}]}
     assert has_file_references(templated_prompt) == []
 
+    # A batch loaded from a file reaches discovery through its own call site.
+    (tmp / "items.yaml").write_text(
+        "items:\n  - command: ./scripts/$NAME.sh\n  - command: ./scripts/run.sh\n", encoding="utf-8"
+    )
+    filed: dict[str, Any] = {
+        "ir_version": "0.1.0",
+        "nodes": [{"id": "s", "type": "shell", "params": {"command": "echo"}, "batch": "./items.yaml"}],
+        "edges": [],
+    }
+    assert [dep.source_param for dep in discover_dependencies(filed, tmp)] == ["batch", "batch.items[1].command"]
+    items = resolve_file_references(filed, tmp)["nodes"][0]["batch"]["items"]
+    assert [item["command"] for item in items] == ["./scripts/$NAME.sh", "echo from-file\n"]
+
+
+def _workflow_save(_registry: Registry, tmp: Path) -> None:
+    """``pflow workflow save`` validates, discovers and bundles: the variable command is
+    kept as written (never read as a file); the plain script path is bundled."""
+    (tmp / "scripts").mkdir()
+    (tmp / "scripts" / "run.sh").write_text("echo from-file\n", encoding="utf-8")
+    markdown = (
+        "# Save Probe\n\nSaves a body that reads a variable.\n\n## Steps\n\n"
+        "### pick\n\nRuns the script the variable names.\n\n- type: shell\n- env:\n    NAME: run\n"
+        "- command: ./scripts/$NAME.sh\n\n"
+        "### plain\n\nRuns a script file.\n\n- type: shell\n- command: ./scripts/run.sh\n"
+    )
+    source = tmp / "save-probe.pflow.md"
+    source.write_text(markdown, encoding="utf-8")
+    saved, bundled, ir = save_workflow_with_options("t118-save-probe", markdown, source_path=source)
+    assert [path.replace("\\", "/") for path in bundled] == ["scripts/run.sh"]
+    assert ir["nodes"][0]["params"]["command"] == "./scripts/$NAME.sh"
+    assert "- command: ./scripts/$NAME.sh" in saved.read_text(encoding="utf-8")
+
 
 def _mcp_expansion(_registry: Registry, _tmp: Path) -> None:
     os.environ["PFLOW_TEST_X"] = "expanded"
@@ -256,6 +289,7 @@ CONSUMERS: list[tuple[str, Callable[[Registry, Path], None]]] = [
     ("graph_build", _graph_build),
     ("canvas_is_dynamic", _canvas_is_dynamic),
     ("file_references", _file_references),
+    ("workflow_save", _workflow_save),
     ("mcp_expansion", _mcp_expansion),
 ]
 

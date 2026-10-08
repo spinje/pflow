@@ -5,9 +5,11 @@ all data dependencies are satisfied before nodes execute.
 """
 
 import ast
+import io
 import keyword
 import logging
-from collections.abc import Callable, Iterator, Mapping
+import tokenize
+from collections.abc import Callable, Collection, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,6 +28,7 @@ from pflow.core.suggestion_utils import find_similar_items
 from pflow.core.templates import (
     Expression,
     Field,
+    Index,
     Issue,
     Reference,
     Template,
@@ -998,9 +1001,10 @@ def _readable_texts(language: BodyLanguage, text: str) -> list[tuple[str, int]]:
     (so ``f"Total: ${total}"`` is ``$`` and an interpolation, never a reference). A code
     block Python cannot parse yields nothing — the markdown parser reports it.
 
-    A literal is read as its own source, not its value: adjacent literals stay apart (the
-    ``"$$" "{X}"`` repair is no escape) and a line count holds through ``\\n`` escapes. An
-    f-string's parts keep their value (their positions are unreliable before Python 3.12)."""
+    A literal is read as its own source token, not its value: adjacent literals stay apart
+    (the ``"$$" "{X}"`` repair is no escape, a comment between them is no text) and a line
+    count holds through ``\\n`` escapes. An f-string's parts keep their value (their
+    positions are unreliable before Python 3.12)."""
     if language == "sh":
         return [(text, 0)]
     try:
@@ -1012,10 +1016,31 @@ def _readable_texts(language: BodyLanguage, text: str) -> list[tuple[str, int]]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Constant) or not isinstance(node.value, str | bytes):
             continue
-        piece = node.value if id(node) in in_fstrings else ast.get_source_segment(text, node)
-        if isinstance(piece, str) and "$" in piece:
-            strings.append((node.lineno, node.col_offset, piece))
+        if id(node) in in_fstrings:
+            if isinstance(node.value, str) and "$" in node.value:
+                strings.append((node.lineno, node.col_offset, node.value))
+            continue
+        segment = ast.get_source_segment(text, node) or ""
+        strings.extend(
+            (node.lineno + row, column + (node.col_offset if row == 0 else 0), literal)
+            for row, column, literal in _literal_tokens(segment)
+            if "$" in literal
+        )
     return [(piece, lineno - 1) for lineno, _, piece in sorted(strings)]
+
+
+def _literal_tokens(segment: str) -> list[tuple[int, int, str]]:
+    """``(row, column, source)`` per string token of one constant's source, relative to its
+    start — one literal, or each of an implicit concatenation's, never the comments between."""
+    try:  # parenthesized, so continuation lines tokenize as they did in the code
+        tokens = list(tokenize.generate_tokens(io.StringIO(f"({segment})").readline))
+    except (tokenize.TokenError, SyntaxError):
+        return [(0, 0, segment)]
+    return [
+        (tok.start[0] - 1, tok.start[1] - (1 if tok.start[0] == 1 else 0), tok.string)
+        for tok in tokens
+        if tok.type == tokenize.STRING
+    ]
 
 
 def _escapes(text: str) -> Iterator[tuple[int, str]]:
@@ -1039,7 +1064,7 @@ def _validate_bodies(workflow_ir: dict[str, Any], node: dict[str, Any]) -> list[
     diagnostics: list[Diagnostic] = []
     for param, language, text in bodies:
         if refs := [ref for ref in leftovers if ref.param == param]:
-            diagnostics.append(_leftover_diagnostic(node, refs, text))
+            diagnostics.append(_leftover_diagnostic(node, refs, text, scope))
         for piece, first_line in _readable_texts(language, text):
             for start, written in _escapes(piece):
                 body_line = first_line + piece.count("\n", 0, start)
@@ -1103,15 +1128,21 @@ def _body_diagnostic(
 # — the fixes the messages offer —
 
 
-def _binding_phrase(node: dict[str, Any], param: str, entries: list[tuple[str, str]]) -> str:
+def binding_phrase(
+    node: dict[str, Any], param: str, entries: list[tuple[str, str]], *, to_the_step: bool = True
+) -> str:
     """How to add ``entries`` — ``(name, pflow reference)`` — to the step's ``env:`` or
-    ``inputs:``: a new bullet, or keys under the map the step already has."""
+    ``inputs:``: a new bullet, keys under the map the step already has, or — when the param
+    is one Template (``env: ${cfg.env}``) — keys in the map it produces, since a second
+    bullet would replace it."""
     params = node.get("params")
     existing = params.get(param) if isinstance(params, dict) else None
     pairs = ", ".join(f"{name}: ${{{reference}}}" for name, reference in entries)
     if isinstance(existing, dict) and existing:
         return f"add {pairs} under the step's existing {param}:"
-    return f"add `- {param}: {{{pairs}}}` to the step"
+    if isinstance(existing, str) and existing:
+        return f"add {pairs} to the map that the step's {param}: {existing} produces (a second `- {param}:` would replace it)"
+    return f"add `- {param}: {{{pairs}}}`" + (" to the step" if to_the_step else "")
 
 
 def _env_name(reference: str) -> str:
@@ -1128,13 +1159,18 @@ def _code_name(reference: str) -> str:
     return f"{name}_value" if keyword.iskeyword(name) or name in _CODE_OUTPUT_NAMES else name
 
 
-def _distinct_names(refs: list[BodyReference], namer: Callable[[str], str]) -> dict[str, str]:
-    """``written -> binding name`` per distinct leftover; a clash gets a numeric suffix."""
+def _distinct_names(
+    refs: list[BodyReference], namer: Callable[[str], str], *, taken: Collection[str] = ()
+) -> dict[str, str]:
+    """``written -> binding name`` per distinct leftover; a name in ``taken`` gets ``_VALUE``,
+    a clash between leftovers a numeric suffix."""
     names: dict[str, str] = {}
     for ref in refs:
         if ref.written in names:
             continue
         base = namer(ref.reference)
+        if base in taken:
+            base = f"{base}_VALUE"
         name, suffix = base, 2
         while name in names.values():
             name, suffix = f"{base}_{suffix}", suffix + 1
@@ -1152,12 +1188,12 @@ def _shell_replacement(ref: BodyReference, name: str) -> str:
 # — the leftover ERROR —
 
 
-def _leftover_diagnostic(node: dict[str, Any], refs: list[BodyReference], text: str) -> Diagnostic:
+def _leftover_diagnostic(node: dict[str, Any], refs: list[BodyReference], text: str, scope: StepScope) -> Diagnostic:
     param, language = refs[0].param, refs[0].language
     distinct = list({ref.written: ref for ref in refs}.values())
     if language == "sh":
         whole_body = len(refs) == 1 and refs[0].is_expression and text.strip() == refs[0].written
-        names = {refs[0].written: "CMD"} if whole_body else _distinct_names(distinct, _env_name)
+        names = {refs[0].written: "CMD"} if whole_body else _distinct_names(distinct, _env_name, taken=scope.names)
         suggestions = _shell_leftover_fixes(node, distinct, names, whole_body=whole_body)
     else:
         names = _distinct_names(distinct, _code_name)
@@ -1210,7 +1246,7 @@ def _shell_leftover_fixes(
     from pflow.nodes.shell.env_binding import AMBIENT_NAMES
 
     entries = [(names[ref.written], ref.reference) for ref in distinct]
-    add = _binding_phrase(node, "env", entries)
+    add = binding_phrase(node, "env", entries)
     if whole_body:
         return [
             f'The whole command is one pflow reference — bind it and run it: {add} and make the command eval "$CMD".'
@@ -1253,23 +1289,38 @@ def _code_leftover_fixes(node: dict[str, Any], distinct: list[BodyReference], na
     fixes: list[str] = []
     if len(unbound) == 1:
         name = names[unbound[0].written]
-        add = _binding_phrase(node, "inputs", [(name, unbound[0].reference)])
+        add = binding_phrase(node, "inputs", [(name, unbound[0].reference)])
         fixes.append(
             f"Declare it in inputs: — {add}, declare its type in the code (`{name}: str`), "
             f"and use the variable `{name}` in place of the string."
         )
     elif unbound:
-        add = _binding_phrase(node, "inputs", [(names[ref.written], ref.reference) for ref in unbound])
+        add = binding_phrase(node, "inputs", [(names[ref.written], ref.reference) for ref in unbound])
         fixes.append(
             f"Declare them in inputs: — {add}, declare their types in the code, "
             "and use the variables in place of the strings."
         )
     fixes.extend(
-        f"'{ref.root}' is already bound by inputs: — use the variable {ref.root} instead of the string "
-        f'"{ref.written}".'
+        f"'{ref.root}' is already bound by inputs: — use {_python_read(ref)} instead of the string \"{ref.written}\"."
         for ref in bound
     )
     return fixes
+
+
+def _python_read(ref: BodyReference) -> str:
+    """How Python reads ``ref`` from its bound variable: ``the variable user``, ``user['name']``."""
+    path = parse_path(ref.reference)
+    if path is None or not path.path:
+        return f"the variable {ref.root}"
+    access: list[str] = []
+    for part in path.path:
+        if isinstance(part, Field):
+            access.append(f"[{part.name!r}]")
+        elif isinstance(part, Index):
+            access.append(f"[{part.value}]")
+        else:  # a dynamic index: no one Python expression to name
+            return f"a value read from the variable {ref.root}"
+    return path.root + "".join(access)
 
 
 # — the $${ ERROR —
@@ -1291,7 +1342,7 @@ def _escape_diagnostic(
         )
         if in_scope is not None:
             name = _env_name(in_scope.raw)
-            add = _binding_phrase(node, "env", [(name, in_scope.raw)])
+            add = binding_phrase(node, "env", [(name, in_scope.raw)])
             fix = (
                 f"For a dollar sign followed by the value: {add} and write \\$${name} inside double quotes "
                 f'— e.g. "value: \\$${name}".'
@@ -1305,8 +1356,11 @@ def _escape_diagnostic(
         )
         if in_scope is not None:
             name = _code_name(in_scope.raw)
-            add = _binding_phrase(node, "inputs", [(name, in_scope.raw)])
-            fix = f'For a dollar sign followed by the value: {add} and write f"${{{name}}}".'
+            add = binding_phrase(node, "inputs", [(name, in_scope.raw)])
+            fix = (
+                f"For a dollar sign followed by the value: {add}, declare its type in the code (`{name}: str`), "
+                f'and write f"${{{name}}}".'
+            )
         else:
             fix = (
                 f"Python needs no escape: write ${escaped} as plain text. For the literal characters $${{ "
@@ -1323,22 +1377,22 @@ def _foreign_shape_warning(node: dict[str, Any], param: str, text: str, scope: S
     misspelled step; it may also be another program's own syntax, hence a warning."""
     known = set(scope.names) | scope.step_ids
     shapes = [
-        expression
-        for expression in parse(text).expressions
-        if expression.references
-        and not any(ref.root in known for ref in expression.references)
+        (start, written, segment)
+        for start, written, segment in _segments(text)
+        if isinstance(segment, Expression)
+        and segment.references
+        and not any(ref.root in known for ref in segment.references)
         and (
-            len(expression.operands) > 1
-            or any(isinstance(segment, Field) for ref in expression.references for segment in ref.path)
+            len(segment.operands) > 1 or any(isinstance(part, Field) for ref in segment.references for part in ref.path)
         )
     ]
     if not shapes:
         return []
-    first = shapes[0]
+    start, written, first = shapes[0]
     ref = first.references[0]
     more = f" (and {len(shapes) - 1} more like it)" if len(shapes) > 1 else ""
     message = (
-        f"Step '{node.get('id')}': {text[first.span[0] : first.span[1]]}{more} in the command is not something sh "
+        f"Step '{node.get('id')}': {written}{more} in the command is not something sh "
         f"can expand, and '{ref.root}' is not a step or input in this workflow. "
         "pflow never fills in ${…} in a command."
     )
@@ -1348,11 +1402,11 @@ def _foreign_shape_warning(node: dict[str, Any], param: str, text: str, scope: S
     if match:
         corrected = match[0] + ref.raw[len(ref.root) :]
         name = _env_name(corrected)
-        add = _binding_phrase(node, "env", [(name, corrected)])
+        add = binding_phrase(node, "env", [(name, corrected)])
         fix = f"Did you mean '{match[0]}'? Bind it: {add} and read \"${name}\". {_KEEP_FOREIGN}"
     else:
         fix = f'To use a pflow value, bind it in env: and read "$NAME". {_KEEP_FOREIGN}'
-    location = _location(node, param, text.count("\n", 0, first.span[0]))
+    location = _location(node, param, text.count("\n", 0, start))
     return [_body_diagnostic(Severity.WARNING, node, param, location, message, [fix])]
 
 

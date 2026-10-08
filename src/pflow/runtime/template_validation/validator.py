@@ -22,7 +22,7 @@ from typing import Any
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.suggestion_utils import find_similar_items
 from pflow.core.templates import DynamicIndex, Literal, Reference, Template, TemplateResolver, parse, resolve
-from pflow.core.workflow.data_flow import body_reference_roots, body_references, step_scope
+from pflow.core.workflow.data_flow import binding_phrase, body_reference_roots, body_references, step_scope
 from pflow.core.workflow.template_surfaces import iter_node_surfaces, iter_template_surfaces
 from pflow.registry import Registry
 from pflow.runtime.template_validation.batch_item_validation import validate_batch_item_fields
@@ -494,13 +494,7 @@ def _unread_step_input_warning(
         from pflow.nodes.shell.env_binding import suggest_env_name
 
         name = suggest_env_name(key)
-        params = node.get("params")
-        env = params.get("env") if isinstance(params, dict) else None
-        add = (
-            f"add {name}: ${{{key}}} under the step's existing env:"
-            if isinstance(env, dict) and env
-            else f"add `- env: {{{name}: ${{{key}}}}}`"
-        )
+        add = binding_phrase(node, "env", [(name, key)], to_the_step=False)
         if carried:
             message = (
                 f"Step '{node_id}' carries '{key}', but no param of this step except inputs: references "

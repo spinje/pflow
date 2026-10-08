@@ -723,3 +723,130 @@ def test_every_inputs_key_a_leftover_names_is_left_to_that_error(registry: Regis
         if "not visible" in d.message
     ]
     assert warnings == []
+
+
+# ── Completion gate: shapes and fixes the phase reviews missed ───────────────
+
+
+def test_ruling_2_sees_a_misspelled_reference_nested_in_a_shell_expansion() -> None:
+    """``${UNSET:-${fecth-data.stdout}}`` is one Issue to the parser; sh silently prints the
+    default's default (``data.stdout``), so the nested typo warns exactly like a bare one."""
+    ir = _ir(
+        _shell("fetch-data", "echo x"),
+        _shell("s", 'echo start\nprintf %s "${PFLOW_T118_UNSET:-${fecth-data.stdout}}"'),
+    )
+    ir["nodes"][1]["_source_lines"] = {"command": 7}
+    [warning] = validate_data_flow(ir)
+    assert warning.severity is Severity.WARNING
+    assert warning.message == (
+        "Step 's': ${fecth-data.stdout} in the command is not something sh can expand, and 'fecth-data' is not "
+        "a step or input in this workflow. pflow never fills in ${…} in a command."
+    )
+    assert warning.suggestions is not None and warning.suggestions[0].startswith("Did you mean 'fetch-data'?")
+    assert warning.context is not None and warning.context["source_line"] == 8
+
+
+def test_a_comment_between_adjacent_python_literals_is_not_string_text() -> None:
+    """Python joins ``"a" "b"`` into one constant whose source span holds the comment
+    between them; the comment is not a string, so a ``${…}`` there is not a leftover."""
+    code = 'name: str\nresult: str = (\n    "hello "  # ${name} and $${X} only in a comment\n    "world"\n)'
+    ir = _ir({"id": "c", "type": "code", "params": {"inputs": {"name": "Ada"}, "code": code}})
+    assert validate_data_flow(ir) == []
+    result = WorkflowRunner().run(ir, {}, RunnerConfig())
+    assert result.success, [d.message for d in result.errors]
+    assert result.shared_after["c"]["result"] == "hello world"
+    # Presence: the same reference inside the second literal is still read, on its own line.
+    leftover = 'name: str\nresult: str = (\n    "hello "  # a comment\n    "${name}"\n)'
+    ir = _ir({"id": "c", "type": "code", "params": {"inputs": {"name": "Ada"}, "code": leftover}})
+    ir["nodes"][0]["_source_lines"] = {"code": 10}
+    [error] = _body_errors(ir)
+    assert error.message.startswith("Step 'c': the code contains \"${name}\" (line 13 of the workflow file)")
+
+
+@pytest.mark.parametrize(
+    ("value", "reference", "access"),
+    [({"name": "ada"}, "user.name", "user['name']"), ([{"name": "ada"}], "user[0].name", "user[0]['name']")],
+    ids=["field", "index_then_field"],
+)
+def test_code_reference_to_a_field_of_an_input_key_says_how_to_read_the_field(
+    value: Any, reference: str, access: str
+) -> None:
+    """The variable holds the whole input; the fix reads the field, and the fix runs."""
+    annotation = "dict" if isinstance(value, dict) else "list"
+    code = f'user: {annotation}\nresult: str = "${{{reference}}}".upper()'
+    [error] = _body_errors(_ir({"id": "c", "type": "code", "params": {"inputs": {"user": value}, "code": code}}))
+    assert error.suggestions == [
+        f"'user' is already bound by inputs: — use {access} instead of the string \"${{{reference}}}\"."
+    ]
+    fixed = _ir({
+        "id": "c",
+        "type": "code",
+        "params": {"inputs": {"user": value}, "code": f"user: {annotation}\nresult: str = {access}.upper()"},
+    })
+    result = WorkflowRunner().run(fixed, {}, RunnerConfig())
+    assert result.success, [d.message for d in result.errors]
+    assert result.shared_after["c"]["result"] == "ADA"
+
+
+def test_an_expansion_form_on_an_upper_case_alias_suggests_a_name_outside_the_scope() -> None:
+    """``as: LIMIT``: the suggested ``"${LIMIT:-10}"`` would be the same leftover again."""
+    batch = {"items": [3], "as": "LIMIT"}
+    [error] = _body_errors(_ir(_shell("s", "seq ${LIMIT:-10}", batch=batch)))
+    assert error.suggestions is not None
+    assert error.suggestions[0].startswith(
+        "Bind the value and read it as a shell variable: add `- env: {LIMIT_VALUE: ${LIMIT}}` to the step, then "
+        'replace ${LIMIT:-10} with "${LIMIT_VALUE:-10}"'
+    )
+    fixed = _ir(_shell("s", 'seq "${LIMIT_VALUE:-10}"', batch=batch, params={"env": {"LIMIT_VALUE": "${LIMIT}"}}))
+    assert validate_data_flow(fixed) == []
+    result = WorkflowRunner().run(fixed, {}, RunnerConfig())
+    assert result.success, [d.message for d in result.errors]
+    assert result.shared_after["s"]["results"][0]["stdout"].split() == ["1", "2", "3"]
+
+
+def test_code_escape_of_an_in_scope_reference_declares_the_type_and_the_fix_runs(registry: Registry) -> None:
+    ir = _ir(
+        {"id": "c", "type": "code", "params": {"code": 'result: str = "$${name}"'}}, inputs={"name": _input("bob")}
+    )
+    [error] = _errors(validate_data_flow(ir))
+    assert error.suggestions == [
+        "For a dollar sign followed by the value: add `- inputs: {name: ${name}}` to the step, declare its type in "
+        'the code (`name: str`), and write f"${name}".'
+    ]
+    fixed = _ir(
+        {
+            "id": "c",
+            "type": "code",
+            "params": {"inputs": {"name": "${name}"}, "code": 'name: str\nresult: str = f"${name}"'},
+        },
+        inputs={"name": _input("bob")},
+    )
+    assert _errors(WorkflowValidator.validate(fixed, extracted_params={}, registry=registry)) == []
+    result = WorkflowRunner().run(fixed, {}, RunnerConfig())
+    assert result.success, [d.message for d in result.errors]
+    assert result.shared_after["c"]["result"] == "$bob"
+
+
+def test_a_step_whose_env_is_one_template_is_told_to_extend_that_map(registry: Registry) -> None:
+    """A second ``- env:`` bullet would replace ``env: ${cfg.stdout}`` (the parser keeps the
+    last), dropping whatever that map binds — so neither fix says "add `- env:`"."""
+    extend = (
+        "add URL: ${url} to the map that the step's env: ${cfg.stdout} produces (a second `- env:` would replace it)"
+    )
+    leftover = _ir(
+        _shell("cfg", "echo '{}'"),
+        _shell("s", 'curl "${url}"', params={"env": "${cfg.stdout}"}),
+        inputs={"url": _input("x")},
+    )
+    [error] = _body_errors(leftover)
+    assert error.suggestions is not None
+    assert error.suggestions[0].startswith(f"Bind the value and read it as a shell variable: {extend}, then replace")
+    unread = _ir(
+        _shell("cfg", "echo '{}'"), _shell("s", "curl x", params={"env": "${cfg.stdout}", "inputs": {"url": "x"}})
+    )
+    [warning] = [
+        d
+        for d in WorkflowValidator.validate(unread, extracted_params={}, registry=registry)
+        if "not visible" in d.message
+    ]
+    assert warning.suggestions == [f'Bind it: {extend} and read "$URL" in the command — or remove the key.']

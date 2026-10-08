@@ -1269,3 +1269,156 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   task-review); the two already-false docs claims corrected; `docs/changelog.mdx` and `task_148/verification/` left
   (history — §5.8).
 - Next: PZ — completion gate.
+
+## [2026-10-08 02:10] gate runner G1 (Opus) — PZ steps 1–2: mechanical gate + real surface (head de9e1cc6)
+- Did: PZ step 1 (mechanical gate) and step 2 (the spec's Verification list, line by line, through `uv run pflow`; one real
+  searcher run). Probes in `scratchpad/g1-t118p2/probes/` (session scratch, not committed).
+- Changed: nothing in `src/`/`tests/` for these steps.
+- Verified (executed, macOS, before any gate fix):
+  - `make check` green; `make test-all-local` **10626 passed / 2 skipped** (= the baseline for the battery fixes).
+  - `verify.sh` **76 / 11 / 0**; drift set = P0's §2.5 set minus `12-…/04-guide-auto-detect`, by name. Actual-vs-actual
+    (`task159_actual.sh` → scratch): **86/87 identical to `task159-before/`**; the one difference is
+    `12-…/04-guide-auto-detect` stdout — 94 changed lines, every hunk this task's guide/fence text — and that actual equals
+    the committed (PF-regenerated) expected byte-for-byte.
+  - `capture.py --check`: 29 examples, 1 differing — only `error-handling/typo-on-failed-node` (pre-existing `workflow.name`).
+  - `inventory.py`: zero outside `ALLOWED_FILES` and history. Remaining rows: `.taskmaster/` archives of done tasks
+    (107/118 research/128/147/148/168/38), `releases/v0.7.0-context.md`, `docs/changelog.mdx` (history by ruling);
+    `src` = `data_flow.py:1289` (a message f-string) and `context_builder.py` (heuristic, refs=[]); `tests` = the known
+    python-manual heuristic rows (refs=[]), `test_loop_control.py:101` (§6 leave), `test_shell_failure_display.py:584`
+    (intentional) — no new site.
+  - Spec Verification, one line each (`--validate-only` → run):
+    1. `${NAME:-world} ${#X} ${HOME} pid=$$` unescaped → valid; run prints `world 3 /Users/andfal pid=67918`.
+    2. Hostile value (`-n it's "q"\nline2 $5 \`touch …\` $(touch …) \ back`) from a code step via `env:` → `od -c` shows every
+       byte intact, neither marker file created; compact `{"a":1,"b":[1,2]}` bound directly arrives as `[{"a":1,"b":[1,2]}]`.
+       Windows leg = Part 1's D8-3 (PASS); Part 2's `tests-windows` run is pending the PR.
+    3. 3 / true / null / object / array from a code step + literal `8080` / `[1, 2]` → valid; run prints
+       `3|True||{"a": 1, "b": [1, 2]}|[1, 2]|8080|[1, 2]`.
+    4. One workflow with every leftover shape (batch `${item}` + `${__index__}`, `${fetch-data.stdout}` + `${a.b}`,
+       `'${overwrite}'`, looped `${__iteration__}` + carry/`inputs:` `${state}`, `inputs:` `${url}`) → 5 ERRORs with the
+       ruled fixes; the run prints the identical 5 (diff = the header line only), no node executes. Ambient probe
+       (`$HOME ${HOME} ${CI:-noci} ${X:-y} ${#HOME}`, `CI=1`) → valid, runs (`5` words).
+    5. `"${name}".upper()` → the code-body ERROR naming `inputs:`, identical at validate-only and run; the `inputs:` form
+       with `f"…${{x}}"` → valid, prints `ABC ${x}`.
+    6. Looped shell step `inputs: {state: a}`, `env: {STATE: ${state}}`, carry `${c.stdout}`, **`cache: true`** → `ab`,
+       `abb`, `abbb` (also the memo-key regression guard: a key ignoring `env:` would replay round 1); carry bound nowhere →
+       the §5 warning at validate-only and in the run's Warnings.
+    7. `- command: ./cmd.sh` holding `${HOME}` and `${NAME:-x}` → `home=/Users/andfal name=x`; one-word
+       `./scripts/$NAME.sh` (`env: {NAME: report}`) → valid and runs the script (a command, not a file reference).
+    8. Failing step (`ENDPOINT`, `API_TOKEN`, a 4,999-char `LONG`) → text block shows `Command:`, `ENDPOINT=users`,
+       `API_TOKEN=<REDACTED>` + the masking note, `LONG` cut at 200 with `(4,999 chars — full value: pflow report)`;
+       `--output-format json` `shell_env` the same, no `sk-secret`, no tail marker; `pflow report` page has `## Command`
+       and `## Env` with the full 4,999-char value (tail marker present), secret masked.
+    9. `my-var` → the ruled ERROR at validate-only and run; 1.2 MB value and a NUL value, both under `ignore_errors: true` →
+       the ruled pre-spawn errors naming `BODY` / `DATA`, run fails, neither marker file created.
+    10. (memo key) — see 6.
+    11. Graph via the `/api/graph` chain (`resolve_validate_build` → `render_react_flow`) on `up` → `echo "${HOME}" "$DATA"`
+        + `env: {DATA: ${up.stdout}}`: one data edge `stdout → input_name "DATA"`; `command` `is_dynamic=False`, `env`
+        `True`. Web canvas: PE's screenshots (not re-driven — no web change since PE).
+    12. Corpus: above. Searcher: `run-searcher.pflow.md agent=pflow-codebase-searcher effort=low cwd=<worktree>` →
+        success (11 s, cited `template_surfaces.py:29/34/38` correctly); trace `resolve-cwd` env
+        `{'CWD_OVERRIDE': '<worktree>'}`, stdout the worktree path. Fan-out run: the battery below (entry 2).
+  | Assumed: Windows for Part 2's diff (the PR's `tests-windows` job); the web canvas beyond the graph contract (PE evidence).
+- Deviations/surprises: (1) the orchestrator's packet named head `dc2c6c10`; the branch head is `de9e1cc6` — an amend of
+  it whose only delta is one line in `tests/test_runtime/test_template_validation/CLAUDE.md`; gated `de9e1cc6`.
+  (2) Verification line 8's terminal block caps a bound value at 200 chars (ruling 6) — the report holds it whole.
+- Self-checks: n/a for these steps (no code); the fixes and their checks are in the next entry.
+- Next: battery evaluation (entry below).
+
+## [2026-10-08 02:15] gate runner G1 (Opus) — PZ step 3–5: code-mode battery, every finding dispositioned, fixes landed
+- Did: dispatched 12 lens runs through `workflows/review/run-review-lenses.pflow.md` (provider codex — opposite the Claude
+  builders) with explicit `cwd=<worktree>`, backgrounded, stdout → `implementation/gate-part2-report.md`, waited in-turn:
+  `✓ Workflow completed in 506.9s`, `run-codex 12/12`, gaps `[]`. Trace
+  `~/.pflow/debug/workflow-trace-7e357182-run-review-lenses-20261008-014828-858277.json`: `resolve-cwd` env
+  `{'CWD_OVERRIDE': '/Users/andfal/projects/pflow-worktrees/feat-task-118-part-2-bodies-untemplated'}`, stdout the same path.
+  Partition: silent-failures ×3 (engine/validator · shell node + display · web), validation-consistency ×1 (body rule ↔
+  split_params/compiler/node + TS `isCodeBody`), agent-ux ×2 (messages — I4 deviations 4–5 named · guide/docs/MCP/examples),
+  test-fidelity ×2 (Python · web); impact-completeness, feature-interactions, simplicity, spec-conformance on the whole diff.
+  concurrency-safety not triggered (no subprocess/thread change in Part 2 — `shell.py` diff is docstring + `post()`).
+  Coverage closure: four lenses declared partial reading of the bulk-converted files → re-ran test-fidelity ×2 over all 76
+  PC2-converted test files (`implementation/gate-part2-report-rerun.md`, 2/2, **clean**); docs were read whole by the
+  docs agent-ux lens; converted examples rest on execution evidence (PC1 node-output dumps + equivalence harness, my
+  capture/verify/real runs), not a reading lens — stated, not re-run.
+- Findings → dispositions (14 distinct; each executed or read at file:line before acting; tests written first and seen red):
+  1. **Critical (SF core) → real severity Warning — FIXED.** `${UNSET:-${fecth-data.stdout}}` got no ruling-2 warning
+     (executed: valid, prints `data.stdout|`). `_foreign_shape_warning` now walks `_segments` (an Issue's interior re-read,
+     as the leftover rule does). Test `test_ruling_2_sees_a_misspelled_reference_nested_in_a_shell_expansion` (+ line).
+  2. **W (SF web + FI, convergent) — NOT FIXED, handed back.** `batchItems.ts` dict expansion substitutes `${item.x}`
+     inside `$${item.x}` (preview shows `$ada`; runtime binds `${item.name}`). Regex predates Part 2 (string params);
+     PE's ruled dict expansion widens its reach to `env:`. Display-only.
+  3. **W (SF web) — NOT FIXED, handed back.** Same function renders an interpolated bool/null via `fullValue`
+     (`flag=true`, `null`) where the child receives `to_string` text (`flag=True`, empty). Pre-existing for string
+     params; display-only. 2 and 3 need a `web/` edit verified through the screenshot skill with the shared `pflow ui`
+     slot — options for you below.
+  4. **W (agent-ux + spec-conformance handoff, convergent) — FIXED.** `"${user.name}"` on an `inputs:` key `user` was told
+     "use the variable user" (executed). Now `use user['name']` (`user[0]['name']` for an index; a dynamic index gets "a
+     value read from the variable user"); bare names keep the ruled text. Test (field + index rows) also RUNS the advice.
+  5. **W (agent-ux) — FIXED.** A step with `env: ${cfg.env}` was told to add a second `- env:` bullet; executed: the parser
+     keeps the last bullet, so `AUTH` from the map silently vanished. New branch: `add URL: ${url} to the map that the
+     step's env: ${cfg.stdout} produces (a second `- env:` would replace it)` — leftover fixes and the unread-`inputs:`
+     warning alike. Test covers both callers.
+  6. **Minor (simplicity) — FIXED with 5.** The validator's unread-`inputs:` warning rebuilt `_binding_phrase`'s rule;
+     now one public `data_flow.binding_phrase(…, to_the_step=False)` serves it. The kwarg keeps checkpoint §5's ruled text
+     ("add `- env: {N: ${n}}` and read…", no "to the step") byte-identical — existing §5 tests green.
+  7. **W (test-fidelity) — FIXED.** File-backed batch items (`batch: ./items.yaml`) had no row; added to the consumer table's
+     `file_references` row (discovery `["batch", "batch.items[1].command"]`, resolution keeps `./scripts/$NAME.sh`).
+     Mutation: file-batch discovery call given `None` node type → that row red; restored (`cmp` clean).
+  8. **W (spec-conformance) — FIXED.** PB-1's `pflow workflow save` caller had no test; new `workflow_save` row through
+     `save_workflow_with_options` (variable command kept verbatim, `scripts/run.sh` bundled). Mutation: body rule removed
+     from `is_param_file_reference` → `file_references` + `workflow_save` red; restored.
+  9. **Suggestion (simplicity): consumer-test dispatch table — SKIPPED.** It is the plan's "one parametrized table, a row per
+     consumer" (PB test 1); the mutation ledger is keyed by its row ids.
+  10. **W (SF display) — NOT FIXED, handed back (lane).** `env: {__VALUE: hello}` binds and shows in the failure block, but
+      the trace sanitizer drops `__`-prefixed keys from `node_params.env`, so `pflow report`'s `## Env` omits it (executed).
+      Fix site is `runtime/workflow_trace.py` → your lane rule.
+  11. **W (validation-consistency) — FIXED.** A comment between adjacent Python literals (`"hello "  # ${name}` / `"world"`)
+      was read as string text (executed: ERROR on valid code). `_readable_texts` now reads each literal's own source token
+      (`tokenize` over the constant's segment), never the comment; lines unchanged. Test validates AND runs, plus a
+      presence half (a `${name}` in the second literal still errors, on its own line).
+  12. **W (agent-ux) — FIXED.** `as: LIMIT` + `${LIMIT:-10}` suggested `"${LIMIT:-10}"` — the same leftover (executed). A
+      shell binding name that is a name in the step's scope now gets `_VALUE` (`LIMIT_VALUE`, `"${LIMIT_VALUE:-10}"`). Test
+      validates the advised form and runs it (`seq` prints 1 2 3).
+  13. **W (agent-ux) — FIXED.** The code-body `$${in-scope}` fix omitted the annotation (following it hit "missing a type
+      annotation"). Now `…, declare its type in the code (`name: str`), and write f"${name}"` (2d's wording). Test
+      validates the advised workflow through `WorkflowValidator` and runs it (`$bob`).
+  14. **W (impact-completeness) — DISPUTED.** `pflow probe` drops the failure `env` copy from `outputs`: true (executed), but
+      probe excludes every key the caller passed (`command` too, since before this task) and resolves nothing
+      (`_probe_impl.py`; spec "skips the compiler and resolves nothing") — the "bound values" are the literals the caller
+      typed on that command line. No information is lost.
+- Changed: `src/pflow/core/workflow/data_flow.py` (1, 4, 5/6, 11, 12, 13), `src/pflow/runtime/template_validation/validator.py`
+  (6), `tests/test_integration/test_code_body_leftovers.py` (+7 tests), `tests/test_integration/test_code_body_consumers.py`
+  (+1 row, file-batch block); `implementation/gate-part2-report.md` (+ Appendix A: the spec-conformance lens's raw output,
+  verbatim — the merge condenses its inventory), `implementation/gate-part2-report-rerun.md` (new).
+- Verified: every new test red before its fix for the reason it names; `make check` green; `make test-all-local`
+  **10634 passed / 2 skipped** (10626 + 8, all new; failing set empty). Real CLI after the fixes: the nested typo warns with
+  `Did you mean 'fetch-data'?`; `as: LIMIT` prints the `LIMIT_VALUE` fix; `"${user.name}"` prints `use user['name']`.
+- Deviations/surprises: texts drafted beyond the checkpoint (none changes ruled text): 4's field-access phrase and its
+  dynamic-index fallback, 5's whole-map phrase, 12's `_VALUE` on an in-scope name, 13's annotation clause — flag for the
+  falsifier/agent-ux eye. The merged report rated 1 Critical; on evidence it is a Warning (ruling 2 is itself a warning).
+- Self-checks: fully happy? With the fixes, yes. Honest residue: the dynamic-index fallback in `_python_read` has no test
+  (one phrase, a rare shape); `_literal_tokens` keeps a `TokenError` fallback that a parsed constant cannot reach. Left
+  in my HOME by `pflow report` (removal was permission-denied): `~/.pflow/reports/{v8-fail,f10-dunder}`. test-reflect: not
+  run separately — every new test pairs absence with presence and was seen red pre-fix; two mutations recorded above.
+- For the orchestrator: (A) findings 2+3 (web preview): options (a) fix `substitute()` now — escape-aware match and
+  `to_string`-faithful interpolation, keep pure-reference typing; needs the `pflow ui` slot + screenshots (a fresh Opus web
+  launch, ~small); (b) follow-up issue (display-only, pre-existing for string params). Recommend (b) unless the slot is free.
+  (B) finding 10: options (a) trace keeps author `env:` keys (workflow_trace.py — your lane); (b) a validation warning on
+  `__`-prefixed `env:` names (env_binding; changes what such a workflow reports, not what it runs); (c) follow-up issue.
+  Recommend (c). (C) The Requirement Inventory for `review-falsifier`: `gate-part2-report.md` → "Appendix A" →
+  "### Requirement Inventory" (line 358). Spec-conformance marked Part 2 `tests-windows` as pending gate evidence.
+- Next: orchestrator launches `review-falsifier`; I evaluate its report.
+
+## [2026-10-08 08:40] task orchestrator (Opus) — completion gate: G1's dispositions ruled; fixes committed; falsifier next
+- Verified (mine): `make check` green; `make test` 10582 / 0 failed (G1: `make test-all-local` 10634 / 2 skipped).
+- [RULING, importance 2] Findings 2/3 (web per-item preview: expands `$${item.x}` as a ref; renders an item's `true`/
+  `null` where the command receives `True`/empty) → **follow-up issue**, not this PR: display-only, the substitution
+  code is pre-existing and wrong identically for string params (`stdin`) — PE's dict extension inherits it, does not
+  widen it in kind. Named in the task-review and the hand-back.
+- [RULING, importance 2] Finding 10 (a `__`-prefixed `env:` name shows in the failure block but not in the report's
+  `## Env` — the trace writer drops `__` keys) → **follow-up issue**: the fix is in `runtime/workflow_trace.py`, a
+  live lane's surface (packet: stop, don't edit). Named in the task-review.
+- Accepted: the disputed probe finding (probe resolves nothing and omits every caller param) and the skipped
+  consumer-table suggestion (the plan's one-row-per-consumer design); new message wording listed in G1's entry.
+- Windows: `tests-windows (core-cli-nodes)` runs on the PR — the hand-back carries it.
+- Residue outside the tree: G1 left `~/.pflow/reports/v8-fail` and `~/.pflow/reports/f10-dunder` (report outputs);
+  deleting under `~` is permission-denied for agents — named in the hand-back for the main orchestrator.
+- Next: `review-falsifier` (direct launch, mine) against this commit; G1 evaluates its report.
