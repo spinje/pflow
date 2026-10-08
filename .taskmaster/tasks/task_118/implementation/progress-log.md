@@ -995,3 +995,12 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   (residue: dash split, Windows assumed, a code-body line offset by escaped `\n` — display only); re-asked at the
   review resume.
 - Next: commit PB; merge `origin/main` (`a42f55e2`); gate; resume I4 for the PB mid-task review.
+
+## [2026-10-08 04:00] task orchestrator (Opus) — PB committed `76a1aed5`; origin/main `a42f55e2` merged `4ab61390`
+- Conflict: one hunk in `tests/test_cli/test_ui_interaction_server.py` (main factored the escalation workflow into
+  `_escalation_wf`; PC2 had converted the inline copy) → took main's helper and converted its body to `env:`
+  (`ESC_RESULT_ESCALATION_DECISION_CHOSEN`); the file's other PC2 conversions kept. `test_shell_env_binding.py`
+  (#726) auto-merged.
+- Verified on the merged result: `make check` green; `make test` 10566 passed / 0 failed; `make test-e2e` 52 / 2
+  skipped. `pflow --version` 0.16.0.
+- Next: resume I4 — PB mid-task review (4 lenses) on `c3189b41..76a1aed5`.
