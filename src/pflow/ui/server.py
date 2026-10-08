@@ -64,6 +64,7 @@ from pflow.core.exceptions import (
     ResumeSupersededError,
 )
 from pflow.core.gate import masked_gate_dict
+from pflow.core.trace_io import load_trace_file
 from pflow.core.tts import wav_duration
 from pflow.core.workflow.graph import render_react_flow
 from pflow.core.workflow.manager import WorkflowManager
@@ -74,7 +75,7 @@ from pflow.execution.graph_service import (
 from pflow.execution.workflow_resolver import resolve_workflow
 from pflow.registry import Registry
 from pflow.ui.run_node import read_run_inputs, run_node_detail
-from pflow.ui.run_tailer import RunTailer, TraceCandidate, is_trace_locked, read_run_trailer, scan_traces
+from pflow.ui.run_tailer import RunTailer, TraceCandidate, is_trace_locked, scan_traces
 from pflow.ui.targets import resolve_target
 
 logger = logging.getLogger(__name__)
@@ -1132,8 +1133,10 @@ _RESUME_REFUSALS: dict[type[PflowError], str] = {
 def _resume_refusal_response(exc: PflowError) -> Response:
     """Map a pre-flight refusal to its 4xx: 404 missing source · 409 every other ResumeSourceError
     (the resume is well-formed but refused) · 400 any other PflowError (parity with `/api/run`'s
-    pre-flight arm). Diagnostics plus the `refusal` discriminator, plus kind-specific extras the
-    panel acts on (`newer_execution_id` / `node_id`+`node_type` / `hash_known`)."""
+    pre-flight arm). Diagnostics plus the `refusal` discriminator, plus kind-specific machine-readable
+    extras (`newer_execution_id` / `node_id`+`node_type` / `hash_known`). The browser's ack panel
+    renders the diagnostics' own message + suggestions (the CLI's text); only `newer_execution_id`
+    drives a browser action — the other extras are for programmatic callers."""
     if isinstance(exc, ResumeSourceMissingError):
         status = 404
     elif isinstance(exc, ResumeSourceError):
@@ -1486,14 +1489,17 @@ def gate(request: Request) -> Response:
     candidate = next((c for c in scan_traces() if c["meta"].get("execution_id") == run_id), None)
     if candidate is None:
         return _json({"error": f"No run {run_id!r} was found."}, status_code=404)
-    # Re-read the trailer fresh (not the scan-cache fact): this is the one consumer of the bulky
-    # gate_request, which is deliberately never cached or carried on a wire.
-    trailer = read_run_trailer(candidate["path"])
-    gate_request = trailer.get("gate_request") if trailer is not None else None
-    paused_node_id = trailer.get("paused_node_id") if trailer is not None else None
+    # Read the pause record through the resume loader's own reader (not the scan-cache fact, never the
+    # raw trailer line): the trace interns strings >= 1 KB as `$pflow_blob` refs whose bodies sit on
+    # earlier lines, so only the full read gives the panel the text `pflow resume` will act on (#720).
+    try:
+        trace: dict[str, Any] = load_trace_file(candidate["path"])
+    except (json.JSONDecodeError, OSError):
+        trace = {}
+    gate_request = trace.get("gate_request")
+    paused_node_id = trace.get("paused_node_id")
     if (
-        trailer is None
-        or trailer.get("final_status") != "paused"
+        trace.get("final_status") != "paused"
         or not isinstance(gate_request, dict)
         or not isinstance(paused_node_id, str)
         # `kind` is a required GateRequest field (every real producer writes it); a hand-corrupted
