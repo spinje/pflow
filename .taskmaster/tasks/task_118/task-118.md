@@ -9,7 +9,12 @@ node's existing `env:` param (the code node already binds through `inputs:`). Th
 and converts every in-tree workflow, example, guide page and test to the new form.
 
 ## Status
-in progress
+
+done
+
+## Completed
+
+2026-10-08
 
 ## Priority
 
