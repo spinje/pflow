@@ -1,0 +1,322 @@
+Executing workflow (6 nodes):
+  resolve-cwd... ✓ 0.0s
+  load-lenses... ✓ 0.0s
+  run-codex... 9/9 268.3s
+  run-claude... 0/0 0.0s
+  collect... ✓ 0.0s
+  merge... ✓ 127.6s
+
+✓ Workflow completed in 395.991s
+
+💰 Cost: subscription (10 agent calls) · API-equivalent: $55.4484
+   Total LLM calls: 10
+
+ℹ️ Advisories:
+  ℹ [run-claude] Batch 'run-claude' ran with 0 items (input list was empty).
+    → Expected when iterating a drained queue or a filter that matched nothing. If items were expected, check the node that produces this batch's list.
+
+Workflow trace saved: /Users/andfal/.pflow/debug/workflow-trace-4953d2b5-run-review-lenses-20261008-040410-636720.json
+
+Workflow output (The consolidated review report — the workflow's product. The caller (the gate-runner / deep-review flow) verifies and adjudicates from here.):
+
+# Merged Review Report
+
+All file references are relative to `/Users/andfal/projects/pflow-worktrees/feat-task-180-resume-step-identity`. Severities and assertions below are preserved from the lenses; no findings were independently verified or adjudicated.
+
+## Convergent findings
+
+### Warning — Legacy refusals incorrectly promise that inserted steps are skipped
+
+**Convergence: four lenses.** Raised by **review-agent-ux** and **review-feature-interactions**; independently flagged as an Agent-UX handoff by **review-impact-completeness** and **review-simplicity**.
+
+**Location:** `src/pflow/core/exceptions.py:1659`
+**Supporting execution path:** `src/pflow/execution/resume_preflight.py:426`
+
+For traces without `step_identity`, the whole-workflow mismatch refusal still says **“any inserted step is skipped.”** The lenses identify two counterexamples:
+
+- Append `notify` after the failed step: forced resume reaches and executes it.
+- Insert `check` immediately after a between-nodes escalation checkpoint, including a 2.8 trace: forced continuation selects and executes it.
+
+The suggestion therefore misstates which actions, including side effects, will execute. The modern-trace wording correction did not fix this legacy fallback.
+
+**Reported correction:** Remove the unconditional parenthetical or use wording such as: “Execution follows the current workflow from the resume point; inserted steps before it may be skipped.” Preserve the ruled refusal policy.
+
+### Warning — The explicitly required forced-resume-chain precision test is missing
+
+**Convergence: two lenses.** Raised by **review-spec-conformance** and **review-test-fidelity**.
+
+**Locations:**
+
+- `.taskmaster/tasks/task_180/implementation/implementation-plan.md:385`
+- `tests/test_cli/test_resume_identity.py:571`
+- `tests/test_cli/test_resume_cli.py:771`
+- `src/pflow/execution/runner.py:220`
+
+P3 test 11 explicitly requires:
+
+> “resume-of-a-resume after an unforced resume → passes; after a `--force`d one → documented precision.”
+
+The chain test exercises an **unforced, unedited** first attempt. The forced-resume test checks restoration after an upstream edit, then finishes successfully without resuming that attempt.
+
+The runner stamps an attempt’s **current** identity even when restored upstream outputs came from the pre-edit run. D5 accepts this precision boundary, but neither test distinguishes that behavior from copying the source identity. Copying the source identity could wrongly refuse a later resume while both existing tests remained green.
+
+**Reported coverage:** Edit a restored upstream step, force a resume that fails again, then resume that attempt without force and assert the identity verdict and retained original upstream value. Spec-conformance describes resuming without another edit; test-fidelity describes fixing only the resume point before that final resume. Both request coverage of the accepted decision without changing policy.
+
+### Additional convergence in the same code areas
+
+These are area-level signals; the distinct defects remain separately listed below.
+
+- **Missing-resume-point diagnostics and web recovery:** **review-impact-completeness** reports that the web handler offers an impossible force action. **review-agent-ux** verifies that the exception itself offers only rerun or restoration, and **review-spec-conformance** marks row 12’s underlying refusal and remedy as represented. The shared area is the diagnostic-to-browser handoff.
+- **Identity checking and diagnostic formatting:** **review-simplicity** flags the implicit change-record handoff around `resume_preflight.py:183` and `exceptions.py:1491`; **review-agent-ux** identifies inaccurate legacy and approval-denial wording in the same diagnostic pipeline.
+- **Resume preflight and HTTP error handling:** **review-validation-consistency** reports an identity-calculation crash before validation; **review-impact-completeness** identifies the web force path that spawns an attempt for a missing resume point. Both concern resume preparation and UI handling, but describe different defects.
+
+## Critical
+
+No lens reported a Critical finding.
+
+## Warnings
+
+### Web confirmation offers force for a missing resume point
+
+**Lens:** review-impact-completeness
+
+**Locations:**
+
+- `web/src/components/resumeAnswer.tsx:67`
+- `src/pflow/core/exceptions.py:1534`
+- `src/pflow/ui/server.py:1262`
+- `src/pflow/runtime/engine/engine.py:715`
+
+The shared web handler treats every `stale_workflow` response as force-confirmable, although Task 180 introduces `context.resume_point_missing` and the exception deliberately offers only rerunning or restoring the missing step.
+
+**Evidence:** Rename failed `save` to `store`, click Resume, then select **Resume anyway**. The component submits `force: true`; the server validates the edited workflow and spawns an attempt; the engine necessarily rejects the missing entry. The browser offers an impossible recovery action and pins a doomed attempt.
+
+**Reported correction:** Treat `resume_point_missing` as a diagnostic without force confirmation in the shared handler used by both ResumeControl and GateCallout. Add coverage with the field set to `true`; both updated web fixtures currently set it to `false`. Preserve row 12’s refusal.
+
+### The current-trace carve-out test can pass without reaching execution
+
+**Lens:** review-test-fidelity
+
+**Location:** `tests/test_cli/test_resume_identity.py:516`
+
+The test removes the host’s start marker, invokes resume, and asserts only that two confirmation strings are absent. An unrelated refusal or exception satisfies both assertions.
+
+**Reported correction:** Retain the ledger and assert a second `"fired a"` entry alongside the expected subsequent item failure. This establishes that resume crossed the gate and catches rejection for an unrelated reason.
+
+### Denying an edited approval step is described as approving and executing it
+
+**Lens:** review-agent-ux
+
+**Locations:**
+
+- `src/pflow/execution/resume_preflight.py:217`
+- `src/pflow/core/exceptions.py:1637`
+- `src/pflow/execution/gate_prompt.py:84`
+
+**Evidence:** Pause at `deploy`, edit its command while retaining its approval gate, then run `resume … --approve no`. Identity checking includes the paused step regardless of the answer. The refusal says **“Resuming would run the edited 'deploy' under that earlier approval,”** and the force suggestion repeats that consequence.
+
+With `--approve no --force`, the resolver instead delivers `approved=False`. An agent attempting to deny the action receives misleading consent and execution guidance.
+
+**Reported correction:** Preserve the refusal policy while making the diagnostic answer-aware: the step changed since its preview, and forcing this denial delivers the denial. Allowing denial without refusal would be a separate **user-level policy decision**.
+
+### Resume identity calculation can crash before structural validation
+
+**Lens:** review-validation-consistency
+
+**Locations:**
+
+- `src/pflow/core/workflow_id.py:100`
+- `src/pflow/execution/resume_preflight.py:208`
+- `src/pflow/ui/server.py:1270`
+
+`step_identity()` assumes `prompt_cache` is iterable.
+
+**Evidence:** Take a resumable 2.9.0 run, add `- prompt_cache: 42` to a downstream step, and submit `/api/resume` without force. The parser preserves the value. Identity calculation runs before validation and raises `TypeError`; the endpoint catches only `PflowError`, producing HTTP 500 instead of structured HTTP 400 diagnostics.
+
+Normal run/preflight rejects the value through the schema’s array requirement.
+
+**Reported correction:** Make identity calculation tolerate unvalidated field shapes or perform the canonical structural check before identity calculation. Preserve the ruled outcomes.
+
+The lens established this by code tracing, not execution.
+
+## Suggestions
+
+### Make the identity-change handoff explicit
+
+**Lens:** review-simplicity
+**Stated severity:** Suggestion
+
+**Locations:** `src/pflow/execution/resume_preflight.py:183`, `src/pflow/core/exceptions.py:1491`
+
+An empty `changes` dictionary has two meanings: an unchanged modern trace returns successfully, while a legacy mismatch passes `{}` into the exception. The exception reconstructs identity availability through the truthiness of change fields (`known`), normalizes three optional collections, and distributes fields across formatting helpers.
+
+**Reported simplification:** Use one typed change record, with absence explicitly representing unavailable per-step comparison, throughout detection and formatting.
+
+**Deletion payoff:** Remove the overloaded empty-dictionary convention, `**changes` coupling to constructor keywords, collection normalization, and inference from unrelated fields. Preserve every ruled outcome and shipped message.
+
+### Give the frame-lifecycle invariant one authoritative home
+
+**Lens:** review-simplicity
+**Stated severity:** Suggestion — minor, take or leave
+
+**Locations:**
+
+- `src/pflow/runtime/workflow_trace.py:944`
+- `src/pflow/runtime/engine/engine.py:1363`
+- `src/pflow/runtime/CLAUDE.md:136`
+
+These repeat reservation, host takeover, and completion pairing. The instruction-file copy already loses qualifications by saying every step gets a “top-level” start, whereas the collector distinguishes nested, buffered, and non-streaming execution.
+
+**Reported simplification:** Keep the contract at `begin_node`, with short pointers elsewhere.
+
+**Deletion payoff:** Remove duplicate invariant prose and the need to reconcile multiple descriptions when tracing changes.
+
+## Verified clean
+
+These are the lenses’ own assertions, condensed. “Verified” here does not imply independent execution by this merger.
+
+### review-impact-completeness
+
+- `step_identity` travels through runner → collector → `META_KEYS` → reconstruction → resume loader; fixture serialization inherits it. UI scan-cache removal is intentional, and resume reloads independently.
+- Dangling-start detection, attempt consumption, never-started proof, and incomplete-entry resolution match correlation IDs. Live overlays replace starts with terminal events; report/analyze readers exclude starts.
+- Missing identity retains whole-hash comparison; legacy workflow hosts retain conservative confirmation. Replay still uses `content_hash`.
+- Compiler and graph share `start_node_id`; identity and between-node successor lookup share `outgoing_edges`.
+- MCP uses the same runner and trace producer. No stale production references to `_host_frame` or `_check_content_hash` remain.
+- Route actions, reachability-aware skip wording, cache selection/content distinctions, and deterministic parallel gate exception coverage remain present.
+
+### review-feature-interactions
+
+- The persisted identity map remains top-level, matching restoration granularity. `begin_node()` reserves frames; `descend()` adopts them; batch descendants retain buffered collectors.
+- Batch × nested workflow × child gate pairing covers sequential execution, the parallel worker path, and a batched host inside another host. Hosts begin on the owner thread; gate completion closes the frame and drains completed item traces.
+- Nested workflow × loop × gate visits receive fresh frames. Approval stops precede reservation; escalation stops follow completion. Existing looping-gate and host-escalation tests guard against overwritten or duplicate host records.
+- In-memory post-descent failure coverage keeps children attached to failed hosts and `tree()` readable.
+- Resume × loops × attempt chains uses the seed-derived restored set, excludes the continuing loop step, and preserves start proof across attempts.
+- Approval definitions receive the extra check while outgoing routes remain downstream; ordinary escalation steps remain restored and checked. Between-node insertion retains the ruled refusal.
+- Referenced cache chunks participate in identity; unused chunks do not. Selection and content changes have distinct explanations.
+- Legacy batched-host traces retain the conservative carve-out; current traces use actual start proof.
+- `--only` gains no identity gate; snapshots cover whole-child execution and one loop iteration. Same-node batch plus loop remains rejected by compiler and validation.
+- Both UI launch endpoints share runner preflight; inspected tests cover validator errors, relative child paths, optional defaults, and structured stale refusals.
+
+### review-spec-conformance
+
+**MET means implementation or test presence established by reading, not independently executed.**
+
+All 16 ruled cases and required leads were reported represented:
+
+| Rows | Preserved assertion |
+|---|---|
+| 1–2 | Fixing the failed step and changing prose pass identity checking. |
+| 3 | Editing restored `produce` refuses with the required edited-step lead. |
+| 4–6 | Upstream insertion, new start, and reroute refuse with their required leads; force retains the row 4 skip. |
+| 7–8 | Appended steps execute; resume-point/downstream edge edits pass. |
+| 9 | Recorded inputs win, with explicit `KEY=VALUE` overrides covered. |
+| 10 | Referenced cache-content changes refuse with the required explanation. |
+| 11 | Loop edits apply from the resumed iteration; earlier iterations remain restored. |
+| 12 | Missing resume points refuse before predecessor blame; the underlying exception offers no ineffective force remedy. |
+| 13 | Removed restored steps refuse, explaining saved-output restoration and the predecessor reroute. |
+| 14 | Edited approval steps refuse with the earlier-approval lead. |
+| 15 | Child-file contents remain outside identity. |
+| 16 | Older traces retain whole-workflow comparison and its explanatory lead. |
+
+The lens also reported these obligations met:
+
+- D1/P1 frame reservation/adoption; host pairing across batched, ordinary, looping, nested, gate, failure, in-memory, and interrupted-host paths; unchanged item correlation.
+- Recorded P1 M1–M5/M3b and P3 M1–M10 mutation evidence.
+- D1b’s legacy-only host-confirmation conjunct.
+- D2/P2 identity excluding prose while including policy keys and referenced cache chunks; normalized edges, stable ordering/provenance, insertion/reroute distinction.
+- D3 restored-set plus paused-approval checking and fidelity loading first, with the recorded approval-edge deviation.
+- D4 shared compiler/graph start rule.
+- D5/D10 metadata-level identity and retained content hash.
+- D6/P2 old/malformed-envelope fallback and fixture round-trip.
+- D7 one `--force` flag; D8 no new `--only` staleness gate.
+- D9 structured `changed_steps`, `new_start`, and `resume_point`; HTTP 409 retains `stale_workflow` and the hash flag.
+- D11 one runner pre-meta primitive; P3 validation-before-spawn, complete diagnostics, relative-child/default-input positive cases.
+- Escalation edit/successor/insertion cases; fallback, malformed-entry, diagnostic-context, and fail-closed tests.
+- D12/D13 unchanged replay hash behavior and no new loop-edit output.
+- P4 guide, CLI reference, and instruction updates, with recorded documentation omissions; host-frame cleanup.
+- Recorded execution of all 16 rows and browser captures for rows 3 and 14; trace-version/recipe contract.
+
+No unrequested behavior was identified. Extra chunk hashes, route-action details, shared edge helpers, `PreparedWorkflow`, host-state removal, and web fixtures were mapped to requirements or supporting work. The lens accepted the recorded reasons for approval-definition-only checking, conditional wording, combined row 13 leads, and simplified ascend cleanup; between-node insertion remains a user-level policy boundary.
+
+### review-simplicity
+
+- `_host_frame` removal eliminates redundant state and completion alternatives without needing a replacement flag.
+- `start_node_id` and `outgoing_edges` consolidate repeated derivations.
+- `WorkflowRunner.preflight` is justified by `plan()` and both UI callers; `PreparedWorkflow` has no unused fields.
+- Per-chunk hashes and reachability support concrete refusal-text requirements.
+- The narrowed legacy-host carve-out preserves a necessary distinction.
+
+### review-silent-failures
+
+- Identity checks fail closed for missing/non-dictionary records, missing/mismatched hashes, malformed route pairs, and missing resume points. Even `([], [])` remains truthy and preserves refusal (`resume_preflight.py:201`).
+- Malformed envelopes fall back conservatively; absent content hashes cannot pass; D1b preserves older-host confirmation (`resume_source.py:962`, `resume_preflight.py:178`).
+- Matching pending frames survive normal, warning, exception, and child-gate completion; originating gates avoid duplicates (`workflow_trace.py:888`, `engine.py:1645`).
+- Compilation precedes descent, followed immediately by balanced `try/finally`; buffered children neither descend nor ascend (`workflow_executor.py:431`).
+- Shared preparation preserves defaults and workflow-file context, propagates validation errors intact, and returns HTTP 400 before spawning (`runner.py:559`, `server.py:1258`).
+- Route actions, reachability wording, cache distinctions, and ruled between-node refusal remain present.
+- Additional checks of attempt consumption, interrupted batched-host identification, and UI scan-cache metadata removal found no new signal-loss path.
+
+### review-test-fidelity
+
+- All 16 ruled outcomes have discriminating CLI coverage.
+- Loop tests assert exact recorded rounds and the changed winner.
+- Trace tests assert exact pairing, nesting, and sequence continuity through real runner paths.
+- Parallel gate coverage uses deterministic worker-exception ordering without sleeps.
+- Identity tests pair ignored prose/layout/unused-cache changes with meaningful definition changes.
+- HTTP validation tests cover rejected diagnostics and valid relative-child/default-input cases.
+- Updated browser fixtures match exception payloads and verify answer preservation when adding `force`.
+- No substantial test bloat was identified; strengthening existing cases was considered sufficient.
+
+### review-agent-ux
+
+- Missing-resume-point exception messages offer rerun or restoration.
+- Modern messages distinguish routing actions, cache-content versus selection changes, and reachable versus skipped steps.
+- Approval-yes and between-step insertion explanations address prior findings.
+- Structured diagnostics preserve the required fields; HTTP refusals preserve diagnostics, `stale_workflow`, and `hash_known`.
+- The guide documents input-default remedies, loop continuation, and accepted identity limits.
+
+### review-validation-consistency
+
+- `preflight()` and `run()` share preparation, default filling, placeholder stripping, and compilation.
+- Workflow-file context preserves relative child resolution.
+- Web resume and its spawned CLI child use the same recorded inputs; CLI overrides remain CLI-specific.
+- `plan()` delegates to `preflight()`; validator errors propagate through the existing HTTP 400 handler.
+- `--force` bypasses identity and side-effect refusals, but not workflow validation.
+
+### review-concurrency-safety
+
+- `_next_seq()` asserts ownership before pending-frame mutation; descent/ascent assert ownership before host-stack mutation. Matching node and parent IDs prevent cross-level adoption (`workflow_trace.py:859`).
+- Workers deep-copy nodes, install `__index__`, and use fresh buffered collectors; deeper descendants stay buffered, isolating the run collector’s frame and sequence allocation (`batch_executor.py:814`, `workflow_executor.py:347`).
+- Each `_execute_node()` visit has a local `start_frame`, reused across completion paths; `_host_frame` removal eliminates instance-state handoff (`engine.py:1266`).
+- Descent cleanup remains balanced around child exceptions (`workflow_executor.py:431`).
+- Child gates close hosts and drain completed item traces; originating gates avoid duplicate completion (`engine.py:1665`).
+- The parallel gate test checks paired host IDs and completed-item retention. Its single-worker configuration tests exception transport, not simultaneous scheduling.
+- Additional inspection found no constructible new owner-thread violation, sequence race, cross-item frame leak, or stale-pending-state failure across visits, nesting, early batch exit, and descent exceptions.
+
+## Coverage
+
+| Lens | Provider |
+|---|---|
+| review-impact-completeness | codex |
+| review-feature-interactions | codex |
+| review-spec-conformance | codex |
+| review-simplicity | codex |
+| review-silent-failures | codex |
+| review-test-fidelity | codex |
+| review-agent-ux | codex |
+| review-validation-consistency | codex |
+| review-concurrency-safety | codex |
+
+**Failed or missing lenses:** None supplied; the gaps input is empty.
+
+**Reported coverage and evidence limitations:**
+
+- All nine reviews were static/read-only. None independently executed tests, workflows, mutations, or browser verification.
+- Impact-completeness, feature-interactions, spec-conformance, simplicity, silent-failures, test-fidelity, agent-UX, and concurrency-safety explicitly did not exhaustively read every unchanged portion of large files. Concurrency-safety also did not read every changed test file in full.
+- Spec-conformance reviewed `origin/main...HEAD` at `a806f1ac`, excluding `.taskmaster/` and `uv.lock` from critique while using the task specification, ruled table, and plan as requirements sources. It expressly withheld unconditional completion-gate sign-off.
+- **Task-159 completion evidence remains pending:** The recorded P2/P3 baseline was **76 pass / 11 existing drift**; spec-conformance located no post-P4 completion baseline. Status: **PARTIAL — final evidence pending**.
+- **Windows evidence remains absent:** No `tests-windows` CI result was present in the supplied record. Status: **UNVERIFIED**.
+- Logged execution matrices, mutation results, and browser captures were recorded evidence, not independently certified by these lenses.
+- Impact-completeness notes that static type checks cannot establish diagnostic-to-button compatibility, and current web fixtures omit `resume_point_missing: true`.
+- Validation-consistency did not independently certify broader engine/trace correctness or the complete 16-row execution matrix.
+- Agent-UX focused on requested UX files and supporting callers/tests; other branch files were not exhaustively reviewed.

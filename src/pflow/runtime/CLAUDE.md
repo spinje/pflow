@@ -133,11 +133,10 @@ full-run snapshot eligibility are separate policies.
 batch items; batch items and already-buffered descendants use child buffers.
 Keep that distinction when changing correlation or worker-thread tracing.
 
-Every step that begins gets a top-level `node.start` paired with its terminal event
-(same `id`) — sub-workflow hosts, batched or not, included: the engine calls
-`begin_node` for every node and a host's `descend` takes that frame over. Resume reads
-an unpaired one as "this step began" (`resume_source`), so a completion path that
-drops the frame leaves a dangling start, and a second reservation a double start.
+`node.start` pairing (one reservation per step that begins, sub-workflow hosts
+included, reused by its terminal event) is owned by `WorkflowTraceCollector.begin_node`'s
+docstring; resume reads an unpaired start as "this step began", so a dropped or
+re-taken frame changes resume decisions.
 
 LLM trace content is canonical in `llm_prompt`/`llm_system`; redundant prompt and
 system copies are stripped from persisted node output. The memo blob retains

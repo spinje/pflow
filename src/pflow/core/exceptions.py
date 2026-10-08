@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from pflow.core.cache_ttl import build_unsupported_cache_ttl_diagnostic, unsupported_cache_ttl_message
@@ -1468,17 +1468,46 @@ def _routes_text(routes: list[Route]) -> str:
     return ", ".join(labels)
 
 
+@dataclass(frozen=True)
+class StepIdentityChanges:
+    """What changed among the steps a resume depends on (``resume_preflight._identity_changes``).
+
+    False when nothing changed. ``cache_edited`` (which ``edited`` steps changed a ``## Cache`` chunk's
+    content) and ``skipped`` (new route targets / start step the resume would never run) qualify the
+    changes; they are never a change on their own.
+    """
+
+    removed: tuple[str, ...] = ()
+    resume_point_missing: bool = False
+    edited: tuple[str, ...] = ()
+    cache_edited: frozenset[str] = frozenset()
+    approved_edited: str | None = None
+    rerouted: dict[str, tuple[list[Route], list[Route]]] = field(default_factory=dict)
+    new_start: tuple[str, str | None] | None = None
+    skipped: frozenset[str] = frozenset()
+
+    def __bool__(self) -> bool:
+        return bool(
+            self.removed
+            or self.resume_point_missing
+            or self.edited
+            or self.approved_edited
+            or self.rerouted
+            or self.new_start
+        )
+
+
 class ResumeStaleWorkflowError(ResumeSourceError):
     """The workflow changed since the original run in a way this resume would get wrong (Task 164;
     paused resumes Task 171; per step since Task 180).
 
-    The preflight passes each change it found; the message leads with them in a fixed order: removed
+    The preflight passes the ``changes`` it found; the message leads with them in a fixed order: removed
     → resume point gone → edited (``cache_edited``: a ``## Cache`` chunk's content changed) → edited
     after approval → now leads elsewhere (``rerouted``: step → (now, recorded) routes) → new start
     step (``new_start``: (now, recorded)). ``skipped`` names the new route targets / start step the
     resume would never run. Then it says what the resume would do instead — restore stale outputs,
     continue into a between-nodes source's new route, or run an approved step as edited. With no
-    change given, the trace predates per-step identity: ``hash_known`` says the whole-workflow hash
+    ``changes`` (``None``), the trace predates per-step identity: ``hash_known`` says the whole-workflow hash
     differs (an older pflow), ``False`` that not even that is known (a run predating hash tracking) —
     never claiming an edit that may not have happened. The suggestions name what ``--force`` accepts
     and, when ``rerun_node_type`` is given, that it also re-runs a started side-effecting resume
@@ -1493,30 +1522,25 @@ class ResumeStaleWorkflowError(ResumeSourceError):
         *,
         hash_known: bool,
         entry_node_id: str | None,
-        removed: list[str] | None = None,
-        resume_point_missing: bool = False,
-        edited: list[str] | None = None,
-        cache_edited: frozenset[str] = frozenset(),
-        approved_edited: str | None = None,
-        rerouted: dict[str, tuple[list[Route], list[Route]]] | None = None,
-        new_start: tuple[str, str | None] | None = None,
-        skipped: frozenset[str] = frozenset(),
+        changes: StepIdentityChanges | None = None,
         entry_iteration: int | None = None,
         after_node_id: str | None = None,
         rerun_node_type: str | None = None,
         execution_id: str | None = None,
         trace_path: str | None = None,
     ):
-        removed, edited, rerouted = removed or [], edited or [], rerouted or {}
+        known = bool(changes)
+        c = changes or StepIdentityChanges()
+        removed, edited, rerouted, new_start = c.removed, c.edited, c.rerouted, c.new_start
+        resume_point_missing, approved_edited, skipped = c.resume_point_missing, c.approved_edited, c.skipped
         self.hash_known = hash_known
         self.resume_point = entry_node_id if entry_node_id is not None else after_node_id
         self.resume_point_missing = resume_point_missing
         self.new_start = new_start[0] if new_start is not None else None
         changed = list(dict.fromkeys([*removed, *edited, *([approved_edited] if approved_edited else []), *rerouted]))
-        known = bool(changed or resume_point_missing or new_start)
         # None = unknown (the trace records no per-step identity), never "nothing changed".
         self.changed_steps: list[str] | None = changed if known else None
-        leads = _stale_leads(removed, resume_point_missing, self.resume_point, edited, cache_edited, approved_edited)
+        leads = _stale_leads(removed, resume_point_missing, self.resume_point, edited, c.cache_edited, approved_edited)
         leads += [_rerouted_lead(node_id, now, before, skipped) for node_id, (now, before) in rerouted.items()]
         if new_start is not None:
             leads.append(_new_start_lead(*new_start, skipped))
@@ -1580,10 +1604,10 @@ class ResumeStaleWorkflowError(ResumeSourceError):
 
 
 def _stale_leads(
-    removed: list[str],
+    removed: tuple[str, ...],
     resume_point_missing: bool,
     resume_point: str | None,
-    edited: list[str],
+    edited: tuple[str, ...],
     cache_edited: frozenset[str],
     approved_edited: str | None,
 ) -> list[str]:
@@ -1657,7 +1681,7 @@ def _stale_suggestions(
     if skipped_names:
         force += f" ({_quoted(skipped_names)} {'is' if len(skipped_names) == 1 else 'are'} skipped)"
     elif upstream is None:
-        force += " (any inserted step is skipped)"
+        force += " (a step inserted among them is skipped)"
     if approved_edited is not None:
         force += f", and the edited '{approved_edited}' runs under the earlier approval"
     return [rerun, force + "."]

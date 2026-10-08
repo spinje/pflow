@@ -517,13 +517,17 @@ def test_batched_host_without_a_start_on_a_current_trace_is_proof_it_never_began
     """Presence twin of the test above: the same start-less host event on a trace that DOES carry
     ``step_identity`` is trusted (every host writes ``node.start`` since 2.9.0) — so the carve-out is
     keyed on the trace's era, not on the step type."""
-    exec_id, _ = _batched_host_run(home, tmp_path)
+    exec_id, ledger = _batched_host_run(home, tmp_path)
     for path in (home / ".pflow" / "debug").glob("workflow-trace-*.json"):
         lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
         path.write_text("".join(json.dumps(line) + "\n" for line in lines if not _is_host_start(line)), "utf-8")
     result = _invoke("resume", exec_id)
     assert "Resume needs confirmation" not in _out(result)
     assert "Resuming re-runs step 'host'" not in _out(result)
+    # Presence: the resume got PAST the confirmation and re-ran the host — item [0] fired again, item [1]
+    # failed its template again (not some unrelated refusal).
+    assert ledger.read_text(encoding="utf-8").splitlines() == ["fired a", "fired a"]
+    assert result.exit_code == 1
 
 
 # --- Resume of a resume: the start step is recorded, never derived from events ------------------
@@ -583,3 +587,33 @@ def test_resume_of_a_resume_with_a_failed_recovered_start_step_passes(home, tmp_
     _edit(wf, ("${recover.stdout.txt}", "${recover.stdout.md}"))
     _passes(attempt.group(1))
     assert out.read_text(encoding="utf-8") == "recovered"
+
+
+# --- Malformed input and forced-resume chains ------------------------------------------------------
+
+
+def test_a_malformed_prompt_cache_after_the_resume_point_reports_a_validation_error(home, wf):
+    """Identity is computed before validation: an unvalidated ``prompt_cache`` value must surface as the
+    validator's error, never a crash in the identity gate."""
+    exec_id = _fail(wf)
+    _edit(wf, (_TYPO, _FIX), ("- type: write-file\n", "- type: write-file\n- prompt_cache: 42\n"))
+    result = _invoke("resume", exec_id)
+    assert result.exit_code == 1
+    assert "42 is not of type 'array'" in _out(result)
+    assert "TypeError" not in _out(result) and "Workflow changed" not in _out(result)
+
+
+def test_a_forced_attempt_records_the_workflow_it_ran_with(home, tmp_path, wf):
+    """D5's accepted precision: after a ``--force``d resume past an edited restored step, the attempt's
+    trace records the CURRENT definitions — so resuming that attempt passes without another --force,
+    while its restored output still comes from the original run (pre-edit)."""
+    first = _fail(wf)
+    _edit(wf, ("printf '%s' \"$GREETING\"", "printf '%s!' \"$GREETING\""))
+    assert "'produce' was edited." in _refused(first)
+    forced = _invoke("resume", first, "--force")  # `save`'s typo fails again, past the gate
+    assert forced.exit_code == 1 and "Workflow changed" not in _out(forced)
+    attempt = _HINT_RE.search(forced.stderr)
+    assert attempt and attempt.group(1) != first
+    _edit(wf, (_TYPO, _FIX))
+    _passes(attempt.group(1))
+    assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "# hello"  # not "# hello!"

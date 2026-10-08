@@ -198,6 +198,14 @@ def test_step_identity_follows_the_cache_chunks_a_step_uses_and_only_those() -> 
     assert params_edit["steps"]["summarize"]["cache"] == base["steps"]["summarize"]["cache"]
 
 
+@pytest.mark.parametrize("malformed", ["42", "[{a: 1}]"])
+def test_step_identity_tolerates_an_unvalidated_prompt_cache_and_still_counts_it(malformed: str) -> None:
+    """Resume computes identity BEFORE validation, so a malformed ``prompt_cache`` must not crash it
+    (the validator reports it after); it still changes that step's hash."""
+    edited = _identity(_BASE.replace("- file_path: out.txt\n", f"- file_path: out.txt\n- prompt_cache: {malformed}\n"))
+    assert _changed_steps(_identity(_BASE), edited) == {"hash": {"save"}, "next": set()}
+
+
 def test_step_identity_reads_an_explicit_next_like_document_order() -> None:
     explicit = _identity(_BASE.replace("- type: shell\n", "- type: shell\n- next: summarize\n"))
     assert explicit["steps"]["produce"]["next"] == [["default", "summarize"]]

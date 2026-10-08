@@ -96,8 +96,13 @@ def step_identity(ir: dict[str, Any]) -> dict[str, Any]:
     for node in ir.get("nodes") or []:
         node_id = str(node["id"])
         definition = _strip_source_provenance({key: value for key, value in node.items() if key != "purpose"})
+        # Unvalidated IR (resume computes this before validation): a malformed `prompt_cache` still counts
+        # through the node's own hash; only a list of chunk names selects chunks.
+        selected = node.get("prompt_cache")
         used_chunks = _strip_source_provenance({
-            name: chunks[name] for name in node.get("prompt_cache") or [] if name in chunks
+            name: chunks[name]
+            for name in (selected if isinstance(selected, list) else [])
+            if isinstance(name, str) and name in chunks
         })
         step: dict[str, Any] = {
             "hash": canonical_ir_digest({"node": definition, "cache": used_chunks}),

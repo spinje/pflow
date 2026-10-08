@@ -35,6 +35,7 @@ from pflow.core.exceptions import (
     ResumeSideEffectConfirmationError,
     ResumeSourceMissingError,
     ResumeStaleWorkflowError,
+    StepIdentityChanges,
     WorkflowNotFoundError,
 )
 
@@ -84,7 +85,8 @@ def preflight_resume(
     # The identity gate applies to --dry-run too (preview mirrors what a real
     # resume would do), but the side-effect confirmation does NOT: a dry-run
     # never runs K, so nothing can fire.
-    _check_workflow_identity(resolved, source, force=force)
+    denying = gate_answer is not None and gate_answer.get("approve") is False
+    _check_workflow_identity(resolved, source, force=force, denying=denying)
     # A between-nodes source — a killed-between-nodes incomplete run (Decision 7)
     # or a paused escalation (Task 171) — has no entry yet: resolve the
     # unambiguous successor against the (identity-checked) workflow.
@@ -158,13 +160,16 @@ def _load_source_and_workflow(
     return load_resume_source(workflow_path=workflow_path_id(resolved), gate_answer=gate_answer), resolved
 
 
-def _check_workflow_identity(resolved: ResolvedWorkflow, source: ResumeSource, *, force: bool) -> None:
+def _check_workflow_identity(
+    resolved: ResolvedWorkflow, source: ResumeSource, *, force: bool, denying: bool = False
+) -> None:
     """Refuse a resume that an edit since the original run would make wrong, unless --force (§E step 3).
 
     Resume restores the saved outputs of the steps that ran before its resume point, so it refuses
     when one of them was edited (its definition minus prose), removed, or now leads somewhere else,
     when the workflow now starts at a different step, when the resume point itself is gone, or when a
-    paused approval step was edited after its approval (the answer covered what the human saw).
+    paused approval step being approved was edited since its preview (the answer covers what the human
+    saw; a denial runs nothing, so ``denying`` skips that one check).
     Everything at or after the resume point is free to change. A trace without per-step identity
     (recorded by an older pflow) falls back to the whole-workflow hash — any edit refuses.
     """
@@ -180,9 +185,9 @@ def _check_workflow_identity(resolved: ResolvedWorkflow, source: ResumeSource, *
 
         if workflow_content_hash(resolved.ir) == source.content_hash:
             return
-        changes: dict[str, Any] = {}
+        changes = None
     else:
-        changes = _identity_changes(resolved.ir, source, resumes_at)
+        changes = _identity_changes(resolved.ir, source, resumes_at, denying=denying)
         if not changes:
             return
     rerun = _side_effect_refusal(resolved, source, force=False) if resumes_at is not None else None
@@ -194,13 +199,15 @@ def _check_workflow_identity(resolved: ResolvedWorkflow, source: ResumeSource, *
         rerun_node_type=rerun.node_type if rerun is not None else None,
         execution_id=source.execution_id,
         trace_path=str(source.path),
-        **changes,
+        changes=changes,
     )
 
 
-def _identity_changes(ir: dict[str, Any], source: ResumeSource, resumes_at: str | None) -> dict[str, Any]:
-    """What changed among the steps the resume depends on, as ``ResumeStaleWorkflowError`` kwargs
-    (empty = nothing). Fail-closed: a checked step the recorded map lacks counts as edited."""
+def _identity_changes(
+    ir: dict[str, Any], source: ResumeSource, resumes_at: str | None, *, denying: bool = False
+) -> StepIdentityChanges | None:
+    """What changed among the steps the resume depends on (``None`` = nothing). Fail-closed: a
+    checked step the recorded map lacks counts as edited."""
     from pflow.core.workflow_id import step_identity
     from pflow.runtime.resume_source import restored_node_ids
 
@@ -210,27 +217,27 @@ def _identity_changes(ir: dict[str, Any], source: ResumeSource, resumes_at: str 
     resume_point = resumes_at or source.last_completed_node_id
     # Checked first, alone: a renamed resume point must not be blamed on its predecessor's `next`.
     if resume_point is not None and resume_point not in now:
-        return {"resume_point_missing": True}
+        return StepIdentityChanges(resume_point_missing=True)
     restored = [node_id for node_id in restored_node_ids(source) if node_id != resumes_at]
-    # A paused approval step is the resume point, yet checked: `--approve yes` is consent to the
-    # version the human saw. Only its definition — where it leads is downstream of the resume.
-    approval = source.paused_node_id if source.paused_node_id == source.entry_node_id else None
-    changes = _definition_changes(now, then, restored, approval)
+    # A paused approval step is the resume point, yet checked when approved: `--approve yes` is consent
+    # to the version the human saw. Only its definition — where it leads is downstream of the resume.
+    approval = source.paused_node_id if source.paused_node_id == source.entry_node_id and not denying else None
     rerouted = {node_id: edges for node_id in restored if (edges := _rerouted(now, then, node_id))}
-    if rerouted:
-        changes["rerouted"] = rerouted
-    if current["start"] != recorded.get("start"):
-        changes["new_start"] = (current["start"], recorded.get("start"))
+    new_start = (current["start"], recorded.get("start")) if current["start"] != recorded.get("start") else None
     # A new route or start step is SKIPPED when the resume neither restores it nor reaches it from
     # where it continues (a plain between-nodes source continues at its last step's current successors).
     continues_from = [resumes_at] if resumes_at is not None else _successors(now, source.last_completed_node_id)
     reached = {*restored, *_reachable(now, continues_from)}
     candidates = {target for now_edges, _ in rerouted.values() for _, target in now_edges}
-    if "new_start" in changes:
-        candidates.add(current["start"])
-    if changes and (skipped := candidates - reached):
-        changes["skipped"] = frozenset(skipped)
-    return changes
+    if new_start is not None:
+        candidates.add(new_start[0])
+    changes = dataclasses.replace(
+        _definition_changes(now, then, restored, approval),
+        rerouted=rerouted,
+        new_start=new_start,
+        skipped=frozenset(candidates - reached),
+    )
+    return changes or None
 
 
 def _successors(steps: dict[str, Any], node_id: str | None) -> list[str]:
@@ -252,23 +259,20 @@ def _reachable(steps: dict[str, Any], starts: list[str]) -> set[str]:
 
 def _definition_changes(
     now: dict[str, Any], then: dict[str, Any], restored: list[str], approval: str | None
-) -> dict[str, Any]:
-    """Restored steps removed or edited, and an edited paused approval step (kwargs, empty = none)."""
+) -> StepIdentityChanges:
+    """Restored steps removed or edited, and an edited paused approval step."""
 
     def edited(node_id: str) -> bool:
         step = then.get(node_id)
         return not isinstance(step, dict) or step.get("hash") != now[node_id]["hash"]
 
-    changes: dict[str, Any] = {}
-    if removed := [node_id for node_id in restored if node_id not in now]:
-        changes["removed"] = removed
-    if edits := [node_id for node_id in restored if node_id in now and edited(node_id)]:
-        changes["edited"] = edits
-        if chunk_edits := {node_id for node_id in edits if _chunk_content_changed(then.get(node_id), now[node_id])}:
-            changes["cache_edited"] = frozenset(chunk_edits)
-    if approval is not None and edited(approval):
-        changes["approved_edited"] = approval
-    return changes
+    edits = tuple(node_id for node_id in restored if node_id in now and edited(node_id))
+    return StepIdentityChanges(
+        removed=tuple(node_id for node_id in restored if node_id not in now),
+        edited=edits,
+        cache_edited=frozenset(n for n in edits if _chunk_content_changed(then.get(n), now[n])),
+        approved_edited=approval if approval is not None and edited(approval) else None,
+    )
 
 
 def _chunk_content_changed(recorded: Any, current: dict[str, Any]) -> bool:

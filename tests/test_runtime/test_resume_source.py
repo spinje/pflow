@@ -33,6 +33,7 @@ from pflow.core.exceptions import (
     ResumeStaleWorkflowError,
     ResumeStillRunningError,
     ResumeSupersededError,
+    StepIdentityChanges,
 )
 from pflow.runtime.resume_source import (
     ResumeSource,
@@ -1076,8 +1077,23 @@ def test_side_effect_confirmation_error_is_agent_first() -> None:
     assert diag.context.get("execution_id") == "e1"
 
 
-def _stale(**changes: Any) -> ResumeStaleWorkflowError:
-    return ResumeStaleWorkflowError(hash_known=True, **{"entry_node_id": "save", **changes})
+def _stale(
+    *,
+    entry_node_id: str | None = "save",
+    entry_iteration: int | None = None,
+    after_node_id: str | None = None,
+    rerun_node_type: str | None = None,
+    **changes: Any,
+) -> ResumeStaleWorkflowError:
+    """The error for the given ``StepIdentityChanges`` fields (none = the no-identity fallback)."""
+    return ResumeStaleWorkflowError(
+        hash_known=True,
+        entry_node_id=entry_node_id,
+        entry_iteration=entry_iteration,
+        after_node_id=after_node_id,
+        rerun_node_type=rerun_node_type,
+        changes=StepIdentityChanges(**changes) if changes else None,
+    )
 
 
 def _to(*targets: str) -> list[tuple[str, str]]:
@@ -1218,7 +1234,7 @@ def test_stale_workflow_error_fallback_texts_never_name_a_change() -> None:
     assert str(unverifiable).endswith("so an edit to them, if any, would not take effect.")
     assert unverifiable.suggestions[0] == "Re-run the workflow from the start."  # no definite "edit"
     for err in (older, unverifiable):
-        assert err.suggestions[1].endswith("(any inserted step is skipped).")
+        assert err.suggestions[1].endswith("(a step inserted among them is skipped).")
         assert err.to_diagnostics()[0].context["changed_steps"] is None  # unknown, never "nothing changed"
 
 

@@ -271,6 +271,18 @@ def test_editing_the_approved_step_refuses_and_force_proceeds(home, gate_wf):
     assert "gated action v2" in forced.stdout
 
 
+def test_denying_an_edited_approval_step_passes_and_ends_denied(home, gate_wf):
+    """Row 14's check is consent for ``--approve yes``; a denial runs nothing, so the edited gated step
+    does not refuse it (the twin above refuses the same edit when approving)."""
+    token = _pause(gate_wf)
+    gate_wf.write_text(gate_wf.read_text(encoding="utf-8").replace("gated action", "gated action v2"), "utf-8")
+    denied = _runner().invoke(cli, ["resume", token, "--approve", "no"])
+    combined = denied.stdout + denied.stderr
+    assert denied.exit_code == 3, combined
+    assert "Denied at gate 'gated'" in combined
+    assert "Workflow changed" not in combined and "gated action" not in denied.stdout
+
+
 def test_editing_a_step_before_the_paused_gate_refuses_naming_it(home, gate_wf):
     token = _pause(gate_wf)
     gate_wf.write_text(gate_wf.read_text(encoding="utf-8").replace('"g1-value"', '"g1-value-2"'), "utf-8")
