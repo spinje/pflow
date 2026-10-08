@@ -905,6 +905,91 @@ def test_finalize_io_fault_closes_stream_and_returns_none(tmp_path, monkeypatch)
     assert c.finalize() is None  # idempotent re-call
 
 
+def _code_workflow(tmp_path: Path, code: str) -> Path:
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        f"# WF\n\nOne code node.\n\n## Steps\n\n### make\n\nProduce a value.\n\n- type: code\n\n"
+        f"```python code\n{code}\n```\n",
+        encoding="utf-8",
+    )
+    return wf
+
+
+@pytest.mark.trace_files
+def test_a_lone_surrogate_streams_and_reads_back_unchanged(tmp_path, monkeypatch):
+    """A lone surrogate (what a truncated JSON escape upstream parses into) cannot be UTF-8-encoded, but
+    the trace still records it (#724): the successful run stays successful, and the reader returns the
+    exact value — both a short leaf and one long enough to be interned as a ``blob``."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    wf = _code_workflow(tmp_path, 'small = "cut \\ud800"\nresult: list = [small, small + "x" * 2000]')
+
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False))
+
+    assert result.success, [d.message for d in result.errors]
+    path = result.trace.trace_path
+    assert path is not None
+    assert [line["kind"] for line in _read_lines(path)] == ["meta", "node.start", "blob", "event", "run.complete"]
+    [event] = load_trace_file(path)["nodes"]
+    assert event["node_output"]["result"] == ["cut \ud800", "cut \ud800" + "x" * 2000]
+
+
+@pytest.mark.trace_files
+def test_a_non_json_key_still_writes_a_complete_trace(tmp_path, monkeypatch):
+    """A key ``json.dumps`` cannot write (a tuple) is written as its text, marked lossy, so the trace is
+    complete — a half-written file would read as an interrupted run that ``pflow resume`` offers (#724)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    wf = _code_workflow(tmp_path, 'result: dict = {(1, 2): "x"}')
+
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False))
+
+    assert result.success, [d.message for d in result.errors]
+    trace = load_trace_file(result.trace.trace_path)
+    assert trace["final_status"] == "success"
+    [event] = trace["nodes"]
+    assert event["node_output"]["result"] == {"(1, 2)": "x"}
+    assert event["lossy"] == ["result.(1, 2): non-string key (tuple)"]
+
+
+@pytest.mark.trace_files
+def test_a_batch_over_items_with_a_non_json_key_writes_a_complete_trace(tmp_path, monkeypatch):
+    """The per-item record carries the item itself: a tuple key there is written as its text too, or the
+    successful batch would leave a half-written trace (#724)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    wf = tmp_path / "wf.pflow.md"
+    wf.write_text(
+        "# WF\n\nBatch over tuple-keyed items.\n\n## Steps\n\n### items\n\nItems.\n\n- type: code\n\n"
+        '```python code\nresult: list = [{(1, 2): "a"}]\n```\n\n'
+        "### each\n\nOne per item.\n\n- type: code\n- inputs:\n    it: ${item}\n- batch:\n    items: ${items.result}\n\n"
+        '```python code\nit: dict\nresult: str = "ok"\n```\n',
+        encoding="utf-8",
+    )
+
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False))
+
+    assert result.success, [d.message for d in result.errors]
+    trace = load_trace_file(result.trace.trace_path)
+    assert trace["final_status"] == "success"
+    each = next(e for e in trace["nodes"] if e["node_id"] == "each")
+    assert [item["item"] for item in each["batch_items"]] == [{"(1, 2)": "a"}]
+
+
+@pytest.mark.trace_files
+def test_a_line_that_cannot_be_written_disables_streaming_like_a_disk_fault(tmp_path, monkeypatch):
+    """The writer's contract covers any fault writing a line, not only I/O (#724): an output value whose
+    text form raises (``json.dumps(default=str)``) disables streaming and leaves the successful run
+    successful, exactly as a disk-full write does."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    code = 'class Opaque:\n    def __str__(self):\n        raise RuntimeError("no text form")\n\nresult: dict = {"v": Opaque()}'
+    wf = _code_workflow(tmp_path, code)
+
+    result = WorkflowRunner().run(str(wf), {}, config=RunnerConfig(cache_enabled=False))
+
+    assert result.success, [d.message for d in result.errors]
+    assert [e["node_id"] for e in result.trace.events] == ["make"]  # in-memory trace retained
+    assert result.trace._stream_failed
+    assert result.trace.trace_path is None
+
+
 # --- Runner-owned finalization (C3): library callers get a complete file, not an incomplete one --------
 
 

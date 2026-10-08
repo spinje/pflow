@@ -286,7 +286,13 @@ class TestPrepFailureRoutesThroughErrorAction:
             {
                 "ir_version": "0.1.0",
                 "inputs": {"lyrics": {"type": "string", "required": True}},
-                "nodes": [{"id": "echo", "type": "shell", "params": {"command": "echo ${lyrics}"}}],
+                "nodes": [
+                    {
+                        "id": "echo",
+                        "type": "shell",
+                        "params": {"command": 'echo "$LYRICS"', "env": {"LYRICS": "${lyrics}"}},
+                    }
+                ],
                 "edges": [],
                 "outputs": {"out": {"source": "${echo.stdout}"}},
             },
@@ -360,7 +366,13 @@ class TestPrepFailureRoutesThroughErrorAction:
             {
                 "ir_version": "0.1.0",
                 "inputs": {"lyrics": {"type": "string", "required": True}},
-                "nodes": [{"id": "echo", "type": "shell", "params": {"command": "echo ${lyrics}"}}],
+                "nodes": [
+                    {
+                        "id": "echo",
+                        "type": "shell",
+                        "params": {"command": 'echo "$LYRICS"', "env": {"LYRICS": "${lyrics}"}},
+                    }
+                ],
                 "edges": [],
                 "outputs": {"out": {"source": "${echo.stdout}"}},
             },
@@ -419,7 +431,13 @@ class TestPrepFailureRoutesThroughErrorAction:
             {
                 "ir_version": "0.1.0",
                 "inputs": {"lyrics": {"type": "string", "required": True}},
-                "nodes": [{"id": "echo", "type": "shell", "params": {"command": "echo ${lyrics}"}}],
+                "nodes": [
+                    {
+                        "id": "echo",
+                        "type": "shell",
+                        "params": {"command": 'echo "$LYRICS"', "env": {"LYRICS": "${lyrics}"}},
+                    }
+                ],
                 "edges": [],
                 "outputs": {"out": {"source": "${echo.stdout}"}},
             },

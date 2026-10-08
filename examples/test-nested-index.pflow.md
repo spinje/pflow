@@ -21,6 +21,10 @@ echo '[{"name": "alice", "score": 85}, {"name": "bob", "score": 92}, {"name": "c
 Process each user and display their name, index, and score.
 
 - type: shell
+- env:
+    NAME: ${user.name}
+    INDEX: ${__index__}
+    SCORE: ${user.score}
 
 ```yaml batch
 items: ${generate-data.stdout}
@@ -28,7 +32,7 @@ as: user
 ```
 
 ```shell command
-echo "Processing user ${user.name} (index ${__index__}) with score ${user.score}"
+echo "Processing user $NAME (index $INDEX) with score $SCORE"
 ```
 
 ### correlate-batch
@@ -36,6 +40,10 @@ echo "Processing user ${user.name} (index ${__index__}) with score ${user.score}
 Correlate batch results with labels using index-based access to prior results.
 
 - type: shell
+- env:
+    LABEL: ${item.label}
+    PREV: ${process-batch.results[${__index__}].stdout}
+    EXTRA: ${item.extra}
 
 ```yaml batch
 items:
@@ -48,5 +56,5 @@ items:
 ```
 
 ```shell command
-echo "${item.label}: ${process-batch.results[${__index__}].stdout} (${item.extra})"
+echo "$LABEL: $PREV ($EXTRA)"
 ```

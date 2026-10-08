@@ -20,6 +20,7 @@ class TemplateConfig:
     expected_types: dict[str, str]  # param_key -> declared type (from registry interface)
     resolution_mode: str  # "strict" or "permissive"
     optional_input_keys: set[str] = field(default_factory=set)  # For branch convergence
+    node_type: str = ""  # The IR type string (``shell``); keys per-param rules such as ``parses_leaves``
 
 
 @dataclass

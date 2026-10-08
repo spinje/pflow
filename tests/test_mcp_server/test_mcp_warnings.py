@@ -36,7 +36,10 @@ NESTED_ACCESS_IR = {
         {
             "id": "process",
             "type": "shell",
-            "params": {"command": "echo ${fetch.stdout.nested_field}"},
+            "params": {
+                "command": 'echo "$FETCH_STDOUT_NESTED_FIELD"',
+                "env": {"FETCH_STDOUT_NESTED_FIELD": "${fetch.stdout.nested_field}"},
+            },
             "purpose": "Access nested field on str output to trigger warning",
         },
     ],

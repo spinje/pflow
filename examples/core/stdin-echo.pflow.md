@@ -21,9 +21,11 @@ The piped input data to echo back.
 Echo the received stdin data with a prefix.
 
 - type: shell
+- env:
+    DATA: ${data}
 
 ```shell command
-echo "Received: ${data}"
+echo "Received: $DATA"
 ```
 
 ## Outputs

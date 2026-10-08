@@ -195,7 +195,10 @@ class TestPerNodeCacheOptOut:
                     "id": "process",
                     "type": "shell",
                     "cache": True,
-                    "params": {"command": "echo ${get-branch.stdout}"},
+                    "params": {
+                        "command": 'echo "$GET_BRANCH_STDOUT"',
+                        "env": {"GET_BRANCH_STDOUT": "${get-branch.stdout}"},
+                    },
                     "purpose": "Processes branch name, normal caching",
                 },
             ],

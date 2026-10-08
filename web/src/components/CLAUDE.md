@@ -61,8 +61,9 @@ edge routing, or focus policy.
   does not inherit selected-edge elevation.
 - `GateCallout` option clicks select without submitting. Submitting an answer can consume
   the gate token, so preserve the separate Answer action as a deliberate confirmation step.
-- Resume refusal UI consumes machine-readable fields, not diagnostic text. Send `force: true`
-  only after explicit acknowledgement through the shared resume-answer state machine.
+- Resume refusal UI switches on the machine-readable `refusal` field, never by parsing diagnostic
+  text; the acknowledgement panel shows the server's diagnostics verbatim, never its own wording.
+  Send `force: true` only after explicit acknowledgement through the shared resume-answer state machine.
 
 ## Authored text and source
 

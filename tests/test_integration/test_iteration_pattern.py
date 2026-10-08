@@ -74,14 +74,14 @@ cat {queue_file}
 Take the first item, append it to the log, write the remainder back.
 
 - type: shell
-- inputs:
-    raw: ${{read-queue.stdout}}
-    iteration: ${{iteration}}
+- env:
+    RAW: ${{read-queue.stdout}}
+    ITERATION: ${{iteration}}
 
 ```shell command
-: "iteration ${{iteration}}"
-printf '%s\\n' "${{raw}}" | sed '/^$/d' | head -n 1 >> {log_file}
-printf '%s\\n' "${{raw}}" | sed '/^$/d' | tail -n +2 > {queue_file}
+: "iteration $ITERATION"
+printf '%s\\n' "$RAW" | sed '/^$/d' | head -n 1 >> {log_file}
+printf '%s\\n' "$RAW" | sed '/^$/d' | tail -n +2 > {queue_file}
 ```
 """,
         encoding="utf-8",

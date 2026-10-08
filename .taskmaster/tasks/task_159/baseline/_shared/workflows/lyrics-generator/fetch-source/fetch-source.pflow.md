@@ -63,11 +63,13 @@ If no subtitles exist, exits with error → triggers `fetch-youtube-mcp` via `on
 - type: shell
 - on-error: fetch-youtube-mcp
 - next: end
+- env:
+    SOURCE: ${source}
 
 ```shell command
 TMP=$(mktemp -d)
-yt-dlp --write-sub --write-auto-sub --sub-lang en --skip-download --sub-format vtt -o "$TMP/yt" "${source}" >/dev/null 2>&1
-TITLE=$(yt-dlp --get-title "${source}" 2>/dev/null)
+yt-dlp --write-sub --write-auto-sub --sub-lang en --skip-download --sub-format vtt -o "$TMP/yt" "$SOURCE" >/dev/null 2>&1
+TITLE=$(yt-dlp --get-title "$SOURCE" 2>/dev/null)
 if [ -f "$TMP/yt.en.vtt" ]; then
   echo "# $TITLE"
   echo ""
@@ -99,9 +101,11 @@ Fetches any web URL as clean markdown via [Jina Reader](https://r.jina.ai). Retu
 
 - type: shell
 - next: end
+- env:
+    SOURCE: ${source}
 
 ```shell command
-curl -sL "https://r.jina.ai/${source}"
+curl -sL "https://r.jina.ai/$SOURCE"
 ```
 
 ### read-file
@@ -110,9 +114,11 @@ Read content directly from a local file path.
 
 - type: shell
 - next: end
+- env:
+    SOURCE: ${source}
 
 ```shell command
-cat "${source}"
+cat "$SOURCE"
 ```
 
 ### pass-text
@@ -121,9 +127,11 @@ Pass raw text through unchanged. This is the catch-all — anything that isn't a
 
 - type: shell
 - next: end
+- env:
+    SOURCE: ${source}
 
 ```shell command
-printf '%s' "${source}"
+printf '%s' "$SOURCE"
 ```
 
 ## Outputs

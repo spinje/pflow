@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { consumedReadPaths } from "./scan";
 import { buildFlow } from "./flow";
 import type { NodeRow, OutputRow } from "./rows";
+import { paramHandle } from "./handles";
 import { DETAILED, edge, group, node } from "./testFixtures";
 import type { RFGraph } from "../types";
 
@@ -225,5 +226,50 @@ describe("consumedReadPaths — runtime parity (mirrors scope.py)", () => {
     ["an Issue runs through its first brace", "${gen.result[${idx.result ?? 0}]}", {}],
   ])("%s: %s", (_label, value, expected) => {
     expect(readsOf(value)).toEqual(expected);
+  });
+});
+
+describe("code bodies read nothing — parity with Python's param_mode (template_surfaces._BODIES)", () => {
+  // A shell `command` / code `code` is plain code: its `${a.out}` is the shell's or
+  // Python's own text (Task 118). The same Reference in a Template param — `env`,
+  // `inputs`, or a same-named param on another node type — still reads `a.out`.
+  const producer = node("a", { output_shape: { field: "out", data_type: "str", keys: [] } });
+  const readsOf = (kind: string, name: string, value: unknown): Record<string, string[]> => {
+    const g: RFGraph = {
+      nodes: [producer, node("b", { kind, params: [{ name, value, is_dynamic: true, source: null }] })],
+      edges: [],
+      groups: [],
+    };
+    return Object.fromEntries(consumedReadPaths(g));
+  };
+
+  it.each<[string, string, unknown, Record<string, string[]>]>([
+    ["shell", "command", 'echo "${a.out}"', {}],
+    ["code", "code", 'print(f"${a.out}")', {}],
+    ["shell", "env", { DATA: "${a.out}" }, { a: ["out"] }],
+    ["shell", "stdin", "${a.out}", { a: ["out"] }],
+    ["code", "inputs", { x: "${a.out}" }, { a: ["out"] }],
+    ["mcp-tool-run", "command", "${a.out}", { a: ["out"] }], // keyed on (kind, name), not the name
+  ])("%s.%s", (kind, name, value, expected) => {
+    expect(readsOf(kind, name, value)).toEqual(expected);
+  });
+
+  it("an env Reference's edge lands on the env row, labelled by its key", () => {
+    const g: RFGraph = {
+      nodes: [
+        producer,
+        node("b", {
+          params: [
+            { name: "command", value: 'echo "$DATA" ${HOME}', is_dynamic: false, source: null },
+            { name: "env", value: { DATA: "${a.out}" }, is_dynamic: true, source: null },
+          ],
+        }),
+      ],
+      // Python's edge for an env leaf carries the env KEY as input_name (build.py:_params_strings).
+      edges: [edge("e0", "a", "b", "data_flow", { output_field: "out", input_name: "DATA" })],
+      groups: [],
+    };
+    const { edges } = buildFlow(g, DETAILED);
+    expect(edges.find((e) => e.id === "e0")?.targetHandle).toBe(paramHandle("env"));
   });
 });

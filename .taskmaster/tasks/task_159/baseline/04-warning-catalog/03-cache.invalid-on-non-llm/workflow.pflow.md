@@ -25,9 +25,11 @@ Echo via shell.
 
 - type: shell
 - prompt_cache: [article]
+- env:
+    ARTICLE: ${article}
 
 ```shell command
-echo "${article}"
+echo "$ARTICLE"
 ```
 
 ## Outputs

@@ -4,7 +4,8 @@
 // `.src-line` row, so the line count MUST equal `text.split("\n").length`
 // (asserted below in dev). Two tiers:
 //   decorateLinesSync(text)            — instant: headings/keys/fence-info
-//     colored, fence + PROSE content plain (+ teal refs). No shiki, paints now.
+//     colored, fence + PROSE content plain (+ teal refs outside code grammars).
+//     No shiki, paints now.
 //   buildDecoratedLines(text, hl)      — full: the above, with fence AND prose
 //     content highlighted in its grammar (prompt→markdown, command→bash, prose
 //     →markdown). Prose is colored markdown SOURCE + teal refs (like prompts).
@@ -53,6 +54,18 @@ function refSegments(text: string): ElementContent[] {
   }
   if (last < text.length) out.push(txt(text.slice(last)));
   return out;
+}
+
+/** Whether a block's `${…}` get the teal ref span: markdown (prompts, prose) and
+ *  ungrammared fences (`text content`) yes; any other grammar's are left to that
+ *  grammar, as `CodeBlock` does — a shell/python body's `${HOME}` is not a pflow
+ *  ref at all (`utils/format.ts:isCodeBody`). The instant tier, the full tier and
+ *  its fallback all ask this, so no tier teals what another would not. */
+const tealsRefs = (grammar: string | null): boolean => grammar === null || grammar === "markdown";
+
+/** A block's content lines unhighlighted — `${…}` tealed only where `tealsRefs`. */
+function plainLines(content: string[], grammar: string | null): ElementContent[][] {
+  return content.map((line) => (tealsRefs(grammar) ? refSegments(line) : line ? [txt(line)] : []));
 }
 
 /** Wrap every `${ref}` in shiki's hast output (text nodes) with the teal span,
@@ -295,18 +308,18 @@ function assertLineCount(text: string, lines: ElementContent[][]): void {
 }
 
 /** Instant tier: headings/keys/fence-info colored, fence + prose content plain
- *  (+ teal refs) — no shiki, so it paints without waiting. */
+ *  (+ teal refs where `tealsRefs`) — no shiki, so it paints without waiting. */
 export function decorateLinesSync(text: string): ElementContent[][] {
   const { specs, fences, proseBlocks } = scan(text);
-  const fenceLines = fences.map((f) => f.content.map(refSegments));
-  const proseLines = proseBlocks.map((b) => b.content.map(refSegments));
+  const fenceLines = fences.map((f) => plainLines(f.content, f.grammar));
+  const proseLines = proseBlocks.map((b) => plainLines(b.content, "markdown"));
   const lines = assemble(specs, fenceLines, proseLines);
   assertLineCount(text, lines);
   return lines;
 }
 
 /** Highlight a block's content in `grammar` (markdown blocks get refs tealed),
- *  fail-closed to plain content + teal refs on null / a line-count mismatch —
+ *  fail-closed to `plainLines` on null / a line-count mismatch —
  *  never throws, never misaligns the per-line count. */
 async function highlightBlock(
   content: string[],
@@ -317,11 +330,11 @@ async function highlightBlock(
     const root = await highlight(content.join("\n"), grammar);
     const shiki = root ? shikiContentLines(root) : null;
     if (shiki && shiki.length === content.length) {
-      if (grammar === "markdown") shiki.forEach(markAllRefs);
+      if (tealsRefs(grammar)) shiki.forEach(markAllRefs);
       return shiki;
     }
   }
-  return content.map(refSegments);
+  return plainLines(content, grammar);
 }
 
 /** Full tier: fence content highlighted in its inferred grammar AND description

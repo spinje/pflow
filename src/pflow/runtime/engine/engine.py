@@ -135,8 +135,8 @@ def _diagnose_carry_ref(template: str, node_id: str, latest: Any) -> tuple[str, 
     output along the WHOLE path and, if a segment is absent, return
     ``(missing_path, available_keys_at_that_level, resolved_prefix)``; else ``None``.
 
-    Unlike a first-segment-only check, this diagnoses NESTED refs — a ``code`` body's
-    ``${tick.result.next}`` (``result`` exists but has no ``next``) is reported at the
+    Unlike a first-segment-only check, this diagnoses NESTED refs — a carry of a ``code``
+    step's ``${tick.result.next}`` (``result`` exists but has no ``next``) is reported at the
     ``result.next`` level with ``result``'s keys as the available outputs, so the most
     common inline carry shape gets the carry-aware message instead of falling through
     to the generic ``inputs:`` template error.

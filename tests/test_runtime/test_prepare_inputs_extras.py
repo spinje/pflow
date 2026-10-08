@@ -197,7 +197,7 @@ class TestValidateOnlyGap:
             "ir_version": "0.1.0",
             "inputs": {"a": {"type": "string", "description": "Required input", "required": True}},
             "nodes": [
-                {"id": "echo", "type": "shell", "params": {"command": "echo ${a}"}},
+                {"id": "echo", "type": "shell", "params": {"command": 'echo "$A"', "env": {"A": "${a}"}}},
             ],
             "edges": [],
         }
@@ -250,9 +250,11 @@ The lyrics input.
 Echo the lyrics.
 
 - type: shell
+- env:
+    LYRICS: ${lyrics}
 
 ```shell command
-echo "lyrics=${lyrics}"
+echo "lyrics=$LYRICS"
 ```
 
 ## Outputs

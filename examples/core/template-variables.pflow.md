@@ -94,9 +94,12 @@ Call an external API endpoint with authentication. The endpoint URL
 and auth token are resolved from workflow inputs.
 
 - type: shell
+- env:
+    API_TOKEN: ${api_token}
+    API_ENDPOINT: ${api_endpoint}
 
 ```shell command
-curl -s -H "Authorization: Bearer ${api_token}" "${api_endpoint}"
+curl -s -H "Authorization: Bearer $API_TOKEN" "$API_ENDPOINT"
 ```
 
 ### copier
@@ -123,7 +126,10 @@ Send a notification email when processing completes. Template variables
 work in any string value, including email subjects.
 
 - type: shell
+- env:
+    INPUT_FILE: ${input_file}
+    RECIPIENT_EMAIL: ${recipient_email}
 
 ```shell command
-echo "Notification: Process completed for ${input_file} — sent to ${recipient_email}"
+echo "Notification: Process completed for $INPUT_FILE — sent to $RECIPIENT_EMAIL"
 ```

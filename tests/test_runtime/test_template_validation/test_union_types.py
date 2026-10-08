@@ -52,7 +52,7 @@ class TestUnionTypeValidation:
                 {
                     "id": "process",
                     "type": "shell",
-                    "params": {"command": "echo ${http-call.response.data}"},
+                    "params": {"command": "cat", "stdin": "echo ${http-call.response.data}"},
                 },
             ],
             "enable_namespacing": True,
@@ -94,7 +94,7 @@ class TestUnionTypeValidation:
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo ${node1.output.field}"},
+                    "params": {"command": "cat", "stdin": "echo ${node1.output.field}"},
                 },
             ],
             "enable_namespacing": True,
@@ -133,7 +133,7 @@ class TestUnionTypeValidation:
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo ${node1.data.field}"},
+                    "params": {"command": "cat", "stdin": "echo ${node1.data.field}"},
                 },
             ],
             "enable_namespacing": True,
@@ -169,7 +169,7 @@ class TestUnionTypeValidation:
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo ${node1.result.nested}"},
+                    "params": {"command": "cat", "stdin": "echo ${node1.result.nested}"},
                 },
             ],
             "enable_namespacing": True,
@@ -205,7 +205,7 @@ class TestUnionTypeValidation:
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo ${node1.data.field}"},
+                    "params": {"command": "cat", "stdin": "echo ${node1.data.field}"},
                 },
             ],
             "enable_namespacing": True,
@@ -242,7 +242,7 @@ class TestUnionTypeValidation:
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo ${node1.data.field}"},
+                    "params": {"command": "cat", "stdin": "echo ${node1.data.field}"},
                 },
             ],
             "enable_namespacing": True,
@@ -279,7 +279,7 @@ class TestUnionTypeValidation:
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo ${node1.data.field}"},
+                    "params": {"command": "cat", "stdin": "echo ${node1.data.field}"},
                 },
             ],
             "enable_namespacing": True,
@@ -315,7 +315,7 @@ class TestUnionTypeValidation:
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo ${node1.data.field}"},
+                    "params": {"command": "cat", "stdin": "echo ${node1.data.field}"},
                 },
             ],
             "enable_namespacing": True,
@@ -351,7 +351,7 @@ class TestUnionTypeValidation:
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo ${node1.data.field}"},
+                    "params": {"command": "cat", "stdin": "echo ${node1.data.field}"},
                 },
             ],
             "enable_namespacing": True,
@@ -388,7 +388,7 @@ class TestUnionTypeValidation:
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo ${node1.data.field}"},
+                    "params": {"command": "cat", "stdin": "echo ${node1.data.field}"},
                 },
             ],
             "enable_namespacing": True,
@@ -471,7 +471,7 @@ class TestUnionTypeEdgeCases:
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo ${node1.data.field}"},
+                    "params": {"command": "cat", "stdin": "echo ${node1.data.field}"},
                 },
             ],
             "enable_namespacing": True,

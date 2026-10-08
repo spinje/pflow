@@ -188,7 +188,8 @@ class TestWorkflowExecutor:
             "Use the input.\n\n"
             "- type: shell\n"
             "- cache: false\n"
-            "- command: echo ${required_value}\n",
+            "- env: { REQUIRED_VALUE: ${required_value} }\n"
+            '- command: echo "$REQUIRED_VALUE"\n',
             encoding="utf-8",
         )
 
@@ -493,7 +494,13 @@ class TestTemplateRefSubWorkflowValidation:
         child_path = tmp_path / "child.pflow.md"
         write_workflow_file(
             {
-                "nodes": [{"id": "echo", "type": "shell", "params": {"command": "echo ${message}"}}],
+                "nodes": [
+                    {
+                        "id": "echo",
+                        "type": "shell",
+                        "params": {"command": 'echo "$MESSAGE"', "env": {"MESSAGE": "${message}"}},
+                    }
+                ],
                 "inputs": {"message": {"type": "str", "required": True}},
                 "outputs": {"out": {"source": "${echo.stdout}"}},
             },

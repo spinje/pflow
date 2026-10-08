@@ -1,0 +1,5 @@
+# P0 hand capture (Task 118), worktree head 0177dd4c, macOS. Run from a fresh empty cwd with a fresh HOME:
+HOME=$(mktemp -d) uv run --project <worktree> pflow --output-format json <worktree>/examples/nested/document-processor.pflow.md "title=Hello World" "body=it's a body"
+# exit 0. Files: document-processor.output.json (stdout), document-processor.stderr.txt, document-processor.trace.jsonl (the run's trace).
+# NOTE: the workflow result is process_body's ("IT'S A BODY") — the templated shell step `combine` never reaches it,
+# so compare `combine`'s node_output.stdout from the trace: "Title: HELLO WORLD\nBody: IT'S A BODY".

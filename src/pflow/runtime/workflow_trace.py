@@ -1003,9 +1003,10 @@ class WorkflowTraceCollector:
         ``intern=False`` writes the line verbatim — used for the ``meta`` line so its marker can never be
         preceded by a ``blob`` declaration (which would make the whole trace unreadable).
 
-        The streamed file is a best-effort tail of the in-memory trace: an I/O fault here disables
-        streaming (``_disable_streaming``) instead of propagating, so a disk-full / read-only
-        ``~/.pflow/debug`` can never turn a successful node into a failure or mask a real node error."""
+        The streamed file is a best-effort tail of the in-memory trace: ANY fault writing a line — a
+        disk-full / read-only ``~/.pflow/debug``, or a value JSON cannot encode (a tuple key) — disables
+        streaming (``_disable_streaming``) instead of propagating, so the trace can never turn a successful
+        node into a failure or mask a real node error."""
         if self._stream is None:
             return
         try:
@@ -1013,7 +1014,7 @@ class WorkflowTraceCollector:
             self._stream.write(json.dumps(payload, default=str))
             self._stream.write("\n")
             self._stream.flush()
-        except OSError as exc:
+        except Exception as exc:
             self._disable_streaming(exc)
 
     def _emit_blob_line(self, digest: str, value: str) -> None:
@@ -1096,13 +1097,13 @@ class WorkflowTraceCollector:
             agg.update(self.pause_request)
         return agg
 
-    def _disable_streaming(self, exc: OSError) -> None:
-        """Give up on disk streaming after the first I/O fault — log once, drop the handle, and never
+    def _disable_streaming(self, exc: Exception) -> None:
+        """Give up on disk streaming after the first write fault — log once, drop the handle, and never
         reopen (``_stream_failed`` blocks ``_open_stream``). The in-memory trace stays complete (it's the
         source of truth); the file just stops growing. ``_stream_path`` is cleared so ``finalize`` returns
         no path to a partial file. This keeps trace persistence a pure side-channel that can never alter
         execution outcome."""
-        logger.warning("trace streaming disabled after I/O error (in-memory trace retained): %s", exc)
+        logger.warning("trace streaming disabled after a write error (in-memory trace retained): %s", exc)
         self._stream_failed = True
         self._close_stream()
         self._stream_path = None
@@ -1343,7 +1344,7 @@ class WorkflowTraceCollector:
 
         ``lossy`` (Task 179, a node output only): collects every place the trace
         cannot round-trip what the AUTHOR's code produced, as ``"<path>: <why>"`` —
-        a non-string key (``json`` turns it into a string), a dropped key below the
+        a non-string key (it reads back as a string), a dropped key below the
         top level, or at the top level unless the engine owns it (``_ENGINE_OUTPUT_KEYS``), bytes (the
         placeholder), and a value that would fall to ``json.dumps(default=str)``
         (set, date, Decimal, Path, custom objects). Tuple→list is not lossy, nor are
@@ -1375,7 +1376,9 @@ class WorkflowTraceCollector:
                     if lossy is not None and (path or key not in _ENGINE_OUTPUT_KEYS):
                         lossy.append(f"{child}: key dropped by the trace")
                     continue
-                result[key] = self._sanitize_for_json(value, lossy, child)
+                # json.dumps writes str/int/float/bool/None keys itself and raises on any other (a tuple).
+                json_key = key if key is None or isinstance(key, (str, int, float)) else str(key)
+                result[json_key] = self._sanitize_for_json(value, lossy, child)
             return result
         elif isinstance(data, bytes):
             if lossy is not None:
@@ -1405,8 +1408,9 @@ class WorkflowTraceCollector:
                 clean_item["node_output"] = self._sanitize_for_json(clean_item["node_output"], found)
                 if found:
                     clean_item["lossy"] = found
-            if "template_resolutions" in clean_item:
-                clean_item["template_resolutions"] = self._sanitize_for_json(clean_item["template_resolutions"])
+            for key in ("item", "template_resolutions"):
+                if key in clean_item:
+                    clean_item[key] = self._sanitize_for_json(clean_item[key])
             # Recurse into nested events (sub-workflow batch items)
             if "events" in clean_item:
                 # Child events from sub-workflow collectors are already sanitized,

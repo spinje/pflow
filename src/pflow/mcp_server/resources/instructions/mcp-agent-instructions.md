@@ -252,7 +252,7 @@ Ask yourself: "Would a user ever want to run step X without step Y?"
   - System commands: mkdir, chmod, which
   - Any program where the exit code or side effect is the point
   - Use macOS-compatible (BSD) commands, not GNU-specific extensions
-  - Use `$VAR` not `${VAR}` for shell variables (braces conflict with pflow template syntax)
+  - The command is plain sh — pflow never fills in `${…}` there. Bind values in `- env:` under UPPER_SNAKE names and read them as `"$NAME"` (always double-quoted); large values go through `- stdin:`
   - **Warning sign**: Long chains of `sed`, `awk`, `jq`, `tr`, `grep` piped together → use `code` node instead (more readable, portable, debuggable)
 - **Unstructured data / interpretation** → `llm` node (costs per workflow execution)
 - **JSON REST APIs** → `http` node
@@ -408,9 +408,11 @@ Fetch data from an MCP service. Need testing — accessing specific nested field
 Check data status. Specific path `${fetch-data.result.data.status}` = test required.
 
 - type: shell
+- env:
+    STATUS: ${fetch-data.result.data.status}
 
 ```shell command
-echo 'Status: ${fetch-data.result.data.status}'
+echo "Status: $STATUS"
 ```
 `````
 
@@ -719,18 +721,20 @@ Fetch data from protected API with authentication.
 
 ### list-recent-files
 
-List recently modified files. Note: `$var` = shell variable, `${var}` = pflow template.
+List files modified since the marker, at most `DEPTH` directories deep.
 
 - type: shell
+- env:
+    DEPTH: ${depth}
 
 ```shell command
-find . -maxdepth ${depth} -type f -newer /tmp/marker 2>/dev/null | head -20
+find . -maxdepth "$DEPTH" -type f -newer /tmp/marker 2>/dev/null | head -20
 ```
 
 ### filter-and-reshape
 
 Filter active items and reshape for downstream processing.
-Templates go in `inputs`, Python code in the code block.
+Values arrive through `inputs`; the code block is plain Python.
 All inputs and result MUST have type annotations.
 
 - type: code
@@ -824,7 +828,7 @@ metadata:
 `````
 
 ⚠️ **Code node rules:**
-- Templates go in `- inputs:` param, NEVER in the `python code` block (code is literal Python, not a template)
+- The `python code` block is plain Python — pflow never fills in `${…}` there. Values arrive only through `- inputs:`, each key bound as a Python variable. A `${…}` in a string that names a pflow value this step could read (`"${name}".upper()`) fails validation; `f"${total}"` is a dollar sign followed by Python's own interpolation
 - All inputs and `result` MUST have type annotations: `data: list`, `result: dict = ...`
 - Upstream JSON is auto-parsed before your code runs — if source is JSON, declare `dict`/`list` not `str`
 - Type annotations follow modern Python (PEP 585 + PEP 604): lowercase generics (`list[T]`, `dict[K, V]`), pipe unions (`A | B`). `Any`, `Optional`, and the `typing` module are auto-injected; other typing names require `from typing import X`. Do NOT use `List[T]` / `Union[A, B]` — pflow rejects them with a canonical-replacement hint.
@@ -1165,7 +1169,7 @@ Common mistake: Using LLM for extraction creates unnecessary nodes. Templates ha
 
 #### All Template Patterns
 
-Templates work in any param value — inline `- key:` or code blocks:
+Templates work in any param value — inline `- key:` or code blocks — except a shell `command` and a `python code` block: those are plain code, and values reach them through `env:` (shell) or `inputs:` (code):
 
 ```markdown
 ### example-node
@@ -1222,15 +1226,19 @@ filters:
 
 **Guideline**: Inline `- key: value` for flat params and simple nesting. `yaml param_name` code block for deep nesting or batch config. Both produce identical results.
 
-**In shell commands** — pflow variables resolve before the shell runs. Use a code block for multi-line or complex commands:
+**In shell commands** — the command is plain sh: values resolve in `env:` and the command reads them as `"$NAME"`. A `${…}` in the command that names a pflow value fails validation with the `env:` line to add. Use a code block for multi-line or complex commands:
 
 ````markdown
 ### run-pipeline
 
 - type: shell
+- env:
+    OUTPUT_DIR: ${output_dir}
+    API_URL: ${api_url}
+    LIMIT: ${limit}
 
 ```shell command
-mkdir -p ${output_dir}/images && curl -s ${api_url}/items?limit=${limit}
+mkdir -p "$OUTPUT_DIR/images" && curl -s "$API_URL/items?limit=$LIMIT"
 ```
 ````
 
@@ -1679,13 +1687,15 @@ Analyze each file.
 Fetch each URL in parallel.
 
 - type: shell
+- env:
+    URL: ${item}
 - batch:
     items: ${urls}
     parallel: true
     max_concurrent: 40
 
 ```shell command
-curl -s '${item}'
+curl -s "$URL"
 ```
 ````
 
@@ -1828,9 +1838,11 @@ Handle small batches.
 
 - type: shell
 - next: end
+- env:
+    COUNT: ${classify.result}
 
 ```shell command
-echo "Small batch: ${classify.result} items"
+echo "Small batch: $COUNT items"
 ```
 
 ### bulk-process
@@ -1839,9 +1851,11 @@ Handle large batches.
 
 - type: shell
 - next: end
+- env:
+    COUNT: ${classify.result}
 
 ```shell command
-echo "Large batch: ${classify.result} items"
+echo "Large batch: $COUNT items"
 ```
 ````
 
@@ -1867,9 +1881,11 @@ Handle category A.
 
 - type: shell
 - next: end
+- env:
+    CATEGORY: ${route.result}
 
 ```shell command
-echo "A: ${route.result}"
+echo "A: $CATEGORY"
 ```
 
 ### path-b
@@ -1878,9 +1894,11 @@ Handle category B.
 
 - type: shell
 - next: end
+- env:
+    CATEGORY: ${route.result}
 
 ```shell command
-echo "B: ${route.result}"
+echo "B: $CATEGORY"
 ```
 ````
 
@@ -1926,8 +1944,8 @@ echo "B: ${route.result}"
 **Phases**: Core path → External services → Processing → Output
 
 #### 4. Putting templates in code blocks instead of inputs (code nodes)
-**Impact**: Template syntax in Python code causes parse errors
-**Fix**: Templates go in `- inputs:` parameter, code block is literal Python
+**Impact**: Validation fails — a `${…}` naming a pflow value inside the code is never filled in
+**Fix**: Bind the value in `- inputs:`; the code block is plain Python and reads it as a variable
 ```markdown
 ### transform
 
@@ -1935,7 +1953,7 @@ echo "B: ${route.result}"
 - inputs:
     data: ${fetch.result}
 ```
-Never put `${...}` inside a `python code` block — it's literal Python, not a template.
+pflow never fills in `${...}` inside a `python code` block — values reach the code only through `inputs:`.
 
 #### 5. Over-specifying parameters
 **Impact**: Brittle workflows

@@ -76,6 +76,10 @@ into context before other params; static inputs also enter context. Shared
 storage is the runtime source of values. Batch nodes skip top-level template
 resolution so `${item}` resolves only in each item's context. Preserve source-line
 metadata through `split_params`; only cache hashing filters those keys.
+A dict/list param's string leaves are JSON-parsed unless `parses_leaves` says no
+(`shell.env` binds as text), keyed on `TemplateConfig.node_type`. A code body
+(`param_mode` → `"body"`) is static whatever it holds: `split_params` decides it
+before `has_templates`, so callers must pass `node_type`.
 
 Whether a param resolved is read from its `Resolution` channels, never by comparing
 resolved text with the template. `inputs` resolves per key, so Optional-input `None`

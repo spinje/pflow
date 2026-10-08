@@ -231,9 +231,16 @@ Save X/Twitter post to file for manual review before posting.
 Create execution summary with instructions for posting the X announcement.
 
 - type: shell
+- env:
+    PROJECT_NAME: ${project_name}
+    VERSION: ${version}
+    SLACK_CHANNEL: ${slack_channel}
+    DISCORD_CHANNEL_ID: ${discord_channel_id}
+    X_OUTPUT_FILE: ${x_output_file}
 
 ```shell command
-printf '## Release Announcements for ${project_name} v${version}\n\n✓ Posted to Slack: #${slack_channel}\n✓ Posted to Discord: channel ${discord_channel_id}\n✓ X post saved to: ${x_output_file}\n\nTo post to X, run:\npflow registry run mcp-twitter-x-TWITTER_CREATION_OF_A_POST text="$(cat ${x_output_file})"\n'
+printf '## Release Announcements for %s v%s\n\n✓ Posted to Slack: #%s\n✓ Posted to Discord: channel %s\n✓ X post saved to: %s\n\nTo post to X, run:\npflow registry run mcp-twitter-x-TWITTER_CREATION_OF_A_POST text="$(cat %s)"\n' \
+  "$PROJECT_NAME" "$VERSION" "$SLACK_CHANNEL" "$DISCORD_CHANNEL_ID" "$X_OUTPUT_FILE" "$X_OUTPUT_FILE"
 ```
 
 ## Outputs

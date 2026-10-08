@@ -562,8 +562,9 @@ def test_v6_subworkflow_invalid_on_non_llm_via_real_validator(tmp_path) -> None:
         "Non-LLM node with cache fields.\n\n"
         "- type: shell\n"
         "- prompt_cache: [topic]\n"
-        "- prewarm: true\n\n"
-        '```shell command\necho "${topic}"\n```\n',
+        "- prewarm: true\n"
+        "- env:\n    TOPIC: ${topic}\n\n"
+        '```shell command\necho "$TOPIC"\n```\n',
         encoding="utf-8",
     )
     parent_path = tmp_path / "parent.pflow.md"

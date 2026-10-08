@@ -838,14 +838,15 @@ def test_batch_alias_ref_in_plain_param_forms_no_edge() -> None:
             {
                 "id": "fan",
                 "type": "shell",
-                "params": {"command": "echo ${item.text}"},
+                "params": {"command": 'echo "$T"', "env": {"T": "${item.text}"}},
                 "batch": {"items": "${prep.rows}"},
             },
         ],
         "edges": [{"from": "prep", "to": "fan"}],
     })
 
-    assert not any(edge.kind == EdgeKind.DATA_FLOW and edge.input_name == "command" for edge in graph.edges)
+    # An env leaf's edge would be labelled by its dict key (`T`).
+    assert not any(edge.kind == EdgeKind.DATA_FLOW and edge.input_name == "T" for edge in graph.edges)
     # the items-source dependency itself is still there (the batch arm)
     assert any(
         edge.kind == EdgeKind.DATA_FLOW and edge.source == NodeId("prep") and edge.target == NodeId("fan")
@@ -1368,13 +1369,14 @@ def test_refs_with_path_in_reads_the_template_parse() -> None:
 
 def test_dynamic_index_read_draws_a_data_flow_edge_from_the_indexed_batch() -> None:
     """``${process-batch.results[${__index__}].stdout}`` (the committed example) reads the
-    upstream batch's ``results`` — one DATA_FLOW edge carrying the ``stdout`` sub-path."""
+    upstream batch's ``results`` — one DATA_FLOW edge carrying the ``stdout`` sub-path, labelled with
+    the ``env:`` key that binds it."""
     graph = build_graph(_parse("examples/test-nested-index.pflow.md"))
     into_correlate = [
         edge for edge in graph.edges if edge.kind == EdgeKind.DATA_FLOW and edge.target.node_id == "correlate-batch"
     ]
     assert [(e.source, e.output_field, e.output_path, e.input_name) for e in into_correlate] == [
-        (NodeId("process-batch"), "results", ("stdout",), "command")
+        (NodeId("process-batch"), "results", ("stdout",), "PREV")
     ]
 
 
@@ -1396,7 +1398,11 @@ def test_data_flow_edges_carry_output_path_below_the_resolved_port() -> None:
         {
             "inputs": {"input_x": {"type": "object"}},
             "nodes": [
-                {"id": "gen", "type": "code", "params": {"code": "result = compute('${input_x.y}')"}},
+                {
+                    "id": "gen",
+                    "type": "code",
+                    "params": {"inputs": {"x": "${input_x.y}"}, "code": "result = compute(x)"},
+                },
                 {
                     "id": "check",
                     "type": "workflow",
@@ -1446,6 +1452,22 @@ def test_data_flow_edges_carry_output_path_below_the_resolved_port() -> None:
     # site 3 (workflow input -> consumer) has no output port, hence no sub-path
     input_edge = next(e for e in graph.edges if e.source == _input_id("input_x") and e.kind == EdgeKind.DATA_FLOW)
     assert input_edge.output_path == ()
+
+
+def test_a_code_body_reference_draws_no_edge_its_inputs_binding_does() -> None:
+    """A code block is plain Python (ADR-0016): ``"${input_x.y}"`` in it is text, never a
+    data-flow edge; the same reference bound through ``inputs:`` draws one."""
+
+    def data_edges(params: dict[str, Any]) -> list[tuple[str, str | None]]:
+        graph = build_graph({
+            "inputs": {"input_x": {"type": "object"}},
+            "nodes": [{"id": "gen", "type": "code", "params": params}],
+            "edges": [],
+        })
+        return [(e.source.node_id, e.input_name) for e in graph.edges if e.kind == EdgeKind.DATA_FLOW]
+
+    assert data_edges({"inputs": {}, "code": 'result: str = "${input_x.y}"'}) == []
+    assert data_edges({"inputs": {"x": "${input_x.y}"}, "code": "result: str = x"}) == [("input_x", "x")]
 
 
 def test_batch_alias_ref_never_carries_an_output_path() -> None:
@@ -1529,7 +1551,7 @@ def test_leaf_dynamic_batch_records_sibling_items_source_data_flow() -> None:
             {
                 "id": "summarize",
                 "type": "shell",
-                "params": {"command": "echo ${item}"},
+                "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                 "batch": {"items": "${prep.rows}"},
             },
         ],

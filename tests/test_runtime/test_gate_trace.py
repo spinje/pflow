@@ -33,7 +33,12 @@ def _gated_ir() -> dict[str, Any]:
         "ir_version": "0.1.0",
         "nodes": [
             {"id": "a", "type": "shell", "params": {"command": "echo hello"}},
-            {"id": "b", "type": "shell", "params": {"command": "echo from-${a.stdout}"}, "approval": "required"},
+            {
+                "id": "b",
+                "type": "shell",
+                "params": {"command": 'echo from-"$A_STDOUT"', "env": {"A_STDOUT": "${a.stdout}"}},
+                "approval": "required",
+            },
         ],
         "edges": [{"from": "a", "to": "b"}],
     }
@@ -78,7 +83,7 @@ class TestGateTraceEvents:
         # The pause line IS the serialization test for the payload (Task 171).
         assert pause["request"]["node_id"] == "b"
         assert pause["request"]["kind"] == "action_approval"
-        assert pause["request"]["preview"] == {"command": "echo from-hello"}
+        assert pause["request"]["preview"] == {"command": 'echo from-"$A_STDOUT"', "env": {"A_STDOUT": "hello"}}
         assert resolution["resolution"] == "approved"
         assert resolution["resolved_via"] == "prompt"
 
@@ -142,7 +147,7 @@ class TestGateTraceEvents:
         assert trace["final_status"] == "paused"
         assert trace["paused_node_id"] == "b"
         assert trace["gate_request"]["kind"] == "action_approval"
-        assert trace["gate_request"]["preview"] == {"command": "echo from-hello"}
+        assert trace["gate_request"]["preview"] == {"command": 'echo from-"$A_STDOUT"', "env": {"A_STDOUT": "hello"}}
         resolution = next(
             ln for ln in _read_lines(collector._stream_path) if ln["kind"] == "gate" and ln["phase"] == "resolution"
         )

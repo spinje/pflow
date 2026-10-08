@@ -38,6 +38,11 @@ with backend scope analysis; it scans params, not loop conditions. Backend owner
 `src/pflow/core/workflow/graph/model.py`, `src/pflow/core/workflow/graph/build.py`, and
 `src/pflow/core/workflow/graph/scope.py`; the grammar strings are copies of `src/pflow/core/templates.py`'s,
 so a grammar change there edits `scan.ts` in the same step (parity rows in `scan.test.ts`).
+A code body (`utils/format.ts:isCodeBody` — shell `command`, code `code`; mirror of
+Python's `template_surfaces.param_mode`) reads nothing: its `${…}` is the shell's or
+Python's own text. The same predicate gates ReadPanel's batch-item expansion; the source
+pane (`sourceDecorate.ts:tealsRefs`) teals refs only in markdown and ungrammared fences,
+in both tiers and the fallback.
 
 ## Representative endpoints and IO
 

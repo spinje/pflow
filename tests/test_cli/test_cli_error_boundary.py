@@ -21,7 +21,7 @@ from tests.conftest import set_isolated_home
 
 # Invalid workflow: output "out" has no description paragraph between the
 # heading and the `- source:` param. parse_markdown raises MarkdownParseError
-# at line 23 ("Entity 'out' (line 23) is missing a description.").
+# at line 24 ("Entity 'out' (line 24) is missing a description.").
 PARSE_ERROR_WORKFLOW = """\
 # Bug Repro
 
@@ -41,7 +41,8 @@ A message.
 Echo it.
 
 - type: shell
-- command: echo "${x}"
+- env: { X: ${x} }
+- command: echo "$X"
 
 ## Outputs
 
@@ -111,7 +112,7 @@ class TestDescribeParseError:
         )
         # Structured diagnostic markers
         assert "Parse Error" in result.stderr, f"missing 'Parse Error' title:\n{result.stderr}"
-        assert "line 23" in result.stderr, f"missing source line ref:\n{result.stderr}"
+        assert "line 24" in result.stderr, f"missing source line ref:\n{result.stderr}"
         # Suggestion block surfaced (from MarkdownParseError.suggestion)
         assert "Add a text paragraph" in result.stderr, f"missing suggestion block:\n{result.stderr}"
 
@@ -134,7 +135,7 @@ class TestDescribeParseError:
         assert result.returncode == 1
         assert "Traceback" not in result.stderr
         assert "Parse Error" in result.stderr
-        assert "line 23" in result.stderr
+        assert "line 24" in result.stderr
 
     def test_describe_and_validate_only_produce_same_diagnostic(self, tmp_path, prepared_subprocess_env):
         """Symmetry guard: describe and file --validate-only produce the same diagnostic content.
@@ -177,8 +178,8 @@ class TestDescribeParseError:
         # MarkdownParseError.to_diagnostics() → format_diagnostic() pipeline.
         for marker in (
             "Error: Parse Error",
-            "Entity 'out' (line 23) is missing a description.",
-            "At: line 23",
+            "Entity 'out' (line 24) is missing a description.",
+            "At: line 24",
             "Add a text paragraph between the heading and the parameters",
         ):
             assert marker in describe_result.output, f"describe missing '{marker}':\n{describe_result.output}"

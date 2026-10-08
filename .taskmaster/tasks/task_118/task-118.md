@@ -9,7 +9,12 @@ node's existing `env:` param (the code node already binds through `inputs:`). Th
 and converts every in-tree workflow, example, guide page and test to the new form.
 
 ## Status
-not started
+
+done
+
+## Completed
+
+2026-10-08
 
 ## Priority
 
@@ -74,10 +79,11 @@ does not reach the body. A looped shell step therefore declares the carried key 
 binds it in `env:` (`env: {STATE: ${state}}`).
 
 **Breaking by design (no external users).** Every inline-templated shell command converts in this
-task. Measured size (grep/parse on `a2d094b7`; the plan re-counts as step 0): `examples/` 33–39
-bodies in ~20 files; `workflows/` 2 of 2; `src/pflow/guide/` 8 blocks + 2 inline; `docs/` 2;
-`shell.py` 5 docstring examples; tests ~29 markdown blocks + ~255–268 IR `command` strings in
-55–70 files. Templated code bodies: one, a test (`tests/test_core/test_graph_build.py:1399`).
+task. Measured size (`implementation/inventory.py`, re-run it for current counts): `examples/` 39
+bodies in 20 files; `workflows/` 2 of 2; `src/pflow/guide/` 8 blocks + 2 inline; `docs/` 3; the two
+MCP instruction resources 16; `shell.py` 5 docstring examples; the Task-159 baseline workflows 6;
+tests ≈325 visible sites in ≈75 files plus ≈50 passed through helper arguments. Templated code
+bodies: one, a test (`tests/test_core/test_graph_build.py:1399`).
 
 ## Design Decisions
 
@@ -135,13 +141,15 @@ be built for shell/code bodies and then deleted by (4).
   (`core/workflow/graph/build.py:586`, `_params_strings`),
   `core/workflow/graph/renderers/react_flow.py:473` (`_param_is_dynamic`), and the TypeScript mirror (`web/src/graph/scan.ts:129-137`). A walk that
   misses the rule draws phantom data-flow edges and ref chips from `${HOME}`, or keeps
-  type-checking a body.
+  type-checking a body. One more consumer reads a body with a different `${…}` language: the MCP
+  single-node run expands environment variables over every param, `command` included
+  (`mcp_server/services/execution_service.py:731-736`) — a body is exempt there too.
 - The exemption keys on the param **before** any "has templates?" test: `$${` counts as a Template
   today, so an exemption gated on that test would still collapse `$${X}` to `${X}`.
 - Every consumer listed above is covered by a behavioural test — a body containing `${HOME}`
   produces no surface, edge, chip or type diagnostic — with a parity row for the TypeScript
-  mirror. The single-node probe (`cli/commands/_probe_impl.py`) skips the compiler: it gets the
-  same exemption and the same `env:` binding.
+  mirror. The single-node probe (`cli/commands/_probe_impl.py`) skips the compiler and resolves
+  nothing, so a body already reaches the node verbatim; it must get the same `env:` binding.
 - The classification's shape must serve Task 181 without being reshaped: that task adds
   code-bearing MCP params, identified by tool (the type string `mcp-{server}-{tool}` is in the IR;
   the server name is user-chosen; registry metadata is not visible to the walks —
@@ -179,10 +187,13 @@ be built for shell/code bodies and then deleted by (4).
   `--validate-only` said "valid": `env: {PORT: 8080}`, a number or boolean input, `${__index__}`,
   `None` from an unset optional input → `TypeError: expected str…`, reported as a false
   "exit code -2".
-- A string that looks like JSON reaches the child unchanged. Today dict params resolve with
-  auto-parse (`template_resolution.py:255-267`, `core/templates.py:591-597`), so
-  `env: {DATA: ${fetch.stdout}}` with JSON stdout becomes a dict — and re-serializing it would
-  change the bytes (`{"a":1}` → `{"a": 1}`). This is #686's mechanism met from the shell side.
+- A string that looks like JSON reaches the child unchanged when it is bound directly. Today dict
+  params resolve with auto-parse (`template_resolution.py:255-267`, `core/templates.py:591-597`),
+  so `env: {DATA: ${fetch.stdout}}` with JSON stdout becomes a dict — and re-serializing it would
+  change the bytes (`{"a":1}` → `{"a": 1}`). This is #686's mechanism met from the shell side. A
+  value that first passes through the step's `inputs:` (and every loop Carry) is parsed there
+  (`:262`) — that half is #686 itself and stays Task 120's; it reproduces what the inline form
+  produced, so converted loops are unchanged.
 - A value that cannot be bound (NUL byte, oversized) and a name that cannot be read as `$NAME`
   (`my-var`, `1x`, `a.b`) fail **before spawn** with a diagnostic naming the variable, at
   validation when it is knowable. A binding failure never surfaces as a command exit code, so
@@ -221,7 +232,7 @@ be built for shell/code bodies and then deleted by (4).
   the gate and the web UI avoid it for that reason), and any length cap on values is a stated
   display rule drafted in the diagnostics checkpoint.
 - `pflow report` shows a shell step's command. It renders `## Command` only when `command` is in
-  `template_resolutions` (`core/trace_report.py:1318-1320`), so after this task every shell step
+  `template_resolutions` (`core/trace_report.py:1321-1323`), so after this task every shell step
   would lose it; code steps already read `node_params`.
 - The trace format does not change: `node_params` and `template_resolutions` already carry the
   body and the resolved `env:`. If the plan finds it must, that is a version bump plus the
@@ -249,24 +260,30 @@ be built for shell/code bodies and then deleted by (4).
   and are exercised for real (a searcher run, a review fan-out run with a `cwd` override) before
   the PR.
 - Tests that use `shell.command` only as a convenient templated string
-  (`tests/test_core/test_workflow_data_flow.py:493/521/547`, the two `test_types.py` files under
-  `tests/test_core/` and `tests/test_runtime/test_template_validation/`) move to another
-  templated string param; converting or deleting them leaves success-expecting tests passing
-  while testing nothing.
+  (`tests/test_core/test_workflow_data_flow.py:493/521/547`,
+  `tests/test_runtime/test_template_validation/test_union_types.py`, `test_malformed.py`,
+  `test_literal_operands.py`) move to another templated param; converting or deleting them leaves
+  success-expecting tests passing while testing nothing. A test that expects an error for an
+  unknown name in a command is the mirror case: left alone it stops failing for its own reason.
 
 **Surfaces that go stale**
 
-- `pflow guide`: `nodes/shell.md` (lines 9, 12, 19, 24, 33-41 — the `$VAR`-not-`${VAR}` rule and
+- `pflow guide`: `nodes/shell.md` (lines 9, 12, 19, 24, 29-41 — the `$VAR`-not-`${VAR}` rule and
   the `$${` escape die; `env:` gets its section: one pattern, UPPER_SNAKE names chosen for the
   content, always double-quoted in the body, the limits, the naming/masking rule), `core.md` (580,
-  643, 394-398), `nodes/code.md` (18, 61 — the authoring rule becomes the mechanism),
-  `features/loop.md:60`, `batch.md:26,30`, `branching.md`, `sub-workflows.md` (52, 82, 191-201).
-- `docs/` (`reference/nodes/shell.mdx`, `how-it-works/template-variables.mdx`), `architecture/`
+  585, 643), `nodes/code.md` (18, 61 — the authoring rule becomes the mechanism),
+  `features/loop.md:60`, `batch.md:26,30,138`, `branching.md`, `sub-workflows.md` (52, 82, 194-201).
+- The MCP server's agent instructions — hand-maintained copies of guide content:
+  `src/pflow/mcp_server/resources/instructions/mcp-agent-instructions.md` and
+  `mcp-sandbox-agent-instructions.md` (16 templated shell fences and the same rule lines).
+- `docs/` (`reference/nodes/shell.mdx`, `reference/nodes/code.mdx:67`,
+  `how-it-works/template-variables.mdx`, `how-it-works/loops.mdx:47`), `architecture/`
   (`reference/template-variables.md`, `features/simple-nodes.md`), the shell node docstring and
   Interface line (`shell.py:367-438`), `registry/context_builder.py:560-571`.
 - Instruction files: `src/pflow/nodes/CLAUDE.md`, `runtime/template_validation/CLAUDE.md`
-  (56-58, 92, 112-115), `runtime/engine/CLAUDE.md`, `core/CLAUDE.md:101`,
-  `.claude/agents/pflow-codebase-searcher.md` (+ `make sync-claude-assets`).
+  (15, 26-27, 56-58, 113-115), `runtime/engine/CLAUDE.md`, `core/CLAUDE.md:101`,
+  `core/workflow/CLAUDE.md:60-64`, `.claude/agents/pflow-codebase-searcher.md`
+  (+ `make sync-claude-assets`).
 - `context/CONTEXT.md`: **Template** is defined as "a string in a Step's params" — bodies no longer
   are; the planner proposes the amended entry and any new noun (a name for a code-bearing body).
 

@@ -150,16 +150,36 @@ def test_build_plan_partial_cache_after_config_edit_marks_boundary_and_downstrea
     old_ir = {
         "nodes": [
             {"id": "a", "type": "shell", "cache": True, "params": {"command": "printf a"}},
-            {"id": "b", "type": "shell", "cache": True, "params": {"command": "printf ${a.stdout}-b"}},
-            {"id": "c", "type": "shell", "cache": True, "params": {"command": "printf ${b.stdout}-c"}},
+            {
+                "id": "b",
+                "type": "shell",
+                "cache": True,
+                "params": {"command": 'printf "$A_STDOUT"-b', "env": {"A_STDOUT": "${a.stdout}"}},
+            },
+            {
+                "id": "c",
+                "type": "shell",
+                "cache": True,
+                "params": {"command": 'printf "$B_STDOUT"-c', "env": {"B_STDOUT": "${b.stdout}"}},
+            },
         ],
         "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}],
     }
     new_ir = {
         "nodes": [
             {"id": "a", "type": "shell", "cache": True, "params": {"command": "printf a"}},
-            {"id": "b", "type": "shell", "cache": True, "params": {"command": "printf ${a.stdout}-b2"}},
-            {"id": "c", "type": "shell", "cache": True, "params": {"command": "printf ${b.stdout}-c"}},
+            {
+                "id": "b",
+                "type": "shell",
+                "cache": True,
+                "params": {"command": 'printf "$A_STDOUT"-b2', "env": {"A_STDOUT": "${a.stdout}"}},
+            },
+            {
+                "id": "c",
+                "type": "shell",
+                "cache": True,
+                "params": {"command": 'printf "$B_STDOUT"-c', "env": {"B_STDOUT": "${b.stdout}"}},
+            },
         ],
         "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "c"}],
     }

@@ -9,6 +9,8 @@
 | Change pre-execution validation | `validator.py::WorkflowValidator.validate` |
 | Change dependencies or cache declaration rules | `data_flow.py::validate_data_flow`, `_validate_cache_block` |
 | Add a template-bearing IR location (every template check sees it) | `template_surfaces.py::iter_template_surfaces` |
+| Make a param a plain-code body (never a Template) | `template_surfaces.py::_BODIES` (definitions: `param_mode`); the body rule is `data_flow.py` "Code bodies" |
+| Decide that a param's values bind as text (never JSON-parsed — `shell.env`) | `template_surfaces.py::binds_as_text`; the resolver consults it through `parses_leaves` |
 | Shared loop/gate validation rules | `loop_validation.py::check_loop_polarity`, `gate_validation.py::check_approval_allowed` (also used by the compiler) |
 | Resolve child workflows and external files | `sub_workflow_resolver.py`, `dependency_discovery.py` |
 | Change static graph construction or rendering | `graph/CLAUDE.md`; compatibility entry point in `mermaid/CLAUDE.md` |
@@ -60,8 +62,10 @@ maintaining another validator.
 **References, not text:** dependencies are the `parse()` References of every
 node surface (`template_surfaces.iter_node_surfaces`: params, `batch.items`, loop
 fields), a dynamic index's inner references included. Bash expansions such as
-`${var:-default}` open no Expression — they are Issues, reported by the
-template validator's Issue pass, never dependencies here.
+`${var:-default}` in a Template param open no Expression — they are Issues,
+reported by the template validator's Issue pass, never dependencies here. A code
+body is no surface: the "Code bodies" section reads it once for leftovers and
+`$${`, scoped per step (`step_scope`).
 
 `check_inputs=True` checks undeclared workflow inputs. The compiler passes False
 because its `initial_params` can contain values unavailable to this validator;

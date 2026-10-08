@@ -61,11 +61,11 @@ TRUSTED_TRAVERSABLE_TYPES = frozenset({"dict", "object", "any"})  # ...without a
 #     - Graceful fallback: invalid JSON stays as string, validation catches it
 #
 #   Direction 2: dict/list → str (auto-serialize feature)
-#     Allows: ${node.results} (type: list) → command (type: str) parameter
+#     Allows: ${node.results} (type: list) → prompt (type: str) parameter
 #     Runtime behavior (see `to_string` below):
-#     - Complex templates ("echo ${var}") serialize dict/list to JSON
+#     - Complex templates ("Data: ${var}") serialize dict/list to JSON
 #     - Simple templates (${var} alone) preserve type (runtime check blocks)
-#     - Enables embedding arrays/objects in shell commands, prompts, etc.
+#     - Enables embedding arrays/objects in prompts, shell env: values, etc.
 #
 #   This bidirectional compatibility enables shell+jq → MCP workflows.
 TYPE_COMPATIBILITY_MATRIX = {

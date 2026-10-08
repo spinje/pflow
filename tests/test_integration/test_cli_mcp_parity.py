@@ -32,7 +32,7 @@ def batch_shell_workflow_ir() -> dict[str, Any]:
                 "id": "echo-items",
                 "type": "shell",
                 "purpose": "Batch echo two items so the run produces a real batch aggregate.",
-                "params": {"command": "echo ${item}"},
+                "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                 "batch": {
                     "items": ["alpha", "beta"],
                     "error_handling": "continue",
@@ -152,7 +152,7 @@ def test_only_batch_node_runtime_empty_items_emits_compact_summary(capsys):
                 "id": "consume",
                 "type": "shell",
                 "purpose": "Batch over the runtime-empty upstream list.",
-                "params": {"command": "echo ${item}"},
+                "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                 "batch": {"items": "${produce-empty.result}", "parallel": False},
             },
         ],
@@ -208,7 +208,7 @@ def test_empty_input_batch_emits_non_degrading_info_advisory():
                 "id": "consume",
                 "type": "shell",
                 "purpose": "Batch over the runtime-empty upstream list.",
-                "params": {"command": "echo ${item}"},
+                "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                 "batch": {"items": "${produce-empty.result}", "parallel": False},
             },
         ],
@@ -256,7 +256,10 @@ def _gated_ir() -> dict[str, Any]:
                 "id": "guarded-step",
                 "type": "shell",
                 "purpose": "Side-effecting step behind an approval gate.",
-                "params": {"command": "echo posting-${make-value.stdout}"},
+                "params": {
+                    "command": 'echo posting-"$MAKE_VALUE_STDOUT"',
+                    "env": {"MAKE_VALUE_STDOUT": "${make-value.stdout}"},
+                },
                 "approval": "required",
             },
         ],
@@ -281,8 +284,9 @@ def test_mcp_gated_workflow_pauses_by_path_but_fails_inline(tmp_path):
     assert "status: paused" in text
     assert "paused_node_id: guarded-step" in text
     assert "resume_command: pflow resume" in text
-    # The gate content is self-contained (resolved preview, not the template).
-    assert "posting-hello" in text
+    # The gate content is self-contained: the static body plus the RESOLVED bound value.
+    assert 'command:  echo posting-"$MAKE_VALUE_STDOUT"' in text
+    assert 'env:      {"MAKE_VALUE_STDOUT": "hello"}' in text
 
     with pytest.raises(RuntimeError) as exc:
         ExecutionService.execute_workflow(_gated_ir(), {})

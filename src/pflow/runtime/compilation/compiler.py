@@ -16,6 +16,7 @@ import logging
 import math
 from typing import Any
 
+from pflow.core.diagnostic import Severity
 from pflow.core.exceptions import CompilationError
 from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
 from pflow.core.node import Node
@@ -313,7 +314,7 @@ def _create_node_and_config(
     node_metadata = nodes.get(node_type, {})
     interface_metadata = node_metadata.get("interface")
 
-    _reject_non_string_code(node_type, node_id, params)
+    _reject_static_param_errors(node_type, node_id, params)
 
     # Extract optional input keys for code nodes
     optional_input_keys: set[str] = set()
@@ -328,7 +329,7 @@ def _create_node_and_config(
 
     # Build type cache and split params
     expected_types = build_type_cache(interface_metadata)
-    template_params, static_params = split_params(params, expected_types)
+    template_params, static_params = split_params(params, expected_types, node_type)
 
     # Set ONLY static params on bare node at compile time
     if static_params:
@@ -370,6 +371,7 @@ def _create_node_and_config(
             expected_types=expected_types,
             resolution_mode=template_resolution_mode,
             optional_input_keys=optional_input_keys,
+            node_type=node_type,
         )
 
     # Build NodeConfig
@@ -560,24 +562,29 @@ def _validate_loop_cap(value: int, node_id: str | None, node_type: str | None) -
     return value
 
 
-def _reject_non_string_code(node_type: str, node_id: str, params: dict[str, Any]) -> None:
-    """Raise WorkflowValidator's non-string ``code`` diagnostic for direct-compile callers.
+def _reject_static_param_errors(node_type: str, node_id: str, params: dict[str, Any]) -> None:
+    """Raise WorkflowValidator's step-9 ERRORs for direct-compile callers.
 
     The web UI run pre-flight and cache-key prediction compile without validating
-    first; without this they hit a raw ``TypeError`` from ``ast.parse`` in
-    optional-input-key extraction.
+    first: a non-string ``code`` would hit a raw ``TypeError`` from ``ast.parse`` in
+    optional-input-key extraction, and a shell ``env:`` that cannot bind would fail
+    only once the step runs.
     """
-    if node_type != "code":
-        return
-    from pflow.core.workflow.validator import code_param_type_diagnostics
+    from pflow.core.workflow.validator import code_param_type_diagnostics, shell_env_diagnostics
 
-    if code_errors := code_param_type_diagnostics(node_id, params):
+    if node_type == "code":
+        errors = code_param_type_diagnostics(node_id, params)
+    elif node_type == "shell":
+        errors = [d for d in shell_env_diagnostics(node_id, params) if d.severity is Severity.ERROR]
+    else:
+        return
+    if errors:
         raise CompilationError(
-            message=code_errors[0].message,
+            message=errors[0].message,
             phase="node_instantiation",
             node_id=node_id,
-            node_type="code",
-            wrapped_diagnostics=code_errors,
+            node_type=node_type,
+            wrapped_diagnostics=errors,
         )
 
 

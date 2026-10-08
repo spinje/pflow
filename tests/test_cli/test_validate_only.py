@@ -142,7 +142,10 @@ class TestValidateOnlyTemplateValidation:
                 {
                     "id": "process",
                     "type": "shell",
-                    "params": {"command": "echo ${wrong_node.result}"},  # References non-existent node
+                    "params": {
+                        "command": 'echo "$WRONG_NODE_RESULT"',
+                        "env": {"WRONG_NODE_RESULT": "${wrong_node.result}"},
+                    },  # References non-existent node
                 },
             ],
             "edges": [{"from": "fetch", "to": "process"}],
@@ -157,7 +160,9 @@ class TestValidateOnlyTemplateValidation:
         assert result.exit_code != 0, "Should have caught invalid node reference"
         # Check error mentions the problematic reference
         combined_output = result.output + result.stderr
-        assert "wrong_node" in combined_output.lower() or "does not exist" in combined_output.lower()
+        assert "Node 'process' references non-existent node 'wrong_node' in parameter 'env.WRONG_NODE_RESULT'" in (
+            combined_output
+        ), combined_output
 
 
 class TestValidateOnlyWithoutInputValues:
@@ -174,7 +179,16 @@ class TestValidateOnlyWithoutInputValues:
                 "repo": {"type": "string", "description": "GitHub repo"},
                 "pr_number": {"type": "number", "description": "PR number"},
             },
-            "nodes": [{"id": "fetch", "type": "shell", "params": {"command": "echo ${repo} ${pr_number}"}}],
+            "nodes": [
+                {
+                    "id": "fetch",
+                    "type": "shell",
+                    "params": {
+                        "command": 'echo "$REPO" "$PR_NUMBER"',
+                        "env": {"REPO": "${repo}", "PR_NUMBER": "${pr_number}"},
+                    },
+                }
+            ],
             "edges": [],
         }
 
@@ -199,7 +213,13 @@ class TestValidateOnlySkipsPrepareInputs:
         workflow = {
             "ir_version": "0.1.0",
             "inputs": {"required_input": {"type": "string", "description": "Required"}},
-            "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo ${required_input}"}}],
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "shell",
+                    "params": {"command": 'echo "$REQUIRED_INPUT"', "env": {"REQUIRED_INPUT": "${required_input}"}},
+                }
+            ],
             "edges": [],
         }
 
@@ -626,7 +646,14 @@ class TestValidationErrorDiagnosticShape:
             "ir_version": "0.1.0",
             "nodes": [
                 {"id": "bad-type", "type": "nonexistent_type_xyz", "params": {}},
-                {"id": "fetch", "type": "shell", "params": {"command": "echo ${bad-type.missing_field}"}},
+                {
+                    "id": "fetch",
+                    "type": "shell",
+                    "params": {
+                        "command": 'echo "$BAD_TYPE_MISSING_FIELD"',
+                        "env": {"BAD_TYPE_MISSING_FIELD": "${bad-type.missing_field}"},
+                    },
+                },
             ],
             "edges": [{"from": "bad-type", "to": "fetch"}],
         }
@@ -759,7 +786,8 @@ class TestFailurePathShowsWarnings:
             "Use the input.\n\n"
             "- type: shell\n"
             "- cache: false\n"
-            "- command: echo ${required_value}\n",
+            "- env: { REQUIRED_VALUE: ${required_value} }\n"
+            '- command: echo "$REQUIRED_VALUE"\n',
             encoding="utf-8",
         )
 
@@ -781,9 +809,9 @@ class TestFailurePathShowsWarnings:
         result = invoke_cli([str(parent)])
 
         assert result.exit_code != 0, "Workflow should fail (missing required input)"
-        # Error must be present
-        assert "failed" in result.stderr.lower() or "error" in result.stderr.lower(), (
-            f"Expected error in output.\nstderr: {result.stderr}"
+        # The error must be the missing required input (not any error)
+        assert "requires input 'required_value' but it is not provided" in result.stderr, (
+            f"Expected the missing-input error in output.\nstderr: {result.stderr}"
         )
         # Parser advisory must ALSO be present — this is the regression guard
         assert "Input" in result.stderr and "Inputs" in result.stderr, (
@@ -800,8 +828,16 @@ class TestValidateOnlyWithComplexWorkflows:
             "ir_version": "0.1.0",
             "nodes": [
                 {"id": "node1", "type": "shell", "params": {"command": "echo start"}},
-                {"id": "node2", "type": "shell", "params": {"command": "echo ${node1.stdout}"}},
-                {"id": "node3", "type": "shell", "params": {"command": "echo ${node2.stdout}"}},
+                {
+                    "id": "node2",
+                    "type": "shell",
+                    "params": {"command": 'echo "$NODE1_STDOUT"', "env": {"NODE1_STDOUT": "${node1.stdout}"}},
+                },
+                {
+                    "id": "node3",
+                    "type": "shell",
+                    "params": {"command": 'echo "$NODE2_STDOUT"', "env": {"NODE2_STDOUT": "${node2.stdout}"}},
+                },
             ],
             "edges": [{"from": "node1", "to": "node2"}, {"from": "node2", "to": "node3"}],
         }
@@ -824,8 +860,16 @@ class TestValidateOnlyWithComplexWorkflows:
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "node1", "type": "shell", "params": {"command": "echo ${node2.stdout}"}},
-                {"id": "node2", "type": "shell", "params": {"command": "echo ${node1.stdout}"}},
+                {
+                    "id": "node1",
+                    "type": "shell",
+                    "params": {"command": 'echo "$NODE2_STDOUT"', "env": {"NODE2_STDOUT": "${node2.stdout}"}},
+                },
+                {
+                    "id": "node2",
+                    "type": "shell",
+                    "params": {"command": 'echo "$NODE1_STDOUT"', "env": {"NODE1_STDOUT": "${node1.stdout}"}},
+                },
             ],
             "edges": [{"from": "node1", "to": "node2"}],
         }
@@ -837,8 +881,11 @@ class TestValidateOnlyWithComplexWorkflows:
 
         # Should fail - forward reference
         assert result.exit_code != 0, "Should have caught forward reference"
-        combined = (result.output + result.stderr).lower()
-        assert "node1" in combined or "execution order" in combined or "reference" in combined
+        combined = result.output + result.stderr
+        assert (
+            "Node 'node1' references 'node2' in parameter 'env.NODE2_STDOUT', but 'node2' comes after this node "
+            "in execution order"
+        ) in combined, combined
 
     def test_retry_on_workflow_node_surfaces_inert_advisory(self, tmp_path: Path) -> None:
         """`retry:` on a `workflow` node validates OK but emits an INFO advisory.

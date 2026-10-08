@@ -68,7 +68,8 @@ class TestIssue95Prevention:
                     "id": "external-api-call",
                     "type": "shell",
                     "params": {
-                        "command": "echo 'Sending to production: ${empty-producer.nonexistent_field}'",
+                        "command": "echo 'Sending to production: '\"$EMPTY_PRODUCER_NONEXISTENT_FIELD\"",
+                        "env": {"EMPTY_PRODUCER_NONEXISTENT_FIELD": "${empty-producer.nonexistent_field}"},
                     },
                 },
             ],
@@ -86,7 +87,7 @@ class TestIssue95Prevention:
         assert len(result.errors) > 0
         error = result.errors[0]
         # Validator catches that nonexistent_field is not a valid shell output
-        assert "nonexistent_field" in error.message
+        assert error.message == "Node 'empty-producer' (type: shell) does not output 'nonexistent_field'."
 
         # No user nodes should have completed
         completed = result.shared_after.get("__execution__", {}).get("completed_nodes", [])
@@ -111,7 +112,10 @@ class TestIssue95Prevention:
                     "id": "consumer",
                     "type": "shell",
                     "params": {
-                        "command": "echo 'Result: ${empty-echo.stdout}'",  # Should work (stdout exists but is empty)
+                        "command": "echo 'Result: '\"$EMPTY_ECHO_STDOUT\"",
+                        "env": {
+                            "EMPTY_ECHO_STDOUT": "${empty-echo.stdout}"
+                        },  # Should work (stdout exists but is empty)
                     },
                 },
             ],
@@ -144,7 +148,8 @@ class TestIssue95Prevention:
                     "id": "api-call",
                     "type": "shell",
                     "params": {
-                        "command": "echo 'Sending to Slack: ${produces-nothing.nonexistent_field}'",
+                        "command": "echo 'Sending to Slack: '\"$PRODUCES_NOTHING_NONEXISTENT_FIELD\"",
+                        "env": {"PRODUCES_NOTHING_NONEXISTENT_FIELD": "${produces-nothing.nonexistent_field}"},
                     },
                 },
             ],
@@ -160,7 +165,7 @@ class TestIssue95Prevention:
         # Verify error is about the nonexistent field
         assert len(result.errors) > 0
         error = result.errors[0]
-        assert "nonexistent_field" in error.message
+        assert error.message == "Node 'produces-nothing' (type: shell) does not output 'nonexistent_field'."
 
         # No user nodes should have completed
         completed = result.shared_after.get("__execution__", {}).get("completed_nodes", [])
@@ -179,7 +184,10 @@ class TestIssue95Prevention:
                 {
                     "id": "will-fail",
                     "type": "shell",
-                    "params": {"command": "echo '${this_variable_does_not_exist}'"},
+                    "params": {
+                        "command": 'echo "$THIS_VARIABLE_DOES_NOT_EXIST"',
+                        "env": {"THIS_VARIABLE_DOES_NOT_EXIST": "${this_variable_does_not_exist}"},
+                    },
                 }
             ],
             "edges": [],
@@ -229,7 +237,10 @@ class TestTriStateStatus:
                 {
                     "id": "consumer",
                     "type": "shell",
-                    "params": {"command": "echo 'Got: ${producer.stdout}'"},
+                    "params": {
+                        "command": "echo 'Got: '\"$PRODUCER_STDOUT\"",
+                        "env": {"PRODUCER_STDOUT": "${producer.stdout}"},
+                    },
                 },
             ],
             "edges": [{"from": "producer", "to": "consumer", "action": "default"}],
@@ -256,7 +267,10 @@ class TestTriStateStatus:
                 {
                     "id": "node-with-missing-template",
                     "type": "shell",
-                    "params": {"command": "echo 'Value: ${missing_variable}'"},
+                    "params": {
+                        "command": "echo 'Value: '\"$MISSING_VARIABLE\"",
+                        "env": {"MISSING_VARIABLE": "${missing_variable}"},
+                    },
                 }
             ],
             "edges": [],
@@ -285,7 +299,7 @@ class TestTriStateStatus:
                 {
                     "id": "node-with-error",
                     "type": "shell",
-                    "params": {"command": "echo '${missing}'"},
+                    "params": {"command": 'echo "$MISSING"', "env": {"MISSING": "${missing}"}},
                 }
             ],
             "edges": [],
@@ -293,10 +307,10 @@ class TestTriStateStatus:
 
         result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
-        # Should fail
+        # Should fail, on the undeclared reference
         assert not result.success
         assert result.status == WorkflowStatus.FAILED
-        assert len(result.errors) > 0
+        assert any("references '${missing}' in parameter 'env.MISSING'" in e.message for e in result.errors)
 
 
 class TestConfigurationHierarchy:
@@ -318,7 +332,7 @@ class TestConfigurationHierarchy:
                 {
                     "id": "test",
                     "type": "shell",
-                    "params": {"command": "echo '${missing}'"},
+                    "params": {"command": 'echo "$MISSING"', "env": {"MISSING": "${missing}"}},
                 }
             ],
             "edges": [],
@@ -329,6 +343,7 @@ class TestConfigurationHierarchy:
         # Template validation catches it - fails before execution
         assert not result.success
         assert result.status == WorkflowStatus.FAILED
+        assert any("references '${missing}' in parameter 'env.MISSING'" in e.message for e in result.errors)
 
     def test_default_strict_mode_when_not_specified(self):
         """Workflows without explicit mode should default to strict.
@@ -342,7 +357,7 @@ class TestConfigurationHierarchy:
                 {
                     "id": "test",
                     "type": "shell",
-                    "params": {"command": "echo '${missing}'"},
+                    "params": {"command": 'echo "$MISSING"', "env": {"MISSING": "${missing}"}},
                 }
             ],
             "edges": [],
@@ -353,6 +368,7 @@ class TestConfigurationHierarchy:
         # Should FAIL (strict mode default)
         assert not result.success
         assert result.status == WorkflowStatus.FAILED
+        assert any("references '${missing}' in parameter 'env.MISSING'" in e.message for e in result.errors)
 
 
 class TestMultipleTemplateErrors:
@@ -374,12 +390,12 @@ class TestMultipleTemplateErrors:
                 {
                     "id": "node1",
                     "type": "shell",
-                    "params": {"command": "echo '${missing1}'"},
+                    "params": {"command": 'echo "$MISSING1"', "env": {"MISSING1": "${missing1}"}},
                 },
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo '${missing2}'"},
+                    "params": {"command": 'echo "$MISSING2"', "env": {"MISSING2": "${missing2}"}},
                 },
             ],
             "edges": [{"from": "node1", "to": "node2", "action": "default"}],
@@ -408,12 +424,12 @@ class TestMultipleTemplateErrors:
                 {
                     "id": "node1",
                     "type": "shell",
-                    "params": {"command": "echo '${missing1}'"},
+                    "params": {"command": 'echo "$MISSING1"', "env": {"MISSING1": "${missing1}"}},
                 },
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo '${missing2}'"},
+                    "params": {"command": 'echo "$MISSING2"', "env": {"MISSING2": "${missing2}"}},
                 },
             ],
             "edges": [{"from": "node1", "to": "node2", "action": "default"}],
@@ -453,7 +469,10 @@ class TestEnhancedErrorMessages:
                 {
                     "id": "consumer",
                     "type": "shell",
-                    "params": {"command": "echo '${producer.wrong_field}'"},
+                    "params": {
+                        "command": 'echo "$PRODUCER_WRONG_FIELD"',
+                        "env": {"PRODUCER_WRONG_FIELD": "${producer.wrong_field}"},
+                    },
                 },
             ],
             "edges": [{"from": "producer", "to": "consumer", "action": "default"}],
@@ -467,8 +486,8 @@ class TestEnhancedErrorMessages:
         error_message = error.message
         rendered = format_diagnostic(error)
 
-        # Error should mention the wrong field
-        assert "wrong_field" in error_message
+        # Error should name the wrong field on its producer
+        assert error_message == "Node 'producer' (type: shell) does not output 'wrong_field'."
 
         # Error should show available outputs from producer (stdout, stderr, etc.)
         assert "available" in rendered.lower()

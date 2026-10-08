@@ -283,7 +283,9 @@ class TestStructuredFieldPreservation:
         write_workflow_file(
             {
                 "inputs": {"data": {"type": "string", "required": True}},
-                "nodes": [{"id": "n1", "type": "shell", "params": {"command": "echo ${data}"}}],
+                "nodes": [
+                    {"id": "n1", "type": "shell", "params": {"command": 'echo "$DATA"', "env": {"DATA": "${data}"}}}
+                ],
                 "edges": [],
             },
             tmp_path / "test.pflow.md",

@@ -106,8 +106,13 @@ class TestCacheVarRoots:
             "inputs": {"i": {"type": "number"}},
             "cache": {"items": [{"name": var, "var": var, "prose_before": "Base: "}]},
             "nodes": [
-                {"id": "p", "type": "shell", "params": {"command": "echo ${i}"}},
-                {"id": "b", "type": "shell", "params": {"command": "echo ${item}"}, "batch": {"items": [1, 2]}},
+                {"id": "p", "type": "shell", "params": {"command": 'echo "$I"', "env": {"I": "${i}"}}},
+                {
+                    "id": "b",
+                    "type": "shell",
+                    "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
+                    "batch": {"items": [1, 2]},
+                },
             ],
             "edges": [{"from": "p", "to": "b"}],
         }
@@ -490,7 +495,8 @@ class TestValidateDataFlow:
                         # - ${api_url}, ${limit}: pflow templates (MUST validate)
                         # - ${array[@]}: bash syntax (skip validation)
                         # - ${#count}: bash length operator (skip validation)
-                        "command": "curl ${api_url} | head -n ${limit}; echo ${array[@]} ${#count}"
+                        "command": 'curl "$API_URL" | head -n "$LIMIT"; echo ${array[@]} ${#count}',
+                        "env": {"API_URL": "${api_url}", "LIMIT": "${limit}"},
                     },
                 },
             ],
@@ -518,7 +524,8 @@ class TestValidateDataFlow:
                     "params": {
                         # ${undefined_input}: Invalid pflow template (should error)
                         # ${array[@]}: Valid bash syntax (should be ignored)
-                        "command": "curl ${undefined_input} && echo ${array[@]}"
+                        "command": 'curl "$UNDEFINED_INPUT" && echo ${array[@]}',
+                        "env": {"UNDEFINED_INPUT": "${undefined_input}"},
                     },
                 },
             ],
@@ -544,7 +551,14 @@ class TestArrayAccessValidation:
         """${nonexistent_node[0].field} should produce 'non-existent node' error."""
         workflow = {
             "nodes": [
-                {"id": "process", "type": "shell", "params": {"command": "echo ${nonexistent_node[0].field}"}},
+                {
+                    "id": "process",
+                    "type": "shell",
+                    "params": {
+                        "command": 'echo "$NONEXISTENT_NODE_0_FIELD"',
+                        "env": {"NONEXISTENT_NODE_0_FIELD": "${nonexistent_node[0].field}"},
+                    },
+                },
             ],
             "edges": [],
             "inputs": {},
@@ -557,7 +571,11 @@ class TestArrayAccessValidation:
         """${future_node[0].field} where future_node comes after should produce forward ref error."""
         workflow = {
             "nodes": [
-                {"id": "early", "type": "shell", "params": {"command": "echo ${late[0].field}"}},
+                {
+                    "id": "early",
+                    "type": "shell",
+                    "params": {"command": 'echo "$LATE_0_FIELD"', "env": {"LATE_0_FIELD": "${late[0].field}"}},
+                },
                 {"id": "late", "type": "shell", "params": {"command": "echo data"}},
             ],
             "edges": [{"from": "early", "to": "late"}],
@@ -572,7 +590,14 @@ class TestArrayAccessValidation:
         """${undefined_input[0]} should produce 'non-existent node' error (array access routes through node-ref path)."""
         workflow = {
             "nodes": [
-                {"id": "process", "type": "shell", "params": {"command": "echo ${undefined_input[0]}"}},
+                {
+                    "id": "process",
+                    "type": "shell",
+                    "params": {
+                        "command": 'echo "$UNDEFINED_INPUT_0"',
+                        "env": {"UNDEFINED_INPUT_0": "${undefined_input[0]}"},
+                    },
+                },
             ],
             "edges": [],
             "inputs": {},
@@ -586,7 +611,11 @@ class TestArrayAccessValidation:
         workflow = {
             "nodes": [
                 {"id": "data", "type": "shell", "params": {"command": "echo '[1,2,3]'"}},
-                {"id": "process", "type": "shell", "params": {"command": "echo ${data[0]}"}},
+                {
+                    "id": "process",
+                    "type": "shell",
+                    "params": {"command": 'echo "$DATA_0"', "env": {"DATA_0": "${data[0]}"}},
+                },
             ],
             "edges": [{"from": "data", "to": "process"}],
             "inputs": {},
@@ -599,7 +628,14 @@ class TestArrayAccessValidation:
         workflow = {
             "nodes": [
                 {"id": "fetch", "type": "shell", "params": {"command": "echo data"}},
-                {"id": "process", "type": "shell", "params": {"command": "echo ${fetch.items[0].field}"}},
+                {
+                    "id": "process",
+                    "type": "shell",
+                    "params": {
+                        "command": 'echo "$FETCH_ITEMS_0_FIELD"',
+                        "env": {"FETCH_ITEMS_0_FIELD": "${fetch.items[0].field}"},
+                    },
+                },
             ],
             "edges": [{"from": "fetch", "to": "process"}],
             "inputs": {},
@@ -730,7 +766,7 @@ class TestBatchDataFlowValidation:
                     "id": "process",
                     "type": "shell",
                     "batch": {"items": "${source.stdout}"},
-                    "params": {"command": "echo ${item.name}"},
+                    "params": {"command": 'echo "$ITEM_NAME"', "env": {"ITEM_NAME": "${item.name}"}},
                 },
             ],
             "edges": [{"from": "source", "to": "process"}],
@@ -747,7 +783,7 @@ class TestBatchDataFlowValidation:
                     "id": "process",
                     "type": "shell",
                     "batch": {"items": "${source.stdout}"},
-                    "params": {"command": "echo ${item.a.b.c}"},
+                    "params": {"command": 'echo "$ITEM_A_B_C"', "env": {"ITEM_A_B_C": "${item.a.b.c}"}},
                 },
             ],
             "edges": [{"from": "source", "to": "process"}],
@@ -764,7 +800,7 @@ class TestBatchDataFlowValidation:
                     "id": "process",
                     "type": "shell",
                     "batch": {"items": "${source.stdout}", "as": "record"},
-                    "params": {"command": "echo ${record.x}"},
+                    "params": {"command": 'echo "$RECORD_X"', "env": {"RECORD_X": "${record.x}"}},
                 },
             ],
             "edges": [{"from": "source", "to": "process"}],
@@ -781,7 +817,14 @@ class TestBatchDataFlowValidation:
                     "id": "process",
                     "type": "shell",
                     "batch": {"items": "${source.stdout}"},
-                    "params": {"command": "process ${item.original_url} ${item.filename} ${item.description}"},
+                    "params": {
+                        "command": 'process "$ITEM_ORIGINAL_URL" "$ITEM_FILENAME" "$ITEM_DESCRIPTION"',
+                        "env": {
+                            "ITEM_ORIGINAL_URL": "${item.original_url}",
+                            "ITEM_FILENAME": "${item.filename}",
+                            "ITEM_DESCRIPTION": "${item.description}",
+                        },
+                    },
                 },
             ],
             "edges": [{"from": "source", "to": "process"}],
@@ -797,7 +840,10 @@ class TestBatchDataFlowValidation:
                     "id": "process",
                     "type": "shell",
                     "batch": {"items": ["a", "b", "c"]},
-                    "params": {"command": "echo 'Item ${__index__}: ${item}'"},
+                    "params": {
+                        "command": "echo 'Item '\"$INDEX\"': '\"$ITEM\"",
+                        "env": {"INDEX": "${__index__}", "ITEM": "${item}"},
+                    },
                 },
             ],
             "edges": [],
@@ -813,13 +859,16 @@ class TestBatchDataFlowValidation:
                     "id": "first",
                     "type": "shell",
                     "batch": {"items": ["a", "b", "c"]},
-                    "params": {"command": "echo ${item}"},
+                    "params": {"command": 'echo "$ITEM"', "env": {"ITEM": "${item}"}},
                 },
                 {
                     "id": "second",
                     "type": "shell",
                     "batch": {"items": ["x", "y", "z"]},
-                    "params": {"command": "echo ${first.results[${__index__}].stdout}"},
+                    "params": {
+                        "command": 'echo "$FIRST_RESULTS_INDEX_STDOUT"',
+                        "env": {"FIRST_RESULTS_INDEX_STDOUT": "${first.results[${__index__}].stdout}"},
+                    },
                 },
             ],
             "edges": [{"from": "first", "to": "second"}],
@@ -835,14 +884,16 @@ class TestBatchDataFlowValidation:
                     "id": "process",
                     "type": "shell",
                     # No batch config - __index__ is invalid here
-                    "params": {"command": "echo ${__index__}"},
+                    "params": {"command": 'echo "$INDEX"', "env": {"INDEX": "${__index__}"}},
                 },
             ],
             "edges": [],
         }
         errors = _data_flow_error_messages(workflow)
         assert len(errors) == 1, f"Expected error for __index__ without batch: {errors}"
-        assert "__index__" in errors[0]
+        assert (
+            "Node 'process' references '${__index__}' in parameter 'env.INDEX' but no inputs are declared" in errors[0]
+        )
 
 
 class TestNestedParamValidation:
@@ -954,7 +1005,7 @@ class TestImprovedErrorMessages:
                 {
                     "id": "echo",
                     "type": "shell",
-                    "params": {"command": "echo ${message}"},
+                    "params": {"command": 'echo "$MESSAGE"', "env": {"MESSAGE": "${message}"}},
                 },
             ],
             "edges": [],
@@ -973,7 +1024,7 @@ class TestImprovedErrorMessages:
                 {
                     "id": "fetch",
                     "type": "shell",
-                    "params": {"command": "curl ${urll}"},
+                    "params": {"command": 'curl "$URLL"', "env": {"URLL": "${urll}"}},
                 },
             ],
             "edges": [],
@@ -995,7 +1046,7 @@ class TestImprovedErrorMessages:
                 {
                     "id": "process",
                     "type": "shell",
-                    "params": {"command": "echo ${unknown_var}"},
+                    "params": {"command": 'echo "$UNKNOWN_VAR"', "env": {"UNKNOWN_VAR": "${unknown_var}"}},
                     "batch": {"over": "items", "as": "item"},
                 },
             ],
@@ -1043,7 +1094,7 @@ class TestImprovedErrorMessages:
                 {
                     "id": "echo",
                     "type": "shell",
-                    "params": {"command": "echo ${message}"},
+                    "params": {"command": 'echo "$MESSAGE"', "env": {"MESSAGE": "${message}"}},
                 },
             ],
             "edges": [],
@@ -1058,15 +1109,17 @@ class TestReservedInternalKeyReferences:
     """Error 3b: ${__execution__.x} and friends get a targeted error, not the
     misleading 'non-existent node, did you mean __index__' message."""
 
-    def _wf(self, command: str) -> dict:
+    def _wf(self, reference: str) -> dict:
         return {
-            "nodes": [{"id": "n1", "type": "shell", "params": {"command": command}}],
+            "nodes": [
+                {"id": "n1", "type": "shell", "params": {"command": 'echo "$VALUE"', "env": {"VALUE": reference}}}
+            ],
             "edges": [],
             "inputs": {},
         }
 
     def test_execution_reference_emits_reserved_key_error(self):
-        diagnostics = validate_data_flow(self._wf("echo ${__execution__.node_visit_counts.x}"))
+        diagnostics = validate_data_flow(self._wf("${__execution__.node_visit_counts.x}"))
         assert len(diagnostics) == 1
         diag = diagnostics[0]
         assert "reserved by pflow" in diag.message
@@ -1075,19 +1128,19 @@ class TestReservedInternalKeyReferences:
         assert not any("Did you mean '__index__'" in (s or "") for s in (diag.suggestions or []))
 
     def test_failures_reference_emits_reserved_key_error(self):
-        diagnostics = validate_data_flow(self._wf("echo ${__failures__.x}"))
+        diagnostics = validate_data_flow(self._wf("${__failures__.x}"))
         assert len(diagnostics) == 1
         assert "reserved by pflow" in diagnostics[0].message
 
     def test_cache_hits_reference_emits_reserved_key_error(self):
-        diagnostics = validate_data_flow(self._wf("echo ${__cache_hits__.x}"))
+        diagnostics = validate_data_flow(self._wf("${__cache_hits__.x}"))
         assert len(diagnostics) == 1
         assert "reserved by pflow" in diagnostics[0].message
 
     def test_bare_reserved_key_emits_reserved_key_error(self):
         # Bare ${__cache_hits__} (no path) must ALSO get the targeted error,
         # not the generic "undefined input" message.
-        for cmd in ("echo ${__cache_hits__}", "echo ${__memoization_cache__}", "echo ${__execution__}"):
+        for cmd in ("${__cache_hits__}", "${__memoization_cache__}", "${__execution__}"):
             diagnostics = validate_data_flow(self._wf(cmd))
             assert len(diagnostics) == 1, f"{cmd}: {[d.message for d in diagnostics]}"
             assert "reserved by pflow" in diagnostics[0].message, cmd
@@ -1099,7 +1152,7 @@ class TestReservedInternalKeyReferences:
                 {
                     "id": "n1",
                     "type": "shell",
-                    "params": {"command": "echo ${__index__}"},
+                    "params": {"command": 'echo "$INDEX"', "env": {"INDEX": "${__index__}"}},
                     "batch": {"items": [1, 2]},
                 }
             ],
@@ -1109,20 +1162,20 @@ class TestReservedInternalKeyReferences:
         assert validate_data_flow(wf) == []
 
     def test_index_path_access_emits_integer_error(self):
-        diagnostics = validate_data_flow(self._wf("echo ${__index__.foo}"))
+        diagnostics = validate_data_flow(self._wf("${__index__.foo}"))
         assert len(diagnostics) == 1
         diag = diagnostics[0]
         assert "integer" in diag.message
         assert "reserved by pflow" not in diag.message
 
     def test_non_underscore_typo_still_non_existent_node(self):
-        diagnostics = validate_data_flow(self._wf("echo ${not_a_node.x}"))
+        diagnostics = validate_data_flow(self._wf("${not_a_node.x}"))
         assert len(diagnostics) == 1
         assert "non-existent node" in diagnostics[0].message
 
     def test_single_underscore_reserved_falls_through(self):
         # _pflow_depth uses single-underscore prefix → not caught by the
         # double-underscore predicate; falls to existing non-existent-node path.
-        diagnostics = validate_data_flow(self._wf("echo ${_pflow_depth.x}"))
+        diagnostics = validate_data_flow(self._wf("${_pflow_depth.x}"))
         assert len(diagnostics) == 1
         assert "reserved by pflow" not in diagnostics[0].message

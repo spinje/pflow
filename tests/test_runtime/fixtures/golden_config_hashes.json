@@ -52,11 +52,11 @@
   },
   "examples/batch-test-parallel.pflow.md": {
     "fetch_users": "9d8e0a7e0a8f2ca8eba842bd961e09dc",
-    "greet_users": "e960bc36b8e4c3b2058095069dc39483"
+    "greet_users": "6f9308e0c760e2dc2e8e9ab1e6accf93"
   },
   "examples/batch-test.pflow.md": {
     "fetch_users": "9d8e0a7e0a8f2ca8eba842bd961e09dc",
-    "greet_users": "e960bc36b8e4c3b2058095069dc39483"
+    "greet_users": "6f9308e0c760e2dc2e8e9ab1e6accf93"
   },
   "examples/bundling/parent-with-sub.pflow.md": {
     "process": "a0258a8b489a4f93011dfb17b8400a71"
@@ -78,22 +78,22 @@
     "writer": "80e3ea4292c595e7855f201104877802"
   },
   "examples/core/template-variables.pflow.md": {
-    "api_caller": "a322a8efeb04ef6f43ef1044590afe02",
+    "api_caller": "360f51c1b33436ed5f04ddbeaf17accc",
     "copier": "f8e2a75e2a7f33eb7ae2ffaaa5744a1e",
-    "notifier": "259262147cc1800ec0b94dac7fc38b29",
+    "notifier": "ceeda8776b5dc8780c661acdeb63f5b2",
     "reader": "c64dc5795b242d70d852c35f9250cc2b",
     "writer": "0ad13978f47208978f692b089405acba"
   },
   "examples/real-workflows/git-worktree-task-creator/workflow.pflow.md": {
     "analyze-task": "cc64ec14aaa2ab9aa6f79808bad4227b",
-    "copy-folder": "799054d272095cf0bf142f3864b069fb",
-    "create-worktree": "3cafcc188e9e34a5a32c2a260928c203",
+    "copy-folder": "bfd6d5b8dec92eec04f7655e3c2a9451",
+    "create-worktree": "e13a610d0cc67ba6de58bd9fb5aaecee",
     "get-branch": "33c830618882bc975db4e0ef6ccd85de",
     "get-repo-root": "33c830618882bc975db4e0ef6ccd85de",
-    "launch-cli": "ab38eb810b897cdb7cedc97bc3505559",
-    "launch-cursor": "2c6fd749b1505c4416a790b4aa7afd75",
-    "output-status": "459e5f8341b84441832f695049b995e6",
-    "parse-result": "cd6248104227476f26548ab91f68c029",
+    "launch-cli": "aa49778ecdc0dda92962a7995af3d293",
+    "launch-cursor": "5430c6c790f559789664de3333ad132a",
+    "output-status": "a68cd4933939bf4fbf368093c7d6fca7",
+    "parse-result": "c8cc581b2de8af23600fe3d43a8aef6e",
     "resolve-description": "c04d99dc55f1640a7bcbb3d448ea7059"
   },
   "examples/test_llm_templates.pflow.md": {

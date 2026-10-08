@@ -72,8 +72,10 @@ Write a valid two-node seed to `wf_file` BEFORE the page opens. `done` carries a
 distinct purpose ("Finalize…") so the remap check can tell which node is focused.
 
 - type: shell
+- env:
+    WF_FILE: ${wf_file}
 - command: |
-    python3 - "${wf_file}" <<'PY'
+    python3 - "$WF_FILE" <<'PY'
     import sys
     content = "# Live Reload Probe\n\nThrowaway workflow for the live-reload skill check.\n\n## Steps\n\n### greet\n\nGreet the world to begin the run.\n\n- type: shell\n- command: echo hello\n\n### done\n\nFinalize and report completion of the run.\n\n- type: shell\n- command: echo done\n"
     open(sys.argv[1], "w", encoding="utf-8").write(content)
@@ -118,8 +120,10 @@ text, source-pane marker, banner/full-screen flags.
 Append a node at the end (does NOT renumber existing nodes) — the in-place + viewport check.
 
 - type: shell
+- env:
+    WF_FILE: ${wf_file}
 - command: |
-    python3 - "${wf_file}" <<'PY'
+    python3 - "$WF_FILE" <<'PY'
     import sys
     block = "\n### tail\n\nAppended tail step for the in-place check.\n\n- type: shell\n- command: echo tail\n"
     open(sys.argv[1], "a", encoding="utf-8").write(block)
@@ -160,8 +164,10 @@ Insert a `middle` node BEFORE `done` (renumbers done's flat id) with a unique ma
 in its description — the remap + source-pane-refresh check.
 
 - type: shell
+- env:
+    WF_FILE: ${wf_file}
 - command: |
-    python3 - "${wf_file}" <<'PY'
+    python3 - "$WF_FILE" <<'PY'
     import sys
     p = sys.argv[1]
     s = open(p, encoding="utf-8").read()
@@ -205,8 +211,10 @@ the marker.
 Overwrite the source with an INVALID workflow (unknown node type → 422).
 
 - type: shell
+- env:
+    WF_FILE: ${wf_file}
 - command: |
-    python3 - "${wf_file}" <<'PY'
+    python3 - "$WF_FILE" <<'PY'
     import sys
     content = "# Broken\n\n## Steps\n\n### x\n\nA step with an unknown type.\n\n- type: nonexistent_type_zzz\n"
     open(sys.argv[1], "w", encoding="utf-8").write(content)
@@ -257,7 +265,9 @@ Capture the final state (banner over the last valid canvas).
 Delete the throwaway workflow.
 
 - type: shell
-- command: rm -f "${wf_file}"
+- env:
+    WF_FILE: ${wf_file}
+- command: rm -f "$WF_FILE"
 
 ### verdict
 

@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "nodes": [
+    {
+      "exit_code": 0,
+      "path": "echo-it",
+      "status": "success",
+      "stderr": "",
+      "stdout": "Received: hello"
+    }
+  ]
+}

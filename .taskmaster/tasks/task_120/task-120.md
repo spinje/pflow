@@ -1,127 +1,156 @@
-# Task 120: Strict Input Type Validation
+# Task 120: Declared Input Types Are Honoured — Strict at the Boundary, Never Re-Inferred
 
 ## Description
 
-Add strict validation in `prepare_inputs()` that fails fast when CLI-provided values cannot be coerced to their declared types, giving users immediate actionable feedback instead of deferring errors to downstream code nodes.
-
-> **Sibling checkpoint (cross-ref added 2026-06-07).** This task and **Task 112 (Pre-execution Type Validation for Literal Parameters)** are two halves of the same idea — "type-check a provided value against its declared type before execution, fail fast with an actionable message" — applied at **two different boundaries**:
-> - **This task (120):** *workflow `## Inputs`* (caller-supplied via CLI/stdin) checked against *declared input types*. Lives in `prepare_inputs()` (`src/pflow/runtime/compilation/ir_preparation.py`), which already collects errors and has the declared types.
-> - **Task 112:** *node `params`* (author-written, inside the workflow) checked against *node interface metadata*. Lives in the compile/validation pipeline.
->
-> They are **not duplicates** (distinct boundary + source of truth) but they **must share one type-compatibility primitive and one error format**. The primitive is `TypeSpec.accepts` (`src/pflow/core/types.py`) for literal/coerced values. The template-flow matrix (`src/pflow/core/templates.py::is_type_compatible`, Task 84) is **not** a literal-value check — it approves `string`→`object` because templates auto-parse — so it must not decide this checkpoint. **Reuse `TypeSpec.accepts` instead of hand-rolling a second table** (see the corrected Implementation Notes below). See Task 112's "Sibling checkpoint" note for the symmetric pointer.
-
-> **Stale notes corrected 2026-06-07 (post-Task 154).** Task 154 (Type Vocabulary Coherence, done 2026-04-17) shrank the `## Inputs`/`## Outputs` `type:` vocabulary to **seven canonical JSON-Schema names only** (`string`, `integer`, `number`, `boolean`, `object`, `array`, `any`) and **removed the Python aliases** (`str`, `int`, `float`, `dict`, `list`). The original `TYPE_CHECKS` map and `_normalize_type` references below predate 154 and list those deleted aliases — they are illustrative-but-stale. Implement against the canonical-only vocabulary and reuse `TypeSpec.accepts` (`core/types.py`) rather than the snippet's bespoke map. (`_normalize_type` does not exist in the codebase.)
+A workflow's `## Inputs` declare a type for each input, but today that type is consulted once,
+leniently, and then forgotten: a value that cannot be coerced only logs a warning and passes
+through; the CLI guesses a type for every token before the declarations are known; and every
+later hop re-guesses the type from the value. Make the declared type hold at every boundary a
+value crosses: parse strictly where the value enters, fail with an actionable error, and never
+re-infer it downstream.
 
 ## Status
 not started
 
 ## Priority
 
-low
+medium
 
 ## Roadmap
 
 next
 
-> **Promoted 2026-10-05 (session-10) on OBSERVED evidence** — a fresh-eyes dogfood pass on main `90b891cb`,
-> re-verified by execution, hit this task's exact class: a `type: array` input given `topics=tea` passes
-> `--validate-only` and fails only inside the batch node ("batch items must be an array, got str" plus a stray
-> `WARNING: Cannot parse string as JSON array` from the lenient coercion at `core/param_coercion.py:189-209`),
-> while `pflow save` already knows the shape (it prints `topics='[...]'`). Two additions to the acceptance
-> criteria from that pass: (a) `--validate-only` with supplied inputs must report the same error — it never
-> calls `prepare_inputs()` today (#297's parity gap), so a check placed only there leaves "valid" standing;
-> (b) the coercion `logger.warning` lines stop reaching user output once failures become errors.
-
-> **Scope widened 2026-10-06 (user ruling) — #686 and #687 are part of this task.** One rule is designed
-> once: *a declared input type is honoured at every boundary the value crosses.* Three observed breaks of it:
-> (1) a `type: array` input accepts `tea` and fails later inside the batch node (this task's original case);
-> (2) #686 — a `type: string` input holding JSON-object text reaches a `code` node as a dict (auto-parse at
-> template resolution, `runtime/engine/template_resolution.py:261-263` — **engine contact**, so plan-mode
-> deep-review is mandatory and the build serializes behind Task 118, which edits the same file);
-> (3) #687 — a `type: string` CLI value is type-inferred then stringified back (`02134` → `2134`).
-> Read both issues in full (body + comments) before planning. Task 118 answers the neighbouring question —
-> what a non-string value becomes when bound into a shell step's `env:` — and builds first; this task's rule
-> must agree with it. The rest of this spec predates the widening and Task 154: it needs a rewrite before a
-> planner is launched on it.
+> **Rewritten 2026-10-06 against main `b2cd92e3`** from an Opus investigation that executed every
+> break below (probe workflows, no paid calls). Owns #686 and #687 by user ruling the same day.
+> **NOT launch-ready: the user decisions below must be ruled before a planner starts.**
 
 ## Problem
 
-When type coercion fails (e.g., `enabled="maybe"` for a boolean input), the current behavior:
-1. Logs a warning
-2. Passes the original value through unchanged
-3. Code node type checking eventually fails with "Input 'enabled' expects bool but received str"
+The rule (user ruling 2026-10-06): *a declared input type is honoured at every boundary the value
+crosses.* Executed on `b2cd92e3` — `--validate-only` printed "✓ Workflow is valid" for 1–3 and 9:
 
-This creates a confusing user experience:
-- User runs workflow → input validation passes → execution starts → code node fails
-- The error message at the code node level lacks context about what valid values were expected
-- Debugging requires tracing back to figure out that "maybe" was invalid for boolean
+1. `type: array` given `topics=tea` → run: `WARNING: Cannot parse string as JSON array`, then
+   `batch items must be an array, got str`. `type: boolean` given `maybe` → warning, then the code
+   node fails `expects bool but received str`. A `type: number` given `abc` with no annotated
+   consumer: warning, **exit 0**, the string flows on.
+2. **#686** — `type: string` given `{"a":1}` or `[1,2]` reaches a code node as dict / list. Same
+   through byte-exact stdin and through MCP `workflow_execute`.
+3. **#687** — `type: string` given `02134` arrives as `2134` (CLI and web UI only; MCP is intact);
+   `true` → `"True"`; JSON text is re-spaced.
+4. `type: integer` silently accepts `3.0`, `3.5`, `1e3`, `true`.
+5. `type: boolean` given `0` / `1` arrives as int, no warning.
+6. `type: number` given `007` → 7, `1e3` → 1000.0.
+7. `type: object` given `[1,2]` → a list, no warning (non-string values are never checked);
+   `type: array` given `{"a":1}` likewise.
+8. `type: any` given `02134` → int, `{"a":1}` → dict.
+9. `${v.a}` on a `type: string` input validates and resolves.
+10. A sub-workflow's declared inputs are never coerced when the parent supplies them: a child
+    `s: string` given `{"a":1}` receives a dict; `n: integer` given `"7"` receives the string.
+11. `--only` reseeds `0099` as `99`.
+12. (Observed by Task 118 Part 1, 2026-10-07.) A numeric YAML literal written into a param is re-typed
+    before anything sees it — `env: {VERSION: 1.10}` binds `1.1`, `{MODE: 0755}` binds `493`. Same family
+    for literals as #687 is for CLI values; the guide tells authors to quote, a warning is this task's call.
 
-## Solution
+## Current state (verified — re-check line numbers at start)
 
-Add a validation step after coercion that checks if the result type matches the declared type:
-1. After `coerce_input_to_declared_type()` returns, check if result type matches expected
-2. If mismatch (coercion failed), add error to `prepare_inputs()` errors list
-3. Return clear error message: "Cannot coerce 'maybe' to boolean for input 'enabled'. Valid values: true, false, 1, 0, yes, no"
+- **The only runtime site that reads the declared type** is `prepare_inputs`
+  (`runtime/compilation/ir_preparation.py:280`) → `coerce_workflow_input`
+  (`core/param_coercion.py:229`), whose every failure branch logs and `return value`
+  (`:116-209`). Non-string values are passed through unchecked. `--validate-only` never calls it
+  (`execution/runner.py:443-445`, #297).
+- **Before it**, the CLI runs `infer_type` (`cli/param_parsing.py:9-46`: bool / int / float /
+  JSON) on every `key=value` token without knowing the declarations — the cause of #687. Callers:
+  `cli/commands/run.py:1053`, `resume.py:56`, `_probe_impl.py:52`, `analyze_cache.py:145`,
+  `ui/server.py:1018`. Declared defaults are pre-filled raw and never validated against `type`
+  (`runner.py:671-687`).
+- **After it**, template resolution re-infers: `inputs:` of code / workflow nodes per key with
+  `auto_parse=True` (`runtime/engine/template_resolution.py:261` — #686), every dict/list param
+  (`:267`), plus JSON parsing during path traversal (`core/templates.py:413-425`). The resolver
+  cannot tell a declared input from an upstream step's output: `TemplateConfig`
+  (`runtime/engine/types.py:13-21`) carries no input names. The static validator can
+  (`runtime/template_validation/type_checker.py:41-44`) but allows string → object.
+- **Sub-workflows**: supplied child inputs bypass coercion — `workflow_executor.py:430-433` seeds
+  declared defaults only for absent keys, then writes the raw values; `_validate_child_params`
+  (`:800-861`) checks shape only.
+- **The primitive exists, unused**: `TypeSpec.accepts` (`core/types.py:115`) — strict, canonical
+  names only, zero callers in `src/`.
+- **Why auto-parse exists**: every motivating case is UPSTREAM output (`${node.stdout.field}`,
+  inline objects); `architecture/core-concepts/data-type-coercion.md:95-107` calls it the
+  "weakest design point". The guide's promise ("Upstream JSON is auto-parsed before your code
+  runs", `guide/nodes/code.md:64`) is upstream-scoped. **No in-tree workflow relies on a DECLARED
+  input arriving parsed** (89 `.pflow.md` files checked); upstream auto-parse is relied on heavily
+  and stays.
 
-This aligns with pflow's principles:
-- "Ambiguity is a STOP signal"
-- "Validate at system boundaries" — CLI input IS a system boundary
+## Design intent (confirm at start — the planner's to settle within the decisions below)
 
-## Design Decisions
+The investigation's recommended shape: **strict at the boundary, typed thereafter.**
+- One strict coercer, `declared value → typed value | error`: a string goes through the
+  string → type parse, a non-string is checked with `TypeSpec.accepts`. It replaces the
+  log-and-return branches.
+- Declared inputs keep the raw argv string — CLI type inference runs only for undeclared params.
+- The coercer is called everywhere a declared input enters: `prepare_inputs`, sub-workflow child
+  seeding, and validate-only with supplied params (#297 parity).
+- The resolver never re-infers a value whose root is a declared input: the compiler passes the
+  declared input names to the resolver.
+- The validator rejects string → container and a path on a non-object input.
 
-- **Fail fast, not lenient**: Originally documented as "lenient coercion" but strict validation better matches pflow's philosophy
-- **Validation in `prepare_inputs()`**: This is the right place since it already collects errors and has access to declared types
-- **Clear error messages**: Include the invalid value, expected type, and valid options where applicable (e.g., boolean valid values)
+The shape it does not cover: a value from an upstream step (`${shell.stdout}`) reaching a code
+param annotated `str` — the other half of #686; see decision (e). The resolver site is shared
+with
+Task 118 (the `env:` leaves): 118 expresses its no-parse rule as a per-leaf predicate this task
+extends, never a second branch.
+
+## Decisions for the user (resolve BEFORE the planner starts)
+
+Each changes what an existing invocation receives or rejects. Recommendations are the main
+orchestrator's.
+
+- **(a) Fail instead of warn** when a value cannot be coerced to its declared type. Rec: fail —
+  exit 0 with a wrong-typed value is the bug.
+- **(b) Accepted spellings.** integer: `3.0`? `1e3`? number: `007`? boolean: `0`/`1`, `yes`/`no`,
+  case-insensitive? Rec: integer accepts only integer text; number accepts any JSON/float text;
+  boolean accepts `true/false/yes/no/1/0` case-insensitively — spelled out in the error.
+- **(c) A declared `string` used as a container** (into `x: dict`, `${v.a}`, batch `items`):
+  validation error, or parse at the consumer? Rec: error — the author declared a string.
+- **(d) `type: any` from the CLI**: raw text or inferred? Rec: inferred (today's behaviour; `any`
+  means "don't check").
+- **(e) Scope: also the upstream half of #686** (`${shell.stdout}` → a code `inputs:` key annotated
+  `str` still arrives parsed). Rec: yes, via the consumer's annotation — it is the same symptom an
+  author meets, and the code node already knows the annotation.
+- **(f) Fold in two adjacent bugs** the investigation executed: sub-workflow child coercion (wider
+  than #188) — rec: yes, it is the rule; an env-var input losing to its own `default:`
+  (`ir_preparation.py:300-305` vs the pre-fill at `runner.py:671-687`) — rec: no, file separately.
+- **(g) Boolean text rendering.** A boolean becomes `True` inside a command / `env:` (Task 118's
+  `to_string` ruling) but `true` on shell stdin. Rec: leave both as they are here (118 ruled the
+  first); note the inconsistency for a future one-line ruling.
+
+## Constraints
+
+- **Engine contact** (`runtime/engine/template_resolution.py`, `workflow_executor.py`): plan-mode
+  deep-review is mandatory; builds after Task 118, which edits the same lines.
+- **The error message is show-before-code.** One error format for input-type failures, shared
+  with Task 112 (literal node params) when that lands — no shared format exists today. Input-type
+  failures must not print "To resume from the failed step" (`resume --force` replays the bad input).
+- Tests that pin today's leniency flip deliberately and are named in the plan
+  (`tests/test_core/test_param_coercion.py` `*returns_original`;
+  `tests/test_runtime/test_prepare_inputs_coercion.py:18,153,163`).
+- Stale surfaces: `guide/core.md:439-456` (claims scalars auto-parse; only containers do),
+  `docs/reference/cli/index.mdx:152-158`, `src/pflow/core/CLAUDE.md:198-200`,
+  `runtime/compilation/CLAUDE.md`, `architecture/core-concepts/data-type-coercion.md` (cites
+  deleted files).
 
 ## Dependencies
 
-None. This builds on the type coercion infrastructure added in the numeric string coercion bug fix (PR #84).
+Builds after Task 118 (same resolver lines; inherits its `to_string` rule for `env:`). Read
+first: Task 118's plan and task-review, Task 170's task-review, issues #686 #687 #297 #188 in
+full (body + comments), Task 112's top block.
 
-## Implementation Notes
+## Verification (intent)
 
-Type checking after coercion:
-```python
-# ⚠ STALE (pre-Task 154) — see "Stale notes corrected" at top of file.
-# The Python aliases ("str", "int", "float", "dict", "list") were REMOVED from
-# the input vocabulary by Task 154. Use the 7 canonical JSON-Schema names only,
-# and prefer reusing TypeSpec.accepts (core/types.py) over this bespoke map.
-# Map declared types to expected Python types
-TYPE_CHECKS = {
-    "string": str, "str": str,
-    "integer": int, "int": int,
-    "number": (int, float), "float": (int, float),
-    "boolean": bool, "bool": bool,
-    "object": dict, "dict": dict,
-    "array": list, "list": list,
-}
+Every numbered break above becomes either an actionable error at validation or input time, or a
+correctly typed value, per the decisions; `--validate-only` with supplied inputs and the run
+agree; upstream-output auto-parse (`${x.stdout}` as batch items, `${x.stdout.field}`) is unchanged.
 
-# After coercion, validate result type
-expected_types = TYPE_CHECKS.get(_normalize_type(declared_type))
-if expected_types and not isinstance(coerced_value, expected_types):
-    errors.append((
-        f"Cannot coerce '{provided_value}' to {declared_type} for input '{input_name}'",
-        f"inputs.{input_name}",
-        _get_valid_values_hint(declared_type),  # e.g., "Valid boolean values: true, false, 1, 0, yes, no"
-    ))
-```
+## References
 
-Consider helpful hints for each type:
-- boolean: "Valid values: true, false, 1, 0, yes, no"
-- integer: "Value must be a valid integer"
-- number: "Value must be a valid number"
-- object: "Value must be valid JSON object"
-- array: "Value must be valid JSON array"
-
-## Verification
-
-Test scenarios:
-- `enabled="maybe"` with `type: boolean` → clear error at input validation
-- `count="abc"` with `type: integer` → clear error at input validation
-- `data="not json"` with `type: object` → clear error at input validation
-- Valid values still work (no regression)
-- Error messages include the invalid value and valid options
-
-Acceptance criteria:
-- Invalid inputs fail at `prepare_inputs()`, not at code node execution
-- Error messages are actionable (tell user what's valid)
-- Existing workflows with valid inputs continue to work
+- Investigation (main orchestrator's session-11 log); issues #686, #687, #297, #188.

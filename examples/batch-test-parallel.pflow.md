@@ -17,6 +17,8 @@ Fetch a list of users from JSONPlaceholder API.
 Greet each user by name (parallel).
 
 - type: shell
+- env:
+    NAME: ${user.name}
 
 ```yaml batch
 items: ${fetch_users.response}
@@ -26,5 +28,5 @@ max_concurrent: 5
 ```
 
 ```shell command
-echo "Hello, ${user.name}!"
+echo "Hello, $NAME!"
 ```

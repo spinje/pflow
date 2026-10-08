@@ -601,7 +601,7 @@ def test_cli_json_run_records_json_output_result_on_run_complete(tmp_path, monke
     wf = tmp_path / "outwf.pflow.md"
     wf.write_text(
         "# OutWf\n\nEchoes a greeting.\n\n## Inputs\n\n### name\n\nWho to greet.\n\n- type: string\n- default: World\n\n"
-        '## Steps\n\n### greet\n\nGreets.\n\n- type: shell\n- cache: false\n- command: echo "Hello ${name}"\n\n'
+        '## Steps\n\n### greet\n\nGreets.\n\n- type: shell\n- cache: false\n- env: { NAME: ${name} }\n- command: echo "Hello $NAME"\n\n'
         "## Outputs\n\n### greeting\n\nThe greeting.\n\n- source: ${greet.stdout}\n",
         encoding="utf-8",
     )

@@ -21,4 +21,6 @@ The uppercased text.
 Convert text to uppercase using tr.
 
 - type: shell
-- command: echo "${text}" | tr '[:lower:]' '[:upper:]'
+- env:
+    TEXT: ${text}
+- command: echo "$TEXT" | tr '[:lower:]' '[:upper:]'

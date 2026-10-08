@@ -151,6 +151,9 @@ These are search surprises — where a thing lives can differ from where you'd e
 | MCP in one directory | `mcp/` (client, using tools in workflows) vs `mcp_server/` (server, exposing pflow AS tools) |
 | Batch as a node type | Not a node type — module-level `execute_batch()` in `runtime/engine/batch_executor.py` (no class) wraps any node for list iteration |
 | Agent instructions / `pflow guide` content | `src/pflow/guide/` (entry.md, core.md, nodes/*, features/*) — NOT in `cli/` |
+| A second copy of guide content | `src/pflow/mcp_server/resources/instructions/*.md` — hand-maintained MCP agent instructions; a guide change edits them too |
+| How a shell `env:` value reaches the command | `nodes/shell/env_binding.py` (`bind_env`, `env_problems`) — not `shell.py` |
+| Why `${…}` in a shell command / code block is not resolved | `core/workflow/template_surfaces.py::param_mode`; the leftover/`$${` check is `core/workflow/data_flow.py` section "Code bodies" |
 | Registry "user node" CLI command | Removed in Task 151 — `Registry.scan_user_nodes()` is Python-only now |
 | `pflow probe` implementation | `cli/commands/probe.py` + `cli/commands/_probe_impl.py` (formerly `registry_run`) |
 | Auto-discover MCP servers at startup | `cli/mcp_sync.py`, invoked from `cli/commands/run.py` (NOT `cli/main.py`) |

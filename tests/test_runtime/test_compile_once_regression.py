@@ -44,7 +44,8 @@ def _write_dynamic_child(tmp_path: Path) -> Path:
         "# Dynamic Child\n\nConsumes input text.\n\n"
         "## Inputs\n\n### text\n\nThe per-item text.\n\n- type: string\n- required: true\n\n"
         "## Steps\n\n### echo\n\nEcho the text with markers.\n\n"
-        "- type: shell\n- command: echo MARKER_${text}_END\n",
+        "- type: shell\n- env: { TEXT: ${text} }\n"
+        '- command: echo MARKER_"$TEXT"_END\n',
         encoding="utf-8",
     )
     return child
@@ -264,7 +265,8 @@ def test_parallel_batch_items_produce_distinct_output(tmp_path: Path):
     child_md.write_text(
         "# Child\n\nA child workflow.\n\n"
         "## Inputs\n\n### text\n\nText input.\n\n- type: string\n- required: true\n\n"
-        "## Steps\n\n### echo\n\nEcho the text.\n\n- type: shell\n- command: echo MARKER_${text}_END\n",
+        "## Steps\n\n### echo\n\nEcho the text.\n\n- type: shell\n- env: { TEXT: ${text} }\n"
+        '- command: echo MARKER_"$TEXT"_END\n',
         encoding="utf-8",
     )
 
@@ -505,7 +507,8 @@ def test_resolved_defaults_do_not_leak_between_batch_items(tmp_path: Path):
         "## Steps\n\n"
         "### echo\n\nEcho with prefix.\n\n"
         "- type: shell\n"
-        "- command: echo ${prefix}_${text}\n",
+        "- env: { PREFIX: ${prefix}, TEXT: ${text} }\n"
+        '- command: echo "$PREFIX"_"$TEXT"\n',
         encoding="utf-8",
     )
 

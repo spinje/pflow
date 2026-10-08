@@ -15,7 +15,7 @@
 ### filter-and-reshape
 
 Filter active items and reshape for downstream processing.
-Templates go in `inputs`, Python code in the code block.
+Values arrive through `inputs`; the code block is plain Python.
 All inputs and result MUST have type annotations.
 
 - type: code
@@ -58,7 +58,7 @@ result: dict = {
 ### Code Node Rules
 
 **Code node rules:**
-- Templates go in `- inputs:` param, NEVER in the `python code` block (code is literal Python, not a template)
+- The `python code` block is plain Python — pflow never fills in `${…}` there. Values arrive only through `- inputs:`, each key bound as a Python variable. A `${…}` in a string that names a pflow value this step could read (`"${name}".upper()`) fails validation; `f"${total}"` is a dollar sign followed by Python's own interpolation
 - All inputs and `result` MUST have type annotations: `data: list`, `result: dict = ...`
 - Bare vs valued annotations: a top-level **bare** `name: type` (no value) is read as an input declaration and needs a matching `inputs:` entry. An annotated assignment `name: type = value` is a local — so type your intermediates freely (`total: int = sum(...)`). `result`/`next` are the declared output/routing.
 - Upstream JSON is auto-parsed before your code runs — if source is JSON, declare `dict`/`list` not `str`

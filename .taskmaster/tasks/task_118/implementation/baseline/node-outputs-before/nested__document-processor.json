@@ -1,0 +1,34 @@
+{
+  "exit_code": 0,
+  "nodes": [
+    {
+      "path": "process_title",
+      "status": "success"
+    },
+    {
+      "exit_code": 0,
+      "path": "process_title/transform",
+      "status": "success",
+      "stderr": "",
+      "stdout": "HELLO WORLD"
+    },
+    {
+      "path": "process_body",
+      "status": "success"
+    },
+    {
+      "exit_code": 0,
+      "path": "process_body/transform",
+      "status": "success",
+      "stderr": "",
+      "stdout": "IT'S A BODY"
+    },
+    {
+      "exit_code": 0,
+      "path": "combine",
+      "status": "success",
+      "stderr": "",
+      "stdout": "Title: HELLO WORLD\nBody: IT'S A BODY"
+    }
+  ]
+}

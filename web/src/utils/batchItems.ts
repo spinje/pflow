@@ -16,7 +16,8 @@ export interface ResolvedBatchItem {
    *  alias refs), e.g. `focus: emotional`; falls back to `item[N]`. */
   label: string;
   /** The param value with every `${alias.path}` ref substituted for THIS item;
-   *  non-alias refs (`${content}`) stay verbatim — they are not per-item. */
+   *  non-alias refs (`${content}`) stay verbatim — they are not per-item. A
+   *  dict/list value arrives as its `fullValue` text (indented JSON). */
   value: string;
 }
 
@@ -45,23 +46,44 @@ function isScalar(v: unknown): v is string | number | boolean {
   return typeof v === "string" || typeof v === "number" || typeof v === "boolean";
 }
 
-/** Whether `value` references `${alias…}` at all (so it resolves per item). */
+// A dict/list param (`env: {GREETING: ${item.greeting}}`) holds its refs in string
+// LEAVES; keys are names, never substituted.
+function stringLeaves(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(stringLeaves);
+  if (value !== null && typeof value === "object") return Object.values(value).flatMap(stringLeaves);
+  return [];
+}
+
+function mapLeaves(value: unknown, fn: (leaf: string) => string): unknown {
+  if (typeof value === "string") return fn(value);
+  if (Array.isArray(value)) return value.map((v) => mapLeaves(v, fn));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, mapLeaves(v, fn)]));
+  }
+  return value;
+}
+
+/** Whether `value` references `${alias…}` in any string leaf (so it resolves per item). */
 export function refsBatchAlias(value: unknown, alias: string): boolean {
-  if (typeof value !== "string") return false;
-  for (const m of value.matchAll(REF_RE)) {
-    const segs = refSegments(m[1]);
-    if (segs && segs[0] === alias) return true;
+  for (const leaf of stringLeaves(value)) {
+    for (const m of leaf.matchAll(REF_RE)) {
+      const segs = refSegments(m[1]);
+      if (segs && segs[0] === alias) return true;
+    }
   }
   return false;
 }
 
 /** The item fields the value reads via the alias (`${item.prompt}` → {"prompt"}). */
-function aliasFields(value: string, alias: string): Set<string> {
+function aliasFields(value: unknown, alias: string): Set<string> {
   const fields = new Set<string>();
-  for (const m of value.matchAll(REF_RE)) {
-    const segs = refSegments(m[1]);
-    const field = segs?.[1];
-    if (segs && segs[0] === alias && field !== undefined) fields.add(field);
+  for (const leaf of stringLeaves(value)) {
+    for (const m of leaf.matchAll(REF_RE)) {
+      const segs = refSegments(m[1]);
+      const field = segs?.[1];
+      if (segs && segs[0] === alias && field !== undefined) fields.add(field);
+    }
   }
   return fields;
 }
@@ -92,18 +114,19 @@ function substitute(value: string, alias: string, item: unknown): string {
 }
 
 /** The per-item expansion of a batch-alias param value, or `null` when there is
- *  nothing to expand: the value is not a string, references no alias field, or
- *  there are no literal items (a dynamic batch). */
+ *  nothing to expand: no string leaf references an alias field, or there are no
+ *  literal items (a dynamic batch). A dict/list value substitutes in its leaves and
+ *  renders through `fullValue`, as the un-expanded param does. */
 export function resolveBatchItems(
   value: unknown,
   alias: string,
   items: readonly unknown[] | null | undefined,
 ): ResolvedBatchItem[] | null {
-  if (typeof value !== "string" || !items || items.length === 0) return null;
+  if (!items || items.length === 0) return null;
   if (!refsBatchAlias(value, alias)) return null;
   const readFields = aliasFields(value, alias);
   return items.map((item, i) => ({
     label: itemLabel(item, i, readFields),
-    value: substitute(value, alias, item),
+    value: fullValue(mapLeaves(value, (leaf) => substitute(leaf, alias, item))),
   }));
 }

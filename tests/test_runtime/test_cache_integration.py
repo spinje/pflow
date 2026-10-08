@@ -200,7 +200,12 @@ def test_template_input_change_invalidation(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "step-1", "type": "shell", "cache": True, "params": {"command": "printf '%s' '${input_val}'"}},
+            {
+                "id": "step-1",
+                "type": "shell",
+                "cache": True,
+                "params": {"command": "printf '%s' \"$INPUT_VAL\"", "env": {"INPUT_VAL": "${input_val}"}},
+            },
             {"id": "step-2", "type": "shell", "cache": True, "params": {"command": "printf '%s' fixed"}},
         ],
         "edges": [{"from": "step-1", "to": "step-2"}],
@@ -339,7 +344,12 @@ def test_key_value_override_cache_interaction(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "step-1", "type": "shell", "cache": True, "params": {"command": "printf '%s' '${input_val}'"}},
+            {
+                "id": "step-1",
+                "type": "shell",
+                "cache": True,
+                "params": {"command": "printf '%s' \"$INPUT_VAL\"", "env": {"INPUT_VAL": "${input_val}"}},
+            },
             {"id": "step-2", "type": "shell", "cache": True, "params": {"command": "printf '%s' static"}},
         ],
         "edges": [{"from": "step-1", "to": "step-2"}],
@@ -472,7 +482,10 @@ def test_cached_output_flows_through_template_resolution(tmp_path: Any) -> None:
                 "id": "consumer",
                 "type": "shell",
                 "cache": True,
-                "params": {"command": "printf '%s' '${producer.stdout}'"},
+                "params": {
+                    "command": "printf '%s' \"$PRODUCER_STDOUT\"",
+                    "env": {"PRODUCER_STDOUT": "${producer.stdout}"},
+                },
             },
         ],
         "edges": [{"from": "producer", "to": "consumer"}],

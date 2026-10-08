@@ -1,6 +1,7 @@
 """Shell node implementation for executing system commands."""
 
 import base64
+import errno
 import logging
 import os
 import shutil
@@ -12,9 +13,11 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pflow.core.exceptions import NodeError
+from pflow.core.exceptions import NodeError, PflowError
 from pflow.core.node import Node
 from pflow.core.user_errors import UserFriendlyError
+
+from .env_binding import bind_env, displayable_env, merge_env, oversized_error
 
 logger = logging.getLogger(__name__)
 
@@ -61,13 +64,19 @@ def _git_bash_support_paths(bash_path: str) -> list[str]:
 def _prepare_windows_shell_env(base_env: dict[str, str] | None, bash_path: str) -> dict[str, str]:
     """Prepare environment for Git Bash shell steps on Windows."""
     full_env = dict(os.environ if base_env is None else base_env)
-    full_env.setdefault("MSYS_NO_PATHCONV", "1")
+    full_env.setdefault(_env_key(full_env, "MSYS_NO_PATHCONV"), "1")
 
     support_paths = _git_bash_support_paths(bash_path)
     if support_paths:
-        current_path = full_env.get("PATH", "")
-        full_env["PATH"] = os.pathsep.join([*support_paths, current_path] if current_path else support_paths)
+        path_key = _env_key(full_env, "PATH")
+        current_path = full_env.get(path_key, "")
+        full_env[path_key] = os.pathsep.join([*support_paths, current_path] if current_path else support_paths)
     return full_env
+
+
+def _env_key(env: dict[str, str], name: str) -> str:
+    """The spelling ``env`` already uses for ``name`` (Windows names ignore case), else ``name``."""
+    return next((key for key in env if key.upper() == name), name)
 
 
 def _windows_path_to_bash(path_text: str) -> str:
@@ -80,7 +89,7 @@ def _translate_windows_paths_for_bash(command: str) -> str:
     """Translate native absolute Windows paths embedded in POSIX shell commands.
 
     The shell dialect is POSIX sh, but pflow's Python-side path values are
-    native Windows strings. Without this bridge, command templates like
+    native Windows strings. Without this bridge, commands like
     ``cat C:\\Users\\...\\flag.txt`` are parsed by bash as ``C:Users...`` because
     backslashes are escape characters. The translation is intentionally narrow:
     drive-letter absolute paths without shell metacharacters.
@@ -353,6 +362,9 @@ class ShellNode(Node):
     - Warns on sudo/shutdown/reboot commands (blocks in strict mode)
     - Set PFLOW_SHELL_STRICT=true to block warning patterns
     - Audit logs all executed commands for security review
+    - The dangerous-command check reads the command text only. It cannot see
+      what a variable will hold — guard destructive commands yourself
+      ([ -n "$DIR" ] || exit 1).
 
     Smart Error Handling:
     The shell node automatically treats certain non-zero exits as success:
@@ -364,67 +376,27 @@ class ShellNode(Node):
     These are treated as empty results, not errors. Use ignore_errors=true
     for other cases where you want to continue despite failures.
 
-    Template Variables and Data Handling:
+    Passing Values (ADR-0016):
 
-    The shell node supports template variables in both command and stdin parameters,
-    but they serve different purposes:
+    The command is plain POSIX sh: pflow never fills in ${...} there, so
+    ${HOME}, ${NAME:-default} and ${#NAME} are the shell's own. Values reach
+    the command through env: (each entry an environment variable, read as
+    "$NAME" — always double-quoted) and stdin (piped; any size or shape).
 
-    ✅ CORRECT - Use stdin for data (JSON, large text, complex strings):
       {
-        "stdin": "${upstream.result}",           # Data with quotes, special chars, etc.
-        "command": "jq -r '.data.field'"         # Processing logic
+        "env": {"ENDPOINT": "${endpoint}"},      # A value, bound as text
+        "command": "curl -s \"https://api.example.com/$ENDPOINT\""
+      }
+      {
+        "stdin": "${api.response.items}",        # Large or structured data
+        "command": "jq -c 'map(.name)'"
       }
 
-      Why stdin?
-      - No shell escaping issues (data is piped, not interpreted)
-      - Handles any data: JSON, binary, special characters, newlines
-      - Follows Unix philosophy: data via stdin, logic in command
-      - More reliable and maintainable
-
-    💡 Nested Template Access (MCP JSON Parsing Feature):
-      MCP and HTTP nodes return parsed JSON. You can access nested properties
-      in template variables: ${node.result.data.field}
-
-      ⚠️ CRITICAL: Where you use nested access matters!
-
-      ✅ In stdin - Always safe (any data type):
-        {
-          "stdin": "${api.response.items}",        # Array/object - safe in stdin
-          "command": "jq -c 'map(.name)'"
-        }
-        {
-          "stdin": "${api.response.data.values}",  # Complex nested - safe
-          "command": "jq 'length'"
-        }
-        # Works because stdin bypasses shell parsing - data is piped directly
-
-      ✅ In commands - Safe for simple scalars only:
-        {
-          "command": "echo User ID: ${user.profile.id}"        # Number - safe
-        }
-        {
-          "command": "curl ${api.response.next_url}"           # URL string - safe
-        }
-        {
-          "command": "ls ${config.settings.directory}"         # Path string - safe
-        }
-        # Safe because simple values don't contain shell special characters
-
-      ❌ In commands - Never use complex data:
-        {
-          "command": "echo '${api.response.items}' | jq"       # Array - BREAKS!
-        }
-        {
-          "command": "cat <<< '${mcp.result.data}' | jq"       # Object - BREAKS!
-        }
-        # Fails with shell escaping if data contains ( ) ' " [ ] etc.
-
-      🎯 Rule: stdin = data (any type), command = logic (scalars only)
-         Nested access works everywhere, but complex data needs stdin.
-
-    Pattern Detection:
-    The shell node will detect when you try to use structured data (dict/list) in
-    command templates and error with a helpful message guiding you to use stdin instead.
+    A value bound in env: is data: quotes, $, backticks and newlines in it
+    are never interpreted by the shell. Binding rules (names, value -> text,
+    the OS size limit) live in env_binding.py. A ${...} in the command that
+    names a pflow value the step could read is a validation error naming
+    the env: line to add.
 
     Interface:
     - Params: stdin: any  # Optional input data for the command (dict/list auto-serialized to JSON); absent, the command reads EOF
@@ -433,9 +405,9 @@ class ShellNode(Node):
     - Writes: shared["stderr"]: str  # Command error output (text or base64-encoded binary)
     - Writes: shared["stderr_is_binary"]: bool  # True if stderr is binary data
     - Writes: shared["exit_code"]: int  # Process exit code
-    - Params: command: str  # Shell command to execute (required)
+    - Params: command: str  # Shell command to execute; plain sh that reads env: values as "$NAME" (required)
     - Params: cwd: str  # Working directory (optional, defaults to current)
-    - Params: env: dict  # Additional environment variables (optional)
+    - Params: env: dict  # Values bound as environment variables for the command (each binds as text; optional)
     - Params: timeout: int  # Max execution time in seconds (optional, default 30)
     - Params: ignore_errors: bool  # Continue on non-zero exit (optional, default false)
     - Params: strip_newline: bool  # Strip trailing newlines from stdout only (optional, default true). stderr is never stripped.
@@ -766,6 +738,7 @@ class ShellNode(Node):
 
         Raises:
             NodeError: If command, cwd, or timeout is missing or invalid
+            EnvBindingError: If an ``env:`` name or value cannot become an environment variable
             UserFriendlyError: On Windows when no Git Bash can be resolved (ADR-0013)
         """
         # Get command from params (required)
@@ -800,7 +773,8 @@ class ShellNode(Node):
 
         # Get optional configuration from params
         cwd = self.params.get("cwd")
-        env = self.params.get("env", {})
+        # A fresh dict: params["env"] may be the compiled config's own map.
+        env = bind_env(self.params.get("env"))
         timeout = self.params.get("timeout", self.DEFAULT_TIMEOUT)
         ignore_errors = self.params.get("ignore_errors", False)
         strip_newline = self.params.get("strip_newline", True)
@@ -861,8 +835,8 @@ class ShellNode(Node):
         env = prep_res["env"]
         timeout = prep_res["timeout"]
 
-        # Merge current environment with custom environment variables
-        full_env = {**os.environ, **env} if env else None
+        # Overlay the bound variables on the inherited environment (None: inherit as-is)
+        full_env = merge_env(os.environ, env, ignore_case=sys.platform == "win32") if env else None
 
         logger.debug(
             f"Executing command: {command[:100]}{'...' if len(command) > 100 else ''}",
@@ -949,11 +923,17 @@ class ShellNode(Node):
             }
 
         except Exception as e:
+            if isinstance(e, OSError) and e.errno == errno.E2BIG:
+                # The OS refused to start the command: not an exit code, never retried.
+                raise oversized_error(env, command) from e
             logger.exception("Command execution failed", extra={"phase": "exec", "error": str(e)})
             raise
 
     def post(self, shared: dict, prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store results in shared store and determine action.
+
+        A failing step also records ``displayable_env`` of its bound values beside
+        ``command`` — the failure surfaces read node output only.
 
         Args:
             shared: The shared store to write results to
@@ -963,6 +943,13 @@ class ShellNode(Node):
         Returns:
             Action string for flow control
         """
+        action = self._store_and_route(shared, prep_res, exec_res)
+        if action == "error" and prep_res["env"]:
+            shared["env"] = displayable_env(prep_res["env"])
+        return action
+
+    def _store_and_route(self, shared: dict, prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
+        """Write the command's results to ``shared`` and choose the action."""
         # Handle stdout encoding (strip trailing newlines for text output)
         self._store_output(
             shared,
@@ -1078,7 +1065,13 @@ class ShellNode(Node):
 
         Returns:
             Dictionary with error information
+
+        Raises:
+            PflowError: Re-raised unchanged — a translated failure (an ``env:`` value the OS
+                refused) is not a command exit code, so ``ignore_errors`` must not see it.
         """
+        if isinstance(exc, PflowError):
+            raise exc
         command = prep_res["command"]
         logger.error(f"Command execution failed: {exc}", extra={"phase": "fallback", "command": command[:100]})
 

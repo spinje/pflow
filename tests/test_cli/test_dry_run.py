@@ -197,7 +197,9 @@ def test_dry_run_exits_one_on_missing_required_input(tmp_path) -> None:
     write_workflow_file(
         {
             "inputs": {"name": {"type": "string", "required": True, "description": "Required name"}},
-            "nodes": [{"id": "echo", "type": "shell", "params": {"command": "printf ${name}"}}],
+            "nodes": [
+                {"id": "echo", "type": "shell", "params": {"command": 'printf "$NAME"', "env": {"NAME": "${name}"}}}
+            ],
             "edges": [],
         },
         workflow_path,
@@ -372,7 +374,11 @@ def test_dry_run_text_output_contains_boundary_divider(tmp_path) -> None:
         {
             "nodes": [
                 {"id": "a", "type": "shell", "params": {"command": "printf a"}},
-                {"id": "b", "type": "shell", "params": {"command": "printf ${a.stdout}"}},
+                {
+                    "id": "b",
+                    "type": "shell",
+                    "params": {"command": 'printf "$A_STDOUT"', "env": {"A_STDOUT": "${a.stdout}"}},
+                },
             ],
             "edges": [{"from": "a", "to": "b"}],
         },

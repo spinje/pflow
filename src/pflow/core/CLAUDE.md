@@ -99,7 +99,8 @@ so a grammar change edits it in the same step.
   with no identifier grammar, and feed the same walk. They are not templates: do
   not route them through `parse_path`, and do not accept raw paths inside `${…}`.
 - **Escapes** (`$${…}`) consume through their brace-balanced `}` and yield a literal
-  `${…}`; a bare `$$` is untouched. `TEMPLATE_PATTERN` / `SIMPLE_TEMPLATE_PATTERN`
+  `${…}`; a bare `$$` is untouched. A code body is never parsed for resolution, so
+  `$${` there is no escape (`workflow/template_surfaces.py::param_mode`). `TEMPLATE_PATTERN` / `SIMPLE_TEMPLATE_PATTERN`
   cannot see that consumption — over text that may hold `$${`, use `parse()`.
 - **Type rules.** `is_type_compatible` is template-flow compatibility (a value may be
   auto-parsed or stringified on its way through `${…}`), not a literal-value check:

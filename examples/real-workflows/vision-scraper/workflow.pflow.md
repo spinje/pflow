@@ -35,12 +35,15 @@ Use vision AI to extract content from images found in the page.
 Generate output filename from URL with date prefix, or use provided output_file.
 
 - type: shell
+- env:
+    OUTPUT_FILE: ${output_file}
+    TARGET_URL: ${target_url}
 
 ```shell command
-if [ '${output_file}' != 'auto' ]; then
-  printf '%s' '${output_file}'
+if [ "$OUTPUT_FILE" != 'auto' ]; then
+  printf '%s' "$OUTPUT_FILE"
 else
-  name=$(printf '%s' '${target_url}' | sed 's|[?#].*||; s|/$||; s|.*/||; s|\\.[^.]*$||')
+  name=$(printf '%s' "$TARGET_URL" | sed 's|[?#].*||; s|/$||; s|.*/||; s|\\.[^.]*$||')
   [ -z "$name" ] && name='article'
   printf '%s' "./$(date +%Y-%m-%d)-$name.md"
 fi
@@ -61,9 +64,11 @@ describe_images is false to skip the analysis step.
 
 - type: shell
 - stdin: ${fetch.response}
+- env:
+    DESCRIBE_IMAGES: ${describe_images}
 
 ```shell command
-case '${describe_images}' in
+case "$DESCRIBE_IMAGES" in
   *[Ff]alse*) echo '[]' ;;
   *) grep 'Image [0-9]' | grep -o 'https://[^)]*' | \
      jq -Rs 'split("\n") | map(select(. != ""))' ;;
@@ -122,15 +127,17 @@ Append image analysis sections to the saved article file.
 
 - type: shell
 - stdin: ${format-analyses.stdout}
+- env:
+    ARTICLE_FILE: ${compute-filename.stdout}
 
 ```shell command
-echo '' >> '${compute-filename.stdout}' && \
-echo '---' >> '${compute-filename.stdout}' && \
-echo '' >> '${compute-filename.stdout}' && \
-echo '## Image Details' >> '${compute-filename.stdout}' && \
-echo '' >> '${compute-filename.stdout}' && \
-cat >> '${compute-filename.stdout}' && \
-echo '${compute-filename.stdout}'
+echo '' >> "$ARTICLE_FILE" && \
+echo '---' >> "$ARTICLE_FILE" && \
+echo '' >> "$ARTICLE_FILE" && \
+echo '## Image Details' >> "$ARTICLE_FILE" && \
+echo '' >> "$ARTICLE_FILE" && \
+cat >> "$ARTICLE_FILE" && \
+echo "$ARTICLE_FILE"
 ```
 
 ## Outputs

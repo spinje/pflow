@@ -50,7 +50,11 @@ class RecordingResolver:
 def _shell_ir(*, approval_on_b: bool = True) -> dict[str, Any]:
     nodes = [
         {"id": "a", "type": "shell", "params": {"command": "echo hello"}},
-        {"id": "b", "type": "shell", "params": {"command": "echo from-${a.stdout}"}},
+        {
+            "id": "b",
+            "type": "shell",
+            "params": {"command": 'echo from-"$A_STDOUT"', "env": {"A_STDOUT": "${a.stdout}"}},
+        },
     ]
     if approval_on_b:
         nodes[1]["approval"] = "required"
@@ -73,8 +77,9 @@ class TestApprovalGate:
         assert request.kind == "action_approval"
         assert request.node_id == "b"
         assert allow_prompt is True
-        # The preview shows the RESOLVED template value, not `${a.stdout}`.
-        assert request.preview["command"] == "echo from-hello"
+        # The preview shows the static body and the RESOLVED bound value, not `${a.stdout}`.
+        assert request.preview["command"] == 'echo from-"$A_STDOUT"'
+        assert request.preview["env"] == {"A_STDOUT": "hello"}
 
     def test_denied_gate_stops_cleanly_before_exec(self, tmp_path):
         marker = tmp_path / "ran.txt"
@@ -105,7 +110,8 @@ class TestApprovalGate:
         # The agent-actionable contract: cause + payload + ask-your-human + scoped flag.
         assert "non-interactive" in diag.message
         assert diag.context["gate"]["node_id"] == "b"
-        assert diag.context["gate"]["preview"]["command"] == "echo from-hello"
+        assert diag.context["gate"]["preview"]["command"] == 'echo from-"$A_STDOUT"'
+        assert diag.context["gate"]["preview"]["env"] == {"A_STDOUT": "hello"}
         assert any("ask your human" in s for s in diag.suggestions)
         assert any("--auto-approve=b" in s for s in diag.suggestions)
         assert not shared.get("__failures__")
@@ -473,7 +479,7 @@ class TestRunnerBoundary:
                 {
                     "id": "b",
                     "type": "shell",
-                    "params": {"command": "echo from-${a.stdout}"},
+                    "params": {"command": 'echo from-"$A_STDOUT"', "env": {"A_STDOUT": "${a.stdout}"}},
                     "approval": "required",
                 },
             ],
@@ -485,7 +491,8 @@ class TestRunnerBoundary:
         assert gate_diags, f"gate diagnostic lost in runner conversion: {result.diagnostics}"
         diag = gate_diags[0]
         # The operating agent must see WHAT was about to happen — resolved, not raw.
-        assert diag.context["gate"]["preview"]["command"] == "echo from-hello"
+        assert diag.context["gate"]["preview"]["command"] == 'echo from-"$A_STDOUT"'
+        assert diag.context["gate"]["preview"]["env"] == {"A_STDOUT": "hello"}
         assert any("ask your human" in s for s in (diag.suggestions or []))
         _json.dumps(diag.to_dict())  # must survive the JSON/MCP serialization path
         # Upstream work is preserved and the gated node never ran / never "failed".

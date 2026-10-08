@@ -31,8 +31,10 @@ function optionLabel(option: Record<string, unknown>, index: number): string {
   return option.label ? String(option.label) : `option ${index + 1}`;
 }
 
-// A preview value as display text: strings verbatim, everything else as readable JSON
+// A gate value as display text: strings verbatim, everything else as readable JSON
 // (the payload is JSON-native by GateRequest contract). Long values scroll in their row.
+// Every gate field goes through here, never straight into JSX: an object as a React child
+// throws and blanks the whole viewer (#720).
 function formatValue(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value, null, 2);
 }
@@ -117,7 +119,7 @@ export function GateCallout({
               ))}
             </dl>
           )}
-          {req.recommendation !== null && <p className="gate-recommendation">{req.recommendation}</p>}
+          {req.recommendation != null && <p className="gate-recommendation">{formatValue(req.recommendation)}</p>}
           <div className="gate-foot">
             <GateErrors errors={answer.errors} />
             <div className="gate-actions">
@@ -142,7 +144,7 @@ export function GateCallout({
         </>
       ) : (
         <>
-          {req.question !== null && <p className="gate-question">{req.question}</p>}
+          {req.question != null && <p className="gate-question">{formatValue(req.question)}</p>}
           {req.options.length > 0 && (
             <ol className="gate-options">
               {req.options.map((option, i) => (
@@ -169,8 +171,8 @@ export function GateCallout({
               ))}
             </ol>
           )}
-          {req.recommendation !== null && recommendedIndex === -1 && (
-            <p className="gate-recommendation">Recommended: {req.recommendation}</p>
+          {req.recommendation != null && recommendedIndex === -1 && (
+            <p className="gate-recommendation">Recommended: {formatValue(req.recommendation)}</p>
           )}
           <div className="gate-foot">
             <GateErrors errors={answer.errors} />

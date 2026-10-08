@@ -31,7 +31,10 @@ class TestSharedStoreIsOnlyDataSource:
                 {
                     "id": "consumer",
                     "type": "shell",
-                    "params": {"command": "echo got:${producer.stdout}"},
+                    "params": {
+                        "command": 'echo got:"$PRODUCER_STDOUT"',
+                        "env": {"PRODUCER_STDOUT": "${producer.stdout}"},
+                    },
                 },
             ],
             "edges": [{"source": "producer", "target": "consumer"}],
@@ -60,7 +63,7 @@ class TestSharedStoreIsOnlyDataSource:
                 {
                     "id": "greet",
                     "type": "shell",
-                    "params": {"command": "echo ${greeting}"},
+                    "params": {"command": 'echo "$GREETING"', "env": {"GREETING": "${greeting}"}},
                 },
             ],
             "edges": [],
@@ -95,7 +98,7 @@ class TestSharedStoreIsOnlyDataSource:
                 {
                     "id": "greet",
                     "type": "shell",
-                    "params": {"command": "echo Hello ${name}"},
+                    "params": {"command": 'echo Hello "$NAME"', "env": {"NAME": "${name}"}},
                 },
             ],
             "edges": [],

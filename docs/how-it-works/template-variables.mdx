@@ -243,9 +243,12 @@ Analyze the document.
 Log the token usage from the analysis.
 
 - type: shell
+- env:
+    MODEL: ${analyze.llm_usage.model}
+    TOTAL_TOKENS: ${analyze.llm_usage.total_tokens}
 
 ```shell command
-echo "Model: ${analyze.llm_usage.model}, Tokens: ${analyze.llm_usage.total_tokens}"
+echo "Model: $MODEL, Tokens: $TOTAL_TOKENS"
 ```
 ```
 
@@ -299,7 +302,7 @@ Continue the same session with follow-up work.
 
 ### Shell command
 
-The `shell` node stores the resolved command that was actually executed, accessible as `${node_id.command}`. Useful for logging or debugging when the command is built dynamically from templates.
+A `shell` node's command is the text the workflow wrote — pflow never fills in template variables there. Values reach it through `env:` (see [Shell](/reference/nodes/shell)). When a shell node fails, the error output shows the command and its bound `env:` values, and `pflow report` shows both for every shell node.
 
 ### HTTP response details
 
@@ -316,18 +319,18 @@ Literal `${...}` text (not a template variable) uses double dollar signs to esca
 ````markdown
 ### print_price
 
-Print the literal price variable.
+Write the literal price variable to a file.
 
-- type: shell
-
-```shell command
-echo 'Price: $${PRICE}'
-```
+- type: write-file
+- file_path: price.txt
+- content: "Price: $${PRICE}"
 ````
 
 This produces the literal string `Price: ${PRICE}` instead of trying to resolve a variable.
 
-An escape runs through its matching `}`, and anything inside it is literal, including braces nested one level deep: `$${NAME:-${default}}` produces `${NAME:-${default}}` without resolving `${default}`. So shell parameter expansion (`$${NAME:-world}`, `$${#ITEMS}`) and JavaScript template literals work the same way. Text after the closing `}` is templated as usual. Only `$${` is an escape: a bare `$$` (the shell's process ID) is passed through unchanged.
+An escape runs through its matching `}`, and anything inside it is literal, including braces nested one level deep: `$${NAME:-${default}}` produces `${NAME:-${default}}` without resolving `${default}`. So shell parameter expansion (`$${NAME:-world}`, `$${#ITEMS}`) and JavaScript template literals work the same way inside a templated parameter. Text after the closing `}` is templated as usual. Only `$${` is an escape: a bare `$$` is passed through unchanged.
+
+A shell command and a code node's code block are not templated, so they need no escape: `${NAME:-world}` there is already the shell's own. `$${` in either is a validation error.
 
 ## Validation
 

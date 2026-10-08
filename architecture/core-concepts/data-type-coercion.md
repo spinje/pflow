@@ -93,7 +93,7 @@ Every location in pflow where automatic JSON parsing or type coercion occurs:
 
 **Intent signal**: Partial — the user constructed a structured object (`{"data": "${shell.stdout}"}`) implying they want structured data. But they didn't explicitly say "parse this."
 
-**Guards**: Only fires for simple templates (full `${var}` replacement). Only parses to containers. Complex templates like `"prefix ${var}"` always stay as strings.
+**Guards**: Only fires for simple templates (full `${var}` replacement). Only parses to containers. Complex templates like `"prefix ${var}"` always stay as strings. A shell step's `env:` values are the first leaves it does not apply to: they bind as text (`template_surfaces.binds_as_text`, consulted by the resolver's `parses_leaves`).
 
 **Why it exists**: Without this, `{"body": "${shell.stdout}"}` where stdout is `'{"key":"value"}'` would produce `{"body": '{"key":"value"}'}` — double-encoded. This prevents that.
 

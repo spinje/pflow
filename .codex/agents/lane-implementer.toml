@@ -151,8 +151,10 @@ calls you make yourself, stated visibly in the PR body. Always-escalate regardle
    review ran before the PR): wait for checks in-turn, then squash-merge your own PR. Sibling
    gaps you noticed but didn't fix → one line each in the PR body, never fixed on the side. Run
    `gh pr checks <N>` once more right before the merge and again before handing back — a check
-   snapshot from ten minutes ago is prose. Kill any `gh pr checks --watch` or other poll you
-   started before you stop; a leftover poll outlives you and blocks the worktree teardown. Stop
+   snapshot from ten minutes ago is prose. Before you stop, kill (by PID) any `gh pr checks --watch`
+   or other poll you started and any shell of yours still alive in the tree — a `grep` left
+   reading stdin, an `ls` (aliased to `eza` on this machine) hung on `-t`; a leftover process
+   outlives you and blocks the worktree teardown. Stop
    this worktree's dev servers too and declare `dev servers: none | <ports>` in the handback —
    `./scripts/worktree rm` refuses while a process is rooted in the tree
    (`.taskmaster/orchestration/ORCHESTRATION.md` → Worktree & git flow).

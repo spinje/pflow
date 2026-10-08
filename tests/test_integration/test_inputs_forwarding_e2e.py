@@ -48,7 +48,10 @@ The value to echo.
 Echo the provided values.
 
 - type: shell
-- command: echo "${name}=${value}"
+- env:
+    NAME: ${name}
+    VALUE: ${value}
+- command: echo "$NAME=$VALUE"
 
 ## Outputs
 

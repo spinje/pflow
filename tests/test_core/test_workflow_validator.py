@@ -83,7 +83,7 @@ class TestWorkflowValidator:
                 {
                     "id": "process",
                     "type": "shell",
-                    "params": {"command": "echo ${item.name}"},
+                    "params": {"command": 'echo "$ITEM_NAME"', "env": {"ITEM_NAME": "${item.name}"}},
                     "batch": "${items}",
                 }
             ],
@@ -333,7 +333,7 @@ Do something.
                 {
                     "id": "use_output",
                     "type": "shell",
-                    "params": {"command": "echo ${process.result}"},
+                    "params": {"command": "cat", "stdin": "${process.result}"},
                 },
             ],
             "edges": [{"from": "process", "to": "use_output"}],
@@ -363,7 +363,7 @@ Do something.
                 {
                     "id": "use_output",
                     "type": "shell",
-                    "params": {"command": "echo ${process.anything}"},
+                    "params": {"command": "cat", "stdin": "${process.anything}"},
                 },
             ],
             "edges": [{"from": "process", "to": "use_output"}],
