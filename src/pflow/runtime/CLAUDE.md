@@ -128,6 +128,12 @@ full-run snapshot eligibility are separate policies.
 batch items; batch items and already-buffered descendants use child buffers.
 Keep that distinction when changing correlation or worker-thread tracing.
 
+Every step that begins gets a top-level `node.start` paired with its terminal event
+(same `id`) — sub-workflow hosts, batched or not, included: the engine calls
+`begin_node` for every node and a host's `descend` takes that frame over. Resume reads
+an unpaired one as "this step began" (`resume_source`), so a completion path that
+drops the frame leaves a dangling start, and a second reservation a double start.
+
 LLM trace content is canonical in `llm_prompt`/`llm_system`; redundant prompt and
 system copies are stripped from persisted node output. The memo blob retains
 full node output, so memo restoration and trace-based snapshot restoration are

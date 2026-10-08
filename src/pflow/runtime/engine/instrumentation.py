@@ -565,10 +565,9 @@ def record_trace(
 ) -> None:
     """Record trace event. Receives data directly, no chain traversal.
 
-    ``frame`` (Task 172) is the sub-workflow host's reserved correlation (``_HostFrame``), passed only
-    for a ``WorkflowExecutor`` host so its completion event reuses the ``seq`` reserved at descent;
-    ``None`` for every other node (the run collector then takes the next ``seq``). Opaque here — the
-    collector interprets it.
+    ``frame`` is the ``_HostFrame`` the collector's ``begin_node`` reserved when the node began (a
+    sub-workflow host's included), so the completion event reuses that ``seq``; ``None`` for a buffer
+    collector or a node that never began (the run collector then takes the next ``seq``). Opaque here.
 
     The ``error`` parameter accepts either an ``Exception`` (from raised-exception
     failure paths) or a ``str`` (from action="error" happy-path failures where no

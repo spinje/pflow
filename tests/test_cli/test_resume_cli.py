@@ -520,8 +520,9 @@ def test_entry_restored_by_a_resumed_attempt_still_needs_confirmation(home, tmp_
     assert out.read_text(encoding="utf-8").splitlines() == ["K fired a"]  # nothing re-fired
 
 
-# A batched sub-workflow host never writes a top-level node.start (the engine skips begin_node
-# for WorkflowExecutor; batch items never descend), so its missing start proves nothing.
+# A batched sub-workflow host whose item fired a side effect. Since Task 180 its node.start is
+# written (and paired with its failed event), so the trace itself proves it began; traces that
+# predate that never wrote it, which is what resume_preflight's `workflow`-type carve-out covers.
 _BATCH_CHILD_WF = """# Ledger Child
 
 Append the tag to a ledger.
@@ -600,6 +601,149 @@ def test_batched_sub_workflow_host_still_needs_confirmation(home, tmp_path):
     assert result.exit_code == 1
     assert "Resuming re-runs step 'host' (a workflow step)" in result.stdout + result.stderr
     assert out.read_text(encoding="utf-8").splitlines() == ["fired a"]  # nothing re-fired
+
+
+_MODE_CHILD_WF = """# Mode Child
+
+Append the tag to a ledger, but only in mode ok.
+
+## Inputs
+
+### tag
+
+The tag.
+
+- type: string
+
+### mode
+
+Must be ok.
+
+- type: string
+
+## Steps
+
+### fire
+
+Append.
+
+- type: shell
+- env:
+    TAG: ${{tag}}
+    MODE: ${{mode}}
+
+```shell command
+test "$MODE" = ok && echo "fired $TAG" >> {out}
+```
+"""
+
+_MODE_HOST_WF = """# Batched Mode Host
+
+A batched sub-workflow host after one upstream step.
+
+## Inputs
+
+### mode
+
+Passed to every item.
+
+- type: string
+- required: true
+
+## Steps
+
+### produce
+
+Items.
+
+- type: code
+
+```python code
+result: list = ["a", "b"]
+```
+
+### host
+
+Run the child per item.
+
+- type: workflow
+- workflow: {child}
+- inputs:
+    tag: ${{item}}
+    mode: ${{mode}}
+- batch:
+    items: ${{produce.result}}
+    error_handling: fail_fast
+"""
+
+
+def _write_mode_host(tmp_path: Path) -> tuple[Path, Path]:
+    out = tmp_path / "ledger.txt"
+    child = tmp_path / "mode-child.pflow.md"
+    child.write_text(_MODE_CHILD_WF.format(out=out.as_posix()), encoding="utf-8")
+    wf = tmp_path / "mode-host.pflow.md"
+    wf.write_text(_MODE_HOST_WF.format(child=child.as_posix()), encoding="utf-8")
+    return wf, out
+
+
+def _kill_before_host_completes(trace: Path) -> list[dict[str, Any]]:
+    """Cut a real trace where a kill mid-``host`` would: drop the host's terminal event and all after."""
+    lines = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+    cut = next(i for i, line in enumerate(lines) if line["kind"] == "event" and line["node_id"] == "host")
+    trace.write_text("".join(json.dumps(line) + "\n" for line in lines[:cut]), encoding="utf-8")
+    return lines[:cut]
+
+
+def test_run_killed_inside_a_batched_host_resumes_at_the_host(home, tmp_path):
+    """The batched host's node.start is the only on-disk sign it began; killed there, the run resolves
+    the host as the step it was killed in (not "between produce and host") and asks to confirm it."""
+    from pflow.runtime.resume_source import load_resume_source
+
+    wf, out = _write_mode_host(tmp_path)
+    full = _runner().invoke(cli, [str(wf), "mode=ok"])
+    assert full.exit_code == 0, full.stderr
+    [trace] = (home / ".pflow" / "debug").glob("workflow-trace-*.json")
+    kept = _kill_before_host_completes(trace)
+    assert [(line["kind"], line["node_id"]) for line in kept[1:]] == [
+        ("node.start", "produce"),
+        ("event", "produce"),
+        ("node.start", "host"),
+    ]
+    exec_id = kept[0]["execution_id"]
+
+    source = load_resume_source(execution_id=exec_id, debug_dir=home / ".pflow" / "debug")
+    assert (source.entry_node_id, source.last_completed_node_id) == ("host", None)
+    refused = _runner().invoke(cli, ["resume", exec_id])
+    assert refused.exit_code == 1
+    assert "Resuming re-runs step 'host' (a workflow step)" in refused.stdout + refused.stderr
+    assert out.read_text(encoding="utf-8").splitlines() == ["fired a", "fired b"]  # nothing re-fired
+
+
+def test_attempt_killed_inside_a_batched_host_supersedes_its_source(home, tmp_path):
+    """A resume attempt killed inside the batched host may have fired its items: it consumed the chain,
+    so its source can no longer be resumed (it would re-run what the attempt started)."""
+    from pflow.core.exceptions import ResumeSupersededError
+    from pflow.runtime.resume_source import load_resume_source
+
+    wf, _ = _write_mode_host(tmp_path)
+    _, source_id = _run_hint([str(wf), "mode=bad"])
+    resumed = _runner().invoke(cli, ["resume", source_id, "mode=ok", "--force"])
+    assert resumed.exit_code == 0, resumed.stderr
+    debug = home / ".pflow" / "debug"
+    [attempt] = [
+        path
+        for path in debug.glob("workflow-trace-*.json")
+        if json.loads(path.read_text(encoding="utf-8").splitlines()[0]).get("resumed_from") == source_id
+    ]
+    kept = _kill_before_host_completes(attempt)
+    assert [(line["kind"], line["node_id"], line.get("restored")) for line in kept[1:]] == [
+        ("event", "produce", True),
+        ("node.start", "host", None),
+    ]
+
+    with pytest.raises(ResumeSupersededError) as excinfo:
+        load_resume_source(execution_id=source_id, debug_dir=debug)
+    assert excinfo.value.newer_execution_id == kept[0]["execution_id"]
 
 
 # --- Stale-workflow gate (§E step 3) -----------------------------------------
@@ -1249,11 +1393,10 @@ def test_stale_refusal_names_a_between_iterations_loop_step_as_the_resume_point(
 
 def test_killed_between_loop_iterations_continues_with_the_engine_decision_e2e(home, tmp_path):
     """Task 179 D3 + review-fold W1, through the real CLI: a run killed after a looping
-    ``workflow`` host's iteration 2 (the host emits no ``node.start``, so a kill inside an
-    iteration looks the same) loads as ``(None, host)`` at iteration 3. The preflight passes it
-    through but still asks to confirm the side-effecting step that may re-run (the host, by
-    its registry type); ``--force`` resumes, and the engine re-enters at iteration 3 with
-    iteration 2's carried survivors — rounds 1-2 never re-run."""
+    ``workflow`` host's iteration 2 (before iteration 3's ``node.start``) loads as ``(None, host)``
+    at iteration 3. The preflight passes it through but still asks to confirm the side-effecting
+    step that may re-run (the host, by its registry type); ``--force`` resumes, and the engine
+    re-enters at iteration 3 with iteration 2's carried survivors — rounds 1-2 never re-run."""
     wf, log = _write_looping_host(tmp_path)
     exec_id, rounds = _kill_looping_host_after_iteration_2(home, wf, log)
 

@@ -22,8 +22,9 @@ The engine flushes a disk-only `node.start` marker for every **main-thread** nod
 sub-workflow hosts, and batch-of-leaf hosts), so the overlay shows live "running" for them —
 superseding the "running/pending stay overlay-inferred (no node.start in v1)" and "node.start (L2)
 is the deferred fix" notes in Consequences below. Still genuinely deferred (the true v1 boundary):
-per-ITEM "running" inside a parallel/sequential batch and the batch-OF-sub-workflow host (both run off
-the owner thread, where the no-lock rule forbids emitting to the run-scoped collector) → pending-until-done.
+per-ITEM "running" inside a parallel/sequential batch (items run off the owner thread, where the no-lock
+rule forbids emitting to the run-scoped collector) → pending-until-done. The batch-OF-sub-workflow host's
+own `node.start` was built by Task 180: the engine begins it on the owner thread like any step.
 The per-node `status` enum (`success`/`cached`/`failed`), left as a "low-stakes open decision" below,
 also shipped (Task 172). The consumer-derivation contract (status read directly; `node.start`→running;
 `run.complete.final_status`→degraded banner; `sameRef` join on `(node_id, ancestor_path, port=null)`,
