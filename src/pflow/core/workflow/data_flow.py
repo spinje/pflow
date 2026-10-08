@@ -1053,6 +1053,12 @@ def _escapes(text: str) -> Iterator[tuple[int, str]]:
         start = text.find("$${", start + 1)
 
 
+def _odd_backslashes_before(text: str, start: int) -> bool:
+    """Whether sh reads the ``$`` at ``start`` as backslash-quoted (``\\$``, not ``\\\\$``)."""
+    before = text[:start]
+    return (len(before) - len(before.rstrip("\\"))) % 2 == 1
+
+
 def _validate_bodies(workflow_ir: dict[str, Any], node: dict[str, Any]) -> list[Diagnostic]:
     """The body rule for one step: its leftovers (one ERROR per body), each ``$${`` escape
     (an ERROR), and — shell only — a pflow-only shape naming nothing pflow knows (one WARNING)."""
@@ -1068,7 +1074,10 @@ def _validate_bodies(workflow_ir: dict[str, Any], node: dict[str, Any]) -> list[
         for piece, first_line in _readable_texts(language, text):
             for start, written in _escapes(piece):
                 body_line = first_line + piece.count("\n", 0, start)
-                diagnostics.append(_escape_diagnostic(node, param, language, written, body_line, scope))
+                backslashed = language == "sh" and _odd_backslashes_before(piece, start)
+                diagnostics.append(
+                    _escape_diagnostic(node, param, language, written, body_line, scope, backslashed=backslashed)
+                )
         if language == "sh":
             diagnostics.extend(_foreign_shape_warning(node, param, text, scope))
     return diagnostics
@@ -1327,28 +1336,36 @@ def _python_read(ref: BodyReference) -> str:
 
 
 def _escape_diagnostic(
-    node: dict[str, Any], param: str, language: BodyLanguage, written: str, body_line: int, scope: StepScope
+    node: dict[str, Any],
+    param: str,
+    language: BodyLanguage,
+    written: str,
+    body_line: int,
+    scope: StepScope,
+    *,
+    backslashed: bool = False,
 ) -> Diagnostic:
     location = _location(node, param, body_line)
     where = _where(location)
     located = f"{written} ({where})" if where else written
     escaped = written[2:]  # ``{PRICE}``
-    inner = parse_path(escaped[1:-1]) if escaped.endswith("}") and len(escaped) > 2 else None
+    braced = escaped.endswith("}") and len(escaped) > 2
+    inner = parse_path(escaped[1:-1]) if braced else None
     in_scope = inner if inner is not None and _owner(scope, inner) else None
+    if backslashed and braced:
+        located = f"\\{located}"
+        message = (
+            f"Step '{node.get('id')}': the command contains {located}. It reads two ways: as pflow's escape it was "
+            f"the literal text ${escaped}; in plain sh it is a dollar sign followed by the value of ${escaped}."
+        )
+        fixes = _dollar_then_expansion_fixes(node, escaped, in_scope)
+        return _body_diagnostic(Severity.ERROR, node, param, location, message, fixes, _GUIDE_TOPIC[language])
     if language == "sh":
         message = (
             f"Step '{node.get('id')}': the command contains the escape {located}. A shell command is plain sh, "
             f"so there is nothing to escape — sh would run $$ as its process id, followed by {escaped}."
         )
-        if in_scope is not None:
-            name = _env_name(in_scope.raw)
-            add = binding_phrase(node, "env", [(name, in_scope.raw)])
-            fix = (
-                f"For a dollar sign followed by the value: {add} and write \\$${name} inside double quotes "
-                f'— e.g. "value: \\$${name}".'
-            )
-        else:
-            fix = f"Write ${escaped} for a shell expansion."
+        fix = _bound_dollar_fix(node, in_scope) if in_scope is not None else f"Write ${escaped} for a shell expansion."
     else:
         message = (
             f"Step '{node.get('id')}': the code contains the escape {located} inside a Python string. A code "
@@ -1367,6 +1384,32 @@ def _escape_diagnostic(
                 f'split the string: "$$" "{escaped}".'
             )
     return _body_diagnostic(Severity.ERROR, node, param, location, message, [fix], _GUIDE_TOPIC[language])
+
+
+def _bound_dollar_fix(node: dict[str, Any], ref: Reference) -> str:
+    """A dollar sign followed by a pflow value in sh: bind it, write ``\\$$NAME``."""
+    name = _env_name(ref.raw)
+    add = binding_phrase(node, "env", [(name, ref.raw)])
+    return f'For a dollar sign followed by the value: {add} and write \\$${name} inside double quotes — e.g. "value: \\$${name}".'
+
+
+def _dollar_then_expansion_fixes(node: dict[str, Any], escaped: str, in_scope: Reference | None) -> list[str]:
+    """One fix per reading of ``\\$${COST}``: the literal text ``${COST}`` (pflow's old
+    meaning) and a dollar sign followed by the value (sh's) — neither containing ``$${``."""
+    name = escaped[1:-1]
+    if in_scope is not None:  # ``\\${x.cost}`` would itself be a leftover
+        literal = f'\\$""{escaped}'
+        value = _bound_dollar_fix(node, in_scope)
+    else:
+        literal = f"\\${escaped}"
+        if name.isascii() and name.replace("_", "a").isalnum() and not name[0].isdigit():
+            value = (
+                f"For a dollar sign followed by the value of {name}: write \\$${name} — or "
+                f'\\$""${escaped} where a letter, digit or _ follows.'
+            )
+        else:
+            value = f'For a dollar sign followed by sh\'s ${escaped}: write \\$""${escaped}.'
+    return [f"For the literal text ${escaped} (what it printed before): write {literal}.", value]
 
 
 # — ruling 2: a pflow-only shape naming nothing pflow knows (WARNING, shell only) —

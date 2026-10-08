@@ -850,3 +850,69 @@ def test_a_step_whose_env_is_one_template_is_told_to_extend_that_map(registry: R
         if "not visible" in d.message
     ]
     assert warning.suggestions == [f'Bind it: {extend} and read "$URL" in the command — or remove the key.']
+
+
+# ── `\$${X}`: a dollar sign, then a braced expansion — two readings, one fix each ──
+
+
+def _run_shell(command: str, *, env: dict[str, str] | None = None, upstream: bool = False) -> str:
+    nodes = [_shell("x", "printf 4.50")] if upstream else []
+    nodes.append(_shell("s", command, params={"env": env} if env else {}))
+    ir = _ir(*nodes)
+    assert validate_data_flow(ir) == [], [d.message for d in validate_data_flow(ir)]
+    result = WorkflowRunner().run(ir, {}, RunnerConfig())
+    assert result.success, [d.message for d in result.errors]
+    return str(result.shared_after["s"]["stdout"]).strip()
+
+
+def test_a_backslashed_escape_states_both_readings_and_each_fix_prints_what_it_says() -> None:
+    """Before plain-sh commands ``\\$${COST}`` was pflow's escape (the literal ``${COST}``);
+    sh reads it as a dollar sign and the value. Never "the pid" — that is false here."""
+    ir = _ir(_shell("s", 'echo "price: \\$${COST}USD"', params={"env": {"COST": "4.50"}}))
+    ir["nodes"][0]["_source_lines"] = {"command": 13}
+    [error] = _errors(validate_data_flow(ir))
+    assert error.message == (
+        "Step 's': the command contains \\$${COST} (line 13 of the workflow file). It reads two ways: as pflow's "
+        "escape it was the literal text ${COST}; in plain sh it is a dollar sign followed by the value of ${COST}."
+    )
+    assert error.suggestions == [
+        "For the literal text ${COST} (what it printed before): write \\${COST}.",
+        'For a dollar sign followed by the value of COST: write \\$$COST — or \\$""${COST} where a letter, digit '
+        "or _ follows.",
+    ]
+    env = {"COST": "4.50"}
+    assert _run_shell('echo "price: \\${COST}USD"', env=env) == "price: ${COST}USD"
+    assert _run_shell('echo "price: \\$$COST"', env=env) == "price: $4.50"
+    assert _run_shell('echo "price: \\$""${COST}USD"', env=env) == "price: $4.50USD"
+
+
+def test_a_backslashed_escape_of_a_pflow_reference_offers_a_literal_and_a_binding() -> None:
+    ir = _ir(_shell("x", "printf 4.50"), _shell("s", 'echo "cost: \\$${x.stdout}"'))
+    [error] = _errors(validate_data_flow(ir))
+    assert error.message.startswith("Step 's': the command contains \\$${x.stdout}. It reads two ways:")
+    assert error.suggestions == [
+        'For the literal text ${x.stdout} (what it printed before): write \\$""{x.stdout}.',
+        "For a dollar sign followed by the value: add `- env: {X_STDOUT: ${x.stdout}}` to the step and write "
+        '\\$$X_STDOUT inside double quotes — e.g. "value: \\$$X_STDOUT".',
+    ]
+    assert _run_shell('echo "cost: \\$""{x.stdout}"', upstream=True) == "cost: ${x.stdout}"
+    assert _run_shell('echo "cost: \\$$X_STDOUT"', env={"X_STDOUT": "${x.stdout}"}, upstream=True) == "cost: $4.50"
+
+
+def test_an_escaped_backslash_before_the_escape_is_still_the_pid_reading() -> None:
+    """``\\\\$${X}``: sh's ``\\\\`` is one backslash, then ``$$`` is the pid — today's message."""
+    [error] = _errors(validate_data_flow(_ir(_shell("s", 'echo "\\\\$${X}"'))))
+    assert error.message == (
+        "Step 's': the command contains the escape $${X}. A shell command is plain sh, so there is nothing to "
+        "escape — sh would run $$ as its process id, followed by {X}."
+    )
+
+
+def test_a_backslashed_escape_of_a_shell_expansion_form_offers_the_quote_split() -> None:
+    [error] = _errors(validate_data_flow(_ir(_shell("s", 'echo "\\$${NOPE:-0}"'))))
+    assert error.suggestions == [
+        "For the literal text ${NOPE:-0} (what it printed before): write \\${NOPE:-0}.",
+        'For a dollar sign followed by sh\'s ${NOPE:-0}: write \\$""${NOPE:-0}.',
+    ]
+    assert _run_shell('echo "\\${NOPE:-0}"') == "${NOPE:-0}"
+    assert _run_shell('echo "\\$""${NOPE:-0}"') == "$0"

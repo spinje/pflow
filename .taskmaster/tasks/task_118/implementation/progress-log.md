@@ -1422,3 +1422,49 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
 - Residue outside the tree: G1 left `~/.pflow/reports/v8-fail` and `~/.pflow/reports/f10-dunder` (report outputs);
   deleting under `~` is permission-denied for agents — named in the hand-back for the main orchestrator.
 - Next: `review-falsifier` (direct launch, mine) against this commit; G1 evaluates its report.
+
+## [2026-10-08 08:55] gate runner G1 (Opus) — falsifier W1 fixed per ruling; S1/S2 recorded
+- Did: evaluated `gate-part2-falsifier.md` W1 (reproduced: `echo "price: \$${COST}USD"` → "sh would run $$ as its process
+  id", and following "Write ${COST}" prints `price: ${COST}USD`). Per the [2026-10-08 08:40] ruling `\$${NAME}` stays an
+  ERROR; only its diagnosis and fixes changed. An odd number of backslashes before `$${` (sh's `\$`) now gets:
+  `Step 's': the command contains \$${COST} (line 16 of the workflow file). It reads two ways: as pflow's escape it was the
+  literal text ${COST}; in plain sh it is a dollar sign followed by the value of ${COST}.` with
+  `1. For the literal text ${COST} (what it printed before): write \${COST}.` and
+  `2. For a dollar sign followed by the value of COST: write \$$COST — or \$""${COST} where a letter, digit or _ follows.`
+  (the guide's `\$$COST` repair plus its "braces only where a name character follows" rule). A non-name inner
+  (`\$${NOPE:-0}`) gets `\$""${NOPE:-0}` for fix 2; an in-scope pflow reference (`\$${x.stdout}`) gets `\$""{x.stdout}` for
+  the literal (`\${x.stdout}` would itself be a leftover) and the existing bound-value fix (now one helper,
+  `_bound_dollar_fix`, shared with the plain-escape branch). Code bodies unchanged: there the message ("the string keeps
+  both dollar signs") is true for `"\$${X}"` — checked.
+- Changed: `src/pflow/core/workflow/data_flow.py` (`_odd_backslashes_before`, `_escape_diagnostic(…, backslashed=)`,
+  `_dollar_then_expansion_fixes`, `_bound_dollar_fix`); `tests/test_integration/test_code_body_leftovers.py` +4.
+- Verified: every suggested form run under sh, bash and dash before writing it (`\${COST}` → `${COST}`, `\$$COST` → `$4.50`,
+  `\$""${COST}USD` → `$4.50USD` quoted and unquoted, `\$""${NOPE:-0}` → `$0`, `\$""{x.cost}` → `${x.cost}` quoted and
+  unquoted; `\\$${X}` is backslash + pid — left on today's message). Tests: each fix, applied, validates AND runs printing
+  what it promises (out-of-scope, in-scope, expansion-form rows); the plain `$${X}`, the in-scope plain escape and the
+  `\\$${X}` (even backslashes) cases keep today's exact text (presence partners; the last passes pre-fix — regression
+  guard). Mutations: backslash detection off → 3 red; every escape treated as backslashed → 3 red; restored (`cmp`).
+  Real CLI: the probe prints the text above; both fixes applied in the file print `price: ${COST}USD` / `price: $4.50USD`.
+  Checkpoint §3 drafts: plain-escape message, its `Write ${PRICE}` fix, the in-scope `\$$COST` fix and the code-body texts
+  unchanged (their exact-text tests untouched and green). `make check` green; `make test` **10586 passed** / 0 failed.
+- Deviations/surprises: new drafted text (beyond the checkpoint, ruled case): the two-readings message and the three
+  fix-2 variants above. Detection is backslash-count only, not quote-aware (no shell lexer — D5): inside single quotes
+  `'\$${X}'` is literal to sh yet still gets this message; it was an error before too.
+- S1 (approval preview shows typed values / truncated env line — plan D11) and S2 (`${input}` in a shell comment is a
+  leftover ERROR — follows the ruled whole-body read): orchestrator-dispositioned (follow-up / accepted); untouched.
+- Self-checks: fully happy — yes; the residue is the single-quote case named above. test-reflect: covered by the
+  run-the-advice assertions and the two mutations.
+- Next: orchestrator commits.
+
+## [2026-10-08 09:10] task orchestrator (Opus) — completion gate CLOSED
+- Falsifier (`implementation/gate-part2-falsifier.md`, direct launch on `3d14aba2`): 0 Critical; W1 fixed by G1 per my
+  ruling (still an ERROR; the `\`-preceded `$${` message now states both readings, each fix run under sh/bash/dash);
+  S1 (approval preview shows typed values — plan D11) → follow-up issue; S2 (`${input}` in a shell comment blocks —
+  the ruled whole-body read) → accepted.
+- Verified on the final tree (mine): `origin/main` has not moved since `4ab61390`; `make check` green;
+  `make test-all-local` **10638 passed / 2 skipped**.
+- Every finding of both gates is dispositioned (G1's two entries + this log). The untracked
+  `implementation/baseline/task159-{before,after}/` (regenerable from `a296ceca` via `task159_actual.sh`) stay in the
+  worktree — deletion is permission-denied for this agent; named in the hand-back (they make the tree non-clean for
+  `scripts/worktree rm`).
+- Next: spec Status → done; `create-task-review`; `create-pr`.
