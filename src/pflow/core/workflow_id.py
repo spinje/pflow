@@ -77,8 +77,8 @@ def step_identity(ir: dict[str, Any]) -> dict[str, Any]:
     ``{"start": <start step>, "steps": {node_id: {"hash": <md5>, "next": [[action, target], ...]}}}``,
     written on the trace's ``meta`` line (2.9.0). A step's ``hash`` covers its definition minus prose:
     every node key except ``purpose`` and source provenance, plus the ``## Cache`` chunks it lists in
-    ``prompt_cache`` (they render into its prompt) — which a step that uses any also gets alone, as
-    ``cache``. ``## Inputs`` are not part of any step — a resume reuses the recorded input values.
+    ``prompt_cache`` (they render into its prompt) — which a step that uses any also gets one by one,
+    as ``cache`` (chunk name → hash). ``## Inputs`` are not part of any step — a resume reuses the recorded input values.
     ``next`` is the step's ``ir_schema.outgoing_edges``, so an insertion or reroute shows on the
     predecessor without touching its hash.
 
@@ -104,8 +104,8 @@ def step_identity(ir: dict[str, Any]) -> dict[str, Any]:
             "next": [list(pair) for pair in edges.get(node_id, [])],
         }
         if used_chunks:
-            # The chunks alone too, so a refusal can say the edit was to a `## Cache` chunk, not the step.
-            step["cache"] = canonical_ir_digest(used_chunks)
+            # Each chunk alone too, so a refusal can say the edit was to a `## Cache` chunk's content.
+            step["cache"] = {name: canonical_ir_digest(chunk) for name, chunk in used_chunks.items()}
         steps[node_id] = step
     return {"start": start_node_id(ir), "steps": steps}
 

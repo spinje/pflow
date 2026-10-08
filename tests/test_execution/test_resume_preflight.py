@@ -189,3 +189,13 @@ class TestIdentityGate:
         from pflow.execution.resume_preflight import _check_workflow_identity
 
         _check_workflow_identity(ResolvedWorkflow(ir=self._IR, source="file"), source, force=False)
+
+    def test_an_added_error_route_is_named_with_its_action(self) -> None:
+        from pflow.core.workflow_id import step_identity
+        from pflow.execution.resume_preflight import _check_workflow_identity
+
+        recorded = step_identity(self._IR)
+        edited_ir = {**self._IR, "edges": [*self._IR["edges"], {"from": "a", "to": "b", "action": "error"}]}
+        with pytest.raises(ResumeStaleWorkflowError) as exc:
+            _check_workflow_identity(ResolvedWorkflow(ir=edited_ir, source="file"), self._source(recorded), force=False)
+        assert str(exc.value).startswith("'a' now continues to 'b', 'b' on error instead of 'b'.")

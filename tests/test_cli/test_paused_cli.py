@@ -263,7 +263,9 @@ def test_editing_the_approved_step_refuses_and_force_proceeds(home, gate_wf):
     assert refused.exit_code == 1
     combined = refused.stdout + refused.stderr
     assert "'gated' was edited after it was approved — the approval covered the earlier version." in combined
-    assert "Re-run the workflow from the start so the edit takes effect." in combined
+    assert "Resuming would run the edited 'gated' under that earlier approval." in combined
+    assert "would not take effect" not in combined  # --force RUNS the edited step
+    assert "Re-run the workflow from the start so 'gated' asks for approval again." in combined
     forced = _runner().invoke(cli, ["resume", token, "--approve", "yes", "--force"])
     assert forced.exit_code == 0, forced.stderr
     assert "gated action v2" in forced.stdout
@@ -748,7 +750,8 @@ def test_a_step_inserted_after_the_escalation_refuses_without_claiming_a_skip(ho
     assert refused.exit_code == 1
     combined = refused.stdout + refused.stderr
     assert "'esc' now continues to 'check' instead of 'after'." in combined
-    assert "never ran" not in combined
+    assert "Resume would continue at 'check' with the saved outputs up to and including 'esc'." in combined
+    assert "never ran" not in combined and "would not take effect" not in combined and "skipped" not in combined
 
 
 def test_approve_on_escalation_refuses_with_the_right_flag(home, esc_wf):

@@ -960,8 +960,9 @@ def load_resume_source(
 
 
 def _recorded_step_identity(data: dict[str, Any]) -> dict[str, Any] | None:
-    """The trace's ``step_identity`` when it has the recorded shape, else ``None`` (absent or malformed —
-    either way the preflight falls back to the whole-workflow hash, never a partial check)."""
+    """The trace's ``step_identity`` when its envelope (a ``steps`` map, a ``start`` id or null) is intact,
+    else ``None`` — the preflight then falls back to the whole-workflow hash. Individual step entries are
+    not vetted here: the preflight treats a missing or malformed one as edited (fail-closed)."""
     identity = data.get("step_identity")
     if not isinstance(identity, dict) or not isinstance(identity.get("steps"), dict):
         return None

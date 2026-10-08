@@ -1452,26 +1452,38 @@ class ResumeSideEffectConfirmationError(ResumeSourceError):
         )
 
 
+Route = tuple[str, str]  # (action, target) — one outgoing edge of a step
+
+
 def _quoted(names: list[str]) -> str:
     return ", ".join(f"'{name}'" for name in names)
 
 
+def _routes_text(routes: list[Route]) -> str:
+    """``'b'`` for the default route, ``'b' on error`` / ``'b' on 'x'`` for the others."""
+    labels = []
+    for action, target in routes:
+        suffix = "" if action == "default" else " on error" if action == "error" else f" on '{action}'"
+        labels.append(f"'{target}'{suffix}")
+    return ", ".join(labels)
+
+
 class ResumeStaleWorkflowError(ResumeSourceError):
-    """The workflow changed since the original run in a way this resume would not pick up (Task 164;
+    """The workflow changed since the original run in a way this resume would get wrong (Task 164;
     paused resumes Task 171; per step since Task 180).
 
-    Resume restores the saved outputs of the steps that ran before its resume point, so an edit to one
-    of them — or a change in where they lead — would not take effect. The preflight passes each change
-    it found, and the message leads with them in a fixed order: removed → resume point gone → edited
-    (``cache_edited``: those whose ``## Cache`` chunks changed) →
-    edited after approval → now continues elsewhere (``rerouted``: step → (now, recorded) targets) →
-    new start step (``new_start``: (now, recorded)). ``skipped`` names the steps among those targets
-    that never ran, which the resume would skip. With no change given, the trace predates per-step
-    identity: ``hash_known`` says the whole-workflow hash differs (an older pflow), ``False`` that not
-    even that is known (a run predating hash tracking) — never claiming an edit that may not have
-    happened. The suggestions name what ``--force`` accepts and, when ``rerun_node_type`` is given,
-    that it also re-runs a started side-effecting resume point. Wording stays neutral ("original
-    run"): this refusal serves failed, interrupted, AND paused resumes.
+    The preflight passes each change it found; the message leads with them in a fixed order: removed
+    → resume point gone → edited (``cache_edited``: a ``## Cache`` chunk's content changed) → edited
+    after approval → now leads elsewhere (``rerouted``: step → (now, recorded) routes) → new start
+    step (``new_start``: (now, recorded)). ``skipped`` names the new route targets / start step the
+    resume would never run. Then it says what the resume would do instead — restore stale outputs,
+    continue into a between-nodes source's new route, or run an approved step as edited. With no
+    change given, the trace predates per-step identity: ``hash_known`` says the whole-workflow hash
+    differs (an older pflow), ``False`` that not even that is known (a run predating hash tracking) —
+    never claiming an edit that may not have happened. The suggestions name what ``--force`` accepts
+    and, when ``rerun_node_type`` is given, that it also re-runs a started side-effecting resume
+    point. Wording stays neutral ("original run"): this refusal serves failed, interrupted, AND
+    paused resumes.
     """
 
     _TITLE = "Workflow changed since the original run"
@@ -1486,7 +1498,7 @@ class ResumeStaleWorkflowError(ResumeSourceError):
         edited: list[str] | None = None,
         cache_edited: frozenset[str] = frozenset(),
         approved_edited: str | None = None,
-        rerouted: dict[str, tuple[list[str], list[str]]] | None = None,
+        rerouted: dict[str, tuple[list[Route], list[Route]]] | None = None,
         new_start: tuple[str, str | None] | None = None,
         skipped: frozenset[str] = frozenset(),
         entry_iteration: int | None = None,
@@ -1500,72 +1512,56 @@ class ResumeStaleWorkflowError(ResumeSourceError):
         self.resume_point = entry_node_id if entry_node_id is not None else after_node_id
         self.resume_point_missing = resume_point_missing
         self.new_start = new_start[0] if new_start is not None else None
-        leads = [
-            f"'{node_id}' is no longer in the workflow (resume would still restore its saved output)."
-            for node_id in removed
-        ]
-        if resume_point_missing:
-            leads.append(f"The resume point '{self.resume_point}' is no longer in the workflow.")
-        leads += [
-            f"'{node_id}' was edited (a `## Cache` chunk it uses changed)."
-            if node_id in cache_edited
-            else f"'{node_id}' was edited."
-            for node_id in edited
-        ]
-        if approved_edited is not None:
-            leads.append(
-                f"'{approved_edited}' was edited after it was approved — the approval covered the earlier version."
-            )
+        changed = list(dict.fromkeys([*removed, *edited, *([approved_edited] if approved_edited else []), *rerouted]))
+        known = bool(changed or resume_point_missing or new_start)
+        # None = unknown (the trace records no per-step identity), never "nothing changed".
+        self.changed_steps: list[str] | None = changed if known else None
+        leads = _stale_leads(removed, resume_point_missing, self.resume_point, edited, cache_edited, approved_edited)
         leads += [_rerouted_lead(node_id, now, before, skipped) for node_id, (now, before) in rerouted.items()]
         if new_start is not None:
             leads.append(_new_start_lead(*new_start, skipped))
-        changed = list(dict.fromkeys([*removed, *edited, *([approved_edited] if approved_edited else []), *rerouted]))
-        # None = unknown (the trace records no per-step identity), never "nothing changed".
-        self.changed_steps: list[str] | None = changed if leads else None
-
-        where = f"'{entry_node_id}'" if entry_node_id is not None else None
-        if where is not None and entry_iteration is not None and entry_iteration > 1:
-            where += f" (iteration {entry_iteration})"
-        scope = f"before {where}" if where is not None else f"up to and including '{after_node_id}'"
-        if not leads:
+        if not known:
             leads = [
                 "This run was recorded by an older pflow version that did not record each step's definition, "
                 "so resume cannot tell which step changed."
                 if hash_known
                 else "Cannot verify the workflow is unchanged — this run predates workflow-hash tracking."
             ]
-            effect = "so an edit to them would not take effect"
-        else:
-            effect = "so that edit would not take effect" if len(leads) == 1 else "so those edits would not take effect"
-        message = " ".join(leads)
+        where = f"'{entry_node_id}'" if entry_node_id is not None else None
+        if where is not None and entry_iteration is not None and entry_iteration > 1:
+            where += f" (iteration {entry_iteration})"
+        scope = f"before {where}" if where is not None else f"up to and including '{after_node_id}'"
         if resume_point_missing:
+            body: list[str] = []
             suggestions = [
                 "Re-run the workflow from the start.",
                 f"Or restore the step '{self.resume_point}' and resume again.",
             ]
         else:
-            message += (
-                f" Resume re-runs nothing {scope} — it restores the saved outputs of the steps that ran — {effect}."
+            # A plain between-nodes source continues at its last step's CURRENT route, so that reroute runs.
+            continuing = rerouted.get(after_node_id) if entry_node_id is None and after_node_id else None
+            upstream = len(removed) + len(edited) + len(rerouted) - (continuing is not None) + (new_start is not None)
+            body = _stale_body(
+                scope, upstream if known else None, hash_known, continuing, after_node_id, approved_edited
             )
             if where is not None and entry_iteration is not None and entry_iteration > 1:
-                message += (
-                    f" Its iterations before {entry_iteration} are restored too, so an edit to '{entry_node_id}' "
+                body.append(
+                    f"Its iterations before {entry_iteration} are restored too, so an edit to '{entry_node_id}' "
                     f"applies from iteration {entry_iteration} on."
                 )
-            force = (
-                f"Pass --force to resume anyway: steps {scope} keep their saved outputs and are not re-run "
-                "(an inserted step is skipped)."
+            skipped_names = [name for name in dict.fromkeys(_route_targets(rerouted, new_start)) if name in skipped]
+            suggestions = _stale_suggestions(
+                scope, upstream if known else None, hash_known, skipped_names, approved_edited, continuing
             )
             if rerun_node_type is not None:
-                force += (
+                suggestions[1] += (
                     f" --force also re-runs '{entry_node_id}' (a {rerun_node_type} step that already started in the "
                     "original run), so its side effects may fire again — if you are an AI agent, confirm that "
                     "with your human first."
                 )
-            suggestions = ["Re-run the workflow from the start so the edit takes effect.", force]
         named = [*changed, *([self.resume_point] if resume_point_missing and self.resume_point else [])]
         super().__init__(
-            message,
+            " ".join([*leads, *body]),
             execution_id=execution_id,
             trace_path=trace_path,
             suggestions=suggestions,
@@ -1583,17 +1579,109 @@ class ResumeStaleWorkflowError(ResumeSourceError):
         return diagnostics
 
 
-def _rerouted_lead(node_id: str, now: list[str], before: list[str], skipped: frozenset[str]) -> str:
-    """The "now continues to" lead: names the new targets that never ran (resume skips them), else says
-    what the step led to before."""
-    never_ran = [target for target in now if target not in before and target in skipped]
+def _stale_leads(
+    removed: list[str],
+    resume_point_missing: bool,
+    resume_point: str | None,
+    edited: list[str],
+    cache_edited: frozenset[str],
+    approved_edited: str | None,
+) -> list[str]:
+    leads = [
+        f"'{node_id}' is no longer in the workflow (resume would still restore its saved output)."
+        for node_id in removed
+    ]
+    if resume_point_missing:
+        leads.append(f"The resume point '{resume_point}' is no longer in the workflow.")
+    leads += [
+        f"'{node_id}' was edited (a `## Cache` chunk it uses changed)."
+        if node_id in cache_edited
+        else f"'{node_id}' was edited."
+        for node_id in edited
+    ]
+    if approved_edited is not None:
+        leads.append(
+            f"'{approved_edited}' was edited after it was approved — the approval covered the earlier version."
+        )
+    return leads
+
+
+def _stale_body(
+    scope: str,
+    upstream: int | None,
+    hash_known: bool,
+    continuing: tuple[list[Route], list[Route]] | None,
+    after_node_id: str | None,
+    approved_edited: str | None,
+) -> list[str]:
+    """What the resume would do instead. ``upstream`` counts the changes upstream of the resume point
+    (``None`` = unknown: a trace without per-step identity)."""
+    body = []
+    if upstream is None:
+        effect = (
+            "so an edit to them would not take effect"
+            if hash_known
+            else "so an edit to them, if any, would not take effect"
+        )
+    elif upstream:
+        effect = "so that edit would not take effect" if upstream == 1 else "so those edits would not take effect"
+    else:
+        effect = ""
+    if effect:
+        body.append(f"Resume re-runs nothing {scope} — it restores the saved outputs of the steps that ran — {effect}.")
+    if continuing is not None:
+        body.append(
+            f"Resume would continue at {_routes_text(continuing[0]) or 'the end of the workflow'} with the saved "
+            f"outputs up to and including '{after_node_id}'."
+        )
+    if approved_edited is not None:
+        body.append(f"Resuming would run the edited '{approved_edited}' under that earlier approval.")
+    return body
+
+
+def _stale_suggestions(
+    scope: str,
+    upstream: int | None,
+    hash_known: bool,
+    skipped_names: list[str],
+    approved_edited: str | None,
+    continuing: tuple[list[Route], list[Route]] | None,
+) -> list[str]:
+    if upstream or (upstream is None and hash_known):
+        rerun = "Re-run the workflow from the start so the edit takes effect."
+    elif approved_edited is not None and continuing is None:
+        rerun = f"Re-run the workflow from the start so '{approved_edited}' asks for approval again."
+    else:
+        rerun = "Re-run the workflow from the start."
+    force = f"Pass --force to resume anyway: steps {scope} keep their saved outputs and are not re-run"
+    if skipped_names:
+        force += f" ({_quoted(skipped_names)} {'is' if len(skipped_names) == 1 else 'are'} skipped)"
+    elif upstream is None:
+        force += " (any inserted step is skipped)"
+    if approved_edited is not None:
+        force += f", and the edited '{approved_edited}' runs under the earlier approval"
+    return [rerun, force + "."]
+
+
+def _route_targets(
+    rerouted: dict[str, tuple[list[Route], list[Route]]], new_start: tuple[str, str | None] | None
+) -> list[str]:
+    """The targets the leads name, in lead order (reroute targets, then the new start step)."""
+    return [*(target for now, _ in rerouted.values() for _, target in now), *([new_start[0]] if new_start else [])]
+
+
+def _rerouted_lead(node_id: str, now: list[Route], before: list[Route], skipped: frozenset[str]) -> str:
+    """The "now continues to" lead: names the new targets resume would skip, else says what the step
+    led to before (with the route's action when it is not the default)."""
+    before_targets = {target for _, target in before}
+    never_ran = list(dict.fromkeys(t for _, t in now if t not in before_targets and t in skipped))
     if never_ran:
         them = "it" if len(never_ran) == 1 else "them"
         return f"'{node_id}' now continues to {_quoted(never_ran)}, which never ran — resume would skip {them}."
     if not now:
-        return f"'{node_id}' now ends the workflow instead of continuing to {_quoted(before)}."
-    was = _quoted(before) if before else "ending the workflow"
-    return f"'{node_id}' now continues to {_quoted(now)} instead of {was}."
+        return f"'{node_id}' now ends the workflow instead of continuing to {_routes_text(before)}."
+    was = _routes_text(before) if before else "ending the workflow"
+    return f"'{node_id}' now continues to {_routes_text(now)} instead of {was}."
 
 
 def _new_start_lead(now: str, before: str | None, skipped: frozenset[str]) -> str:

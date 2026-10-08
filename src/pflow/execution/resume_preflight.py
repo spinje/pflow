@@ -216,26 +216,38 @@ def _identity_changes(ir: dict[str, Any], source: ResumeSource, resumes_at: str 
     # version the human saw. Only its definition — where it leads is downstream of the resume.
     approval = source.paused_node_id if source.paused_node_id == source.entry_node_id else None
     changes = _definition_changes(now, then, restored, approval)
-    # Steps this resume restores or re-enters — a new route/start to anything else is skipped.
-    covered = {*restored, resumes_at}
-    # A plain between-nodes source resumes at its last step's CURRENT successor, so a new one runs.
-    runs_next = source.last_completed_node_id if resumes_at is None else None
-    rerouted = {node_id: targets for node_id in restored if (targets := _rerouted(now, then, node_id))}
-    skipped = {
-        target
-        for node_id, (targets, recorded_targets) in rerouted.items()
-        if node_id != runs_next
-        for target in targets
-        if target not in recorded_targets and target not in covered
-    }
+    rerouted = {node_id: edges for node_id in restored if (edges := _rerouted(now, then, node_id))}
     if rerouted:
         changes["rerouted"] = rerouted
     if current["start"] != recorded.get("start"):
         changes["new_start"] = (current["start"], recorded.get("start"))
-        skipped |= {current["start"]} - covered
-    if changes and skipped:
+    # A new route or start step is SKIPPED when the resume neither restores it nor reaches it from
+    # where it continues (a plain between-nodes source continues at its last step's current successors).
+    continues_from = [resumes_at] if resumes_at is not None else _successors(now, source.last_completed_node_id)
+    reached = {*restored, *_reachable(now, continues_from)}
+    candidates = {target for now_edges, _ in rerouted.values() for _, target in now_edges}
+    if "new_start" in changes:
+        candidates.add(current["start"])
+    if changes and (skipped := candidates - reached):
         changes["skipped"] = frozenset(skipped)
     return changes
+
+
+def _successors(steps: dict[str, Any], node_id: str | None) -> list[str]:
+    step = steps.get(node_id) if node_id is not None else None
+    return [target for _, target in step["next"]] if step is not None else []
+
+
+def _reachable(steps: dict[str, Any], starts: list[str]) -> set[str]:
+    """Every step the current graph reaches from ``starts`` (inclusive), over any route."""
+    seen: set[str] = set()
+    frontier = list(starts)
+    while frontier:
+        node_id = frontier.pop()
+        if node_id not in seen:
+            seen.add(node_id)
+            frontier.extend(_successors(steps, node_id))
+    return seen
 
 
 def _definition_changes(
@@ -252,29 +264,43 @@ def _definition_changes(
         changes["removed"] = removed
     if edits := [node_id for node_id in restored if node_id in now and edited(node_id)]:
         changes["edited"] = edits
-        recorded = {node_id: then[node_id] for node_id in edits if isinstance(then.get(node_id), dict)}
-        if chunk_edits := {n for n, step in recorded.items() if step.get("cache") != now[n].get("cache")}:
+        if chunk_edits := {node_id for node_id in edits if _chunk_content_changed(then.get(node_id), now[node_id])}:
             changes["cache_edited"] = frozenset(chunk_edits)
     if approval is not None and edited(approval):
         changes["approved_edited"] = approval
     return changes
 
 
-def _rerouted(now: dict[str, Any], then: dict[str, Any], node_id: str) -> tuple[list[str], list[str]] | None:
-    """``(now, recorded)`` next-step targets when ``node_id``'s recorded ``next`` differs, else ``None``
-    (also when it is gone or unrecorded — those count as removed / edited)."""
+def _chunk_content_changed(recorded: Any, current: dict[str, Any]) -> bool:
+    """Whether a ``## Cache`` chunk the step uses both then and now changed its content (a different
+    selection of chunks is an edit to the step, not to a chunk)."""
+    before = recorded.get("cache") if isinstance(recorded, dict) else None
+    after = current.get("cache")
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return False
+    return any(name in before and before[name] != digest for name, digest in after.items())
+
+
+def _rerouted(
+    now: dict[str, Any], then: dict[str, Any], node_id: str
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]] | None:
+    """``(now, recorded)`` ``(action, target)`` routes when ``node_id``'s recorded ``next`` differs, else
+    ``None`` (also when it is gone or unrecorded — those count as removed / edited)."""
     step = then.get(node_id)
     if node_id not in now or not isinstance(step, dict) or step.get("next") == now[node_id]["next"]:
         return None
-    return _targets(now[node_id]["next"]), _targets(step.get("next"))
+    return _routes(now[node_id]["next"]), _routes(step.get("next"))
 
 
-def _targets(next_steps: Any) -> list[str]:
-    """The target step ids of a recorded/current ``next`` list (``[[action, target], ...]``), in order."""
+def _routes(next_steps: Any) -> list[tuple[str, str]]:
+    """The well-formed ``(action, target)`` pairs of a recorded/current ``next`` list, in order."""
     if not isinstance(next_steps, list):
         return []
-    targets = [pair[1] for pair in next_steps if isinstance(pair, list) and len(pair) == 2]
-    return list(dict.fromkeys(target for target in targets if isinstance(target, str)))
+    return [
+        (pair[0], pair[1])
+        for pair in next_steps
+        if isinstance(pair, list) and len(pair) == 2 and all(isinstance(part, str) for part in pair)
+    ]
 
 
 def _node_registry_type(ir: dict[str, Any], node_id: str | None) -> str | None:

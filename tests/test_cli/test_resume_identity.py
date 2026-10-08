@@ -173,7 +173,8 @@ def test_row3_editing_a_restored_step_refuses_naming_only_that_step(home, wf):
     )
     assert "'shape'" not in combined
     assert "Re-run the workflow from the start so the edit takes effect." in combined
-    assert "Pass --force to resume anyway: steps before 'save' keep their saved outputs" in combined
+    assert "Pass --force to resume anyway: steps before 'save' keep their saved outputs and are not re-run." in combined
+    assert "skipped" not in combined  # nothing was inserted
     assert "fire again" not in combined  # `save` never started — --force re-fires nothing
     # Preview mirrors the real resume.
     assert "'produce' was edited." in _refused(exec_id, "--dry-run")
@@ -185,6 +186,7 @@ def test_row4_a_step_inserted_before_the_resume_point_refuses(home, tmp_path, wf
     _edit(wf, ("### save\n", _step("prepare", marker) + "### save\n"), (_TYPO, _FIX))
     combined = _refused(exec_id)
     assert "'shape' now continues to 'prepare', which never ran — resume would skip it." in combined
+    assert "keep their saved outputs and are not re-run ('prepare' is skipped)." in combined
     # Regression guard (passes on the pre-180 code too): --force keeps today's behaviour — the
     # inserted step is skipped, as the refusal says.
     forced = _invoke("resume", exec_id, "--force")
@@ -205,6 +207,17 @@ def test_row6_rerouting_a_restored_step_refuses(home, wf):
     _edit(wf, ("- type: shell\n", "- type: shell\n- next: save\n"), (_TYPO, _FIX))
     combined = _refused(exec_id)
     assert "'produce' now continues to 'save' instead of 'shape'." in combined
+
+
+def test_rerouting_to_a_step_the_resume_still_reaches_never_claims_it_is_skipped(home, tmp_path, wf):
+    """`notify` never ran, but the resume reaches it (after `save`) — so the reroute refuses with the
+    factual "instead of" lead, never "would skip it" (and --force names nothing as skipped)."""
+    wf.write_text(wf.read_text(encoding="utf-8") + "\n" + _step("notify", tmp_path / "notify-ran"), encoding="utf-8")
+    exec_id = _fail(wf)
+    _edit(wf, ("- type: shell\n", "- type: shell\n- next: notify\n"), (_TYPO, _FIX))
+    combined = _refused(exec_id)
+    assert "'produce' now continues to 'notify' instead of 'shape'." in combined
+    assert "never ran" not in combined and "skipped" not in combined
 
 
 def test_row12_a_removed_resume_point_refuses_without_blaming_its_predecessor(home, wf):
@@ -332,6 +345,18 @@ def test_row10_editing_a_cache_chunk_refuses_naming_the_step_that_uses_it(home, 
     combined = _refused(exec_id)
     assert "'summarize' was edited (a `## Cache` chunk it uses changed)." in combined
     assert "'produce'" not in combined
+
+
+def test_changing_which_cache_chunks_a_step_uses_is_an_edit_to_the_step(home, tmp_path, mock_llm_client):
+    """A different selection is not a chunk-content change — the lead must not send the agent to `## Cache`."""
+    mock_llm_client.set_response(_LLM_MODEL, None, {"response": "a summary"})
+    wf = tmp_path / "cache.pflow.md"
+    wf.write_text(_CACHE_WF, encoding="utf-8")
+    exec_id = _fail(wf)
+    _edit(wf, ("- prompt_cache: [produce.stdout]\n", ""))
+    combined = _refused(exec_id)
+    assert "'summarize' was edited." in combined
+    assert "## Cache" not in combined
 
 
 # --- Row 15: a sub-workflow's child file is outside both hashes (pre-existing, unchanged) -------

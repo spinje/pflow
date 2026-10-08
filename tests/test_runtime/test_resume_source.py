@@ -1080,9 +1080,14 @@ def _stale(**changes: Any) -> ResumeStaleWorkflowError:
     return ResumeStaleWorkflowError(hash_known=True, **{"entry_node_id": "save", **changes})
 
 
+def _to(*targets: str) -> list[tuple[str, str]]:
+    return [("default", target) for target in targets]
+
+
 def test_stale_workflow_error_names_the_edited_step_and_what_force_accepts() -> None:
     """The ruled text (show-before-code, row 3): the lead names the edited step; the body says what
-    resume re-runs; re-running is the first remedy and --force the second, saying what it keeps."""
+    resume re-runs; re-running is the first remedy and --force the second, saying what it keeps —
+    with no "(… is skipped)" claim when nothing was inserted."""
     err = _stale(edited=["produce"])
     assert str(err) == (
         "'produce' was edited. Resume re-runs nothing before 'save' — it restores the saved outputs of the "
@@ -1090,38 +1095,57 @@ def test_stale_workflow_error_names_the_edited_step_and_what_force_accepts() -> 
     )
     assert err.suggestions == [
         "Re-run the workflow from the start so the edit takes effect.",
-        "Pass --force to resume anyway: steps before 'save' keep their saved outputs and are not re-run "
-        "(an inserted step is skipped).",
+        "Pass --force to resume anyway: steps before 'save' keep their saved outputs and are not re-run.",
     ]
+
+
+def test_stale_workflow_error_names_each_skipped_step_in_the_force_line() -> None:
+    err = _stale(rerouted={"shape": (_to("prepare"), _to("save"))}, skipped=frozenset({"prepare"}))
+    assert err.suggestions[1] == (
+        "Pass --force to resume anyway: steps before 'save' keep their saved outputs and are not re-run "
+        "('prepare' is skipped)."
+    )
+    two = _stale(
+        new_start=("banner", "produce"),
+        rerouted={"shape": (_to("prep"), _to("save"))},
+        skipped=frozenset({"banner", "prep"}),
+    )
+    assert "('prep', 'banner' are skipped)." in two.suggestions[1]
 
 
 def test_stale_workflow_error_leads_come_in_the_ruled_order() -> None:
     err = _stale(
         new_start=("banner", "produce"),
-        rerouted={"shape": (["prepare"], ["save"])},
+        rerouted={"shape": (_to("prepare"), _to("save"))},
         approved_edited="save",
         edited=["shape"],
         removed=["old"],
         skipped=frozenset({"banner", "prepare"}),
     )
     assert str(err).startswith(
-        "'old' is no longer in the workflow (resume would still restore its saved output). 'shape' was edited. 'save' was edited after it was approved — the "
-        "approval covered the earlier version. 'shape' now continues to 'prepare', which never ran — resume would "
-        "skip it. The workflow now starts at 'banner', which never ran — resume would skip it. Resume re-runs "
-        "nothing before 'save'"
+        "'old' is no longer in the workflow (resume would still restore its saved output). 'shape' was edited. "
+        "'save' was edited after it was approved — the approval covered the earlier version. 'shape' now "
+        "continues to 'prepare', which never ran — resume would skip it. The workflow now starts at 'banner', "
+        "which never ran — resume would skip it. Resume re-runs nothing before 'save'"
     )
     assert "so those edits would not take effect." in str(err)
 
 
 def test_stale_workflow_error_reroute_says_never_ran_only_for_a_skipped_step() -> None:
-    skipped = _stale(rerouted={"shape": (["prepare"], ["save"])}, skipped=frozenset({"prepare"}))
-    instead = _stale(rerouted={"produce": (["save"], ["shape"])})
-    ends = _stale(rerouted={"produce": ([], ["shape"])})
+    skipped = _stale(rerouted={"shape": (_to("prepare"), _to("save"))}, skipped=frozenset({"prepare"}))
+    instead = _stale(rerouted={"produce": (_to("save"), _to("shape"))})
+    ends = _stale(rerouted={"produce": ([], _to("shape"))})
     assert str(skipped).startswith("'shape' now continues to 'prepare', which never ran — resume would skip it.")
     assert str(instead).startswith("'produce' now continues to 'save' instead of 'shape'.")
     assert str(ends).startswith("'produce' now ends the workflow instead of continuing to 'shape'.")
     restart = _stale(new_start=("shape", "produce"))
     assert str(restart).startswith("The workflow now starts at 'shape' instead of 'produce'.")
+
+
+def test_stale_workflow_error_reroute_names_the_routes_action() -> None:
+    """An added error route to the same target must not read "continues to 'shape' instead of 'shape'"."""
+    err = _stale(rerouted={"produce": ([("default", "shape"), ("error", "shape")], _to("shape"))})
+    assert str(err).startswith("'produce' now continues to 'shape', 'shape' on error instead of 'shape'.")
 
 
 def test_stale_workflow_error_for_a_missing_resume_point_offers_no_force() -> None:
@@ -1143,6 +1167,32 @@ def test_stale_workflow_error_between_nodes_and_loop_scopes() -> None:
     assert "iteration" not in str(first)
 
 
+def test_stale_workflow_error_between_nodes_new_route_says_resume_would_run_it() -> None:
+    """A plain between-nodes source continues at its last step's CURRENT route — the new step runs, so
+    neither "would skip it" nor "would not take effect" may appear."""
+    err = _stale(entry_node_id=None, after_node_id="esc", rerouted={"esc": (_to("check"), _to("after"))})
+    assert str(err) == (
+        "'esc' now continues to 'check' instead of 'after'. Resume would continue at 'check' with the saved "
+        "outputs up to and including 'esc'."
+    )
+    assert err.suggestions[0] == "Re-run the workflow from the start."
+    assert "skipped" not in err.suggestions[1]
+
+
+def test_stale_workflow_error_for_an_approval_says_the_edited_step_would_run() -> None:
+    """The approval step is the resume point: --force RUNS its edited version — never "would not take effect"."""
+    err = _stale(entry_node_id="deploy", approved_edited="deploy")
+    assert str(err) == (
+        "'deploy' was edited after it was approved — the approval covered the earlier version. Resuming would "
+        "run the edited 'deploy' under that earlier approval."
+    )
+    assert err.suggestions == [
+        "Re-run the workflow from the start so 'deploy' asks for approval again.",
+        "Pass --force to resume anyway: steps before 'deploy' keep their saved outputs and are not re-run, and "
+        "the edited 'deploy' runs under the earlier approval.",
+    ]
+
+
 def test_stale_workflow_error_says_force_also_refires_a_started_side_effecting_entry() -> None:
     """--force waives the side-effect confirmation too — the stale refusal is the only place the
     agent learns that, so it must say so when the entry already started."""
@@ -1162,10 +1212,13 @@ def test_stale_workflow_error_fallback_texts_never_name_a_change() -> None:
         "This run was recorded by an older pflow version that did not record each step's definition, so resume "
         "cannot tell which step changed. Resume re-runs nothing before 'save'"
     )
+    assert str(older).endswith("so an edit to them would not take effect.")
+    assert older.suggestions[0] == "Re-run the workflow from the start so the edit takes effect."
     assert str(unverifiable).startswith("Cannot verify the workflow is unchanged — this run predates")
+    assert str(unverifiable).endswith("so an edit to them, if any, would not take effect.")
+    assert unverifiable.suggestions[0] == "Re-run the workflow from the start."  # no definite "edit"
     for err in (older, unverifiable):
-        assert "so an edit to them would not take effect." in str(err)
-        assert err.suggestions[1].startswith("Pass --force to resume anyway")
+        assert err.suggestions[1].endswith("(any inserted step is skipped).")
         assert err.to_diagnostics()[0].context["changed_steps"] is None  # unknown, never "nothing changed"
 
 
@@ -1177,8 +1230,10 @@ def test_stale_workflow_error_carries_structured_fields_for_agents() -> None:
     assert context["resume_point_missing"] is False
     assert context["category"] == "execution_failure"
     assert err.to_diagnostics()[0].node_id == "produce"
-    two = _stale(edited=["a"], rerouted={"b": (["c"], ["d"])}).to_diagnostics()[0]
+    two = _stale(edited=["a"], rerouted={"b": (_to("c"), _to("d"))}).to_diagnostics()[0]
     assert (two.context or {})["changed_steps"] == ["a", "b"] and two.node_id is None
+    start_only = _stale(new_start=("banner", "produce"), skipped=frozenset({"banner"})).to_diagnostics()[0]
+    assert (start_only.context or {})["changed_steps"] == []  # known: no step changed, only the start
 
 
 # ── entry_never_started / restored_node_ids (#690) ─────────────────────────────
