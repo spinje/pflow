@@ -900,57 +900,76 @@ class BodyReference:
     language: BodyLanguage
     written: str  # as in the body: ``${item}``, ``${limit:-10}``
     reference: str  # the pflow reference it names: ``item``, ``limit``, ``fetch.stdout``
-    root: str
+    root: str  # the root ``owner`` describes
     owner: str
     line: int  # 0-based, within the body
     is_expression: bool  # False: a shell expansion form (``${limit:-10}``) on an in-scope name
+    roots: tuple[str, ...]  # every in-scope root it names (``${a ?? b}`` → a, b) — for accounting
 
 
 def body_references(node: dict[str, Any], scope: StepScope) -> list[BodyReference]:
     """Every leftover in a node's bodies, in body order. A shell command is read whole, a
     code block's string literals only. An Expression is a leftover when any reference in it
-    (dependency view) is in ``scope``; an Issue when the name it starts with is."""
+    (dependency view) is in ``scope``; an Issue when the name it starts with is, or a
+    ``${…}`` nested inside it (``${UNSET:-${item}}`` — the Issue ends at the first ``}``)."""
     found: list[BodyReference] = []
     for param, language, text in code_bodies(node):
         if "${" not in text:
             continue
         for piece, first_line in _readable_texts(language, text):
-            for segment in parse(piece).segments:
-                if isinstance(segment, Text) or (leftover := _leftover(segment, scope)) is None:
+            for start, written, segment in _segments(piece):
+                if (leftover := _leftover(segment, scope)) is None:
                     continue
-                start, end = segment.span
+                reference, owner, roots, is_expression = leftover
                 line = first_line + piece.count("\n", 0, start)
-                found.append(BodyReference(param, language, piece[start:end], *leftover[:3], line, leftover[3]))
+                found.append(
+                    BodyReference(param, language, written, reference, roots[0], owner, line, is_expression, roots)
+                )
     return found
+
+
+def _segments(text: str, offset: int = 0) -> Iterator[tuple[int, str, Expression | Issue]]:
+    """``(offset, written, segment)`` per ``${`` the parser sees in ``text``, an Issue's
+    interior re-read for the ``${…}`` it swallowed."""
+    for segment in parse(text).segments:
+        if isinstance(segment, Text):
+            continue
+        start, end = segment.span
+        yield offset + start, text[start:end], segment
+        if isinstance(segment, Issue):
+            yield from _segments(segment.raw[2:], offset + start + 2)
 
 
 def body_reference_roots(workflow_ir: dict[str, Any]) -> set[str]:
     """The roots of every leftover in a workflow. The unused-input pass counts them as used:
     an input read only through a leftover gets the leftover ERROR alone."""
     return {
-        ref.root
+        root
         for node in workflow_ir.get("nodes", [])
         if isinstance(node, dict)
         for ref in body_references(node, step_scope(workflow_ir, node))
+        for root in ref.roots
     }
 
 
-def _leftover(segment: Expression | Issue, scope: StepScope) -> tuple[str, str, str, bool] | None:
-    """``(reference, root, owner, is_expression)`` when ``segment`` names something in scope."""
+def _leftover(segment: Expression | Issue, scope: StepScope) -> tuple[str, str, tuple[str, ...], bool] | None:
+    """``(reference, owner, in-scope roots, is_expression)`` when ``segment`` names something in scope."""
     if isinstance(segment, Expression):
-        for ref in segment.references:
-            if owner := _owner(scope, ref):
-                return segment.raw, ref.root, owner, True
-        # sh reads ``${limit-10}`` as ``$limit`` with a default (sh names hold no ``-``);
-        # pflow's grammar reads one name, ``limit-10``. A shell expansion form, like an Issue.
+        owned = [(ref.root, owner) for ref in segment.references if (owner := _owner(scope, ref))]
+        if owned:
+            return segment.raw, owned[0][1], tuple(dict.fromkeys(root for root, _ in owned)), True
         first = segment.operands[0]
-        if isinstance(first, Reference) and "-" in first.root:
-            name = first.root.split("-", 1)[0]
-            if owner := scope.owner(name, has_path=False):
-                return name, name, owner, False
-    elif (leading := _issue_reference(segment.raw)) is not None:
-        if owner := _owner(scope, leading):
-            return leading.raw, leading.root, owner, False
+        leading = first if isinstance(first, Reference) else None
+    else:
+        leading = _issue_reference(segment.raw)
+        if leading is not None and (owner := _owner(scope, leading)):
+            return leading.raw, owner, (leading.root,), False
+    # sh reads ``${limit-10}`` / ``${limit-a:b}`` as ``$limit`` with a default (sh names hold no
+    # ``-``); pflow's grammar reads one name, ``limit-10``. A shell expansion form on ``limit``.
+    if leading is not None and "-" in leading.root:
+        name = leading.root.split("-", 1)[0]
+        if owner := scope.owner(name, has_path=False):
+            return name, owner, (name,), False
     return None
 
 
@@ -975,21 +994,28 @@ def _issue_reference(raw: str) -> Reference | None:
 
 def _readable_texts(language: BodyLanguage, text: str) -> list[tuple[str, int]]:
     """``(text, 0-based body line it starts on)`` for what the rule reads: a shell command
-    whole; a code block's string literals, an f-string's constant parts included (so
-    ``f"Total: ${total}"`` is ``$`` and an interpolation, never a reference). A code block
-    Python cannot parse yields nothing — the markdown parser reports it."""
+    whole; a code block's string and bytes literals, an f-string's constant parts included
+    (so ``f"Total: ${total}"`` is ``$`` and an interpolation, never a reference). A code
+    block Python cannot parse yields nothing — the markdown parser reports it.
+
+    A literal is read as its own source, not its value: adjacent literals stay apart (the
+    ``"$$" "{X}"`` repair is no escape) and a line count holds through ``\\n`` escapes. An
+    f-string's parts keep their value (their positions are unreliable before Python 3.12)."""
     if language == "sh":
         return [(text, 0)]
     try:
         tree = ast.parse(text)
     except SyntaxError:
         return []
-    strings = [
-        (node.lineno, node.col_offset, node.value)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and "$" in node.value
-    ]
-    return [(value, lineno - 1) for lineno, _, value in sorted(strings)]
+    in_fstrings = {id(part) for node in ast.walk(tree) if isinstance(node, ast.JoinedStr) for part in node.values}
+    strings: list[tuple[int, int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str | bytes):
+            continue
+        piece = node.value if id(node) in in_fstrings else ast.get_source_segment(text, node)
+        if isinstance(piece, str) and "$" in piece:
+            strings.append((node.lineno, node.col_offset, piece))
+    return [(piece, lineno - 1) for lineno, _, piece in sorted(strings)]
 
 
 def _escapes(text: str) -> Iterator[tuple[int, str]]:

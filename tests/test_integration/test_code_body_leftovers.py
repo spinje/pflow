@@ -643,3 +643,83 @@ def test_checkpoint_probe_validates_and_prints_what_sh_prints(tmp_path: Path) ->
     assert ran.exit_code == 0
     [line] = [text for text in ran.output.splitlines() if text.startswith("world 3 ")]
     assert line != "world 3 " and "${" not in line  # sh expanded ${HOME}
+
+
+# ── PB mid-task review: shapes the first cut missed ──────────────────────────
+
+
+def test_a_bytes_literal_is_read_like_a_string() -> None:
+    """``b"${name}".decode()`` was resolved before; it must fail, not return the literal text."""
+    code = 'name: str\nresult: str = b"${name}".decode()'
+    [error] = _body_errors(_ir({"id": "c", "type": "code", "params": {"inputs": {"name": "bob"}, "code": code}}))
+    assert error.message.startswith(
+        "Step 'c': the code contains \"${name}\" — a pflow reference (a key of this step's inputs:)"
+    )
+    escape = _ir({"id": "c", "type": "code", "params": {"inputs": {}, "code": 'result: str = b"$${X}".decode()'}})
+    assert [d.message.split(" (")[0] for d in _errors(validate_data_flow(escape))] == [
+        "Step 'c': the code contains the escape $${X} inside a Python string. A code step's code is plain Python, "
+        "so there is nothing to escape — the string keeps both dollar signs."
+    ]
+
+
+@pytest.mark.parametrize(
+    ("command", "written", "step"),
+    [
+        (
+            'printf %s "${limit-default:value}"',
+            "${limit-default:value}",
+            _shell("s", "", params={"inputs": {"limit": 5}}),
+        ),
+        ('printf %s "${item-fallback value}"', "${item-fallback value}", _shell("s", "", batch=BATCH)),
+    ],
+    ids=["colon_in_default", "space_in_default"],
+)
+def test_a_colonless_default_the_parser_reads_as_an_issue_is_a_leftover(
+    command: str, written: str, step: dict[str, Any]
+) -> None:
+    step["params"]["command"] = command
+    [error] = _body_errors(_ir(step))
+    assert f"the command contains {written} — a pflow reference" in error.message
+
+
+def test_an_in_scope_reference_nested_in_a_shell_expansion_is_a_leftover() -> None:
+    """``${UNSET:-${item}}`` is one Issue to the parser (it ends at the first ``}``); the
+    ``${item}`` inside it was resolved before and must not run empty now."""
+    ir = _ir(_shell("s", 'printf %s "${PFLOW_T118_UNSET:-${item}}"', batch=BATCH))
+    [error] = _body_errors(ir)
+    assert error.message.startswith(
+        "Step 's': the command contains ${item} — a pflow reference (this step's batch item)"
+    )
+    assert _body_errors(_ir(_shell("s", 'printf %s "${PFLOW_T118_UNSET:-${HOME}}"', batch=BATCH))) == []
+
+
+def test_the_prescribed_escape_split_validates_and_runs_beside_another_reference() -> None:
+    """Checkpoint §3's repair, ``"$$" "{PRICE}"``, must stay valid when the body also holds a
+    legitimate ``${…}`` (which is what makes the rule read the body at all)."""
+    code = 'result: str = "$$" "{PRICE}" + "${HOME}"'
+    ir = _ir({"id": "c", "type": "code", "params": {"inputs": {}, "code": code}})
+    assert validate_data_flow(ir) == []
+    result = WorkflowRunner().run(ir, {}, RunnerConfig())
+    assert result.success, [d.message for d in result.errors]
+    assert result.shared_after["c"]["result"] == "$${PRICE}${HOME}"
+
+
+@pytest.mark.parametrize(
+    ("command", "inputs"),
+    [('echo "${primary ?? fallback}"', ("primary", "fallback")), ('echo "${values[${index}]}"', ("values", "index"))],
+    ids=["coalesce", "dynamic_index"],
+)
+def test_every_input_a_leftover_names_counts_as_used(command: str, inputs: tuple[str, str], registry: Registry) -> None:
+    ir = _ir(_shell("s", command), inputs={name: _input("x") for name in inputs})
+    messages = [d.message for d in _errors(WorkflowValidator.validate(ir, extracted_params={}, registry=registry))]
+    assert len(messages) == 1 and "pflow reference" in messages[0], messages
+
+
+def test_every_inputs_key_a_leftover_names_is_left_to_that_error(registry: Registry) -> None:
+    step = _shell("s", 'echo "${a ?? b}"', params={"inputs": {"a": "1", "b": "2"}})
+    warnings = [
+        d
+        for d in WorkflowValidator.validate(_ir(step), extracted_params={}, registry=registry)
+        if "not visible" in d.message
+    ]
+    assert warnings == []

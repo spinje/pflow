@@ -475,7 +475,7 @@ def _validate_unread_step_inputs(workflow_ir: dict[str, Any]) -> list[Diagnostic
             if surface.kind == "param" and surface.key != "inputs"
             for _, template in surface.templates()
             for ref in template.references
-        } | {ref.root for ref in body_references(node, step_scope(workflow_ir, node))}
+        } | {root for ref in body_references(node, step_scope(workflow_ir, node)) for root in ref.roots}
         diagnostics.extend(
             _unread_step_input_warning(node, node_id, node_type, key, carried=key in carried)
             for key in keys

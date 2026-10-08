@@ -1004,3 +1004,69 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
 - Verified on the merged result: `make check` green; `make test` 10566 passed / 0 failed; `make test-e2e` 52 / 2
   skipped. `pflow --version` 0.16.0.
 - Next: resume I4 — PB mid-task review (4 lenses) on `c3189b41..76a1aed5`.
+
+## [2026-10-08 01:35] implementer I4 (Opus) — PB mid-task review: fan-out run, every finding dispositioned
+- Did: dispatched the battery through `workflows/review/run-review-lenses.pflow.md` (provider codex — opposite the
+  Claude builder), backgrounded, stdout → `implementation/review-pb-midtask.md` (256 lines, read whole), waited in-turn.
+  Lenses: `review-validation-consistency` (per-lens target: the data-flow body rule + validator ↔ `split_params`/
+  compiler/node twins), `review-impact-completeness`, `review-silent-failures`, `review-feature-interactions` (whole
+  diff), plus `review-test-fidelity` (added upward: the engine/MCP files are sensitive paths whose skill floor includes
+  it; per-lens target = PB's tests). Target `c3189b41..76a1aed5`, with the spec, plan D1/D5/D7/D14 + PB, checkpoint
+  §1–§3/§5, ADR-0016 and log entries 23:05 / 00:44 / 03:40 stated as SETTLED. Coverage: 5/5 lenses returned, none
+  failed. `review-falsifier` NOT run: it is a direct Agent launch and my role never spawns agents — the completion
+  gate owns it.
+- Findings (7) — each reproduced by executing against the code before fixing; tests written first and seen to fail:
+  1. **Critical (2 lenses) — CONFIRMED, fixed.** A Python bytes literal (`b"${name}".decode()`, `b"$${X}"`) bypassed
+     the rule (`_readable_texts` read `str` constants only): was resolved before, silently literal after.
+  2. **Critical (2 lenses) — CONFIRMED, fixed.** The accepted dash split covered Expressions only; `${limit-default:value}`
+     / `${item-fallback value}` parse as Issues whose leading path is `limit-default`, so an in-scope `limit`/`item`
+     ran silently. The split now applies to an Issue's leading name too (full pflow name still checked first).
+  3. **Warning (2 lenses) + test-fidelity Critical — CONFIRMED, fixed.** The AST joins adjacent literals, so checkpoint
+     §3's own repair `"$$" "{PRICE}"` was re-flagged as an escape whenever the body held another `${…}`. A plain literal is
+     now read as its own SOURCE text (adjacent literals stay apart; bytes read like strings — this also fixes 1; line
+     counts now hold through `\n` escapes, closing my residue (c)); f-string parts keep their value (their positions are
+     unreliable before 3.12). Test: the mixed body validates and runs, printing exactly `$${PRICE}${HOME}`.
+  4. **Warning (4 lenses) — CONFIRMED, fixed.** `_leftover` kept only the first in-scope root, so `${primary ?? fallback}`
+     or `${values[${index}]}` drew a second "never used" ERROR for the other input, and two `inputs:` keys in one
+     leftover drew an unread-`inputs:` warning — against §2's "one mistake, one diagnostic". `BodyReference.roots`
+     (every in-scope root, dependency view) now feeds both `body_reference_roots` and `_validate_unread_step_inputs`;
+     the body still gets ONE grouped error.
+  5. **Critical (silent-failures) — CONFIRMED, fixed.** `${UNSET:-${item}}` is one Issue to the parser (it ends at the
+     first `}`), so the nested in-scope `${item}` ran empty (loud before PB). `_segments` re-reads an Issue's interior;
+     the leftover names `${item}`. Partner: `${UNSET:-${HOME}}` stays valid.
+  6. **Warning (silent-failures) — SKIPPED, pre-existing.** `run_registry_node`'s success branch
+     (`mcp_server/services/execution_service.py`) formats node outputs only and has never forwarded a validation
+     warning (PA's `env:` warnings included); PB did not touch that output shape and the ruling-2 warning is the only
+     new content reaching it. Changing the MCP response shape is outside PB. Follow-up for the merge seam: "MCP
+     `registry_run` success drops validation warnings". Importance 1–2.
+  7. **test-fidelity Warnings — CONFIRMED, folded into 3 and 4** (the escape-repair test now validates AND runs the
+     mixed body; accounting tests cover two known roots through `WorkflowValidator`).
+- Changed: `core/workflow/data_flow.py` (`BodyReference.roots`; `_segments`; `_leftover` returns `(reference, owner,
+  roots, is_expression)` and dash-splits Expression and Issue alike; `_readable_texts` reads literal source / bytes);
+  `runtime/template_validation/validator.py` (unread-`inputs:` reads `ref.roots`); `tests/test_integration/
+  test_code_body_leftovers.py` +8 (bytes, two colon-less Issue forms, nested expansion, the §3 repair beside another
+  reference, two accounting shapes, two `inputs:` keys in one leftover).
+- Verified: `make check` green; `make test` **10574 passed / 0 failed** (10566 at `f061120e` + 8); `make test-e2e` 52 / 2
+  skipped. Mutation ledger re-run on the fixed code: all 22 prior mutations still go red (M19/M22 re-anchored to the new
+  shape) plus R1 bytes skipped → 1, R2 literal values not source → 2, R3 Issue interior not re-read → 1, R4 first
+  in-scope root only → 3, R5 dash split Expressions only → 2, R6 unread-`inputs:` first root only → 1 (counted
+  failures; restores asserted byte-equal; R3's first attempt was a syntax-error mutant and was redone). Real CLI: the
+  nested shape errors identically at `--validate-only` and at the run; corpus scan (33 fences + every shipped
+  `.pflow.md`) still clean; both tooling workflows `✓ Workflow is valid`.
+- Deviations/surprises: none against ruled text or a seam decision — every fix applies an existing ruling (§1 rows,
+  §2 "one mistake, one diagnostic", §3's repair, the accepted dash split). Detection for code bodies now reads source,
+  not decoded values: an obfuscated split like `"${" "name}"` is (correctly) not a reference — it never was one to the
+  old resolver either.
+- Self-checks: fully happy? Yes — the review found real holes in the detector's edges (all in the "reading" half, none
+  in the seam: `split_params`, consumers, compile path were verified clean by all lenses); each is now a named test
+  with a killing mutation. Open for you: finding 6's follow-up; `review-falsifier` remains the completion gate's.
+- Next: orchestrator commits; PE.
+
+## [2026-10-08 04:45] task orchestrator (Opus) — PB mid-task review closed; committed
+- Verified: I4's `[2026-10-08 01:35]` entry — 5 lenses (4 planned + test-fidelity, added by the skill's floor), 7
+  findings, 6 fixed with tests (all in the detector's reading half; seam verified clean by every lens), 1 skipped as
+  pre-existing (MCP `registry_run` success drops validation warnings — follow-up for the merge seam, carried to the
+  task-review/hand-back). `make check` green; `make test` 10574 passed / 0 failed (mine).
+- Disposition: accepted as logged. `review-falsifier` stays with the completion gate (direct launch, mine).
+- I4 retired for PF: window ~545k, past the plan's ~350k rotation point → PF goes to a fresh Opus · medium launch.
+- Next: PE (I5, fresh, Opus · medium, specialist web hand-off).
