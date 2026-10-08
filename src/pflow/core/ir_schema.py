@@ -875,3 +875,19 @@ def start_node_id(ir: dict[str, Any]) -> str | None:
         return start
     nodes = ir.get("nodes") or []
     return str(nodes[0]["id"]) if nodes else None
+
+
+def outgoing_edges(ir: dict[str, Any]) -> dict[str, list[tuple[str, str]]]:
+    """Each step's outgoing ``(action, target)`` edges, sorted and deduped.
+
+    Read the way the compiler wires them (``from``/``source``, ``to``/``target``, a missing ``action`` —
+    a document-order edge — is ``"default"``), so a document-order edge and an explicit ``next:`` to the
+    same target are the same edge. Malformed edges are skipped; the compiler is the one that rejects them.
+    """
+    edges: dict[str, set[tuple[str, str]]] = {}
+    for edge in ir.get("edges") or []:
+        source = edge.get("from") or edge.get("source")
+        target = edge.get("to") or edge.get("target")
+        if isinstance(source, str) and isinstance(target, str):
+            edges.setdefault(source, set()).add((str(edge.get("action", "default")), target))
+    return {source: sorted(pairs) for source, pairs in edges.items()}

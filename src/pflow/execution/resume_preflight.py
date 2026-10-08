@@ -216,7 +216,8 @@ def _identity_changes(ir: dict[str, Any], source: ResumeSource, resumes_at: str 
     # version the human saw. Only its definition — where it leads is downstream of the resume.
     approval = source.paused_node_id if source.paused_node_id == source.entry_node_id else None
     changes = _definition_changes(now, then, restored, approval)
-    ran = {*restored, resumes_at}
+    # Steps this resume restores or re-enters — a new route/start to anything else is skipped.
+    covered = {*restored, resumes_at}
     # A plain between-nodes source resumes at its last step's CURRENT successor, so a new one runs.
     runs_next = source.last_completed_node_id if resumes_at is None else None
     rerouted = {node_id: targets for node_id in restored if (targets := _rerouted(now, then, node_id))}
@@ -225,13 +226,13 @@ def _identity_changes(ir: dict[str, Any], source: ResumeSource, resumes_at: str 
         for node_id, (targets, recorded_targets) in rerouted.items()
         if node_id != runs_next
         for target in targets
-        if target not in recorded_targets and target not in ran
+        if target not in recorded_targets and target not in covered
     }
     if rerouted:
         changes["rerouted"] = rerouted
     if current["start"] != recorded.get("start"):
         changes["new_start"] = (current["start"], recorded.get("start"))
-        skipped |= {current["start"]} - ran
+        skipped |= {current["start"]} - covered
     if changes and skipped:
         changes["skipped"] = frozenset(skipped)
     return changes
@@ -307,19 +308,12 @@ def _single_default_successor(ir: dict[str, Any], node_id: str) -> str | None:
     Named-action and ``error`` edges are not default routes (they encode branches /
     failure handling, not the success fall-through the killed-between-nodes case
     needs). Zero default edges (terminal / conditional-only) or more than one →
-    None (ambiguous). ``from``/``to`` and ``source``/``target`` edge spellings are
-    both accepted (the compiler supports both).
+    None (ambiguous).
     """
-    targets: list[str] = []
-    for edge in ir.get("edges", []):
-        source = edge.get("from") or edge.get("source")
-        if source != node_id or edge.get("action", "default") != "default":
-            continue
-        target = edge.get("to") or edge.get("target")
-        if isinstance(target, str):
-            targets.append(target)
-    unique = list(dict.fromkeys(targets))
-    return unique[0] if len(unique) == 1 else None
+    from pflow.core.ir_schema import outgoing_edges
+
+    targets = {target for action, target in outgoing_edges(ir).get(node_id, []) if action == "default"}
+    return targets.pop() if len(targets) == 1 else None
 
 
 def _resolve_between_nodes_entry(resolved: ResolvedWorkflow, source: ResumeSource) -> ResumeSource:

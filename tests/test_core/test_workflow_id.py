@@ -247,3 +247,11 @@ def test_step_identity_is_insensitive_to_key_order_and_never_mutates_the_ir() ->
     b = {"nodes": [{"_source_line": 3, "params": {"env": {"A": "1"}, "command": "true"}, "type": "shell", "id": "x"}]}
     assert step_identity(a) == step_identity(b)
     assert a["nodes"][0]["_source_line"] == 3
+
+
+def test_step_identity_reads_both_edge_spellings_as_the_compiler_does() -> None:
+    nodes = [{"id": "a", "type": "shell"}, {"id": "b", "type": "shell"}]
+    from_to = step_identity({"nodes": nodes, "edges": [{"from": "a", "to": "b"}]})
+    source_target = step_identity({"nodes": nodes, "edges": [{"source": "a", "target": "b", "action": "default"}]})
+    assert from_to == source_target
+    assert from_to["steps"]["a"]["next"] == [["default", "b"]]

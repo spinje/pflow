@@ -20,7 +20,7 @@ import hashlib
 import json
 from typing import Any
 
-from pflow.core.ir_schema import start_node_id
+from pflow.core.ir_schema import outgoing_edges, start_node_id
 
 
 def canonical_ir_digest(ir: dict[str, Any]) -> str:
@@ -78,36 +78,30 @@ def step_identity(ir: dict[str, Any]) -> dict[str, Any]:
     written on the trace's ``meta`` line (2.9.0). A step's ``hash`` covers its definition minus prose:
     every node key except ``purpose`` and source provenance, plus the ``## Cache`` chunks it lists in
     ``prompt_cache`` (they render into its prompt) — which a step that uses any also gets alone, as
-    ``cache``. ``## Inputs`` are not part of any step — a resume
-    reuses the recorded input values. ``next`` is the step's outgoing edges, sorted, with a
-    document-order edge (no ``action``) read as ``"default"`` exactly like an explicit ``next:`` to
-    the same target, so an insertion or reroute shows on the predecessor without touching its hash.
+    ``cache``. ``## Inputs`` are not part of any step — a resume reuses the recorded input values.
+    ``next`` is the step's ``ir_schema.outgoing_edges``, so an insertion or reroute shows on the
+    predecessor without touching its hash.
 
     Static on purpose — not the engine's per-visit memo ``config_hash``, which varies with loop
-    iteration and leaves out ``loop``/``retry``/``approval`` and edges. Changing what this hashes
-    changes every recorded value, so it bumps the trace minor (``runtime/workflow_trace.py``).
+    iteration and leaves out ``loop``/``retry``/``approval`` and edges. What this hashes is part of the
+    trace format (``runtime/workflow_trace.TRACE_FORMAT_VERSION``).
     """
     chunks = {
         item["name"]: item
         for item in (ir.get("cache") or {}).get("items") or []
         if isinstance(item, dict) and isinstance(item.get("name"), str)
     }
-    successors: dict[str, set[tuple[str, str]]] = {}
-    for edge in ir.get("edges") or []:
-        source = edge.get("from") or edge.get("source")
-        target = edge.get("to") or edge.get("target")
-        if isinstance(source, str) and isinstance(target, str):
-            successors.setdefault(source, set()).add((str(edge.get("action", "default")), target))
+    edges = outgoing_edges(ir)
     steps: dict[str, dict[str, Any]] = {}
     for node in ir.get("nodes") or []:
         node_id = str(node["id"])
+        definition = _strip_source_provenance({key: value for key, value in node.items() if key != "purpose"})
         used_chunks = _strip_source_provenance({
             name: chunks[name] for name in node.get("prompt_cache") or [] if name in chunks
         })
-        definition = {"node": {key: value for key, value in node.items() if key != "purpose"}, "cache": used_chunks}
         step: dict[str, Any] = {
-            "hash": canonical_ir_digest(_strip_source_provenance(definition)),
-            "next": [list(pair) for pair in sorted(successors.get(node_id, set()))],
+            "hash": canonical_ir_digest({"node": definition, "cache": used_chunks}),
+            "next": [list(pair) for pair in edges.get(node_id, [])],
         }
         if used_chunks:
             # The chunks alone too, so a refusal can say the edit was to a `## Cache` chunk, not the step.
