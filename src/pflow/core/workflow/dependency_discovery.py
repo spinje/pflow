@@ -13,7 +13,12 @@ from typing import Any, Literal
 import yaml
 
 from pflow.core.exceptions import MarkdownParseError
-from pflow.core.file_resolver import FILE_RESOLVABLE_PARAMS, is_file_reference, is_workflow_file_reference
+from pflow.core.file_resolver import (
+    FILE_RESOLVABLE_PARAMS,
+    is_file_reference,
+    is_param_file_reference,
+    is_workflow_file_reference,
+)
 from pflow.core.markdown_parser import parse_markdown
 from pflow.core.yaml_utils import safe_load_preserving_templates
 
@@ -73,7 +78,7 @@ def discover_dependencies(
             continue
 
         _collect_sub_workflow_deps(params, base_dir, node_id, seen, deps)
-        _collect_param_deps(params, base_dir, node_id, deps)
+        _collect_param_deps(node.get("type"), params, base_dir, node_id, deps)
         _collect_batch_deps(node, base_dir, node_id, deps)
 
     return deps
@@ -120,6 +125,7 @@ def _collect_sub_workflow_deps(
 
 
 def _collect_param_deps(
+    node_type: str | None,
     params: dict[str, Any],
     base_dir: Path,
     node_id: str,
@@ -131,7 +137,7 @@ def _collect_param_deps(
             continue
         if key not in FILE_RESOLVABLE_PARAMS:
             continue
-        if not is_file_reference(value):
+        if not is_param_file_reference(node_type, key, value):
             continue
         resolved = (base_dir / value).resolve()
         _require_file_exists(resolved, value, node_id, key, base_dir)
@@ -173,17 +179,18 @@ def _collect_batch_deps(
             batch_content = resolved.read_text(encoding="utf-8")
             batch_data = safe_load_preserving_templates(batch_content)
             if isinstance(batch_data, dict):
-                _collect_batch_item_deps(batch_data, base_dir, node_id, deps)
+                _collect_batch_item_deps(node.get("type"), batch_data, base_dir, node_id, deps)
         except yaml.YAMLError:
             logger.warning(f"Failed to parse batch YAML {batch} in node '{node_id}'")
         return
 
     # Batch is a dict with inline items
     if isinstance(batch, dict):
-        _collect_batch_item_deps(batch, base_dir, node_id, deps)
+        _collect_batch_item_deps(node.get("type"), batch, base_dir, node_id, deps)
 
 
 def _collect_batch_item_deps(
+    node_type: str | None,
     batch_data: dict[str, Any],
     base_dir: Path,
     node_id: str,
@@ -199,7 +206,7 @@ def _collect_batch_item_deps(
         for key, value in item.items():
             if key not in FILE_RESOLVABLE_PARAMS:
                 continue
-            if not is_file_reference(value):
+            if not is_param_file_reference(node_type, key, value):
                 continue
             resolved = (base_dir / value).resolve()
             _require_file_exists(resolved, value, node_id, f"batch.items[{i}].{key}", base_dir)

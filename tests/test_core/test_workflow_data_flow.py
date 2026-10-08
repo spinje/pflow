@@ -891,7 +891,9 @@ class TestBatchDataFlowValidation:
         }
         errors = _data_flow_error_messages(workflow)
         assert len(errors) == 1, f"Expected error for __index__ without batch: {errors}"
-        assert "__index__" in errors[0]
+        assert (
+            "Node 'process' references '${__index__}' in parameter 'env.INDEX' but no inputs are declared" in errors[0]
+        )
 
 
 class TestNestedParamValidation:

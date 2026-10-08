@@ -838,7 +838,11 @@ def test_child_parser_warning_survives_prep_failure(tmp_path: Path):
     result = WorkflowRunner().run(str(parent_workflow), {}, RunnerConfig())
 
     assert result.success is False
-    assert any(diagnostic.severity == Severity.ERROR for diagnostic in result.diagnostics)
+    assert any(
+        diagnostic.severity == Severity.ERROR
+        and "requires input 'required_value' but it is not provided" in diagnostic.message
+        for diagnostic in result.diagnostics
+    ), [diagnostic.message for diagnostic in result.diagnostics]
     parser_warnings = [
         diagnostic
         for diagnostic in result.diagnostics

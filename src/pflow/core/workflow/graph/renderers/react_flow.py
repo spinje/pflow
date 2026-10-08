@@ -32,6 +32,7 @@ from pflow.core.workflow.graph.model import (
     NodeId,
 )
 from pflow.core.workflow.graph.scope import source_refs_in
+from pflow.core.workflow.template_surfaces import param_mode
 
 
 @dataclass(frozen=True)
@@ -308,7 +309,7 @@ class _ReactFlowRenderer:
         return RFParam(
             name=name,
             value=value,
-            is_dynamic=_param_is_dynamic(value),
+            is_dynamic=param_mode(node.kind, name) != "body" and _param_is_dynamic(value),
             source=asdict(source) if source is not None else None,
         )
 

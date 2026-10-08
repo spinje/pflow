@@ -400,8 +400,8 @@ class TestEnhancedErrorOutput:
         # Should fail (either in validation or execution)
         assert result.exit_code != 0
 
-        # Error message should mention the problematic template (routed to stderr).
-        assert "producer" in result.stderr or "output" in result.stderr
+        # The error names the missing field on its producer (routed to stderr).
+        assert "Node 'producer' (type: shell) does not output 'output'." in result.stderr, result.stderr
 
     def test_graceful_handling_when_no_enhanced_data(self, tmp_path):
         """Should handle errors gracefully even without enhanced error data."""

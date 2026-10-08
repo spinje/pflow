@@ -390,20 +390,115 @@ def test_empty_loop_block_rejected_as_missing_polarity(registry) -> None:
     assert any("exactly one of `while:` or `until:`" in d.message for d in errs)
 
 
-def test_shell_carry_key_not_referenced_warns(registry) -> None:
-    ir = _ir([
+def _carried_shell_step(**params: object) -> dict:
+    return _ir([
         {
             "id": "c",
             "type": "shell",
-            "params": {
-                "inputs": {"state": "seed"},
-                "command": "echo hi",
-            },
+            "params": {"inputs": {"state": "seed"}, "command": "echo hi", **params},
             "loop": {"carry": {"state": "${c.exit_code}"}, "while": "${c.exit_code}", "max_iterations": 3},
         }
     ])
-    diagnostics = _diagnostics(ir, registry)
-    assert any(d.severity == Severity.WARNING and "carries input 'state'" in d.message for d in diagnostics)
+
+
+def _unread_input_warnings(ir, registry) -> list:
+    return [
+        d
+        for d in _diagnostics(ir, registry)
+        if d.severity == Severity.WARNING and ("carries '" in d.message or "is not visible to the command" in d.message)
+    ]
+
+
+def test_shell_carry_key_not_referenced_warns(registry) -> None:
+    [warning] = _unread_input_warnings(_carried_shell_step(), registry)
+    assert warning.message == (
+        "Step 'c' carries 'state', but no param of this step except inputs: references ${state}, "
+        "so the carried value never reaches the command."
+    )
+    assert warning.suggestions == [
+        'Bind it: add `- env: {STATE: ${state}}` and read "$STATE" in the command — or remove the carried key.'
+    ]
+    assert warning.context["path"] == "nodes[id=c].loop.carry.state"
+
+
+def test_shell_carry_key_bound_in_existing_env_names_that_map(registry) -> None:
+    [warning] = _unread_input_warnings(_carried_shell_step(env={"OTHER": "x"}), registry)
+    assert warning.suggestions == [
+        'Bind it: add STATE: ${state} under the step\'s existing env: and read "$STATE" in the command '
+        "— or remove the carried key."
+    ]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"env": {"STATE": "${state}"}},
+        {"stdin": "${state}"},
+        {"env": {"SUMMARY": "${state.summary}"}},  # nested path still roots at `state`
+        {"env": {"S": '${state ?? ""}'}},  # coalesce
+        {"env": {"FIRST": "${state[0]}"}},
+    ],
+    ids=["env", "stdin", "nested-path", "coalesce", "index"],
+)
+def test_shell_carry_key_read_by_another_param_does_not_warn(registry, params) -> None:
+    assert _unread_input_warnings(_carried_shell_step(**params), registry) == []
+
+
+def test_shell_carry_key_left_in_the_command_is_the_leftover_error_alone(registry) -> None:
+    """``echo ${state.summary}`` (the old carry form) is the body leftover ERROR — not also
+    the carry warning: one mistake, one diagnostic."""
+    ir = _carried_shell_step(command="echo ${state.summary}")
+    assert _unread_input_warnings(ir, registry) == []
+    assert [d.message for d in _errors(ir, registry) if "pflow reference" in d.message] == [
+        "Step 'c': the command contains ${state.summary} — a pflow reference (a key of this step's inputs:). "
+        "A shell command is plain sh: pflow never fills in ${…} there."
+    ]
+
+
+def test_shell_inputs_key_nothing_reads_warns_not_visible(registry) -> None:
+    ir = _ir([{"id": "fetch", "type": "shell", "params": {"inputs": {"url": "https://x"}, "command": "curl -s x"}}])
+    [warning] = _unread_input_warnings(ir, registry)
+    assert warning.message == (
+        "Step 'fetch': inputs: key 'url' is not visible to the command — a shell step reads values through env:."
+    )
+    assert warning.suggestions == [
+        'Bind it: add `- env: {URL: ${url}}` and read "$URL" in the command — or remove the key.'
+    ]
+    assert warning.context["path"] == "nodes[id=fetch].params.inputs.url"
+    # The common shape: a key bound from the same-named workflow input still reaches nothing.
+    self_named = _ir(
+        [{"id": "fetch", "type": "shell", "params": {"inputs": {"url": "${url}"}, "command": "curl -s x"}}],
+        inputs={"url": {"type": "string", "required": False, "default": "u"}},
+    )
+    assert [w.message for w in _unread_input_warnings(self_named, registry)] == [warning.message]
+    bound = _ir([
+        {
+            "id": "fetch",
+            "type": "shell",
+            "params": {"inputs": {"url": "https://x"}, "env": {"URL": "${url}"}, "command": 'curl -s "$URL"'},
+        }
+    ])
+    assert _unread_input_warnings(bound, registry) == []
+
+
+def test_llm_carry_warning_keeps_its_meaning(registry) -> None:
+    """An llm step warns only for a carried key nothing but inputs: reads; its other
+    ``inputs:`` keys are not warned (prompt context)."""
+
+    def llm_step(prompt: str) -> dict:
+        return _ir([
+            {
+                "id": "c",
+                "type": "llm",
+                "params": {"inputs": {"state": "seed", "extra": "x"}, "prompt": prompt},
+                "loop": {"carry": {"state": "${c.response}"}, "while": "${c.response}", "max_iterations": 3},
+            }
+        ])
+
+    [warning] = _unread_input_warnings(llm_step("Summarize."), registry)
+    assert warning.message == "Step 'c' carries 'state', but no param of this step except inputs: references ${state}."
+    assert warning.suggestions == ["Reference ${state} in the prompt, or remove the carried key."]
+    assert _unread_input_warnings(llm_step("Continue from ${state.summary}."), registry) == []
 
 
 def test_coalesce_carry_with_literal_fallback_not_falsely_rejected(registry) -> None:
@@ -445,25 +540,6 @@ def test_coalesce_carry_typo_in_operand_still_caught(registry) -> None:
     ])
     errs = _errors(ir, registry)
     assert any("does not declare output 'missing'" in d.message for d in errs)
-
-
-def test_shell_carry_key_referenced_via_nested_path_no_warning(registry) -> None:
-    """A carried key used via a NESTED path (`${state.summary}`) is referenced — the old
-    exact `${state}` substring check false-positived on this and warned spuriously.
-    """
-    ir = _ir([
-        {
-            "id": "c",
-            "type": "shell",
-            "params": {
-                "inputs": {"state": "seed"},
-                "command": "echo ${state.summary}",
-            },
-            "loop": {"carry": {"state": "${c.stdout}"}, "while": "${c.exit_code}", "max_iterations": 3},
-        }
-    ])
-    diagnostics = _diagnostics(ir, registry)
-    assert not any("carries input 'state'" in d.message for d in diagnostics), [d.message for d in diagnostics]
 
 
 def test_carry_literal_coalesce_fallback_warns(registry) -> None:

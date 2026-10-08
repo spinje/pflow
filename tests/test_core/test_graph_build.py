@@ -1454,6 +1454,22 @@ def test_data_flow_edges_carry_output_path_below_the_resolved_port() -> None:
     assert input_edge.output_path == ()
 
 
+def test_a_code_body_reference_draws_no_edge_its_inputs_binding_does() -> None:
+    """A code block is plain Python (ADR-0016): ``"${input_x.y}"`` in it is text, never a
+    data-flow edge; the same reference bound through ``inputs:`` draws one."""
+
+    def data_edges(params: dict[str, Any]) -> list[tuple[str, str | None]]:
+        graph = build_graph({
+            "inputs": {"input_x": {"type": "object"}},
+            "nodes": [{"id": "gen", "type": "code", "params": params}],
+            "edges": [],
+        })
+        return [(e.source.node_id, e.input_name) for e in graph.edges if e.kind == EdgeKind.DATA_FLOW]
+
+    assert data_edges({"inputs": {}, "code": 'result: str = "${input_x.y}"'}) == []
+    assert data_edges({"inputs": {"x": "${input_x.y}"}, "code": "result: str = x"}) == [("input_x", "x")]
+
+
 def test_batch_alias_ref_never_carries_an_output_path() -> None:
     """The explicit alias guard: `${data.rows.x}` under `as: data` over
     `items: ${prep.rows}` has first segment "rows" == the batch source's

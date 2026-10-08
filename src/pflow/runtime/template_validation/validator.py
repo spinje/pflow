@@ -5,7 +5,7 @@ validation passes in sequence and aggregates errors/warnings.
 
 Validation passes are split by concern into separate modules:
 - path_validation: Pass 5 (path existence)
-- type_validation: Passes 6+7+9 (type matching, shell command types, code-node annotations)
+- type_validation: Passes 6+9 (type matching, code-node annotations)
 - batch_item_validation: Pass 8 (${item.field} validation)
 - utils: Shared infrastructure
 
@@ -22,7 +22,8 @@ from typing import Any
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.suggestion_utils import find_similar_items
 from pflow.core.templates import DynamicIndex, Literal, Reference, Template, TemplateResolver, parse, resolve
-from pflow.core.workflow.template_surfaces import iter_template_surfaces
+from pflow.core.workflow.data_flow import body_reference_roots, body_references, step_scope
+from pflow.core.workflow.template_surfaces import iter_node_surfaces, iter_template_surfaces
 from pflow.registry import Registry
 from pflow.runtime.template_validation.batch_item_validation import validate_batch_item_fields
 from pflow.runtime.template_validation.operands import (
@@ -33,7 +34,6 @@ from pflow.runtime.template_validation.operands import (
 from pflow.runtime.template_validation.path_validation import validate_template_paths
 from pflow.runtime.template_validation.type_validation import (
     validate_code_node_input_annotations,
-    validate_shell_command_types,
     validate_template_types,
 )
 from pflow.runtime.template_validation.utils import get_node_ids
@@ -108,11 +108,17 @@ def validate_workflow_templates(
     # Check for unused inputs — the union ensures inputs declared ONLY for use
     # in ``## Cache`` or an output ``source:`` aren't flagged as unused. Cache vars
     # never reach ``validate_template_paths`` below (see
-    # ``_extract_cache_templates_for_unused_check``).
+    # ``_extract_cache_templates_for_unused_check``). A leftover ``${…}`` in a code
+    # body counts too: data flow reports it, one diagnostic for one mistake.
     unused_input_diagnostics = _validate_unused_inputs(
-        workflow_ir, all_templates | cache_templates | {operand.ref.raw for operand in output_operands}
+        workflow_ir,
+        all_templates
+        | cache_templates
+        | {operand.ref.raw for operand in output_operands}
+        | body_reference_roots(workflow_ir),
     )
     diagnostics.extend(unused_input_diagnostics)
+    diagnostics.extend(_validate_unread_step_inputs(workflow_ir))
 
     # Pass 5's input: each FIELD_CHECK reference (the operand classifier: a ?? operand's
     # root is checked by core/workflow/data_flow.py instead). An output source adds only
@@ -149,9 +155,6 @@ def validate_workflow_templates(
     # Pass 6: Validate template types match parameter expectations
     diagnostics.extend(validate_template_types(workflow_ir, node_outputs, registry))
 
-    # Pass 7: Block structured data (dict/list) in shell command parameters
-    diagnostics.extend(validate_shell_command_types(workflow_ir, node_outputs))
-
     # Pass 8: Validate batch item field access (${item.field} against inferred structure)
     diagnostics.extend(validate_batch_item_fields(workflow_ir, node_outputs, operands))
 
@@ -164,7 +167,6 @@ def validate_workflow_templates(
     # str-condition raise in the engine.
     diagnostics.extend(_validate_loop_conditions(workflow_ir, node_outputs))
     diagnostics.extend(_validate_loop_carry_refs(workflow_ir, node_outputs))
-    diagnostics.extend(_validate_loop_carry_prompt_usage(workflow_ir))
     diagnostics.extend(_validate_loop_carry_literal_fallback(workflow_ir))
 
     errors = [d for d in diagnostics if d.severity == Severity.ERROR]
@@ -444,58 +446,82 @@ def _make_loop_carry_unknown_output_diagnostic(
     )
 
 
-def _validate_loop_carry_prompt_usage(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
-    """Warn when shell/llm carry inputs are not interpolated into their executable text."""
+def _validate_unread_step_inputs(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
+    """Warn on an ``inputs:`` key no other param of its step reads.
+
+    On a shell step ``inputs:`` is only the namespace ``env:``, ``stdin`` and ``cwd`` draw
+    from — the command never sees it — so every key counts; on an llm step only a carried
+    key. A key a body leftover names is left to that leftover's ERROR.
+    """
     diagnostics: list[Diagnostic] = []
     for node in workflow_ir.get("nodes", []):
         node_type = node.get("type")
-        if node_type not in {"shell", "llm"}:
-            continue
         node_id = node.get("id")
+        if node_type not in ("shell", "llm") or not isinstance(node_id, str):
+            continue
         loop_config = node.get("loop")
         carry = loop_config.get("carry") if isinstance(loop_config, dict) else None
-        if not isinstance(node_id, str) or not isinstance(carry, dict):
+        carried = [key for key in carry if isinstance(key, str)] if isinstance(carry, dict) else []
+        params = node.get("params")
+        own_inputs = params.get("inputs") if isinstance(params, dict) else None
+        keys = [*carried]
+        if node_type == "shell" and isinstance(own_inputs, dict):
+            keys += [key for key in own_inputs if isinstance(key, str) and key not in carried]
+        if not keys:
             continue
-        text = _loop_prompt_sink_text(node)
-        # Collect the ROOT id of every reference in the prompt/command text.
-        # A carried key used via a nested path (`${state.summary}`), index
-        # (`${state[0]}`, `${x[${state}]}`), or coalesce (`${state ?? ""}`) still
-        # roots at `state`, so it counts as referenced — an exact `${state}` substring
-        # check false-positives on all of those forms (the carry IS used, just not bare).
-        referenced_roots = {ref.root for ref in parse(text).references}
-        for key in carry:
-            if isinstance(key, str) and key not in referenced_roots:
-                diagnostics.append(_make_loop_carry_unreferenced_warning(node_id, node_type, key))
+        read = {
+            ref.root
+            for surface in iter_node_surfaces(node)
+            if surface.kind == "param" and surface.key != "inputs"
+            for _, template in surface.templates()
+            for ref in template.references
+        } | {ref.root for ref in body_references(node, step_scope(workflow_ir, node))}
+        diagnostics.extend(
+            _unread_step_input_warning(node, node_id, node_type, key, carried=key in carried)
+            for key in keys
+            if key not in read
+        )
     return diagnostics
 
 
-def _loop_prompt_sink_text(node: dict[str, Any]) -> str:
-    params = node.get("params", {})
-    if not isinstance(params, dict):
-        return ""
-    values: list[str] = []
-    for key in ("command", "prompt", "system"):
-        value = params.get(key)
-        if isinstance(value, str):
-            values.append(value)
-    return "\n".join(values)
+def _unread_step_input_warning(
+    node: dict[str, Any], node_id: str, node_type: str, key: str, *, carried: bool
+) -> Diagnostic:
+    if node_type == "llm":
+        message = f"Step '{node_id}' carries '{key}', but no param of this step except inputs: references ${{{key}}}."
+        fix = f"Reference ${{{key}}} in the prompt, or remove the carried key."
+    else:
+        from pflow.nodes.shell.env_binding import suggest_env_name
 
-
-def _make_loop_carry_unreferenced_warning(node_id: str, node_type: str, key: str) -> Diagnostic:
-    sink = "command" if node_type == "shell" else "prompt/system"
+        name = suggest_env_name(key)
+        params = node.get("params")
+        env = params.get("env") if isinstance(params, dict) else None
+        add = (
+            f"add {name}: ${{{key}}} under the step's existing env:"
+            if isinstance(env, dict) and env
+            else f"add `- env: {{{name}: ${{{key}}}}}`"
+        )
+        if carried:
+            message = (
+                f"Step '{node_id}' carries '{key}', but no param of this step except inputs: references "
+                f"${{{key}}}, so the carried value never reaches the command."
+            )
+            fix = f'Bind it: {add} and read "${name}" in the command — or remove the carried key.'
+        else:
+            message = (
+                f"Step '{node_id}': inputs: key '{key}' is not visible to the command — "
+                "a shell step reads values through env:."
+            )
+            fix = f'Bind it: {add} and read "${name}" in the command — or remove the key.'
+    path = f"nodes[id={node_id}].loop.carry.{key}" if carried else f"nodes[id={node_id}].params.inputs.{key}"
     return Diagnostic(
         severity=Severity.WARNING,
         source="validator",
         title="Validation Warning",
         node_id=node_id,
-        message=(
-            f"Node '{node_id}' carries input '{key}', but the {node_type} node's {sink} text does not "
-            f"reference `${{{key}}}`. Carrying into `inputs:` alone is inert for {node_type} nodes."
-        ),
-        suggestions=[
-            f"Reference `${{{key}}}` in the node's {sink} text, or remove the carried key.",
-        ],
-        context={"category": "validation", "path": f"nodes[id={node_id}].loop.carry.{key}"},
+        message=message,
+        suggestions=[fix],
+        context={"category": "validation", "path": path},
     )
 
 

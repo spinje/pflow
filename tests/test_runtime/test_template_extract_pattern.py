@@ -1,17 +1,13 @@
-"""Tests for the shared TEMPLATE_EXTRACT_PATTERN and the _build_quoted_templates helper.
+"""Tests for the shared TEMPLATE_EXTRACT_PATTERN.
 
-Fix 1: TEMPLATE_EXTRACT_PATTERN is a loose extraction regex on TemplateResolver
+TEMPLATE_EXTRACT_PATTERN is a loose extraction regex on TemplateResolver
 used by data_flow.py, validator.py, template_errors.py, and trace_report.py
 for template discovery (not resolution). It captures everything between ${ and }.
-
-Fix 2: _build_quoted_templates splits coalesce operands so that '${a ?? b}'
-correctly exempts both 'a' and 'b' from shell type validation.
 """
 
 import re
 
 from pflow.core.templates import TemplateResolver
-from pflow.runtime.template_validation.type_validation import _build_quoted_templates
 
 # ---------------------------------------------------------------------------
 # Fix 1: TEMPLATE_EXTRACT_PATTERN
@@ -86,61 +82,3 @@ class TestTemplateExtractPatternMatching:
         text = "${branch-a.result ?? branch-b.result}"
         matches = TemplateResolver.TEMPLATE_EXTRACT_PATTERN.findall(text)
         assert matches == ["branch-a.result ?? branch-b.result"]
-
-
-# ---------------------------------------------------------------------------
-# Fix 2: _build_quoted_templates coalesce splitting
-# ---------------------------------------------------------------------------
-
-
-class TestBuildQuotedTemplatesSimple:
-    """Test _build_quoted_templates with non-coalesce templates."""
-
-    def test_simple_quoted_template(self) -> None:
-        """Single quoted template: echo '${result}' -> {'result'}."""
-        result = _build_quoted_templates("echo '${result}'")
-        assert result == {"result"}
-
-    def test_multiple_quoted_templates(self) -> None:
-        """Multiple quoted templates: echo '${a}' '${b}' -> {'a', 'b'}."""
-        result = _build_quoted_templates("echo '${a}' '${b}'")
-        assert result == {"a", "b"}
-
-    def test_non_quoted_template_not_captured(self) -> None:
-        """Unquoted template: echo ${var} -> empty set."""
-        result = _build_quoted_templates("echo ${var}")
-        assert result == set()
-
-    def test_no_templates(self) -> None:
-        """String with no templates at all -> empty set."""
-        result = _build_quoted_templates("echo hello world")
-        assert result == set()
-
-
-class TestBuildQuotedTemplatesCoalesce:
-    """Test that coalesce operands are split so both sides are exempted."""
-
-    def test_coalesce_in_quotes_splits_operands(self) -> None:
-        """Coalesce: echo '${a.result ?? b.result}' -> {'a.result', 'b.result'}."""
-        result = _build_quoted_templates("echo '${a.result ?? b.result}'")
-        assert result == {"a.result", "b.result"}
-
-    def test_triple_coalesce_splits_all(self) -> None:
-        """Three-way coalesce: all operands should be in the set."""
-        result = _build_quoted_templates("echo '${x ?? y ?? z}'")
-        assert result == {"x", "y", "z"}
-
-    def test_mixed_quoted_and_unquoted(self) -> None:
-        """Only quoted templates are captured; unquoted are excluded."""
-        result = _build_quoted_templates("echo '${a ?? b}' ${c}")
-        assert result == {"a", "b"}
-
-    def test_coalesce_with_dotted_paths(self) -> None:
-        """Dotted paths in coalesce are split and preserved."""
-        result = _build_quoted_templates("jq . '${node-a.stdout ?? node-b.stdout}'")
-        assert result == {"node-a.stdout", "node-b.stdout"}
-
-    def test_mixed_simple_and_coalesce_quoted(self) -> None:
-        """Mix of simple and coalesce quoted templates."""
-        result = _build_quoted_templates("cmd '${simple}' '${a ?? b}'")
-        assert result == {"simple", "a", "b"}

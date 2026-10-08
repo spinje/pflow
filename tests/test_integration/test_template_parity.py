@@ -41,6 +41,7 @@ from typing import Any
 
 import pytest
 
+from pflow.core.exceptions import CompilationError
 from pflow.core.prompt_cache import CacheRenderContext, build_cache_system_blocks
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
@@ -479,6 +480,21 @@ def _drive_shell_env(row: Row, ir: dict[str, Any], shared: dict[str, Any]) -> Ru
     return _resolved(bind_env(observed.value)["V"]) if observed.kind == "resolves" else observed
 
 
+def _drive_body(param: str) -> Callable[[Row, dict[str, Any], dict[str, Any]], RuntimeObservation]:
+    """A code body (ADR-0016): the compiler routes it STATIC, or refuses it with the data-flow
+    leftover ERROR — observed as the wrapped diagnostics' text, not the summary line."""
+
+    def drive(row: Row, ir: dict[str, Any], shared: dict[str, Any]) -> RuntimeObservation:
+        try:
+            config = _compile(row, ir).node_configs["s"]
+        except CompilationError as exc:
+            messages = " | ".join(d.message for d in exc.wrapped_diagnostics or [])
+            return RuntimeObservation("raises", message=messages, exc_name="CompilationError")
+        return _resolve_param(row, config, shared, param)
+
+    return drive
+
+
 def _drive_prewarm(row: Row, ir: dict[str, Any], shared: dict[str, Any]) -> RuntimeObservation:
     """``None`` means the warm-up silently drops the user's ``system`` prompt: Absent, no report."""
     value = _resolve_template_string(row.template, shared)
@@ -590,6 +606,17 @@ SURFACES: Mapping[str, Surface] = MappingProxyType({
         lambda row, _t, _ir: _node("shell", {"command": 'printf "%s" "$V"', "env": {"V": row.template}}),
         _drive_shell_env,
         lambda _row, result: result.shared_after["s"]["stdout"],
+    ),
+    # A code body (ADR-0016) holds the template inside a literal the body prints verbatim.
+    "shell_body": Surface(
+        lambda row, _t, _ir: _node("shell", {"command": f"printf '%s' '{row.template}'"}),
+        _drive_body("command"),
+        lambda _row, result: result.shared_after["s"]["stdout"],
+    ),
+    "code_body": Surface(
+        lambda row, _t, _ir: _node("code", {"inputs": {}, "code": f"result: str = {json.dumps(row.template)}"}),
+        _drive_body("code"),
+        lambda _row, result: result.shared_after["s"]["result"],
     ),
     # The engine's batch warm-up resolves an llm node's ``system`` with this helper;
     # end to end, the same text is a plain ``sink_str`` param.
@@ -1585,6 +1612,36 @@ SHELL_ENV_ROWS: tuple[Row, ...] = (
     ),
 )
 
+BODY_ROWS: tuple[Row, ...] = (
+    # Task 118 Part 2: a code body is never a Template. A name pflow never knew is the
+    # language's own text; a root in the step's scope is the leftover ERROR on both layers.
+    Row("shell_body_ambient", "shell_body", "${HOME}", Ok(), StaticLiteral()),
+    Row("shell_body_expansion_form", "shell_body", "${NAME:-world} ${#X}", Ok(), StaticLiteral()),
+    Row(
+        "shell_body_in_scope",
+        "shell_body",
+        "${p.out_str}",
+        Error("the command contains ${p.out_str}"),
+        Raises("CompilationError", "the command contains ${p.out_str}"),
+        mutation="iter_node_surfaces yields bodies again (the old 'resolved inline' behavior)",
+    ),
+    Row(
+        "shell_body_escape",
+        "shell_body",
+        "$${X}",
+        Error("the command contains the escape $${X}"),
+        Raises("CompilationError", "the command contains the escape $${X}"),
+    ),
+    Row("code_body_ambient", "code_body", "${HOME}", Ok(), StaticLiteral()),
+    Row(
+        "code_body_in_scope",
+        "code_body",
+        "${p.out_str}",
+        Error('the code contains "${p.out_str}"'),
+        Raises("CompilationError", 'the code contains "${p.out_str}"'),
+    ),
+)
+
 CACHE_ROWS: tuple[Row, ...] = (
     Row(
         "cache_var_ref",
@@ -1740,7 +1797,15 @@ CACHE_ROWS: tuple[Row, ...] = (
 )
 
 SURFACE_ROWS: tuple[Row, ...] = (
-    PARAM_ROWS + BATCH_ROWS + LOOP_ROWS + OUTPUT_ROWS + SUB_WORKFLOW_ROWS + PREWARM_ROWS + SHELL_ENV_ROWS + CACHE_ROWS
+    PARAM_ROWS
+    + BATCH_ROWS
+    + LOOP_ROWS
+    + OUTPUT_ROWS
+    + SUB_WORKFLOW_ROWS
+    + PREWARM_ROWS
+    + SHELL_ENV_ROWS
+    + BODY_ROWS
+    + CACHE_ROWS
 )
 
 

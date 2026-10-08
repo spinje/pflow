@@ -87,7 +87,7 @@ class TestIssue95Prevention:
         assert len(result.errors) > 0
         error = result.errors[0]
         # Validator catches that nonexistent_field is not a valid shell output
-        assert "nonexistent_field" in error.message
+        assert error.message == "Node 'empty-producer' (type: shell) does not output 'nonexistent_field'."
 
         # No user nodes should have completed
         completed = result.shared_after.get("__execution__", {}).get("completed_nodes", [])
@@ -165,7 +165,7 @@ class TestIssue95Prevention:
         # Verify error is about the nonexistent field
         assert len(result.errors) > 0
         error = result.errors[0]
-        assert "nonexistent_field" in error.message
+        assert error.message == "Node 'produces-nothing' (type: shell) does not output 'nonexistent_field'."
 
         # No user nodes should have completed
         completed = result.shared_after.get("__execution__", {}).get("completed_nodes", [])
@@ -307,10 +307,10 @@ class TestTriStateStatus:
 
         result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
-        # Should fail
+        # Should fail, on the undeclared reference
         assert not result.success
         assert result.status == WorkflowStatus.FAILED
-        assert len(result.errors) > 0
+        assert any("references '${missing}' in parameter 'env.MISSING'" in e.message for e in result.errors)
 
 
 class TestConfigurationHierarchy:
@@ -343,6 +343,7 @@ class TestConfigurationHierarchy:
         # Template validation catches it - fails before execution
         assert not result.success
         assert result.status == WorkflowStatus.FAILED
+        assert any("references '${missing}' in parameter 'env.MISSING'" in e.message for e in result.errors)
 
     def test_default_strict_mode_when_not_specified(self):
         """Workflows without explicit mode should default to strict.
@@ -367,6 +368,7 @@ class TestConfigurationHierarchy:
         # Should FAIL (strict mode default)
         assert not result.success
         assert result.status == WorkflowStatus.FAILED
+        assert any("references '${missing}' in parameter 'env.MISSING'" in e.message for e in result.errors)
 
 
 class TestMultipleTemplateErrors:
@@ -484,8 +486,8 @@ class TestEnhancedErrorMessages:
         error_message = error.message
         rendered = format_diagnostic(error)
 
-        # Error should mention the wrong field
-        assert "wrong_field" in error_message
+        # Error should name the wrong field on its producer
+        assert error_message == "Node 'producer' (type: shell) does not output 'wrong_field'."
 
         # Error should show available outputs from producer (stdout, stderr, etc.)
         assert "available" in rendered.lower()

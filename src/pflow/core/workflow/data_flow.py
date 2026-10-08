@@ -4,7 +4,11 @@ This module ensures that workflows have correct execution order and that
 all data dependencies are satisfied before nodes execute.
 """
 
+import ast
+import keyword
 import logging
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from pflow.core.cache_ttl import (
@@ -19,11 +23,21 @@ from pflow.core.diagnostic import (
     Severity,
 )
 from pflow.core.suggestion_utils import find_similar_items
-from pflow.core.templates import Reference, Template, TemplateResolver, parse
+from pflow.core.templates import (
+    Expression,
+    Field,
+    Issue,
+    Reference,
+    Template,
+    TemplateResolver,
+    Text,
+    parse,
+    parse_path,
+)
 from pflow.core.types import is_template_reserved_internal_key
 from pflow.core.workflow.gate_validation import check_approval_allowed
 from pflow.core.workflow.loop_validation import check_loop_polarity
-from pflow.core.workflow.template_surfaces import iter_node_surfaces
+from pflow.core.workflow.template_surfaces import BodyLanguage, code_bodies, iter_node_surfaces
 
 logger = logging.getLogger(__name__)
 
@@ -507,6 +521,7 @@ def validate_data_flow(
             check_inputs,
             diagnostics,
         )
+        diagnostics.extend(_validate_bodies(workflow_ir, node))
 
     # Cache-block validation (Task 159): ## Cache references, prompt_cache: order,
     # invalid-on-non-llm, unused chunks, batch-scoped rejection, prompt-body
@@ -820,6 +835,499 @@ def _checked_references(kind: str, template: Template) -> tuple[Reference, ...]:
         if isinstance(operand, Reference)
         for source in operand.index_sources
     )
+
+
+# ------------------------------------------------------------------------------
+# Code bodies (ADR-0016): a shell command or code block is plain code. A ${…} the
+# runtime resolved there before is a leftover; a $${ escape has nothing to escape.
+# ------------------------------------------------------------------------------
+
+_INPUTS_KEY_OWNER = "a key of this step's inputs:"
+_BATCH_ITEM_OWNER = "this step's batch item"
+_SHELL_IS_PLAIN = "A shell command is plain sh: pflow never fills in ${…} there."
+_CODE_IS_PLAIN = "A code step's code is plain Python: pflow never fills in ${…} there."
+_KEEP_FOREIGN = "If the text belongs to another program inside the command, leave it."
+_PATH_CHARS = frozenset("_-.[]")
+_CODE_OUTPUT_NAMES = frozenset({"result", "next"})
+_GUIDE_TOPIC: dict[BodyLanguage, str] = {"sh": "shell", "python": "code"}
+
+
+@dataclass(frozen=True, slots=True)
+class StepScope:
+    """The pflow names a ``${…}`` in one step could mean: what the runtime resolved for
+    that step while bodies were Templates. A step id counts only with a path —
+    ``${fetch.stdout}``, never a bare ``${fetch}`` (that is ordinary sh)."""
+
+    names: Mapping[str, str]  # name -> its owner, as diagnostics phrase it
+    step_ids: frozenset[str]
+
+    def owner(self, root: str, *, has_path: bool) -> str | None:
+        """Who ``root`` names in this step (``"step 'fetch'"``); ``None`` if pflow never knew it."""
+        if root in self.names:
+            return self.names[root]
+        if has_path and root in self.step_ids:
+            return f"step '{root}'"
+        return None
+
+
+def step_scope(workflow_ir: dict[str, Any], node: dict[str, Any]) -> StepScope:
+    """One step's scope: the workflow's inputs, the step's own ``inputs:`` keys and — on a
+    batched or looped step only — its batch alias, ``__index__``, ``__iteration__`` (a later
+    source shadows an earlier one, as at run time); every step id, with a path."""
+    declared = workflow_ir.get("inputs")
+    names = {str(name): f"workflow input '{name}'" for name in (declared if isinstance(declared, dict) else {})}
+    params = node.get("params")
+    own_inputs = params.get("inputs") if isinstance(params, dict) else None
+    if isinstance(own_inputs, dict):
+        names.update(dict.fromkeys(map(str, own_inputs), _INPUTS_KEY_OWNER))
+    batch = node.get("batch")
+    if isinstance(batch, dict):
+        alias = batch.get("as")
+        names[alias if isinstance(alias, str) and alias else "item"] = _BATCH_ITEM_OWNER
+        names["__index__"] = "this step's batch index"
+    if isinstance(node.get("loop"), dict):
+        names["__iteration__"] = "this step's loop iteration"
+    nodes = workflow_ir.get("nodes", [])
+    step_ids = frozenset(other["id"] for other in nodes if isinstance(other, dict) and isinstance(other.get("id"), str))
+    return StepScope(names, step_ids)
+
+
+@dataclass(frozen=True, slots=True)
+class BodyReference:
+    """A ``${…}`` in a code body whose root is in its step's scope — a leftover."""
+
+    param: str  # ``command`` / ``code``
+    language: BodyLanguage
+    written: str  # as in the body: ``${item}``, ``${limit:-10}``
+    reference: str  # the pflow reference it names: ``item``, ``limit``, ``fetch.stdout``
+    root: str
+    owner: str
+    line: int  # 0-based, within the body
+    is_expression: bool  # False: a shell expansion form (``${limit:-10}``) on an in-scope name
+
+
+def body_references(node: dict[str, Any], scope: StepScope) -> list[BodyReference]:
+    """Every leftover in a node's bodies, in body order. A shell command is read whole, a
+    code block's string literals only. An Expression is a leftover when any reference in it
+    (dependency view) is in ``scope``; an Issue when the name it starts with is."""
+    found: list[BodyReference] = []
+    for param, language, text in code_bodies(node):
+        if "${" not in text:
+            continue
+        for piece, first_line in _readable_texts(language, text):
+            for segment in parse(piece).segments:
+                if isinstance(segment, Text) or (leftover := _leftover(segment, scope)) is None:
+                    continue
+                start, end = segment.span
+                line = first_line + piece.count("\n", 0, start)
+                found.append(BodyReference(param, language, piece[start:end], *leftover[:3], line, leftover[3]))
+    return found
+
+
+def body_reference_roots(workflow_ir: dict[str, Any]) -> set[str]:
+    """The roots of every leftover in a workflow. The unused-input pass counts them as used:
+    an input read only through a leftover gets the leftover ERROR alone."""
+    return {
+        ref.root
+        for node in workflow_ir.get("nodes", [])
+        if isinstance(node, dict)
+        for ref in body_references(node, step_scope(workflow_ir, node))
+    }
+
+
+def _leftover(segment: Expression | Issue, scope: StepScope) -> tuple[str, str, str, bool] | None:
+    """``(reference, root, owner, is_expression)`` when ``segment`` names something in scope."""
+    if isinstance(segment, Expression):
+        for ref in segment.references:
+            if owner := _owner(scope, ref):
+                return segment.raw, ref.root, owner, True
+        # sh reads ``${limit-10}`` as ``$limit`` with a default (sh names hold no ``-``);
+        # pflow's grammar reads one name, ``limit-10``. A shell expansion form, like an Issue.
+        first = segment.operands[0]
+        if isinstance(first, Reference) and "-" in first.root:
+            name = first.root.split("-", 1)[0]
+            if owner := scope.owner(name, has_path=False):
+                return name, name, owner, False
+    elif (leading := _issue_reference(segment.raw)) is not None:
+        if owner := _owner(scope, leading):
+            return leading.raw, leading.root, owner, False
+    return None
+
+
+def _owner(scope: StepScope, ref: Reference) -> str | None:
+    return scope.owner(ref.root, has_path=bool(ref.path))
+
+
+def _issue_reference(raw: str) -> Reference | None:
+    """The pflow path an Issue starts with, after ``${`` and an optional ``#``/``!``:
+    ``limit`` in ``${limit:-10}``, ``item`` in ``${#item}``; ``None`` for ``${}``, ``${1:-x}``."""
+    text = raw[2:]
+    if text[:1] in ("#", "!"):
+        text = text[1:]
+    end = 0
+    while end < len(text) and (text[end].isalnum() or text[end] in _PATH_CHARS):
+        end += 1
+    for length in range(end, 0, -1):
+        if (ref := parse_path(text[:length])) is not None:
+            return ref
+    return None
+
+
+def _readable_texts(language: BodyLanguage, text: str) -> list[tuple[str, int]]:
+    """``(text, 0-based body line it starts on)`` for what the rule reads: a shell command
+    whole; a code block's string literals, an f-string's constant parts included (so
+    ``f"Total: ${total}"`` is ``$`` and an interpolation, never a reference). A code block
+    Python cannot parse yields nothing — the markdown parser reports it."""
+    if language == "sh":
+        return [(text, 0)]
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return []
+    strings = [
+        (node.lineno, node.col_offset, node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and "$" in node.value
+    ]
+    return [(value, lineno - 1) for lineno, _, value in sorted(strings)]
+
+
+def _escapes(text: str) -> Iterator[tuple[int, str]]:
+    """``(offset, written)`` per ``$${…}`` escape — never ``$$${…}``, sh's pid then ``${…}``."""
+    start = text.find("$${")
+    while start != -1:
+        if start == 0 or text[start - 1] != "$":
+            close = text.find("}", start)
+            yield start, text[start : close + 1 if close != -1 else start + 3]
+        start = text.find("$${", start + 1)
+
+
+def _validate_bodies(workflow_ir: dict[str, Any], node: dict[str, Any]) -> list[Diagnostic]:
+    """The body rule for one step: its leftovers (one ERROR per body), each ``$${`` escape
+    (an ERROR), and — shell only — a pflow-only shape naming nothing pflow knows (one WARNING)."""
+    bodies = [(param, language, text) for param, language, text in code_bodies(node) if "${" in text]
+    if not bodies:
+        return []
+    scope = step_scope(workflow_ir, node)
+    leftovers = body_references(node, scope)
+    diagnostics: list[Diagnostic] = []
+    for param, language, text in bodies:
+        if refs := [ref for ref in leftovers if ref.param == param]:
+            diagnostics.append(_leftover_diagnostic(node, refs, text))
+        for piece, first_line in _readable_texts(language, text):
+            for start, written in _escapes(piece):
+                body_line = first_line + piece.count("\n", 0, start)
+                diagnostics.append(_escape_diagnostic(node, param, language, written, body_line, scope))
+        if language == "sh":
+            diagnostics.extend(_foreign_shape_warning(node, param, text, scope))
+    return diagnostics
+
+
+# — where a body diagnostic points —
+
+
+def _location(node: dict[str, Any], param: str, body_line: int) -> tuple[str | None, int | None]:
+    """``(script path, its line)`` for a file-loaded body, else ``(None, workflow-file line)``;
+    ``(None, None)`` when the IR carries no source lines (a dict IR)."""
+    source_files = node.get("_source_files")
+    if isinstance(source_files, dict) and isinstance(source_files.get(param), str):
+        return source_files[param], body_line + 1
+    source_lines = node.get("_source_lines")
+    first = source_lines.get(param) if isinstance(source_lines, dict) else None
+    return (None, first + body_line) if isinstance(first, int) else (None, None)
+
+
+def _where(location: tuple[str | None, int | None], *, in_list: bool = False) -> str | None:
+    """``line 13 of the workflow file`` (``line 13`` inside a list) / ``line 4 of ./cmd.sh``."""
+    script, line = location
+    if line is None:
+        return None
+    if script is not None:
+        return f"line {line} of {script}"
+    return f"line {line}" if in_list else f"line {line} of the workflow file"
+
+
+def _body_diagnostic(
+    severity: Severity,
+    node: dict[str, Any],
+    param: str,
+    location: tuple[str | None, int | None],
+    message: str,
+    suggestions: list[str],
+    guide_topic: str | None = None,
+    **context: Any,
+) -> Diagnostic:
+    full_context: dict[str, Any] = {"category": "validation", "path": f"nodes[id={node.get('id')}].params.{param}"}
+    script, line = location
+    if script is None and line is not None:
+        full_context["source_line"] = line
+    full_context.update(context)
+    return Diagnostic(
+        severity=severity,
+        source="validator",
+        title="Validation Error" if severity is Severity.ERROR else "Validation Warning",
+        node_id=str(node.get("id")),
+        message=message,
+        suggestions=suggestions,
+        context=full_context,
+        see_also=[guide_topic] if guide_topic else None,
+    )
+
+
+# — the fixes the messages offer —
+
+
+def _binding_phrase(node: dict[str, Any], param: str, entries: list[tuple[str, str]]) -> str:
+    """How to add ``entries`` — ``(name, pflow reference)`` — to the step's ``env:`` or
+    ``inputs:``: a new bullet, or keys under the map the step already has."""
+    params = node.get("params")
+    existing = params.get(param) if isinstance(params, dict) else None
+    pairs = ", ".join(f"{name}: ${{{reference}}}" for name, reference in entries)
+    if isinstance(existing, dict) and existing:
+        return f"add {pairs} under the step's existing {param}:"
+    return f"add `- {param}: {{{pairs}}}` to the step"
+
+
+def _env_name(reference: str) -> str:
+    from pflow.nodes.shell.env_binding import suggest_env_name
+
+    return suggest_env_name(reference)
+
+
+def _code_name(reference: str) -> str:
+    """A Python variable for a pflow reference: lower_snake, ``_value`` on a keyword or an output name."""
+    name = "_".join("".join(char if char.isalnum() else " " for char in reference).split()).lower() or "value"
+    if name[0].isdigit():
+        name = f"var_{name}"
+    return f"{name}_value" if keyword.iskeyword(name) or name in _CODE_OUTPUT_NAMES else name
+
+
+def _distinct_names(refs: list[BodyReference], namer: Callable[[str], str]) -> dict[str, str]:
+    """``written -> binding name`` per distinct leftover; a clash gets a numeric suffix."""
+    names: dict[str, str] = {}
+    for ref in refs:
+        if ref.written in names:
+            continue
+        base = namer(ref.reference)
+        name, suffix = base, 2
+        while name in names.values():
+            name, suffix = f"{base}_{suffix}", suffix + 1
+        names[ref.written] = name
+    return names
+
+
+def _shell_replacement(ref: BodyReference, name: str) -> str:
+    """What replaces a leftover in sh: ``"$ITEM"``; an expansion form keeps its operator (``"${LIMIT:-10}"``)."""
+    if ref.is_expression:
+        return f'"${name}"'
+    return '"' + ref.written.replace(ref.reference, name, 1) + '"'
+
+
+# — the leftover ERROR —
+
+
+def _leftover_diagnostic(node: dict[str, Any], refs: list[BodyReference], text: str) -> Diagnostic:
+    param, language = refs[0].param, refs[0].language
+    distinct = list({ref.written: ref for ref in refs}.values())
+    if language == "sh":
+        whole_body = len(refs) == 1 and refs[0].is_expression and text.strip() == refs[0].written
+        names = {refs[0].written: "CMD"} if whole_body else _distinct_names(distinct, _env_name)
+        suggestions = _shell_leftover_fixes(node, distinct, names, whole_body=whole_body)
+    else:
+        names = _distinct_names(distinct, _code_name)
+        suggestions = _code_leftover_fixes(node, distinct, names)
+    listed = [
+        {
+            "reference": ref.written,
+            "owner": ref.owner,
+            "line": _location(node, param, ref.line)[1],
+            "binding": names[ref.written],
+        }
+        for ref in distinct
+    ]
+    message = _leftover_message(node, refs, distinct)
+    location = _location(node, param, refs[0].line)
+    return _body_diagnostic(
+        Severity.ERROR, node, param, location, message, suggestions, _GUIDE_TOPIC[language], body_references=listed
+    )
+
+
+def _leftover_message(node: dict[str, Any], refs: list[BodyReference], distinct: list[BodyReference]) -> str:
+    """``Step 'x': the command contains ${item} (line 13 of the workflow file) — a pflow
+    reference (this step's batch item). …`` — or the list form for several."""
+    is_sh = refs[0].language == "sh"
+    quote = "" if is_sh else '"'
+    places = {ref.written: sum(other.written == ref.written for other in refs) for ref in distinct}
+
+    def details(ref: BodyReference, *, in_list: bool) -> list[str]:
+        count = [f"{places[ref.written]} places"] if places[ref.written] > 1 else []
+        where = _where(_location(node, ref.param, ref.line), in_list=in_list)
+        return count + ([where] if where else [])
+
+    head = f"Step '{node.get('id')}': the {'command' if is_sh else 'code'} contains"
+    if len(distinct) == 1:
+        ref = distinct[0]
+        detail = details(ref, in_list=False)
+        located = f"{quote}{ref.written}{quote}" + (f" ({', '.join(detail)})" if detail else "")
+        inside = "" if is_sh else " inside a Python string"
+        return f"{head} {located} — a pflow reference ({ref.owner}){inside}. {_SHELL_IS_PLAIN if is_sh else _CODE_IS_PLAIN}"
+    listed = ", ".join(
+        f"{quote}{ref.written}{quote} ({', '.join([*details(ref, in_list=True), ref.owner])})" for ref in distinct
+    )
+    inside = "" if is_sh else " inside Python strings"
+    return f"{head} {len(distinct)} pflow references{inside} — {listed}. {_SHELL_IS_PLAIN if is_sh else _CODE_IS_PLAIN}"
+
+
+def _shell_leftover_fixes(
+    node: dict[str, Any], distinct: list[BodyReference], names: dict[str, str], *, whole_body: bool
+) -> list[str]:
+    from pflow.nodes.shell.env_binding import AMBIENT_NAMES
+
+    entries = [(names[ref.written], ref.reference) for ref in distinct]
+    add = _binding_phrase(node, "env", entries)
+    if whole_body:
+        return [
+            f'The whole command is one pflow reference — bind it and run it: {add} and make the command eval "$CMD".'
+        ]
+    if len(distinct) > 1:
+        replacements = ", ".join(_shell_replacement(ref, names[ref.written]) for ref in distinct)
+        return [
+            f"Bind them: {add}, then replace each with {replacements} (${{NAME}} where a letter, digit or _ "
+            "follows; inside single quotes sh expands nothing — close them around each)."
+        ]
+    ref = distinct[0]
+    name = names[ref.written]
+    replacement = _shell_replacement(ref, name)
+    braced = f"${{{name}}} where a letter, digit or _ follows; " if ref.is_expression else ""
+    bind = (
+        f"Bind the value and read it as a shell variable: {add}, then replace {ref.written} with {replacement} "
+        f"({braced}inside single quotes sh expands nothing — close them around it: '…'{replacement}'…')."
+    )
+    if ref.reference != ref.root:
+        other = (
+            f"If {ref.written} belongs to another program inside the command (a JavaScript template literal, "
+            f"say), it collides with {ref.owner} — rename the name in that program."
+        )
+    elif not ref.is_expression:
+        other = f"Only if the command itself assigns `{ref.root}` (a shell variable of your own): rename it."
+    elif ref.root in AMBIENT_NAMES:
+        other = f"If you meant the shell's own ${ref.root}: write ${ref.root} without braces."
+    else:
+        example = f", e.g. `for {ref.root} in …`" if ref.owner == _BATCH_ITEM_OWNER else ""
+        other = (
+            f"Only if the command itself assigns `{ref.root}` (a shell variable of your own{example}): "
+            f"write ${ref.root} without braces, or rename it."
+        )
+    return [bind, other]
+
+
+def _code_leftover_fixes(node: dict[str, Any], distinct: list[BodyReference], names: dict[str, str]) -> list[str]:
+    bound = [ref for ref in distinct if ref.owner == _INPUTS_KEY_OWNER]
+    unbound = [ref for ref in distinct if ref.owner != _INPUTS_KEY_OWNER]
+    fixes: list[str] = []
+    if len(unbound) == 1:
+        name = names[unbound[0].written]
+        add = _binding_phrase(node, "inputs", [(name, unbound[0].reference)])
+        fixes.append(
+            f"Declare it in inputs: — {add}, declare its type in the code (`{name}: str`), "
+            f"and use the variable `{name}` in place of the string."
+        )
+    elif unbound:
+        add = _binding_phrase(node, "inputs", [(names[ref.written], ref.reference) for ref in unbound])
+        fixes.append(
+            f"Declare them in inputs: — {add}, declare their types in the code, "
+            "and use the variables in place of the strings."
+        )
+    fixes.extend(
+        f"'{ref.root}' is already bound by inputs: — use the variable {ref.root} instead of the string "
+        f'"{ref.written}".'
+        for ref in bound
+    )
+    return fixes
+
+
+# — the $${ ERROR —
+
+
+def _escape_diagnostic(
+    node: dict[str, Any], param: str, language: BodyLanguage, written: str, body_line: int, scope: StepScope
+) -> Diagnostic:
+    location = _location(node, param, body_line)
+    where = _where(location)
+    located = f"{written} ({where})" if where else written
+    escaped = written[2:]  # ``{PRICE}``
+    inner = parse_path(escaped[1:-1]) if escaped.endswith("}") and len(escaped) > 2 else None
+    in_scope = inner if inner is not None and _owner(scope, inner) else None
+    if language == "sh":
+        message = (
+            f"Step '{node.get('id')}': the command contains the escape {located}. A shell command is plain sh, "
+            f"so there is nothing to escape — sh would run $$ as its process id, followed by {escaped}."
+        )
+        if in_scope is not None:
+            name = _env_name(in_scope.raw)
+            add = _binding_phrase(node, "env", [(name, in_scope.raw)])
+            fix = (
+                f"For a dollar sign followed by the value: {add} and write \\$${name} inside double quotes "
+                f'— e.g. "value: \\$${name}".'
+            )
+        else:
+            fix = f"Write ${escaped} for a shell expansion."
+    else:
+        message = (
+            f"Step '{node.get('id')}': the code contains the escape {located} inside a Python string. A code "
+            "step's code is plain Python, so there is nothing to escape — the string keeps both dollar signs."
+        )
+        if in_scope is not None:
+            name = _code_name(in_scope.raw)
+            add = _binding_phrase(node, "inputs", [(name, in_scope.raw)])
+            fix = f'For a dollar sign followed by the value: {add} and write f"${{{name}}}".'
+        else:
+            fix = (
+                f"Python needs no escape: write ${escaped} as plain text. For the literal characters $${{ "
+                f'split the string: "$$" "{escaped}".'
+            )
+    return _body_diagnostic(Severity.ERROR, node, param, location, message, [fix], _GUIDE_TOPIC[language])
+
+
+# — ruling 2: a pflow-only shape naming nothing pflow knows (WARNING, shell only) —
+
+
+def _foreign_shape_warning(node: dict[str, Any], param: str, text: str, scope: StepScope) -> list[Diagnostic]:
+    """``${fecth.stdout}`` — sh cannot expand a field or a ``??``, so it is most likely a
+    misspelled step; it may also be another program's own syntax, hence a warning."""
+    known = set(scope.names) | scope.step_ids
+    shapes = [
+        expression
+        for expression in parse(text).expressions
+        if expression.references
+        and not any(ref.root in known for ref in expression.references)
+        and (
+            len(expression.operands) > 1
+            or any(isinstance(segment, Field) for ref in expression.references for segment in ref.path)
+        )
+    ]
+    if not shapes:
+        return []
+    first = shapes[0]
+    ref = first.references[0]
+    more = f" (and {len(shapes) - 1} more like it)" if len(shapes) > 1 else ""
+    message = (
+        f"Step '{node.get('id')}': {text[first.span[0] : first.span[1]]}{more} in the command is not something sh "
+        f"can expand, and '{ref.root}' is not a step or input in this workflow. "
+        "pflow never fills in ${…} in a command."
+    )
+    # Stricter than difflib's default: the text may be another language's, and a far-off
+    # suggestion (``user`` → ``s``) misleads more than none.
+    match = find_similar_items(ref.root, sorted(known), max_results=1, method="fuzzy", cutoff=0.6)
+    if match:
+        corrected = match[0] + ref.raw[len(ref.root) :]
+        name = _env_name(corrected)
+        add = _binding_phrase(node, "env", [(name, corrected)])
+        fix = f"Did you mean '{match[0]}'? Bind it: {add} and read \"${name}\". {_KEEP_FOREIGN}"
+    else:
+        fix = f'To use a pflow value, bind it in env: and read "$NAME". {_KEEP_FOREIGN}'
+    location = _location(node, param, text.count("\n", 0, first.span[0]))
+    return [_body_diagnostic(Severity.WARNING, node, param, location, message, [fix])]
 
 
 # ------------------------------------------------------------------------------

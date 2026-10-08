@@ -212,7 +212,7 @@ def _name_fix(key: object) -> str:
         # The key was a YAML word (null, yes, off, …) — its spelling is lost, so never suggest one back.
         kind = "null" if key is None else "boolean"
         return f"YAML read this key as a {kind}, not text: quote the key so it stays the name you wrote."
-    suggestion = _suggest_name(_as_written(key))
+    suggestion = suggest_env_name(_as_written(key))
     return (
         "Use letters, digits and underscores, not starting with a digit — "
         f'e.g. {suggestion} — and read it as "${suggestion}" in the command.'
@@ -228,8 +228,10 @@ def _as_written(key: object) -> str:
     return str(key)
 
 
-def _suggest_name(name: str) -> str:
-    suggestion = re.sub(r"[^A-Za-z0-9_]", "_", name).upper() or "VALUE"
+def suggest_env_name(text: str) -> str:
+    """An ``env:`` name for ``text`` (a key, a reference): upper-cased, every run of other
+    characters one ``_``; ``_VALUE`` appended when it lands on an ``AMBIENT_NAMES`` name."""
+    suggestion = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_").upper() or "VALUE"
     if suggestion[0].isdigit():
         suggestion = f"VAR_{suggestion}"
     return f"{suggestion}_VALUE" if suggestion in AMBIENT_NAMES else suggestion

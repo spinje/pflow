@@ -74,6 +74,7 @@ from pflow.core.ir_schema import normalize_ir
 from pflow.core.markdown_parser import parse_markdown
 from pflow.core.validation_utils import generate_dummy_parameters
 from pflow.core.workflow.status import WorkflowStatus
+from pflow.core.workflow.template_surfaces import iter_template_surfaces
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
@@ -104,8 +105,6 @@ CORPORA = (
 _FENCE_RE = re.compile(r"(?m)^([ \t]*)(`{3,})([^\n`]*)\n(.*?)^\1\2[ \t]*$", re.S)
 # A filename hint in the prose just before a block, e.g. ``(`to-uppercase.pflow.md`)``.
 _HINT_RE = re.compile(r"`([A-Za-z0-9._-]+\.pflow\.md)`")
-# A bare template var ``${name}`` — no dot, no index. Dotted refs are node outputs.
-_BARE_VAR_RE = re.compile(r"\$\{([a-zA-Z_][\w-]*)\}")
 _STEPS_RE = re.compile(r"(?m)^##\s+Steps\b", re.I)
 _TITLE_RE = re.compile(r"(?m)^#\s+\S")
 
@@ -160,9 +159,10 @@ def _collect_workflows(corpus: Corpus, tmp_root: Path) -> list[tuple[str, Path]]
 def _validate(path: Path, registry: Registry) -> list:
     """Run the CLI ``--validate-only`` pipeline on one extracted block.
 
-    Bare undeclared ``${name}`` refs are injected as optional inputs so
+    Bare undeclared ``${name}`` references are injected as optional inputs so
     pattern-teaching excerpts that omit ``## Inputs`` validate structurally;
-    dotted node refs are left alone so typos/phantom children still fail.
+    dotted node refs are left alone so typos/phantom children still fail. Only
+    template surfaces are read: a shell command's ``${HOME}`` is sh's, never an input.
     Returns ERROR-severity diagnostics.
     """
     ir = parse_markdown(path.read_text(encoding="utf-8")).ir
@@ -170,7 +170,14 @@ def _validate(path: Path, registry: Registry) -> list:
 
     node_ids = {n.get("id") for n in ir.get("nodes", [])}
     inputs = ir.setdefault("inputs", {})
-    for var in set(_BARE_VAR_RE.findall(path.read_text(encoding="utf-8"))):
+    bare_names = {
+        ref.root
+        for surface in iter_template_surfaces(ir)
+        for _, template in surface.templates()
+        for ref in template.references
+        if not ref.path
+    }
+    for var in bare_names:
         if var in node_ids or var in inputs:
             continue
         inputs[var] = {"type": "string", "required": False, "default": "dummy"}

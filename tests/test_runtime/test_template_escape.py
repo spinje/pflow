@@ -110,3 +110,21 @@ def test_escape_in_batch_step_resolves_per_item() -> None:
         "a ${PFLOW_TEST_UNSET_620:-none}",
         "b ${PFLOW_TEST_UNSET_620:-none}",
     ]
+
+
+# A shell command is plain sh (ADR-0016): the escape has no meaning there.
+
+
+def test_shell_expansion_in_a_command_runs_unescaped() -> None:
+    """The form #620 needed `$${…}` for now reaches sh as written and sh expands it."""
+    result = _run(_shell_workflow("", command='echo "${PFLOW_TEST_UNSET_620:-world}"'))
+    assert _stdout(result, "run") == "world"
+
+
+def test_escape_in_a_command_is_a_validation_error() -> None:
+    result = _run(_shell_workflow("", command='echo "$${PFLOW_TEST_UNSET_620:-world}"'))
+    assert not result.success
+    [error] = [d for d in result.errors if "escape" in d.message]
+    assert error.message.startswith(
+        "Step 'run': the command contains the escape $${PFLOW_TEST_UNSET_620:-world} (line "
+    )

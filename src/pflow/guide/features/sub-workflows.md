@@ -194,15 +194,15 @@ cat queue.txt
 
 ### take-and-write
 
-Take the first item, log it, write the remainder back.
+Take the first item, log it with the iteration number, write the remainder back.
 
 - type: shell
-- inputs:
-    iteration: ${iteration}
 - env:
+    ITERATION: ${iteration}
     QUEUE: ${read-queue.stdout}
 
 ```shell command
+printf '%s: ' "$ITERATION" >> log.txt
 printf '%s\n' "$QUEUE" | head -n 1 >> log.txt
 printf '%s\n' "$QUEUE" | tail -n +2 > queue.txt
 ```

@@ -160,7 +160,9 @@ class TestValidateOnlyTemplateValidation:
         assert result.exit_code != 0, "Should have caught invalid node reference"
         # Check error mentions the problematic reference
         combined_output = result.output + result.stderr
-        assert "wrong_node" in combined_output.lower() or "does not exist" in combined_output.lower()
+        assert "Node 'process' references non-existent node 'wrong_node' in parameter 'env.WRONG_NODE_RESULT'" in (
+            combined_output
+        ), combined_output
 
 
 class TestValidateOnlyWithoutInputValues:
@@ -807,9 +809,9 @@ class TestFailurePathShowsWarnings:
         result = invoke_cli([str(parent)])
 
         assert result.exit_code != 0, "Workflow should fail (missing required input)"
-        # Error must be present
-        assert "failed" in result.stderr.lower() or "error" in result.stderr.lower(), (
-            f"Expected error in output.\nstderr: {result.stderr}"
+        # The error must be the missing required input (not any error)
+        assert "requires input 'required_value' but it is not provided" in result.stderr, (
+            f"Expected the missing-input error in output.\nstderr: {result.stderr}"
         )
         # Parser advisory must ALSO be present — this is the regression guard
         assert "Input" in result.stderr and "Inputs" in result.stderr, (
@@ -879,8 +881,11 @@ class TestValidateOnlyWithComplexWorkflows:
 
         # Should fail - forward reference
         assert result.exit_code != 0, "Should have caught forward reference"
-        combined = (result.output + result.stderr).lower()
-        assert "node1" in combined or "execution order" in combined or "reference" in combined
+        combined = result.output + result.stderr
+        assert (
+            "Node 'node1' references 'node2' in parameter 'env.NODE2_STDOUT', but 'node2' comes after this node "
+            "in execution order"
+        ) in combined, combined
 
     def test_retry_on_workflow_node_surfaces_inert_advisory(self, tmp_path: Path) -> None:
         """`retry:` on a `workflow` node validates OK but emits an INFO advisory.

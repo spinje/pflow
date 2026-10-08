@@ -729,11 +729,19 @@ class ExecutionService(BaseService):
 
         try:
             # Resolve ${ENV_VAR} from os.environ and settings.json
-            # (the compiler's template resolver only resolves from shared store)
+            # (the compiler's template resolver only resolves from shared store).
+            # A body (a shell command, a code block) is plain code: its ${…} is the
+            # language's own, never expanded here.
             if node_params:
+                from pflow.core.workflow.template_surfaces import param_mode
                 from pflow.mcp.auth_utils import expand_env_vars_nested
 
-                node_params = expand_env_vars_nested(node_params, include_settings=True, raise_on_missing=True)
+                expanded = expand_env_vars_nested(
+                    {key: value for key, value in node_params.items() if param_mode(node_type, key) != "body"},
+                    include_settings=True,
+                    raise_on_missing=True,
+                )
+                node_params = {key: expanded.get(key, value) for key, value in node_params.items()}
 
             # Build synthetic single-node IR
             synthetic_ir: dict[str, Any] = {

@@ -366,12 +366,13 @@ class TestIssuePassCoversEverySurface:
         return sorted(e.context["path"] for e in errors if "Malformed template syntax" in e.message)
 
     def test_every_surface_reports_at_its_path(self):
+        """A shell command is not a surface (ADR-0016): its malformed-looking ``${`` is sh's."""
         workflow_ir = {
             "nodes": [
                 {
                     "id": "a",
                     "type": "shell",
-                    "params": {"command": "cat", "stdin": "echo ${a.b.0}", "env": {"X": ["${}"]}},
+                    "params": {"command": "cat; echo ${NAME:-x} ${}", "stdin": "echo ${a.b.0}", "env": {"X": ["${}"]}},
                     "batch": {"items": ["${unclosed", "ok"]},
                 },
                 {

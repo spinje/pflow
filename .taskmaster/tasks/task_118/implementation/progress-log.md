@@ -834,3 +834,164 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
   escape-in-body tests; golden-hash drift expected at PB = zero (D14); marker-excluded (paid) tests were outside the
   hook — the static inventory shows no body site there.
 - Next: launch I4 (fresh, Opus · high) on PB.
+
+## [2026-10-08 00:44] implementer I4 (Opus) — PB The flip
+- Did: bodies (`shell.command`, `code.code`) are never surfaces, never resolved, never walked; the body rule (D5 +
+  checkpoint §1/§2/§3, ruling 2) runs in `validate_data_flow` (so also at compile); Pass 7 deleted; the loop-carry
+  warning generalized to every shell `inputs:` key (§5); file-reference detection, the MCP single-node expansion, the
+  graph builder and the canvas `is_dynamic` skip bodies; harness edit (2); the sub-workflows guide fence fixed.
+  Measured first: flipping `iter_node_surfaces` alone failed exactly the 15 Pass-7 tests in `test_types.py` (T3) —
+  no other site survived PC.
+- Changed (src): `core/workflow/template_surfaces.py` (`ParamMode`, `BodyLanguage`, `param_mode`, `template_params`,
+  `code_bodies`; `iter_node_surfaces` iterates `template_params`); `core/workflow/data_flow.py` (new section "Code
+  bodies": `StepScope`, `step_scope`, `BodyReference`, `body_references`, `body_reference_roots`, `_validate_bodies`
+  + message builders; called per node from `validate_data_flow`); `runtime/engine/template_resolution.py`
+  (`split_params(..., node_type=None)` — a body is static before `has_templates`); `runtime/compilation/compiler.py`
+  (passes `node_type`); `runtime/template_validation/type_validation.py` (Pass 6 iterates `template_params`; Pass 7,
+  `_build_quoted_templates`, `_is_shell_safe_type`, `_SHELL_SAFE_TYPES` deleted); `runtime/template_validation/
+  validator.py` (Pass 7 call gone; `_validate_unread_step_inputs` replaces `_validate_loop_carry_prompt_usage` +
+  `_loop_prompt_sink_text`; unused-input union gains `body_reference_roots(workflow_ir)`); `core/workflow/graph/
+  build.py`, `graph/renderers/react_flow.py`; `core/file_resolver.py` (`is_param_file_reference(node_type, key, value)`
+  at all FIVE param-value sites: `resolve_file_references` A, `_resolve_batch_file_references` B2, `_collect_param_file_refs`
+  (params AND batch items, behind `has_file_references`), `dependency_discovery._collect_param_deps` and
+  `_collect_batch_item_deps` — a grep shows the only remaining `is_file_reference(` calls are on a whole `batch:` string);
+  `mcp_server/services/execution_service.py` (one `expand_env_vars_nested` call over the non-body params);
+  `nodes/shell/env_binding.py` (`_suggest_name` → public `suggest_env_name`, runs collapsed + stripped — PA's tests
+  unchanged; NOT `shell.py`, no lane-#724 overlap); `runtime/engine/engine.py` docstring (R, impact S4);
+  `guide/features/sub-workflows.md` take-and-write fence. Tests: new `tests/test_integration/test_code_body_consumers.py`
+  (12-row consumer table) and `test_code_body_leftovers.py` (62); parity `BODY_ROWS` (6 rows × 2) + `shell_body`/
+  `code_body` surfaces; `test_types.py` (Pass-7 block → 1 test), `test_template_extract_pattern.py` (−9),
+  `test_nodes/test_shell/test_command_validation.py` deleted, `test_loop_validation.py`, `test_graph_build.py`,
+  `test_template_escape.py`, `test_malformed.py`, `test_guide_example_validation.py` (harness edit 2: bare names from
+  `iter_template_surfaces`, never a regex over the file), the tightened files below; `inventory.py` (`ALLOWED_FILES`).
+- **Task 181 (amendment 4):** scope rule = `pflow.core.workflow.data_flow.step_scope(workflow_ir: dict[str, Any],
+  node: dict[str, Any]) -> StepScope`; `StepScope.owner(root: str, *, has_path: bool) -> str | None` (`None` = pflow
+  never knew the name; a step id counts only with a path). `body_references(node, scope)` consumes it. Unused-input
+  hook = the `| body_reference_roots(workflow_ir)` term of the union passed to `_validate_unused_inputs` in
+  `runtime/template_validation/validator.py::validate_workflow_templates` — one function call, no parameter/callback.
+- Verified (executed, macOS):
+  - `make check` green; `make test` **10558 passed / 0 failed** (baseline 10504 at `c3189b41`, captured by me: +54 =
+    consumers 12, leftovers 62, parity 12, loop-validation +8, graph 1, escape 2; retired: Pass-7 −29, extract-pattern
+    −9, command_validation −5); `make test-e2e` 52 passed / 2 skipped (= baseline).
+  - **Golden hashes: zero drift** (D14) — `golden_config_hashes.json` untouched, `test_golden_baseline_hashes_match` green.
+  - Real CLI (`uv run pflow`, probes in scratch): checkpoint §2a/2b/2c/2d (leftover text), §2e (ruling-2 warning; the
+    run proceeds and sh prints `bad substitution`), §3 (`$${PRICE}`), §5 (carry + "not visible" warnings) and §8
+    (`world 3 /Users/andfal`) reproduce the ruled text; `--validate-only` and the run print the identical message.
+    `workflows/search/run-searcher.pflow.md` and `workflows/review/run-review-lenses.pflow.md`: `✓ Workflow is valid`,
+    no warning. The fixed guide fence ran twice for real (log `1: a`, `2: b`; queue left `c`).
+  - Corpus scan (data-flow body rule + unread-`inputs:` warning over every `.pflow.md` in `examples/`, `workflows/`,
+    the Task-159 baseline, and every `## Steps` fence in the guide, docs and both MCP instruction resources — 33
+    fences): one hit before the fix (the sub-workflows fence), zero after. No shipped shell step has `inputs:` elsewhere.
+  - `inventory.py`: 0 templated bodies outside `ALLOWED_FILES` in tests except §6's leave (`test_loop_control.py:101`)
+    and the known `python-manual` heuristic false positives; non-test rows are historical task archives.
+  - **Mutation ledger** (22 mutations, each on a byte copy, counted failures, restore asserted byte-equal): M1
+    surfaces yield bodies → 27 red (consumer rows data_flow/pass_5/pass_8/issue_pass/source_file_hint/mcp + every false
+    positive + parity ambient rows); M2 Pass 6 → `pass_6` row; M3 split_params → 14 (split_params row, runs); M4 graph →
+    `graph_build` row + code-body graph test; M5 canvas → `canvas_is_dynamic`; M6 file refs → `file_references`; M7 MCP →
+    `mcp_expansion` + MCP run test; M8 unused-input hook → `unused_input` + test 8; M9 rule not run → 53; M10 bare step id
+    in scope → 1; M11 batch alias workflow-wide → 2; M12 Issues ignored → 5; M13 code read whole → 2; M14 `$$${` as escape
+    → 2; M15 `inputs:` counted as a reader → 1; M16 ruling 2 on an index → 2; M17 whole-body form → 1; M18 script path → 1;
+    M19 first operand only → 1; M20 llm carry → 1; M22 colon-less default → 1; M23 SyntaxError guard → 1. (The predict.py
+    row is DROPPED per amendment 3 — not in the table.)
+  - **T2 check-off (§6), by name** — net: a temporary hook in `_validate_bodies` (removed; `grep TEMP` = 0) logged every
+    test whose run emitted a body diagnostic across `make test` + `make test-e2e`: every hit is a new PB test, so no T2
+    test passes or fails through a body. Asserted messages read: `test_graph_build.py` (edge `input_name == "T"`, presence);
+    `test_loop_validation.py` 132/145 (`__iteration__` messages, stdin); `test_validation_utils.py:170`;
+    `test_workflow_data_flow.py` (19 env vehicles; 493/521 keep `${array[@]}`/`${#count}` in bodies and stay `[]` — over-fire
+    guard holds, `array`/`count` out of scope; `_wf` helper); `test_workflow_validator.py` 336/366;
+    `test_sub_workflow_validation.py` 386/501; `test_node_wrapper_template_validation.py` 595/610 (`prompt`);
+    `test_array_notation.py:366`; `test_malformed.py` (15, stdin; + the command now holding `${NAME:-x} ${}` is NOT
+    reported); `test_literal_operands.py`; `test_union_types.py` (11); `tv/test_validator.py` 974/1443;
+    `test_trace_integration.py` 571/664; `test_enhanced_error_output.py:382`; `test_validate_only.py` 145/629/827;
+    `test_runner.py` 30-31 (asserts cycle text); `test_failed_node_invariant.py:1866`; `test_template_resolution_hardening.py`
+    (12); `test_mcp_warnings.py`; `test_validation_service.py` 66/95/130/215; `test_guide_example_validation.py` (harness).
+    **Tightened** to the original error class: `test_validate_only.py` (missing-required-input → `requires input
+    'required_value' but it is not provided`; forward ref → the exact `comes after this node in execution order` text;
+    and beyond the plan's list, `wrong_node` → `references non-existent node 'wrong_node' in parameter
+    'env.WRONG_NODE_RESULT'`), `test_template_resolution_hardening.py` (89/163/471 → exact `does not output` messages; and
+    beyond the list, the three `${missing}` tests that asserted only `not result.success` → the undeclared-reference text),
+    `test_workflow_data_flow.py` (`__index__` without batch → the exact "no inputs are declared" text),
+    `test_runner.py` (any ERROR → the missing-input text), `test_enhanced_error_output.py:382` (beyond the list:
+    `"producer" in stderr or "output" in stderr` → the exact `does not output 'output'` line).
+  | Assumed: Windows. Every new test that spawns sh avoids `os.environ["HOME"]` (Git Bash may re-spell HOME; tests compare
+  `"${HOME}"` to sh's own `$HOME`) and uses POSIX-form paths; `bash -c 'arr=(…)'` relies on Git Bash's bash on PATH —
+  settled only by `tests-windows`.
+- Deviations/surprises:
+  1. **`body_references` lives in `data_flow.py`, not `template_surfaces.py` (D1).** It takes a `StepScope`, whose
+     constructor amendment 4 places in `data_flow.py`; in `template_surfaces.py` it would need a type from the module
+     that imports it. One cohesive section in `data_flow.py` holds scope, detector and messages. Importance 1.
+  2. **`code_bodies` yields `(param, language, text)`, not `(param, text)`.** The detector must know sh vs Python; a
+     `_BODIES: {(type, param): language}` table answers both `param_mode` and that, with no `node_type == "code"`
+     branch (Task 182 needs the language too). Importance 1.
+  3. **A gap in D5's mechanism vs the ruled §1 verdict, closed:** sh's colon-less default `${limit-10}` parses as ONE
+     pflow name (`-` is an identifier character), so the Issue leading-name check never saw it — loud before (undefined
+     input), it would have been silent. The ruled table says "a shell expansion form whose leading name is in scope →
+     ERROR"; sh names cannot hold `-`, so the expression's first name is split at `-` (`_leftover`). Test + M22.
+     Importance 2 — conforms to the ruling, flag if you read it otherwise.
+  4. **Texts I drafted where the checkpoint had none** (all follow its voice): an Issue leftover's fix keeps the operator
+     (`replace ${limit:-10} with "${LIMIT:-10}"`) and its fix 2 is "Only if the command itself assigns `limit` (a shell
+     variable of your own): rename it." (braces cannot be dropped from `${x:-y}`); an ambient-named collision's fix 2 is
+     "If you meant the shell's own $HOME: write $HOME without braces." (hard case a); the code-body `$${in-scope}` fix
+     (`add `- inputs: {x_cost: ${x.cost}}` … and write f"${x_cost}"`) and code escape message ("…the string keeps both
+     dollar signs"); the multi-escape case is one ERROR per escape (D5 step 2 is per-occurrence; leftovers are grouped
+     per body as ruled). The §3 in-scope example reads `"value: \$$X_COST"` (name by the naming rule, not `COST`).
+  5. **Wording vs ruled drafts:** every `add …` phrase branches on an existing `env:`/`inputs:` (R, C3) instead of
+     §5's/§2d's parenthetical "(or N: ${n} under the existing env:)"; the ruling-2 fix says "add `- env: {…}` to the
+     step and read" (draft: no "to the step"). `At:` renders `nodes[id=x].params.command:16` because D5 sets
+     `context["source_line"]` and the generic renderer appends it to the path (the draft showed no `:line`).
+  6. **Ruling-2 did-you-mean cutoff 0.6** (difflib default 0.4 offered `user` → `s` for hard case d — a misleading
+     suggestion on text that is most likely another language's). `fecth` → `fetch` still matches.
+  7. **`test_command_validation.py` deleted, not replaced** with node-level `bind_env` tests (§6): PA's
+     `TestShellNodeBinding` already is that, and its five tests asserted only `action == "default"` (`${dir}` there was
+     always plain sh). The verbatim run is PB test 4, end to end.
+  8. The sub-workflows fence now binds `ITERATION` and logs `1: a` (the child's declared input stays used); dropping the
+     input would have changed the parent pattern the section teaches.
+  9. Stale instruction lines my diff makes false, left for PF per §7 (named there): `runtime/template_validation/CLAUDE.md`
+     ("Type, shell, and code-annotation passes (6, 7, 9)", "Shell validation rejects dict/list interpolation in
+     `command`…"), `core/workflow/CLAUDE.md` data_flow ("Bash expansions such as `${var:-default}` … are Issues, reported
+     by the template validator's Issue pass" — not in a body any more). `.taskmaster/tasks/task_148/verification/*.pflow.md`
+     (2) still hold old-form bodies — historical artifacts, not corpus.
+- Self-checks: **test-reflect (directed):** the ledger above, kill criterion a counted `N failed`. First pass left M2,
+  M15, M19 alive → DEEPENED `pass_6` row (a compatible template beside the body so the passes run — the validator's
+  no-template early return masked Pass 6), `test_shell_inputs_key_nothing_reads_warns_not_visible` (+ the self-named
+  `inputs: {url: ${url}}` shape — the guide's exact pattern), added `test_any_reference_in_an_expression_makes_it_a_leftover`
+  (coalesce's later operand, dynamic index). DEEPENED `test_code_with_a_syntax_error…` with a dict-IR twin
+  (`test_code_python_cannot_parse_is_left_to_its_parser`, M23 — the markdown-path test passes pre-PB). DELETED
+  `test_dict_bound_through_env_arrives_as_json_text_with_apostrophes_intact` (§6's 1385 replacement): duplicates PA's
+  `TestEveryValueBinds::test_a_workflow_input[object]` + `TestInjection`. Labelled regression guards (pass pre-PB):
+  `test_code_without_references_runs_unchanged`, `test_code_with_a_syntax_error_gets_the_parsers_error_only`. Every
+  absence assertion has a same-medium presence partner (consumer rows: env half; false positives: the printed stdout;
+  nothing-runs: the proof file appears once fixed; inputs warning: the bound form vs the unbound form).
+  **Fully happy?** Yes after closing deviation 3 (found on this pass). Honest residue: (a) the dash split is a rule
+  the ruling implies but no draft states; (b) Windows is assumed; (c) a code-body leftover's line can be off by the
+  count of escaped `\n` inside a single-quoted Python string before it (`ast` gives the decoded value) — display only.
+- Next: mid-task review (`review-validation-consistency`, `review-impact-completeness`, `review-silent-failures`,
+  `review-feature-interactions`) on PB's diff; fixes fold in before PE.
+
+## [2026-10-08 02:30] task orchestrator (Opus) — state change from main (received while I4 runs PB)
+- v0.16.0 SHIPPED (PyPI). Plan §4.0's merge hold on Part 2 is LIFTED; I still hand back at `create-pr`, main merges
+  after CI green on the merged result.
+- main `a296ceca` → `a42f55e2` (measured by main): release files; PR #726 (`core/trace_io.py` surrogatepass sizing,
+  `runtime/workflow_trace.py` `_flush_line` catches Exception — closes Part 1 follow-up W1;
+  `tests/test_integration/test_shell_env_binding.py` lone-surrogate test now with streaming ON — overlaps PC2's
+  file); PR #725 + #744 (`ui/server.py` `/api/gate`, `tests/test_cli/test_ui_interaction_server.py` — PC2 touched it,
+  web gate components, `web/src/index.css`).
+- Action: merge `origin/main` at the PB boundary (after PB is committed, before the mid-task review), re-run
+  `make check` + `make test`; PE's brief gets the web delta.
+- Issue #727 (shell `stdin:` encode failure after spawn, in `shell.py`): NOT built here; the task-review notes
+  whether Part 1's binding check makes it trivial.
+
+## [2026-10-08 03:40] task orchestrator (Opus) — PB verified; rulings on I4's deviations; committed; merging main
+- Verified: `make check` green, `make test` 10558 passed / 0 failed (mine). 181 shapes present:
+  `template_surfaces.param_mode`/`template_params`/`code_bodies`, `data_flow.step_scope`/`body_references`/
+  `body_reference_roots` (§0 checks 1, 3, 4, 5 of 181's plan answerable by name; check 6 is PE's).
+- [RULING, orchestrator, importance 2] I4 deviation 3 (sh colon-less default `${limit-10}` split at `-` for the
+  leading-name check) — **accepted**: it is the ruled §1 row ("a shell expansion form whose leading name is in scope
+  → ERROR") applied to the one form the parser reads as a single name; sh names cannot hold `-`, and the whole root is
+  still checked as a pflow name first. Deviations 1, 2, 4–8 accepted (importance 1); 4/5 (texts drafted beyond the
+  checkpoint, `At: …params.command:16`) go to the completion gate's agent-ux lens by name. Deviation 9 (two stale
+  CLAUDE.md lines) → PF.
+- Self-check: I4's entry resolves test-reflect (22-mutation ledger; three survivors deepened) and "fully happy?"
+  (residue: dash split, Windows assumed, a code-body line offset by escaped `\n` — display only); re-asked at the
+  review resume.
+- Next: commit PB; merge `origin/main` (`a42f55e2`); gate; resume I4 for the PB mid-task review.
