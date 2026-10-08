@@ -25,6 +25,7 @@ ParamMode = typing.Literal["template", "body"]
 BodyLanguage = typing.Literal["sh", "python"]
 
 # (node type, param) -> the language of a param that holds plain code — see ``param_mode``.
+# TypeScript mirror: web/src/utils/format.ts::isCodeBody — change both together.
 _BODIES: dict[tuple[str, str], BodyLanguage] = {("shell", "command"): "sh", ("code", "code"): "python"}
 # (node type, param) pairs whose values bind as text — see ``binds_as_text``.
 _BINDS_AS_TEXT: frozenset[tuple[str, str]] = frozenset({("shell", "env")})

@@ -563,10 +563,12 @@ _RICH_SNIPPETS: dict[str, list[str]] = {
         "    Describe what this step does and why.",
         "",
         "    - type: shell",
+        "    - env:",
+        "        TITLE: ${previous-step.title}",
         "    - stdin: ${previous-step.response}",
         "",
         "    ```shell command",
-        "    your-command-here",
+        '    your-command-here --title "$TITLE"',
         "    ```",
     ],
     "llm": [

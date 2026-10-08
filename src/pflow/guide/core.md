@@ -577,12 +577,12 @@ result: float = sum(i['pricing']['amount'] for i in items)
 
 #### All Template Patterns
 
-Templates work in any param value — inline `- key:` or code blocks:
+Templates work in any param value — inline `- key:` or code blocks — except a shell `command` and a `python code` block: those are plain code, and values reach them through `env:` (shell) or `inputs:` (code):
 
 ```markdown
 ### example-node
 
-Demonstrates the template forms that work in any parameter value.
+Demonstrates the template forms a param value can hold.
 
 - basic_input: ${username}
 - basic_output: ${fetch.response}
@@ -640,7 +640,7 @@ filters:
 
 **Guideline**: Inline `- key: value` for flat params and simple nesting. `yaml param_name` code block for deep nesting, multiline values (`|`), or batch config. Both produce identical results.
 
-**`- inputs:` works on ANY node type** (not just code nodes). It maps named variables into the template context so other params (prompt, command, etc.) can reference them by name. This is especially useful for reusing external prompt files with different data sources:
+**`- inputs:` works on ANY node type** (not just code nodes). It maps named variables into the template context so other params (a prompt, a shell step's `env:`, etc.) can reference them by name. This is especially useful for reusing external prompt files with different data sources:
 
 ````markdown
 ### review

@@ -10,7 +10,7 @@ Test filenames are local; source modules are under `src/pflow/runtime/template_v
 |-----------|-------------|----------------|
 | `test_validator.py` | `validator.py` | Orchestrator, template extraction, batch-through-orchestrator integration |
 | `test_batch_item_validation.py` | `batch_item_validation.py` | `${item.field}` validation against inferred item structure |
-| `test_types.py` | `type_validation.py` | Parameter type matching, shell command safety, code-node input annotations |
+| `test_types.py` | `type_validation.py` | Parameter type matching, a reference left in a shell command, code-node input annotations |
 | `test_union_types.py` | `type_validation.py` | Union type handling (`dict\|str`) in type matching |
 | `test_type_checker.py` | `type_checker.py` | Type compatibility matrix, type inference |
 | `test_enhanced_errors.py` | `path_validation.py` | Error messages with input descriptions |

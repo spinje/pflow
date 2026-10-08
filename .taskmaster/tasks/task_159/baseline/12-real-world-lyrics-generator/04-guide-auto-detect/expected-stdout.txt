@@ -21,13 +21,15 @@ Analyze each file.
 Fetch each URL in parallel.
 
 - type: shell
+- env:
+    URL: ${item}
 - batch:
     items: ${urls}
     parallel: true
     max_concurrent: 40
 
 ```shell command
-curl -s '${item}'
+curl -s "$URL"
 ```
 ````
 
@@ -139,7 +141,7 @@ items:
 parallel: true
 ```
 ````
-Any `${item.field}` template works in any param — not just prompt/command.
+Any `${item.field}` template works in any param — not just the prompt. A shell step binds it in `env:` (`URL: ${item.url}`), a code step in `inputs:`; their command and code never hold it.
 
 **Correlating parallel arrays (zip)**: when two batches ran over aligned inputs and you need each row of one alongside the matching row of the other, there are two ways — pick by how much you trust the alignment:
 
@@ -174,7 +176,7 @@ Revise the draft, applying the review.
 
 **Alignment caveat**: zipping by position assumes both arrays are in the same order with no gaps — true only under `fail_fast` (the default). `error_handling: continue` drops failed items, which misaligns the arrays, and index access is not supported there anyway. When alignment isn't guaranteed, use the explicit zip node and match on a key.
 
-**Indexing works on a node's `.results`, not on declared inputs.** `${my_input[${__index__}]}` does not resolve — pull the per-row value from an upstream node's `.results` instead.
+A declared `array` input indexes the same way: `${my_input[${__index__}]}`.
 
 **Using results**:
 ```markdown
@@ -209,7 +211,7 @@ Fetch each URL with node-level exponential backoff.
     parallel: true
 ````
 
-For `llm`, `shell`, `mcp`, `code`, and file nodes, an exhausted node `retry:` budget ends the item as a handled failure, and `batch.max_retries` does not start another attempt for it. For `http` and `claude-code` nodes, an exhausted `retry:` budget surfaces as a failure that `batch.max_retries` re-attempts, so the upper bound is `batch.max_retries * retry.max` attempts per item.
+For `llm`, `shell`, `mcp`, `code`, and file nodes, an exhausted node `retry:` budget ends the item as a handled failure, and `batch.max_retries` does not start another attempt for it. For `http` and `agent` nodes, an exhausted `retry:` budget surfaces as a failure that `batch.max_retries` re-attempts, so the upper bound is `batch.max_retries * retry.max` attempts per item.
 
 Parallel batch workers inherit the configured node retry budget. A `fail_fast` batch cannot interrupt a worker that is already sleeping in backoff; exponential node backoff is clamped to 60 seconds per wait.
 
@@ -283,9 +285,11 @@ Handle small batches.
 
 - type: shell
 - next: end
+- env:
+    COUNT: ${classify.result}
 
 ```shell command
-echo "Small batch: ${classify.result} items"
+echo "Small batch: $COUNT items"
 ```
 
 ### bulk-process
@@ -294,9 +298,11 @@ Handle large batches.
 
 - type: shell
 - next: end
+- env:
+    COUNT: ${classify.result}
 
 ```shell command
-echo "Large batch: ${classify.result} items"
+echo "Large batch: $COUNT items"
 ```
 ````
 
@@ -322,9 +328,11 @@ Handle category A.
 
 - type: shell
 - next: end
+- env:
+    CATEGORY: ${route.result}
 
 ```shell command
-echo "A: ${route.result}"
+echo "A: $CATEGORY"
 ```
 
 ### path-b
@@ -333,9 +341,11 @@ Handle category B.
 
 - type: shell
 - next: end
+- env:
+    CATEGORY: ${route.result}
 
 ```shell command
-echo "B: ${route.result}"
+echo "B: $CATEGORY"
 ```
 ````
 
@@ -380,7 +390,7 @@ echo "B: ${route.result}"
 ### filter-and-reshape
 
 Filter active items and reshape for downstream processing.
-Templates go in `inputs`, Python code in the code block.
+Values arrive through `inputs`; the code block is plain Python.
 All inputs and result MUST have type annotations.
 
 - type: code
@@ -423,12 +433,13 @@ result: dict = {
 ### Code Node Rules
 
 **Code node rules:**
-- Templates go in `- inputs:` param, NEVER in the `python code` block (code is literal Python, not a template)
+- The `python code` block is plain Python — pflow never fills in `${…}` there. Values arrive only through `- inputs:`, each key bound as a Python variable. A `${…}` in a string that names a pflow value this step could read (`"${name}".upper()`) fails validation; `f"${total}"` is a dollar sign followed by Python's own interpolation
 - All inputs and `result` MUST have type annotations: `data: list`, `result: dict = ...`
 - Bare vs valued annotations: a top-level **bare** `name: type` (no value) is read as an input declaration and needs a matching `inputs:` entry. An annotated assignment `name: type = value` is a local — so type your intermediates freely (`total: int = sum(...)`). `result`/`next` are the declared output/routing.
 - Upstream JSON is auto-parsed before your code runs — if source is JSON, declare `dict`/`list` not `str`
 - Use `Any` as the type when you don't want type validation (see syntax table below — auto-injected, no import needed)
 - Single output via `result` variable — use dict for structured output
+- `${node.stdout}`/`${node.stderr}` hold what the code itself prints (per batch item); prints from threads the code starts (`threading.Thread`, `ThreadPoolExecutor`, `run_in_executor`) are not captured and go to pflow's stderr — return thread output through `result`. Never use `contextlib.redirect_stdout` (process-wide; misroutes parallel batch output)
 - Downstream access: `${node.result}` or `${node.result.field}` for dict results
 
 ## Validate-Time Type Checking
@@ -669,7 +680,7 @@ Write the final report to disk.
 - content: ${format-for-delivery.response}
 ```
 
-**`delete-file` safety flag:** it won't act on `file_path` alone — it requires a `confirm_delete: true` flag that deliberately **cannot** be a node param (so a deletion can't be triggered by node config alone). Provide it as a workflow input and wire it in with `- inputs:` (that reference is also what lets the workflow validate):
+**`delete-file` safety flag:** it won't act on `file_path` alone — it requires a `confirm_delete: true` flag that deliberately **cannot** be a node param (so a deletion can't be triggered by node config alone). Provide it as a `- type: boolean` workflow input named `confirm_delete` and wire it in with `- inputs:` (that reference is also what lets the workflow validate). Only the boolean `true` authorizes deletion — any other value, including a string-typed input's `"true"`, is refused:
 
 ```markdown
 - type: delete-file
@@ -739,7 +750,7 @@ Delete a file from the filesystem with safety confirmation.
 - `file_path: str` - Path to delete
 
 **Outputs**:
-- `deleted: bool` - True if delete succeeded
+- `deleted: str` - Success message
 - `error: str` - Error message if operation failed
 
 ---
@@ -752,7 +763,7 @@ Delete a file from the filesystem with safety confirmation.
 
 **The test**: Can you write a deterministic algorithm for it? YES → `code` node. NO → LLM.
 
-Use `output_schema` for structured responses (guarantees valid JSON via constrained decoding).
+Use `output_schema` for structured responses. Providers use different structured-output mechanisms; pflow validates the returned JSON locally before publishing it. Schemas may use self-contained references, but pflow does not fetch external schemas. Structured responses use strict JSON numbers, so `NaN` and infinities fail validation.
 
 **Prompt format**: Put multi-line prompts in a ` ```prompt ` block — real line breaks, no `\n` escapes and no quote/colon escaping hazards. Reserve inline `- prompt: "..."` for genuinely single-line prompts.
 
@@ -767,8 +778,6 @@ analyzer tells you when to add a workflow-level `## Cache`, add
 `prompt_cache: [...]` to LLM nodes, add `prewarm: true` for batch LLM nodes, or
 move stable prompt text before per-item data. Load `pflow guide prompt-caching`
 for the full rules and examples.
-
-**API keys**: see `pflow settings llm providers` for the list of LiteLLM provider names and their required env vars.
 
 ### Node Creation Pattern
 
@@ -828,15 +837,15 @@ Optional cache fields for LLM nodes:
 - `reasoning_effort: str` - Reasoning depth: xhigh/high/medium/low/minimal/none (optional, mapped to provider-specific params). Sets reasoning depth; max_tokens only caps the budget, never raises it.
 - `reasoning_max_tokens: int` - Direct reasoning token budget, mutually exclusive with reasoning_effort (optional). Still capped to stay under max_tokens when both are set.
 - `model_options: dict` - Additional provider-specific model options passed as kwargs (optional; reasoning keys must use reasoning_effort/reasoning_max_tokens)
-- `model: str` - Model to use (optional - always use smart default unless user requests specific model)
+- `model: str` - Model to use (optional - always use smart default unless user requests specific model). List usable models: pflow settings llm models · API key env vars: pflow settings llm providers
 - `temperature: float` - Sampling temperature (default: 1.0)
 - `max_tokens: int` - Response-length ceiling (optional). On reasoning models this is the combined thinking+answer budget and only caps thinking depth — it never increases it. Set it explicitly when you need a long visible answer from a reasoning model (otherwise the provider may cap visible output low).
 - `timeout: int` - Execution timeout in seconds for LLM API call (default: 120)
 
 ### Outputs
 
-- `response: str|dict` - Text (str), parsed JSON (dict) when output_schema is set, or raw text on parse failure
-- `error: str` - Error message if LLM call or JSON parsing failed
+- `response: any` - Parsed JSON root with output_schema, raw response text on validation failure, or text without a schema
+- `error: str` - Error message if LLM call or structured-output validation failed
 - `prompt: str` - Rendered prompt actually sent to the model (populated for tracing/audit, including per-item batch traces)
 - `llm_usage: dict` - Token usage metrics (empty dict {} if unavailable)
 
@@ -864,9 +873,9 @@ See `pflow mcp describe <tool> --help` for how to interpret tool details.
 MCP nodes expose one canonical output namespace: `result`.
 
 Use `${node.result}` for the full tool payload and `${node.result.field}` for
-nested fields. Do not use `${node.field}` for MCP tool fields; validation only
-knows the declared `result` output because MCP servers do not publish stable
-output schemas.
+nested fields. Do not use `${node.field}` for MCP tool fields. Validation keeps
+`result` open-ended because server schemas may be missing or incomplete; probe
+inspects the actual response to show the concrete paths.
 
 **Every MCP server is completely different. Even the SAME operation:**
 
@@ -884,6 +893,34 @@ Server C:  result.Items[]                   # DynamoDB style
 
 **There are NO patterns. Test every MCP tool:**
 `pflow probe mcp-service-TOOL param=value`
+
+### pflow Parameters on Every MCP Node
+
+Besides the tool's own parameters, every MCP node accepts two pflow parameters
+that are never sent to the server:
+
+| Parameter | Effect |
+|---|---|
+| `timeout` | Seconds before the tool call is abandoned (default: 30) |
+| `result_format: json_block` | Parse the single fenced ` ```json ` block in a text result and use it as `result` |
+
+Some tools answer for an LLM, wrapping their data in prose:
+
+````text
+Script ran on page and returned:
+```json
+{"count": 42}
+```
+````
+
+By default that arrives as a plain string, so `${node.result.count}` cannot
+resolve. With `- result_format: json_block` the parsed block becomes `result`,
+and `${node.result.count}` works. The result must be text-only and hold exactly
+one ` ```json ` block: other content (images, resources), zero or several
+blocks, or invalid JSON inside it fail the node (routable with `on-error`)
+rather than guess. `structuredContent`, when the
+server sends it, still takes precedence, and a tool error (`isError`) is still
+an error.
 
 ### MCP Tools Can Report Failure Inside `result`
 
@@ -914,6 +951,70 @@ MCP failure paths:
 | Protocol/transport failure | MCP client/server call failed before a tool result | Writes `${node.error}` and `${node.error_details}` |
 | `isError: true` | Tool set the MCP tool-error flag | Returns `error`, so `on-error` can route it |
 | `result.status: "error"`, `result.ok: false`, etc. | Service failure inside a successful MCP payload | Stored under `${node.result}`; pflow surfaces explicit failure flags as API warnings |
+
+### Choosing Tools for Deterministic Steps
+
+Many MCP servers are built for an LLM taking turns. One server often offers two
+styles of tool, and they behave very differently as fixed workflow steps:
+
+- **Observe-then-act tools** return handles (element uids, cursor or session ids)
+  that the next call uses after reading this result: `take_snapshot` → `click(uid)`.
+  They fit a step count known up front, with handles threaded through templates.
+  When the list of steps is runtime data, each step has to read the previous
+  result to find its handle, which usually means an `agent` node in the loop.
+- **Whole-program tools** take a complete script, query or form and return its
+  result in one call (`evaluate_script`, a SQL `query`, `fill_form`). Prefer them
+  when the steps are data, or when you would otherwise chain observe-then-act calls.
+
+Then check three things before building on a tool:
+
+- **Where the program runs.** Code that runs *inside* the target (a script
+  evaluated in a web page) can only do what the target lets its own code do: in a
+  page, no trusted input events and no request interception. A tool that drives the
+  target *from the host* (a browser-automation API) can do both. If you need that,
+  pick the host-side tool first; rebuilding it inside the target is a long detour.
+- **What comes back.** Prefer tools, or programs you write, that return JSON over
+  prose or markdown meant for an LLM (log listings, console dumps). For one fenced
+  JSON block inside prose, use `result_format: json_block`. If you must parse
+  prose, pin the server version and treat output changes as breaking.
+- **What it can do, not just what it returns.** `pflow probe` shows the output
+  shape. Also test the one capability the workflow depends on (does the input
+  reach the field? is the request visible?). Each probe starts from a fresh server
+  unless you keep one alive (see Server lifetime below).
+
+**Slow calls.** A call is abandoned after `timeout` seconds. The server stays up
+for the rest of the run, so an `on-error:` handler can call the same server and
+read what the slow program left behind (e.g. results it pushed to a global as it
+went). If the server runs one call at a time, the handler waits until the
+abandoned call actually finishes, so give a long program its own deadline and
+have it return early with what it has.
+
+**Server lifetime.** Each run or probe connects to its MCP servers and
+disconnects at the end; a stdio server is started and stopped with it. That suits
+a reusable workflow, which should start clean, but it means state held in the
+server process (an open browser page, a notebook kernel, a shell session) is gone
+before your next probe. State the server writes to disk (a browser profile, a
+database) survives either way, so check the server's options when a run must
+start clean.
+
+To explore step by step (look, act, look again across separate probes), keep one
+server process alive outside pflow: run the stdio server behind a proxy that holds
+a single child for its whole life, and register the proxy over HTTP.
+
+```bash
+# keep this running in its own process (another terminal, or backgrounded):
+uvx --with 'mcp<2' mcp-proxy --port 8932 -- <server command>   # mcp<2: mcp-proxy 0.12 breaks on mcp 2.x
+pflow mcp add '{"explore": {"type": "http", "url": "http://127.0.0.1:8932/mcp"}}'
+# probe or run mcp-explore-* nodes; when done:
+pflow mcp remove -f explore    # then stop the proxy process
+```
+
+A server's own HTTP mode is not the same: it may still discard state when the
+last client disconnects, which every run end does. Playwright MCP's `--port`
+restarts at `about:blank`; behind the proxy, its open page, localStorage and
+session cookie carried across separate probes and runs. Everything using the
+long-lived registration shares that one server and its state, so confirm the
+finished workflow against the normal run-scoped registration.
 
 ### Node Creation Pattern
 
@@ -993,7 +1094,7 @@ Email the analysis report to the recipient.
 | "Returns array" | `{"items": [...], "metadata": {...}}` | Access via `.items` |
 | "String parameter" | Needs specific format | Test with examples |
 | "Async endpoint" | Might support Prefer:wait | Try header first |
-| "Returns immediately" | Actually takes 5-10 seconds | Add timeout handling |
+| "Returns immediately" | Actually takes 5-10 seconds | Raise `timeout` (see Slow calls) |
 
 ### When to Probe MCP Nodes
 
@@ -1494,40 +1595,58 @@ paste-ready recommendations over manually guessing chunk names or order.
 - System commands: mkdir, chmod, which
 - Binary/streaming data: use `shell` with `curl`
 - Use macOS-compatible (BSD) commands, not GNU-specific extensions
-- Use `$VAR` not `${VAR}` for shell variables (braces conflict with pflow template syntax)
+- **The command is plain sh** — pflow never fills in `${…}` there. `$HOME`, `${HOME}`, `${NAME:-default}` and `${#NAME}` are the shell's own, with nothing to escape. Values reach the command through `env:` (below).
 - **Warning sign**: Long chains of `sed`, `awk`, `jq`, `tr`, `grep` piped together → use `code` node instead (more readable, portable, debuggable)
 - **Don't use shell for data pass-through**: `jq '.'` before an LLM is unnecessary — pass `${node.response}` directly. Templates handle JSON natively.
 - **Caching**: shell nodes don't cache by default (their output depends on external state) — safe to use inside iteration loops. Add `cache: true` only for a pure, expensive command whose output is fully determined by its declared inputs.
 
 ### Node Creation Pattern
 
-```markdown
-### list-recent-files
-
-List recently modified files. Note: `$var` = shell variable, `${var}` = pflow template.
-
-- type: shell
-
-```shell command
-find . -maxdepth ${depth} -type f -newer <TMP> 2>/dev/null | head -20
-```
-```
-
-### Templates in Shell Commands
-
-**In shell commands** — pflow variables resolve before the shell runs. Use a code block for multi-line or complex commands:
+Bind each value in `- env:` under an UPPER_SNAKE name chosen for its content, and read it in the command as `"$NAME"` — always double-quoted. Use a `shell command` code block for multi-line or complex commands:
 
 ````markdown
-### run-pipeline
+### list-recent-files
 
-Creates the output directory, then pulls items from the API into it.
+List files modified since the marker, at most `DEPTH` directories deep.
 
 - type: shell
+- env:
+    DEPTH: ${depth}
 
 ```shell command
-mkdir -p ${output_dir}/images && curl -s ${api_url}/items?limit=${limit}
+find . -maxdepth "$DEPTH" -type f -newer <TMP> 2>/dev/null | head -20
 ```
 ````
+
+### Passing values: `env:`
+
+Templates resolve in `env:` like in any param; each entry becomes an environment variable of the command. A bound value is data: quotes, `$`, backticks and newlines in it are never interpreted by the shell.
+
+````markdown
+### fetch-item
+
+Fetches one page of items from the API.
+
+- type: shell
+- env:
+    ENDPOINT: ${endpoint}
+    LIMIT: ${limit}
+
+```shell command
+curl -s "https://api.example.com/$ENDPOINT?limit=$LIMIT"
+```
+````
+
+A `${…}` in the command that names a pflow value this step could read — a workflow input, a step output such as `${fetch.stdout}`, the batch `${item}`, an `inputs:` key — fails validation with the `env:` line to add. So does `$${`.
+
+- **Names**: UPPER_SNAKE, chosen for the content (`ISSUE_BODY`, not `X`) — letters, digits and underscores, not starting with a digit. Write `${ISSUE_BODY}` only where a letter, digit or `_` follows the name. Names the shell itself relies on (`PATH`, `HOME`, `IFS`, …) get a validation warning. On Windows, Git Bash imports Windows path variables such as `PATH` and `TEMP` upper-cased, with their values converted to POSIX paths — use another name for data.
+- **Every value binds as text** — exactly the text `${x}` produces inside a string: a number `3`, a boolean `True`/`False`, null empty, an object or array as JSON (`{"a": 1}`). A string bound directly (`DATA: ${fetch.stdout}`) arrives unchanged, JSON-looking or not; a value that first passes through an `inputs:` map (the step's own, a loop carry, a sub-workflow's inputs) is JSON-parsed there and re-serialized (`{"a":1}` → `{"a": 1}`), and a `key=value` given on the command line is typed first (`007` → `7`) — bind directly in `env:` when the bytes matter. Literal YAML values follow the same rule: `DEBUG: true` binds `True`, `VERSION: 1.10` binds `1.1`, `MODE: 0755` binds `493` — quote a value whose exact text matters (`VERSION: "1.10"`).
+- **Large values go through `stdin:`**: the operating system limits the environment — on macOS about 1 MB for the arguments and the whole environment together; on Linux at most 128 KiB for one value (on Windows a 200 KB value binds). A value over the limit, or one containing a NUL byte, fails before the command starts. `- stdin: ${fetch.response}` pipes a value of any size or shape to the command (`jq`, `wc`, `cat`); objects and arrays arrive as JSON.
+- **Masking follows the name**: approval previews, the web UI, error output and `pflow report` hide a value whose name contains one of the words `TOKEN`, `SECRET`, `PASSWORD`, `AUTH`, `CREDENTIAL` or `API_KEY`. Name secrets that way (`GITHUB_TOKEN`), and keep those words out of ordinary data — `TOKEN_LIMIT: "5"` shows as `<REDACTED>`, so the person approving the step cannot see it.
+
+**`inputs:` on a shell step** is the namespace `env:`, `stdin` and `cwd` read from, and where a loop `carry:` lands — the command never sees it. Bind each key you need in `env:` (`env: {STATE: ${state}}`, then `"$STATE"`); an `inputs:` key no other param reads gets a warning.
+
+**The dangerous-command check** reads the command text only. It cannot see what a variable will hold — guard destructive commands yourself (`[ -n "$DIR" ] || exit 1`).
 
 ### Testing Shell Pipelines
 
@@ -1546,10 +1665,10 @@ curl -s "https://example.com/api" | head -20
 
 ### Parameters
 
-- `stdin: any` - Optional input data for the command (dict/list auto-serialized to JSON)
-- `command: str` - Shell command to execute (required)
+- `stdin: any` - Optional input data for the command (dict/list auto-serialized to JSON); absent, the command reads EOF
+- `command: str` - Shell command to execute; plain sh that reads env: values as "$NAME" (required)
 - `cwd: str` - Working directory (optional, defaults to current)
-- `env: dict` - Additional environment variables (optional)
+- `env: dict` - Values bound as environment variables for the command (each binds as text; optional)
 - `timeout: int` - Max execution time in seconds (optional, default 30)
 - `ignore_errors: bool` - Continue on non-zero exit (optional, default false)
 - `strip_newline: bool` - Strip trailing newlines from stdout only (optional, default true). stderr is never stripped.
@@ -1615,7 +1734,9 @@ The uppercased text.
 Uppercase via `tr`.
 
 - type: shell
-- command: echo "${text}" | tr '[:lower:]' '[:upper:]'
+- env:
+    TEXT: ${text}
+- command: echo "$TEXT" | tr '[:lower:]' '[:upper:]'
 ````
 
 **Parent workflow** calling the child:
@@ -1645,7 +1766,10 @@ Convert the body to uppercase using the shared sub-workflow.
 Combine the processed title and body into a single output.
 
 - type: shell
-- command: printf "Title: %s\nBody: %s" "${process-title.result}" "${process-body.result}"
+- env:
+    TITLE: ${process-title.result}
+    BODY: ${process-body.result}
+- command: printf "Title: %s\nBody: %s" "$TITLE" "$BODY"
 ````
 
 ### Dynamic Child Selection (Template References)
@@ -1755,16 +1879,17 @@ cat queue.txt
 
 ### take-and-write
 
-Take the first item, log it, write the remainder back.
+Take the first item, log it with the iteration number, write the remainder back.
 
 - type: shell
-- inputs:
-    raw: ${read-queue.stdout}
-    iteration: ${iteration}
+- env:
+    ITERATION: ${iteration}
+    QUEUE: ${read-queue.stdout}
 
 ```shell command
-printf '%s\n' "${raw}" | head -n 1 >> log.txt
-printf '%s\n' "${raw}" | tail -n +2 > queue.txt
+printf '%s: ' "$ITERATION" >> log.txt
+printf '%s\n' "$QUEUE" | head -n 1 >> log.txt
+printf '%s\n' "$QUEUE" | tail -n +2 > queue.txt
 ```
 ````
 

@@ -225,12 +225,12 @@ For Git and GitHub operations, use the `shell` node with CLI tools:
 # GitHub operations via gh CLI
 shell --command="gh issue view 123 --json title,body" >>
 llm --prompt="Analyze this issue" >>
-shell --command="gh issue comment 123 --body '${response}'"
+shell --env='{"BODY": "${response}"}' --command='gh issue comment 123 --body "$BODY"'
 
 # Git operations via git CLI
 shell --command="git status --porcelain" >>
 llm --prompt="Summarize these changes" >>
-shell --command="git commit -m '${response}'"
+shell --env='{"MESSAGE": "${response}"}' --command='git commit -m "$MESSAGE"'
 ```
 
 ## Real-World Examples

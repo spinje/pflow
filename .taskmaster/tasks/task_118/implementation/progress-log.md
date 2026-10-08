@@ -1189,3 +1189,83 @@ Append-only. Entry format: ORCHESTRATION.md → "Progress-log entry format".
 - Fully happy: resolved in I5's entry (code yes; the one loose end was deviation 1, now built). test-reflect resolved
   there (every skip assertion has a presence partner; kill check 8/8).
 - Next: PF (fresh, Opus · medium).
+
+## [2026-10-08 07:30] implementer I6 (Opus) — PF Guide, docs, instruction files
+- Did: every §7 line re-verified on `a105e744` (PC had already converted all fences; PB had already fixed
+  `type_validation.py`/`validator.py` docstrings, `engine.py`, `data-type-coercion.md`) and the remaining prose fixed;
+  `nodes/shell.md` rewritten around one pattern; orchestrator additions 2–7 done; Task-159 guide case regenerated.
+- Changed: guide `nodes/shell.md` (rewrite: plain-sh bullet; pattern = `env:` + `"$NAME"`; the old "Templates in Shell
+  Commands" + `run-pipeline` folded into one `env:` section; body rule one paragraph; names; text rule + YAML note
+  (Part 1's, kept); limits as CI showed; `stdin:`; masking; `inputs:` on a shell step; checkpoint §9 sentence verbatim;
+  `$VAR`-not-`${VAR}` rule and `$${` paragraph deleted; the Node Creation fence's broken ```` nesting fixed),
+  `nodes/code.md` 18/61, `core.md` 580/585/643, `features/loop.md:60`, `features/batch.md:140`; both MCP resources (the
+  same 8 sentence edits each: shell bullet, list-recent-files label, code label + rule, "Templates work in any param",
+  "In shell commands", common mistake #4 Impact/Fix + closing line); docs `reference/nodes/shell.mdx` (params table incl.
+  the "Additional environment variables" line; "Using stdin for data"/Correct-Wrong + the Pass-7 "Validation" accordion
+  replaced by "Passing values to the command" (+ breaking-change `<Warning>` per docs/CLAUDE.md), "Using stdin for large
+  data", and a validation section quoting the real leftover error; §9 sentence under Security; example `ENV:` →
+  `DEPLOY_ENV:` — `ENV` draws the shell-owned warning), `code.mdx:67`, `loops.mdx:47`, `template-variables.mdx` (escape:
+  "not in a command or code block"; the false `${node_id.command}` subsection rewritten); `architecture/reference/
+  template-variables.md` (all 7 JSON-IR sites; escape + Supported Locations exceptions; "Shell Command Limitations" →
+  "Shell Commands and Code Blocks"), `architecture/features/simple-nodes.md` 228/233; source: `shell.py` (bridge comment;
+  docstring "Template Variables…/Pattern Detection" → "Passing Values"; §9 sentence under Security features; `command`/
+  `env` Interface comments, no comma outside parens — extracted metadata read back), `registry/context_builder.py` (shell
+  snippet gains `env:`), `core/templates.py:63-68` comment, `data_flow.py` reference docstring ("in a Template param"),
+  `template_surfaces.py` (`_BODIES` back-pointer to `web/src/utils/format.ts::isCodeBody`); CLAUDE.md:
+  `runtime/template_validation` (table rows; passes 6/9 only; bodies are data_flow's; dict/list paragraph deleted),
+  `core/workflow` (row for `_BODIES`/`param_mode` + body rule home; data_flow paragraph), `core` (escapes: not in a code
+  body), `runtime/engine` (body static; callers pass `node_type`), `nodes` (body verbatim; failure `env` record),
+  `tests/.../test_template_validation` (test_types row); `.claude/agents/pflow-codebase-searcher.md` (+3 rows) →
+  `make sync-claude-assets` (1 file); Task-159 `12-…/04-guide-auto-detect/expected-stdout.txt` regenerated.
+- Verified (executed): `inventory.py --sites` → 0 in `src/pflow/guide`, `src/pflow/mcp_server/resources`, `docs` except
+  `docs/changelog.mdx:16` (v0.16.0 release notes — history, out of my scope); `src` rows = `data_flow.py:1289` (a
+  message f-string) and `context_builder.py` (heuristic false positive I2 named) only. Architecture JSON-IR grep
+  (`"command":…${`) → 0 outside `historical/`. `tests/test_docs` + `test_guide.py` + `test_instruction_resources.py`
+  115 passed; `make check` green; `make test` **10574 passed** (= PE head). `uv run pflow guide shell` and `guide code`
+  read back. Guide fence `list-recent-files` copied verbatim into a scratch workflow, `depth=1` → `./newfile.txt`.
+  Every new claim probed: shell `inputs:` unread warning, `DEBUG: true` → `True` + warning, `VERSION: "1.10"` intact,
+  `TOKEN_LIMIT` `<REDACTED>` in the failure block, `${NAME:-world} ${#X}` → `world 3`, `$${PRICE}` error; code
+  `"${name}".upper()` errors while `f" ${total}"` prints `ABC $5`; `${a.command}` is "does not output" (the docs claim
+  was already false). Task-159: the case's actual vs committed expected differs in stdout only (stderr, exit code
+  identical); vs `task159-before` every hunk is this task's guide text; vs the committed expected the rest is also
+  `pflow guide` output — node Interface text drifted from other merged work (delete-file `deleted: str` #617, llm
+  `response: any`, mcp pflow-params section) — so regenerated (`run-case.sh … --write`), then `run-case.sh` rc 0;
+  `verify.sh` **76 / 11 / 0**, drift set = P0's §2.5 set minus this case.
+- Deviations/surprises:
+  1. **Masking wording follows the code, not the plan's draft.** `is_sensitive_parameter` matches whole words: `MY_KEY`
+     is NOT masked (only `API_KEY`/`PRIVATE_KEY`/`SSH_KEY`/`SECRET_KEY`), so the plan's "`…_key`" would state a behaviour
+     the code lacks; the guide/docs name `TOKEN`, `SECRET`, `PASSWORD`, `AUTH`, `CREDENTIAL`, `API_KEY` ("one of the
+     words"). Also true but not stated: `PASSWD`, `PWD` (!) and `AUTHORIZATION` mask. Importance 1.
+  2. The Task-159 regeneration also absorbs ~120 lines of non-118 guide drift (node Interface and mcp guide text from
+     merged main work). I judged that "guide text" because it is `pflow guide`'s own output and the case exists to
+     snapshot it; overrule → `git checkout` that one file.
+  3. MCP resources got the rule-line edits only (as planned) — they still carry no names/limits/masking detail for
+     `env:`; their shell bullet now says bind in `env:`, read `"$NAME"`, large values via `stdin:`. A fuller copy is a
+     content decision, not made here.
+  4. Docs `shell.mdx`: the "Wrong" fence I2 wrote (`env:`-bound JSON piped to jq) was removed rather than kept — binding
+     JSON in `env:` is the decided rule and works; the page now teaches `env:` for values and `stdin` for large/streamed
+     data. `template-variables.mdx` "Shell command" subsection claimed `${node_id.command}` is readable — it never
+     validated; replaced with what is true (failure output + `pflow report` show command and bound `env:`).
+  5. Arch type-compat examples moved from `command` (Pass 7, gone) to shell `timeout` (dict → int, probed: Pass 6 fires);
+     "Using Whole Dict Where String Expected" retitled "…Where a Scalar Is Expected" — dict → str is legal elsewhere.
+  6. `docs/reference/nodes/shell.mdx` gained a breaking-change `<Warning>` (docs/CLAUDE.md update policy).
+- Not done / for you: `docs/changelog.mdx:16` (v0.16.0 entry shows `$${batch_name}` in a command — history, yours or
+  main's); `.taskmaster/tasks/task_148/verification/*.pflow.md` old-form (I4 noted; history). `/tmp/marker` was touched
+  by the fence probe (the guide example's own path).
+- Self-checks: **Fully happy?** Yes — every sentence I added was probed against the running code or names a code home;
+  the honest residue is deviation 2's judgment call and deviation 3's thinner MCP copy. test-reflect: not needed — docs
+  (no test added or changed).
+- Next: orchestrator verifies + commits PF; PZ.
+
+## [2026-10-08 07:50] task orchestrator (Opus) — PF verified; rulings; committed
+- Verified (mine): `make check` green; `make test` 10574 / 0 failed; the five `.py` files PF touched change comments,
+  docstrings and `context_builder`'s example text only (diff read).
+- [RULING, importance 1] Task-159 `12-…/04-guide-auto-detect` regeneration — **kept**: the case exists to snapshot
+  `pflow guide` output, and every hunk is guide output (this task's text plus guide text other merged work changed);
+  `verify.sh` 76 / 11 / 0, the 11 = P0's set minus this case. Named in the task-review (the Task-159 re-record
+  follow-up owns the other 11).
+- Accepted: masking wording follows the code (whole words — `MY_KEY` is not masked); MCP instruction copies carry the
+  planned rule edits only (plan §7 scope; a richer `env:` section there is a content follow-up, named in the
+  task-review); the two already-false docs claims corrected; `docs/changelog.mdx` and `task_148/verification/` left
+  (history — §5.8).
+- Next: PZ — completion gate.

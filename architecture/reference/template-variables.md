@@ -126,6 +126,10 @@ To output literal `${...}` text without resolution:
 The escape runs through its matching `}` (one nested `{}` level included): `$${FOO:-${bar}}` is the
 literal `${FOO:-${bar}}`. A bare `$$` is untouched.
 
+The escape exists only where templates do. A shell `command` and a code node's `code` are never
+templated (see [Shell Commands and Code Blocks](#shell-commands-and-code-blocks)), so `$${` there is a
+validation error, not an escape.
+
 **Limitation**: No backslash escape (`\${var}`) - this is known technical debt.
 
 ---
@@ -332,7 +336,7 @@ This enables powerful patterns like combining multiple data sources:
 
 ### Supported Locations
 
-✅ **Node parameters** - Any string parameter
+✅ **Node parameters** - Any string parameter, except a shell `command` and a code node's `code` (plain code — see [Shell Commands and Code Blocks](#shell-commands-and-code-blocks))
 ✅ **Workflow inputs** - When calling workflows
 ✅ **Nested dictionaries** - Recursively resolved
 ✅ **Lists/arrays** - Each item resolved
@@ -492,9 +496,9 @@ Checks if template type matches parameter expectation:
   "id": "count-items",
   "type": "shell",
   "params": {
-    "command": "echo ${fetch.response}"
+    "timeout": "${fetch.response}"
     //         ^^^^^^^^^^^^^^^^^^^^
-    //         ERROR: fetch.response is 'dict' but 'command' expects 'str'
+    //         ERROR: fetch.response is 'dict' but 'timeout' expects 'int'
   }
 }
 ```
@@ -715,8 +719,8 @@ This guides users to the correct template path.
   "id": "shell",
   "type": "shell",
   "params": {
-    "command": "echo ${fetch.response}"
-    // ✗ ERROR: dict cannot be used directly
+    "timeout": "${fetch.response}"
+    // ✗ ERROR: dict cannot be used where an int is expected
     //          Use ${fetch.response.specific_field} instead
   }
 }
@@ -1039,7 +1043,8 @@ assert resolve_template("Status: ${enabled}", context) == "Status: True"
       "id": "process",
       "type": "shell",
       "params": {
-        "command": "jq '.name' <<< '${fetch-data.response.user}'"
+        "stdin": "${fetch-data.response.user}",
+        "command": "jq '.name'"
       }
     }
   ]
@@ -1364,19 +1369,19 @@ export PFLOW_TEMPLATE_RESOLUTION_MODE=permissive
 
 ### ❌ Anti-Patterns
 
-#### Using Whole Dict Where String Expected
+#### Using Whole Dict Where a Scalar Is Expected
 
 ```json
 // Bad: Type error
 {
-  "command": "echo ${api_response}"
-  //              ^^^^^^^^^^^^^^^^^
-  //              api_response is dict, command expects str
+  "timeout": "${api_response}"
+  //         ^^^^^^^^^^^^^^^^^
+  //         api_response is dict, timeout expects int
 }
 
 // Good: Use specific field
 {
-  "command": "echo ${api_response.status}"
+  "timeout": "${api_response.retry_after}"
 }
 ```
 
@@ -1405,10 +1410,10 @@ export PFLOW_TEMPLATE_RESOLUTION_MODE=permissive
 ```json
 // Bad: Assumes number is string
 {
-  "command": "echo count_${fetch.count}"
-  //                      ^^^^^^^^^^^^
-  //                      If count=42 (int), this works,
-  //                      but if count=null, becomes "count_"
+  "content": "count_${fetch.count}"
+  //                  ^^^^^^^^^^^^
+  //                  If count=42 (int), this works,
+  //                  but if count=null, becomes "count_"
 }
 
 // Good: Use type-aware parameters
@@ -1417,57 +1422,39 @@ export PFLOW_TEMPLATE_RESOLUTION_MODE=permissive
 }
 ```
 
-### Shell Command Limitations
+### Shell Commands and Code Blocks
 
-When embedding arrays or dicts in shell commands, pflow serializes them to JSON. However, **certain characters in JSON can break shell parsing**:
+A shell node's `command` and a code node's `code` are plain code — POSIX sh and Python — and are
+never scanned, validated or resolved as templates (ADR-0016). The rule is keyed on (node type,
+param) in one function, `core/workflow/template_surfaces.py::param_mode`; every param walk consults
+it or iterates `template_params`. `${HOME}`, `${NAME:-default}` and `${#X}` in a command are the
+shell's own.
 
-| Character | Problem |
-|-----------|---------|
-| `'` (apostrophe) | Breaks single-quoted strings |
-| `` ` `` (backtick) | Triggers command substitution |
-| `$(...)` | Triggers command substitution |
+Values reach a body through the node's own binding:
 
-#### Example Problem
-
-```json
-{
-  "command": "echo '${data}' | jq '.'"
-}
-```
-
-If `data = {"message": "it's working"}`, the command becomes:
-
-```bash
-echo '{"message": "it's working"}' | jq '.'
-#                    ^ Shell sees this as end of string!
-```
-
-**This will fail with a shell syntax error.**
-
-#### Safe Alternative: Use `stdin`
-
-For data that might contain shell-unsafe characters, use the `stdin` parameter:
+- **Shell**: `env:` — each entry becomes an environment variable, read as `"$NAME"`. A value binds
+  as the text `${x}` produces inside any string (`core/templates.to_string`), so quotes, `$` and
+  backticks in it are never interpreted. Binding (names, NUL bytes, the OS size refusal) lives in
+  `nodes/shell/env_binding.py`. Large or streamed data goes through `stdin`, which pipes it without
+  an environment limit.
+- **Code**: `inputs:` — each key is bound as a Python variable.
 
 ```json
 {
   "id": "process",
   "type": "shell",
   "params": {
-    "stdin": "${data}",
-    "command": "jq '.message'"
+    "env": {"STATUS": "${fetch.response.status}"},
+    "stdin": "${fetch.response}",
+    "command": "echo \"status: $STATUS\"; jq '.message'"
   }
 }
 ```
 
-The `stdin` parameter passes data through a pipe, completely bypassing shell parsing.
-
-#### When JSON in Commands is Safe
-
-- Data you control (no user input)
-- Data without apostrophes, backticks, or `$` characters
-- Simple arrays of strings/numbers without special chars
-
-**pflow will warn** if it detects potentially unsafe JSON patterns in shell commands.
+A body is still read once by validation (`core/workflow/data_flow.py`, section "Code bodies"): a
+`${...}` whose root is a name the step could read — a workflow input, a step output with a path, an
+`inputs:` key, the batch alias — is an error naming the binding to add, and so is `$${`. Other
+`${...}` text is the body language's own.
 
 ---
 

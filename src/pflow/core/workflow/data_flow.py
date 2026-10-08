@@ -276,8 +276,8 @@ def _validate_template_reference(
 
     Args:
         ref: A parsed Reference's source text (e.g., "node1.output", "input_param",
-            "a[${i}].x") — never an Issue: bash syntax (``${var:-default}``) opens no
-            Expression and is the Issue pass's to report
+            "a[${i}].x") — never an Issue: bash syntax (``${var:-default}``) in a
+            Template param opens no Expression and is the Issue pass's to report
         node_id: ID of the node containing the reference
         param_name: Parameter name containing the reference
         node_position: Position of the current node in execution order

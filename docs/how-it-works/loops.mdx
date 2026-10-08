@@ -44,7 +44,7 @@ Each `carry:` value must reference this loop node's latest output. A missing or 
 
 A literal coalesce fallback breaks that guarantee, so avoid it in `carry:`. With `carry: { contenders: ${run-rounds.survivors ?? []} }`, the `[]` always resolves, so a round where the body omits `survivors` silently re-seeds `contenders` to `[]` instead of erroring. Validation warns when a carry value uses a literal fallback. A round-1 default belongs in `inputs:`, not in a carry fallback.
 
-For `shell` and `llm` nodes, carried keys are effective only when referenced in `command`, `prompt`, or `system` text. Code and workflow nodes consume `inputs:` directly.
+For `llm` nodes, carried keys are effective only when referenced in `prompt` or `system` text. A `shell` node binds the carried key in `env:` (`env: {STATE: ${state}}`) and reads `"$STATE"` in its command; validation warns when nothing on a shell node reads an `inputs:` key. Code and workflow nodes consume `inputs:` directly.
 
 ## Caps And Inspection
 
