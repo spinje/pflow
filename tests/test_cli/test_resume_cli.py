@@ -820,6 +820,131 @@ def test_stale_unverifiable_message_when_hash_absent(tmp_path):
     _check_workflow_identity(resolved, source, force=True)
 
 
+# --- A denial checks the gate, not edits (#858) ------------------------------
+
+# up -> gated (approval: required, touches a marker). A denial re-enters at `gated`, whose
+# gate fires before anything runs — so only the gate's presence matters, never an edit.
+_DENY_WF = """# Deny Demo
+
+An upstream step, then a gated side effect.
+
+## Steps
+
+### up
+
+Upstream value.
+
+- type: shell
+- next: gated
+
+```shell command
+echo "up-value"
+```
+
+### gated
+
+Gated side effect.
+
+- type: shell
+- approval: required
+
+```shell command
+touch {marker}
+```
+"""
+
+
+def _pause_deny_wf(tmp_path: Path) -> tuple[Path, Path, str]:
+    """Write the deny workflow, run it to its pause, and return ``(workflow, marker, token)``."""
+    marker = tmp_path / "gated-ran"
+    wf = tmp_path / "deny_wf.pflow.md"
+    wf.write_text(_DENY_WF.format(marker=marker.as_posix()), encoding="utf-8")
+    paused = _runner().invoke(cli, [str(wf)])
+    assert paused.exit_code == 4, paused.stderr
+    match = re.search(r"Resume token: (\S+)", paused.stdout)
+    assert match, paused.stdout
+    return wf, marker, match.group(1)
+
+
+def _strip_step_identity(home: Path, exec_id: str) -> None:
+    """Rewrite the paused trace into the pre-2.9.0 shape (no ``step_identity``): whole-hash compare."""
+    for path in (home / ".pflow" / "debug").glob("workflow-trace-*.json"):
+        lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        if lines[0].get("execution_id") == exec_id:
+            lines[0].pop("step_identity")
+            path.write_text("".join(json.dumps(line) + "\n" for line in lines), encoding="utf-8")
+            return
+    raise AssertionError(f"no trace for {exec_id}")
+
+
+_UP_EDITED = (('echo "up-value"', 'echo "up-value-2"'),)
+_STEP_INSERTED_BEFORE_GATE = (
+    ("- next: gated", "- next: extra"),
+    (
+        "### gated",
+        "### extra\n\nInserted.\n\n- type: shell\n- next: gated\n\n```shell command\necho extra\n```\n\n### gated",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("edits", "older_trace"),
+    [
+        pytest.param(_UP_EDITED, False, id="restored-step-edited"),
+        pytest.param(_STEP_INSERTED_BEFORE_GATE, False, id="step-inserted-before-the-gate"),
+        pytest.param(_UP_EDITED, True, id="older-trace-whole-hash"),
+    ],
+)
+def test_denying_after_an_edit_needs_no_force(home, tmp_path, edits, older_trace):
+    """#858: each edit here refuses `--approve yes` without --force (Task 180's checks), yet a denial
+    passes them all — it runs nothing, so it ends `denied` (exit 3) without --force."""
+    wf, marker, token = _pause_deny_wf(tmp_path)
+    if older_trace:
+        _strip_step_identity(home, token)
+    text = wf.read_text(encoding="utf-8")
+    for before, after in edits:
+        text = text.replace(before, after)
+    wf.write_text(text, encoding="utf-8")
+    approved = _runner().invoke(cli, ["resume", token, "--approve", "yes"])
+    assert approved.exit_code == 2, approved.stderr  # the edit is one Task 180 refuses for an approval
+    assert "Workflow changed since the original run" in approved.stdout + approved.stderr
+
+    denied = _runner().invoke(cli, ["resume", token, "--approve", "no"])
+    assert denied.exit_code == 3, denied.stdout + denied.stderr
+    assert "Denied at gate 'gated'" in denied.stderr
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("force", [False, True], ids=["plain", "force"])
+def test_denying_a_step_whose_approval_was_removed_refuses_instead_of_running_it(home, tmp_path, force):
+    """A denial is only safe while the gate is there to receive it: with `approval: required` removed
+    from the paused step, resuming would RUN it on a "no". `--force` (consent to re-running) waives
+    nothing here."""
+    wf, marker, token = _pause_deny_wf(tmp_path)
+    wf.write_text(wf.read_text(encoding="utf-8").replace("- approval: required\n", ""), encoding="utf-8")
+    result = _runner().invoke(cli, ["resume", token, "--approve", "no", *(["--force"] if force else [])])
+    assert result.exit_code == 2, result.stdout + result.stderr
+    combined = result.stdout + result.stderr
+    assert (
+        "The paused step 'gated' no longer has `approval: required`, so resuming would run it instead of "
+        "recording the denial." in combined
+    )
+    assert not marker.exists()
+
+
+def test_denying_a_renamed_paused_step_refuses_before_any_attempt(home, tmp_path):
+    """A paused step renamed since the pause leaves no gate to deny. The refusal comes from the
+    preflight, with or without --force — never a failed attempt from the engine."""
+    wf, marker, token = _pause_deny_wf(tmp_path)
+    text = wf.read_text(encoding="utf-8").replace("### gated", "### gated2").replace("next: gated", "next: gated2")
+    wf.write_text(text, encoding="utf-8")
+    result = _runner().invoke(cli, ["resume", token, "--approve", "no", "--force"])
+    assert result.exit_code == 2, result.stdout + result.stderr
+    assert "The paused step 'gated' is no longer in the workflow" in result.stdout + result.stderr
+    assert len(list((home / ".pflow" / "debug").glob("workflow-trace-*.json"))) == 1  # the paused run only
+    assert not marker.exists()
+
+
 # --- Disambiguation (existence precedence, §E step 2) ------------------------
 
 

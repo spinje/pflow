@@ -55,6 +55,7 @@ Behavior worth knowing:
 - **An answer covers one gate, once.** `--approve yes` approves the paused gate only — it is not a standing approval for that step. A paused **loop** step runs the paused iteration on the answer; its next iteration is a new action that pauses again with a new token (the pause output names it: `Loop iteration 2 of up to 3`). Pass `--auto-approve <step>` to approve every remaining iteration at once — the pause output prints that command, and the browser panel's Approve all remaining sends it.
 - **Resuming without an answer flag refuses** and shows the pending question with the exact command; `--approve`/`--choose` on a run that is not paused refuses too.
 - The **edited-workflow refusal** and `--force` (below) apply to paused resumes the same as failed ones, with one addition: editing the paused approval step after approving it refuses — the approval covered the version the human saw. Input overrides (`KEY=VALUE`) work the same way.
+- **A denial needs neither.** `--approve no` runs nothing, so no edit refuses it and it never needs `--force`. It refuses only when the paused step was renamed, removed, or lost its `approval: required` — there is no gate left to deny, and resuming would run the step — and `--force` does not override that.
 
 ## Overriding inputs
 
@@ -76,7 +77,7 @@ The failed step runs **again** from the start (for a loop step: the failed itera
   - **For AI agents** (no terminal): resume **refuses with a clear error** rather than silently repeating the side effect. Confirm with your human that re-running the step is safe, then re-run with `--force`.
 - A failed step that **never started** — it failed resolving its `${...}` templates (a typo, a missing field) before it ran — resumes without confirmation: nothing fired. A batch step whose item failed that way had already started (earlier items ran), so it still asks.
 
-`--force` bypasses this confirmation **and** the edited-workflow check below.
+`--force` is consent to re-running steps: it bypasses this confirmation **and** the edited-workflow check below. A denial never needs it.
 
 ## Other behavior worth knowing
 
