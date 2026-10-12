@@ -111,13 +111,14 @@ pflow settings set-env OPENAI_API_KEY "sk-proj-..."
 ```
 
 <Note>
-API keys stored via `pflow settings set-env` are used automatically for workflow inputs and discovery features. Your agent can't set these for security reasons.
+API keys stored via `pflow settings set-env` are used automatically for workflow inputs and discovery features, and are exported into pflow's environment when a run starts (see [`set-env`](/reference/cli/settings#pflow-settings-set-env)). Your agent can't set these for security reasons.
 </Note>
 
-**Precedence order** (highest to lowest):
-1. CLI parameters (`--param key=value`)
-2. Settings file (`~/.pflow/settings.json` → `env`)
-3. System environment variables
+**Precedence order** for a workflow input (highest to lowest):
+1. CLI parameters (`key=value`)
+2. System environment variables
+3. Settings file (`~/.pflow/settings.json` → `env`)
+4. Workflow defaults
 
 ### pflow configuration variables
 

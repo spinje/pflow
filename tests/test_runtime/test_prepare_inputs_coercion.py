@@ -9,6 +9,7 @@ from typing import Any, ClassVar
 
 import pytest
 
+from pflow.core import llm_config
 from pflow.core.diagnostic import Diagnostic
 from pflow.core.exceptions import WorkflowValidationError
 from pflow.registry import Registry
@@ -321,6 +322,17 @@ class TestResolutionOrder:
         _, updates, settings_names = prepare_inputs(self.IR, {}, {"port": "7070"})
         assert updates == {"port": 9090}
         assert settings_names == set()
+
+    def test_a_settings_value_copied_into_the_environment_is_still_a_settings_name(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Startup copies settings.env into ``os.environ`` (``inject_settings_env_vars``); the copy is still a
+        settings value, so it joins the always-redact names like one read from settings directly (#833)."""
+        monkeypatch.setenv("port", "7070")
+        monkeypatch.setattr(llm_config, "_settings_injected_env_vars", {"port"})
+        _, updates, settings_names = prepare_inputs(self.IR, {}, {"port": "7070"})
+        assert updates == {"port": 7070}
+        assert settings_names == {"port"}
 
     def test_supplied_beats_environment(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("port", "9090")
