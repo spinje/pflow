@@ -11,7 +11,13 @@ import click
 from pflow.cli.param_parsing import infer_type, parse_workflow_params
 from pflow.core.stdio_reservation import reserve_stdout
 from pflow.core.workflow.status import WorkflowStatus
-from pflow.execution.formatters.run_outcome import EXIT_CODES, EXIT_REJECTED, format_error_text
+from pflow.execution.formatters.run_outcome import (
+    EXIT_CODES,
+    EXIT_REJECTED,
+    diagnostic_sections,
+    format_error_text,
+    partition_surfaced_diagnostics,
+)
 from pflow.execution.probe import ProbeResult, probe_node
 
 
@@ -35,6 +41,8 @@ def execute_single_node(node_type: str, params: tuple[str, ...], output_format: 
         click.echo(json.dumps(_json_document(probe, execution_params, verbose), indent=2, default=str))
     elif probe.success:
         click.echo(_format_success_text(probe, execution_params, verbose))
+        if probe.warnings:
+            click.echo("\n".join(diagnostic_sections(*partition_surfaced_diagnostics(probe.warnings))), err=True)
     else:
         click.echo(format_error_text(probe.errors, probe.warnings), err=True)
 
@@ -70,27 +78,25 @@ def _json_document(probe: ProbeResult, execution_params: dict[str, Any], verbose
     }
     if not probe.success:
         document["errors"] = [error.to_output_dict() for error in probe.errors]
+    if probe.warnings or not probe.success:
         document["warnings"] = [warning.to_output_dict() for warning in probe.warnings]
     return document
 
 
 def _format_success_text(probe: ProbeResult, execution_params: dict[str, Any], verbose: bool) -> str:
-    from pflow.execution.formatters.node_output_formatter import format_node_output
+    from pflow.execution.formatters.node_output_formatter import format_structure_output
     from pflow.registry import Registry
 
-    formatted = format_node_output(
-        node_type=probe.node_type,
-        action="default",
-        outputs=probe.outputs,
-        shared_store=_shared_store_view(probe, execution_params),
-        execution_time_ms=probe.execution_time_ms,
-        registry=Registry(),
-        format_type="structure",
-        verbose=verbose,
-        output_mode=_load_registry_output_mode(),
+    return format_structure_output(
+        probe.node_type,
+        probe.outputs,
+        _shared_store_view(probe, execution_params),
+        Registry(),
+        probe.execution_time_ms,
+        verbose,
         execution_id=probe.execution_id,
+        output_mode=_load_registry_output_mode(),
     )
-    return str(formatted)
 
 
 def _load_registry_output_mode() -> str:

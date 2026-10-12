@@ -15,7 +15,7 @@ pflow probe <NODE> [PARAMS...] --output-format json
 
 ## Parameters
 
-`name=value` arguments become the node's params; a value's type is inferred (`5` is a number, `true` a boolean, `{"a": 1}` an object). A `${VAR}` in a param is filled from the environment or from `pflow settings set-env` before the node runs — except inside a body (a shell command, a code block), whose `${…}` belongs to that language. A variable set in neither place refuses the probe with the commands that set it. Params are validated the way `pflow run` validates a step: an unknown param or a malformed one is refused before the node runs.
+`name=value` arguments become the node's params; a value's type is inferred (`5` is a number, `true` a boolean, `{"a": 1}` an object). A `${VAR}` in a param is filled from the environment or from `pflow settings set-env` before the node runs — except inside a body (a shell command, a code block), whose `${…}` belongs to that language. A variable set in neither place refuses the probe with the commands that set it. The node runs the way a workflow step does: a file path in a param that takes content (`command`, `code`, `prompt`, `source`, `stdin`, `headers`, `output_schema`) — one starting with `./` or `../`, or one containing `/` and ending in `.md`, `.txt`, `.py`, `.sh`, `.yaml`, `.yml` or `.json` — is replaced by the file's content, and params are validated as `pflow run` validates a step: an unknown or malformed param is refused before the node runs.
 
 ## Failures and exit codes
 

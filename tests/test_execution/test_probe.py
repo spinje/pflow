@@ -4,12 +4,14 @@ Channel rendering is tested at each channel (tests/test_cli/test_probe.py, tests
 what the shared result carries.
 """
 
+import sqlite3
 from pathlib import Path
 
 import pytest
 
 from pflow.core.execution_cache import ExecutionCache
 from pflow.execution.probe import probe_node
+from pflow.runtime.cache import MemoizationCache
 
 
 def test_success_caches_outputs_for_read_fields(tmp_path: Path) -> None:
@@ -42,6 +44,24 @@ def test_cache_keeps_the_callers_params_not_the_expanded_secret(
     assert cached is not None
     assert cached["params"]["content"] == "${PFLOW_PROBE_SECRET_VALUE}"
     assert "s3cr3t-value" not in str(cached)
+
+
+def test_probe_never_writes_the_workflow_memo_cache(mock_llm_client) -> None:
+    """An LLM node memoizes by default; a probe must not leave an entry a later workflow run would reuse."""
+    mock_llm_client.set_response("*", None, "ok")
+    before = _memo_entries()
+
+    probe = probe_node("llm", {"model": "anthropic/claude-sonnet-4-5", "prompt": "hi"})
+
+    assert probe.success, probe.errors
+    assert _memo_entries() == before
+
+
+def _memo_entries() -> list[str]:
+    """Memoized outputs only — the per-node duration history (`__pflow_history__:` keys) is not reused as output."""
+    with sqlite3.connect(MemoizationCache().db_path) as conn:
+        rows = conn.execute("SELECT cache_key FROM cache_entries").fetchall()
+    return [key for (key,) in rows if not key.startswith("__pflow_history__:")]
 
 
 def test_a_node_that_ran_and_failed_is_not_cached() -> None:

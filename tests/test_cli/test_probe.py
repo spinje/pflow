@@ -97,13 +97,15 @@ def test_probe_verbose_json_keeps_progress_off_stdout(runner: click.testing.CliR
     """`-v` progress lines go to stderr so the JSON document on stdout still parses (#658), and the
     `-v` shared_store is the flat view — the params given, then what the node wrote."""
     result = runner.invoke(
-        probe_cmd, ["read-file", f"file_path={text_file}", "--output-format", "json"], obj={"verbose": True}
+        probe_cmd,
+        ["read-file", f"file_path={text_file}", "encoding=utf-8", "--output-format", "json"],
+        obj={"verbose": True},
     )
 
     assert result.exit_code == 0
     output = json.loads(result.stdout)
     assert output["success"] is True
-    assert output["shared_store"]["file_path"] == str(text_file)
+    assert output["shared_store"]["encoding"] == "utf-8"  # a param the node never writes back
     assert output["shared_store"]["content"] == "test content"
     assert "Running node 'read-file'" in result.stderr
     assert "file_path: " in result.stderr
@@ -175,6 +177,60 @@ def test_raised_node_error_renders_structured_diagnostic(runner: click.testing.C
     (error,) = json.loads(as_json.stdout)["errors"]
     assert error["title"] == "Validation Error"
     assert error["context"]["param"] == "file_path"
+
+
+def test_node_that_succeeds_despite_an_error_key_renders_as_success(runner: click.testing.CliRunner) -> None:
+    """`ignore_errors=true` makes a non-zero exit a success that still records `error`: the probe
+    reports the node's own verdict (success, exit 0), never a failure banner on stdout."""
+    result = runner.invoke(probe_cmd, ["shell", "command=exit 3", "ignore_errors=true"])
+
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.startswith("✓ Node executed successfully")
+    assert "failed" not in result.stdout
+
+
+def test_success_still_reports_validation_warnings(runner: click.testing.CliRunner) -> None:
+    """A warning the validator raised reaches the caller on a successful probe — stderr in text, a
+    `warnings` list in JSON — while stdout keeps only the result."""
+    args = ["shell", 'command=printf "%s" "$FLAG"', 'env={"FLAG": true}']
+
+    text = runner.invoke(probe_cmd, args)
+    as_json = runner.invoke(probe_cmd, [*args, "--output-format", "json"])
+
+    assert text.exit_code == 0
+    assert text.stdout.startswith("✓ Node executed successfully")
+    assert "binds as the text True" in text.stderr
+    assert "binds as the text True" not in text.stdout
+    output = json.loads(as_json.stdout)
+    assert output["success"] is True
+    assert "binds as the text True" in output["warnings"][0]["message"]
+
+
+def test_uncachable_outputs_lose_the_id_not_the_result(runner: click.testing.CliRunner) -> None:
+    """The node has already run when its outputs are cached: a cache that cannot be written drops
+    the execution id, and the probe still reports the success."""
+    cache_dir = Path.home() / ".pflow" / "cache" / "registry-run"
+    cache_dir.parent.mkdir(parents=True, exist_ok=True)
+    cache_dir.write_text("not a directory", encoding="utf-8")
+
+    result = runner.invoke(probe_cmd, ["shell", "command=echo hi", "--output-format", "json"])
+
+    assert result.exit_code == 0, result.stderr
+    output = json.loads(result.stdout)
+    assert output["success"] is True
+    assert output["outputs"]["stdout"] == "hi"
+    assert output["execution_id"] is None
+
+
+def test_file_path_in_a_content_param_loads_the_file_as_in_a_workflow(
+    runner: click.testing.CliRunner, text_file: Path
+) -> None:
+    """Probe runs the node the way `pflow run` does: a path in a file-resolvable param (`stdin`,
+    `command`, `prompt`, …) is replaced by the file's content."""
+    result = runner.invoke(probe_cmd, ["shell", "command=cat", f"stdin={text_file}", "--output-format", "json"])
+
+    assert result.exit_code == 0, result.stdout
+    assert json.loads(result.stdout)["outputs"]["stdout"] == "test content"
 
 
 # --- Refused before the node ran: exit 2 (the call is wrong) ---

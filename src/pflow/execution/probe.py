@@ -63,9 +63,11 @@ def probe_node(node_type: str, params: dict[str, Any]) -> ProbeResult:
     except ValueError as missing:
         return _refused(resolved, [replace(d, node_id=resolved) for d in exception_to_diagnostics(missing)])
 
-    workflow_ir = {"nodes": [{"id": resolved, "type": resolved, "params": node_params}], "edges": []}
-    # A probe is for discovery: no node cache, no trace. Runner params stay empty — the user's
-    # params are the node's params, never workflow inputs.
+    # A probe is for discovery: it neither reads nor writes the node memo cache (`cache: False`
+    # stops the write `cache_enabled=False` leaves on) and keeps no trace. Runner params stay
+    # empty — the user's params are the node's params, never workflow inputs.
+    node = {"id": resolved, "type": resolved, "params": node_params, "cache": False}
+    workflow_ir = {"nodes": [node], "edges": []}
     result = WorkflowRunner().run(workflow_ir, {}, RunnerConfig(cache_enabled=False, trace_enabled=False))
     execution_time_ms = int(result.metrics.workflow_nodes.get(resolved, 0)) if result.metrics else 0
     warnings = [d for d in result.diagnostics if d.severity is not Severity.ERROR]
@@ -118,10 +120,9 @@ def _cache_outputs(node_type: str, params: dict[str, Any], outputs: dict[str, An
     The params cached are the caller's, before ``${VAR}`` expansion, so a secret from the
     environment never lands in the cache.
     """
-    cache = ExecutionCache()
-    execution_id = cache.generate_execution_id()
-    try:
-        cache.store(execution_id, node_type, params, outputs)
+    execution_id = ExecutionCache.generate_execution_id()
+    try:  # the node has already run: a cache that cannot be written loses the id, never the result
+        ExecutionCache().store(execution_id, node_type, params, outputs)
     except Exception as error:
         logger.warning("Failed to cache probe execution %s: %s", execution_id, error)
         return None

@@ -493,23 +493,18 @@ class ExecutionService(BaseService):
                 return format_error_text(probe.errors, _mcp_surfaced_diagnostics(probe.warnings))
 
             from pflow.core.settings import SettingsManager
-            from pflow.execution.formatters.node_output_formatter import format_node_output
+            from pflow.execution.formatters.node_output_formatter import format_structure_output
 
-            formatted = format_node_output(
-                node_type=probe.node_type,
-                action="default",
-                outputs=probe.outputs,
-                shared_store=probe.outputs,
-                execution_time_ms=probe.execution_time_ms,
-                registry=Registry(),
-                format_type="structure",
+            return format_structure_output(
+                probe.node_type,
+                probe.outputs,
+                probe.outputs,
+                Registry(),
+                probe.execution_time_ms,
                 verbose=True,
                 execution_id=probe.execution_id,
                 output_mode=SettingsManager().load().registry.output_mode,
             )
-            if not isinstance(formatted, str):
-                raise TypeError(f"Expected str from structure format, got {type(formatted)}")
-            return formatted
         except Exception as e:
             logger.error(f"Failed to run node {node_type}: {e}", exc_info=True)
             return "\n".join(format_diagnostic(d) for d in exception_to_diagnostics(e))
