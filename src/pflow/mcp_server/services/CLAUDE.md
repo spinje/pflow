@@ -18,8 +18,8 @@ singletons holding request state can leak data or race between `to_thread` calls
 
 ## Execution and diagnostic seams
 
-Execute, validate, and plan through `WorkflowRunner`; single-node probes construct
-an IR for the same pipeline. Do not load node classes independently in services.
+Execute, validate, and plan through `WorkflowRunner`; the single-node probe is
+`execution/probe.py::probe_node` (shared with CLI `pflow probe`), a one-node IR through the same pipeline. Do not load node classes independently in services.
 `plan_workflow` uses `format_plan_json` for the CLI dry-run JSON shape.
 
 MCP-specific parameter checks are in
