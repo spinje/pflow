@@ -335,7 +335,7 @@ Every way a run ends — success, failure, a paused gate, a denied gate — prin
 | `gate` | Paused or denied at an approval gate: the gate's `node_id`, `kind` and content (secrets masked) |
 | `resume_command` | The exact next command: `pflow resume <id>` on a resumable failure, the `--approve`/`--choose` answer on a pause |
 
-Values under a sensitive name (`token`, `password`, `authorization`, `cookie`, …) print as `<REDACTED>` at any depth of a diagnostic, in every JSON document — a run's result, a pause, a denial, `--validate-only`, and `--dry-run`. The trace keeps them raw for `pflow resume`; `pflow report` masks them too.
+Values under a sensitive name (`token`, `password`, `authorization`, `cookie`, …) print as `<REDACTED>` at any depth of a diagnostic, in every JSON document — a run's result, a pause, a denial, `--validate-only`, and `--dry-run`. A run's secret values — stored with `pflow settings set-env`, or passed to a sensitive-named input — are replaced with `<REDACTED>` anywhere in the document, `result` included ([secret values](/reference/cli/settings#secret-values)). The trace keeps them raw for `pflow resume`; `pflow report` masks them too.
 
 </Expandable>
 

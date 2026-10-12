@@ -3,7 +3,7 @@
 The interactive single-node counterpart of ``pflow report``: given a workflow, an optional pinned
 ``run_id``, and a structural node ref, resolve THAT node's runtime record off its trace — the realized
 input (post-``${...}`` resolution), the resolved output, cost, tokens, and the error — with blobs
-resolved and secrets redacted.
+resolved and secrets redacted (by name, and by value: the run's ``secret_values``).
 
 Distinct from ``run_tailer.py``: that POLLS the growing file and ships a deliberately-stripped wire (no
 payloads — they may be large/blobbed); this does a single request/response read of ONE event with the
@@ -24,7 +24,7 @@ from typing import Any
 
 from pflow.core.llm_usage import input_token_total
 from pflow.core.node_type_display import node_type_tag
-from pflow.core.security_utils import redact_sensitive
+from pflow.core.security_utils import redact_sensitive, scrub_secret_values, secret_values
 from pflow.core.trace_io import BLOB_SENTINEL, substitute_refs
 from pflow.core.trace_tree import event_cost
 from pflow.ui.run_tailer import discover_live_trace, scan_traces
@@ -48,21 +48,25 @@ def run_node_detail(workflow_key: str, run_id: str | None, ref: dict[str, Any]) 
     trace_path = _resolve_trace(workflow_key, run_id)
     if trace_path is None:
         return None
+    lines = _read_trace_lines(trace_path)
+    if lines is None:
+        return None
     port = ref.get("port")
     if port in ("in", "out"):
-        return _io_detail(trace_path, ref, port)
-    event = _read_matching_event(trace_path, ref)
-    if event is None:
-        return None
-    return _project(event)
+        detail = _io_detail(lines, ref, port)
+    else:
+        event = _matching_event(lines, ref)
+        detail = None if event is None else _project(event)
+    return None if detail is None else scrub_secret_values(detail, _run_secrets(lines))
 
 
 def read_run_inputs(workflow_key: str, run_id: str | None) -> dict[str, str] | None:
     """A past run's recorded inputs as form-ready token strings, for the re-run prefill (Task 175 Phase 5).
 
     Reads the trace's ``meta.inputs`` (the Phase-1 keystone), OMITS any input carrying a secret — a
-    top-level sensitive name OR a nested sensitive key like ``config.api_key`` (a past run's resolved
-    secret never reaches the browser; the form re-resolves it from settings/env) — and renders each
+    top-level sensitive name, a nested sensitive key like ``config.api_key``, or one of the run's secret
+    values (a past run's resolved secret never reaches the browser; the form re-resolves it from
+    settings/env) — and renders each
     remaining value via ``format_param_value`` (the inverse of the input boundary's declared-type
     reading for every type but ``any``: bools→``true``/``false``, list/dict→compact JSON, scalars→str), so
     the tokens drop straight into the form's channel-A controls. ``None`` when no trace/run is found (→ 404); ``{}`` for a run whose trace
@@ -79,6 +83,7 @@ def read_run_inputs(workflow_key: str, run_id: str | None) -> dict[str, str] | N
     inputs = (_line_of_kind(lines, "meta") or {}).get("inputs")
     if not isinstance(inputs, dict):
         return {}
+    secrets = secret_values(inputs)
     tokens: dict[str, str] = {}
     for name, value in inputs.items():
         if not isinstance(name, str) or value is None:
@@ -86,10 +91,10 @@ def read_run_inputs(workflow_key: str, run_id: str | None) -> dict[str, str] | N
             # read as the TEXT "None" — a silent change from the original null. Omitting lets it
             # re-resolve to its default, consistent with the form's blank-omission policy.
             continue
-        if redact_sensitive({name: value}) != {name: value}:
-            # A secret at ANY depth (the top-level name, or a nested key inside an object/list input) →
-            # omit, so it re-resolves from settings/env instead of shipping to the browser. Reuses the one
-            # recursive key-name redactor; a changed value means it contained a sensitive-named key.
+        if scrub_secret_values(redact_sensitive({name: value}), secrets) != {name: value}:
+            # A secret at ANY depth (the top-level name, a nested key inside an object/list input, or a
+            # secret value) → omit, so it re-resolves from settings/env instead of shipping to the
+            # browser. A changed value means one of the two redactors found something.
             continue
         tokens[name] = format_param_value(value)
     return tokens
@@ -146,7 +151,13 @@ def _line_of_kind(lines: list[dict[str, Any]], kind: str) -> dict[str, Any] | No
     return next((line for line in lines if line.get("kind") == kind), None)
 
 
-def _read_matching_event(path: Path, ref: dict[str, Any]) -> dict[str, Any] | None:
+def _run_secrets(lines: list[dict[str, Any]]) -> frozenset[str]:
+    """The run's ``secret_values``, rebuilt from settings + the trace's recorded ``meta.inputs``."""
+    inputs = (_line_of_kind(lines, "meta") or {}).get("inputs")
+    return secret_values(inputs if isinstance(inputs, dict) else {})
+
+
+def _matching_event(lines: list[dict[str, Any]], ref: dict[str, Any]) -> dict[str, Any] | None:
     """The LAST ``event`` line whose ref matches, with blobs resolved — or ``None``.
 
     Track the last matching ``kind == "event"`` line — NOT ``node.start``: the terminal ``event`` is emitted
@@ -154,9 +165,6 @@ def _read_matching_event(path: Path, ref: dict[str, Any]) -> dict[str, Any] | No
     Last-wins also matches the overlay's per-ref semantics (a loop's latest iteration; a dead-end re-flush
     correction). If a ``$pflow_blob`` sentinel survives blob resolution (a missing/corrupt blob line) the
     payload is unresolvable → ``None``, never the raw sentinel."""
-    lines = _read_trace_lines(path)
-    if lines is None:
-        return None
     matched: dict[str, Any] | None = None
     for line in lines:
         if line.get("kind") == "event" and _ref_matches(line, ref):
@@ -169,7 +177,7 @@ def _read_matching_event(path: Path, ref: dict[str, Any]) -> dict[str, Any] | No
     return resolved
 
 
-def _io_detail(path: Path, ref: dict[str, Any], port: str) -> dict[str, Any] | None:
+def _io_detail(lines: list[dict[str, Any]], ref: dict[str, Any], port: str) -> dict[str, Any] | None:
     """Project an IO node's run value (Task 175). Input → ``meta.inputs[name]``; output →
     ``json_output["result"][name]`` — both bare-name-keyed, TOP-LEVEL values.
 
@@ -184,9 +192,6 @@ def _io_detail(path: Path, ref: dict[str, Any], port: str) -> dict[str, Any] | N
         return None
     name = ref.get("node_id")
     if not isinstance(name, str):
-        return None
-    lines = _read_trace_lines(path)
-    if lines is None:
         return None
     if port == "in":
         meta = _line_of_kind(lines, "meta") or {}

@@ -94,14 +94,14 @@ Current settings:
     "filtering_model": null
   },
   "env": {
-    "ANTHROPIC_API_KEY": "sk-***",
-    "log_level": "deb***"
+    "ANTHROPIC_API_KEY": "*** (108 chars)",
+    "log_level": "*** (5 chars)"
   }
 }
 ```
 
 <Note>
-  Every `env` value is masked (first 3 characters + `***`), whatever its name — the same rule as `list-env`. Use `pflow settings list-env --show-values` to see full values.
+  Every `env` value is masked to its length (`*** (N chars)`), whatever its name — the same rule as `list-env`. Use `pflow settings list-env --show-values` to see full values.
 </Note>
 
 ## pflow settings set-env
@@ -134,7 +134,7 @@ pflow settings set-env api_token "..."
 
 ```
 ✓ Set environment variable: OPENAI_API_KEY
-   Value: sk-***
+   Value: *** (56 chars)
 ```
 
 <Warning>
@@ -189,9 +189,9 @@ pflow settings list-env --show-values
 
 ```
 Environment variables:
-  OPENAI_API_KEY: sk-***
-  GITHUB_TOKEN: ghp***
-  LOG_LEVEL: debug
+  OPENAI_API_KEY: *** (56 chars)
+  GITHUB_TOKEN: *** (40 chars)
+  LOG_LEVEL: *** (5 chars)
 ```
 
 <Warning>
@@ -673,7 +673,13 @@ Values under these names are masked as `<REDACTED>` when pflow displays them:
 
 Matching is case-insensitive and by whole word, across `snake_case`, `kebab-case` and `camelCase`: `GITHUB_TOKEN`, `X-API-Key` and `sessionCookie` are masked, while `author` and `tokens` are not.
 
-Masking applies to `pflow report`, the web UI, approval previews and error output. Execution always uses the real value, and declared workflow outputs are returned as-is.
+Masking applies to `pflow report`, the web UI, approval previews and error output. Execution always uses the real value, and declared workflow outputs are not masked by name.
+
+### Secret values
+
+Masking by name misses a secret that travels into free text — shell stderr, an error message, a workflow result. So pflow also replaces every occurrence of a run's **secret values** with `<REDACTED>` in everything it prints: CLI text and JSON output (results included), MCP responses, `pflow report`, the web UI and `-v`.
+
+A run's secret values are every value stored with `pflow settings set-env` and every value passed to a declared input with a sensitive name — strings of 8 characters or more. A value exported only in your shell, or one a step produces mid-run, is not known to be secret and prints as is. The trace file keeps every value raw so `pflow resume` can restore it.
 
 ## File locations
 

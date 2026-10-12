@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Final
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.diagnostic_render import format_diagnostic, head_tail_preview
 from pflow.core.gate import masked_gate_dict
+from pflow.core.security_utils import scrub_secret_values, secret_values
 from pflow.core.templates import TemplateResolver
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.execution_state import build_execution_steps
@@ -63,6 +64,9 @@ class RunOutcome:
     warnings: list[Diagnostic]
     advisories: list[Diagnostic]
     engine_started: bool
+    # The run's secret values (``secret_values``), already scrubbed from everything above — kept so a
+    # printer that renders from the run's store instead (CLI text stdout) scrubs with the same set.
+    secrets: frozenset[str] = frozenset()
 
     @property
     def exit_code(self) -> int:
@@ -86,7 +90,18 @@ def build_run_outcome(
     ``duration_ms``/``metrics``).
     Values whose producer means ``null`` keep it: the ``total_cost_usd`` pricing tri-state, a
     ``?? null`` output, the canonical gate payload's ``question``/``recommendation``/``iteration``.
+    The run's secret values are scrubbed from its DATA before anything is built from it — the store,
+    the diagnostics, a paused gate's request — so truncation and JSON parsing never see a whole
+    secret and no channel that renders the outcome can print one. The document's own fields
+    (statuses, node ids, counts) are never scrubbed: a stored value that happens to equal one of
+    them must not rewrite the contract.
     """
+    secrets = secret_values(getattr(result.trace, "inputs", None) or {})
+    result = replace(
+        result,
+        shared_after=scrub_shared_store(result.shared_after, secrets),
+        diagnostics=[_scrub_diagnostic(diagnostic, secrets) for diagnostic in result.diagnostics],
+    )
     status = _outcome_status(result)
     trace = result.trace
     errors = [] if status is WorkflowStatus.PAUSED else result.errors
@@ -104,7 +119,8 @@ def build_run_outcome(
     if trace is not None and trace.trace_path is not None:
         document["execution_id"] = trace.execution_id
         document["trace_path"] = str(trace.trace_path)
-    outputs = _outputs(result, status, workflow_ir, output_key)
+    # Again after collection: an output is JSON-decoded there, which can restore a secret the store held encoded.
+    outputs = scrub_secret_values(_outputs(result, status, workflow_ir, output_key), secrets)
     if outputs is not None:
         document["result"] = outputs
     if printed_errors:
@@ -122,7 +138,7 @@ def build_run_outcome(
         document["total_cost_usd"] = metrics_summary["total_cost_usd"]
         _mirror_pricing_tri_state(document, metrics_summary)
         document["metrics"] = metrics_summary["metrics"]
-    gate = _gate_payload(result, status)
+    gate = _gate_payload(result, status, secrets)
     execution = _execution_block(workflow_ir, result.shared_after, metrics_summary, gate)
     if execution is not None:
         document["execution"] = execution
@@ -139,6 +155,35 @@ def build_run_outcome(
         warnings=warnings,
         advisories=advisories,
         engine_started=result.engine_started,
+        secrets=secrets,
+    )
+
+
+# The store's bookkeeping of node ids (routing, cache hits): what output selection and the step table
+# match node ids against, never data — scrubbing one that equals a stored value would break the match.
+_NODE_ID_RECORDS = frozenset({"__execution__", "__cache_hits__"})
+
+
+def scrub_shared_store(shared: dict[str, Any], secrets: frozenset[str]) -> dict[str, Any]:
+    """A copy of a run's store scrubbed of ``secrets`` — every value but its node-id records; top-level
+    keys (node ids, input and output names) stay as they are, so lookups still resolve."""
+    if not secrets:
+        return shared
+    return {
+        key: value if key in _NODE_ID_RECORDS else scrub_secret_values(value, secrets) for key, value in shared.items()
+    }
+
+
+def _scrub_diagnostic(diagnostic: Diagnostic, secrets: frozenset[str]) -> Diagnostic:
+    """A copy whose text fields — what ``format_diagnostic`` renders — are scrubbed of ``secrets``."""
+    if not secrets:
+        return diagnostic
+    return replace(
+        diagnostic,
+        message=scrub_secret_values(diagnostic.message, secrets),
+        title=scrub_secret_values(diagnostic.title, secrets),
+        suggestions=scrub_secret_values(diagnostic.suggestions, secrets),
+        context=scrub_secret_values(diagnostic.context, secrets),
     )
 
 
@@ -221,11 +266,15 @@ def _compact_step(step: dict[str, Any]) -> dict[str, Any]:
     return {**step, "batch_error_details": compacted}
 
 
-def _gate_payload(result: ExecutionResult, status: WorkflowStatus) -> dict[str, Any] | None:
+def _gate_payload(result: ExecutionResult, status: WorkflowStatus, secrets: frozenset[str]) -> dict[str, Any] | None:
     """The masked ``GateRequest`` dict of a paused or denied run — one shape for both (``node_id`` inside)."""
     if status is WorkflowStatus.PAUSED and result.trace is not None:  # a durable pause always has its trace
         request = (result.trace.pause_request or {}).get("gate_request")
-        return masked_gate_dict(request) if isinstance(request, dict) else None
+        if not isinstance(request, dict):
+            return None
+        # The request comes from the trace, not the scrubbed store: scrub what it shows, not who it is.
+        identity = {key: request[key] for key in ("node_id", "node_type", "kind") if key in request}
+        return masked_gate_dict({**scrub_secret_values(request, secrets), **identity})
     if status is WorkflowStatus.DENIED:
         for error in result.errors:
             context = error.context or {}
