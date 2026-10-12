@@ -402,44 +402,6 @@ echo hello
 """
 
 
-KEYED_OUTPUT = """\
-# Keyed
-
-A code step keys its result by the token.
-
-## Inputs
-
-### api_token
-
-The token.
-
-- type: string
-
-## Steps
-
-### index
-
-Key by the token.
-
-- type: code
-- inputs: { token: "${api_token}" }
-
-```python code
-token: str
-
-result: dict = {token: "denied"}
-```
-
-## Outputs
-
-### out
-
-The keyed result.
-
-- source: ${index.result}
-"""
-
-
 class TestWhereTheSetIsBuiltAndApplied:
     def test_a_secret_cut_by_truncation_never_leaves_a_fragment(self, tmp_path: Path) -> None:
         """The step table caps a batch error at 200 chars — the secret straddles the cut. The data is
@@ -469,16 +431,6 @@ class TestWhereTheSetIsBuiltAndApplied:
 
         assert result.exit_code == 0, result.stderr
         assert result.stdout.strip() == "hello"
-
-    def test_a_secret_used_as_a_key_is_scrubbed(self, tmp_path: Path) -> None:
-        path = str(_write(tmp_path, KEYED_OUTPUT))
-
-        text = _cli(path, f"api_token={INPUT_SECRET}")
-        as_json = _cli("--output-format", "json", path, f"api_token={INPUT_SECRET}")
-
-        assert text.exit_code == 0, text.stderr
-        _assert_scrubbed(text.stdout)
-        assert json.loads(as_json.stdout)["result"]["out"] == {"<REDACTED>": "denied"}
 
     def test_a_cache_hit_survives_a_settings_value_equal_to_the_step_id(self, tmp_path: Path) -> None:
         SettingsManager().set_env("TARGET_STEP", "generate-text")
