@@ -854,11 +854,15 @@ touch {marker}
 """
 
 
-def _pause_deny_wf(tmp_path: Path) -> tuple[Path, Path, str]:
-    """Write the deny workflow, run it to its pause, and return ``(workflow, marker, token)``."""
+def _pause_deny_wf(tmp_path: Path, *, cached: bool = False, tail: str = "") -> tuple[Path, Path, str]:
+    """Write the deny workflow (``cached``: the gated step memoizes; ``tail``: steps after it), run it to
+    its pause, and return ``(workflow, marker, token)``."""
     marker = tmp_path / "gated-ran"
     wf = tmp_path / "deny_wf.pflow.md"
-    wf.write_text(_DENY_WF.format(marker=marker.as_posix()), encoding="utf-8")
+    text = _DENY_WF.format(marker=marker.as_posix()) + tail
+    if cached:
+        text = text.replace("- approval: required\n", "- approval: required\n- cache: true\n")
+    wf.write_text(text, encoding="utf-8")
     paused = _runner().invoke(cli, [str(wf)])
     assert paused.exit_code == 4, paused.stderr
     match = re.search(r"Resume token: (\S+)", paused.stdout)
@@ -932,17 +936,52 @@ def test_denying_a_step_whose_approval_was_removed_refuses_instead_of_running_it
     assert not marker.exists()
 
 
-def test_denying_a_renamed_paused_step_refuses_before_any_attempt(home, tmp_path):
-    """A paused step renamed since the pause leaves no gate to deny. The refusal comes from the
-    preflight, with or without --force — never a failed attempt from the engine."""
+@pytest.mark.parametrize(
+    ("edits", "problem"),
+    [
+        pytest.param(
+            (("### gated", "### gated2"), ("next: gated", "next: gated2")),
+            "is no longer in the workflow",
+            id="renamed",
+        ),
+        pytest.param(
+            (("next: gated", "next: end"),),
+            "is no longer reachable from the workflow's start step",
+            id="cut-off-from-the-start",
+        ),
+    ],
+)
+def test_denying_a_paused_step_the_walk_cannot_enter_refuses_before_any_attempt(home, tmp_path, edits, problem):
+    """A paused step renamed, or no longer reachable from the start, is one the resumed walk cannot enter
+    to deliver the denial. The refusal comes from the preflight, even with --force — never a failed
+    attempt from the engine claiming the step was removed."""
     wf, marker, token = _pause_deny_wf(tmp_path)
-    text = wf.read_text(encoding="utf-8").replace("### gated", "### gated2").replace("next: gated", "next: gated2")
+    text = wf.read_text(encoding="utf-8")
+    for before, after in edits:
+        text = text.replace(before, after)
     wf.write_text(text, encoding="utf-8")
     result = _runner().invoke(cli, ["resume", token, "--approve", "no", "--force"])
     assert result.exit_code == 2, result.stdout + result.stderr
-    assert "The paused step 'gated' is no longer in the workflow" in result.stdout + result.stderr
+    assert f"The paused step 'gated' {problem}" in result.stdout + result.stderr
     assert len(list((home / ".pflow" / "debug").glob("workflow-trace-*.json"))) == 1  # the paused run only
     assert not marker.exists()
+
+
+def test_denying_a_cached_gated_step_never_continues_past_it(home, tmp_path):
+    """A memo hit returns a step's saved result before its approval gate fires. After another run
+    approved and cached the gated step, a denial of the older pause must still meet the gate — never
+    take the cached result and run the steps after it."""
+    after = tmp_path / "after-ran"
+    tail = f"\n### after\n\nAfter the gate.\n\n- type: shell\n\n```shell command\ntouch {after.as_posix()}\n```\n"
+    wf, _marker, token = _pause_deny_wf(tmp_path, cached=True, tail=tail)
+    approved = _runner().invoke(cli, [str(wf), "--auto-approve", "gated"])  # caches `gated`
+    assert approved.exit_code == 0, approved.stderr
+    after.unlink()
+
+    denied = _runner().invoke(cli, ["resume", token, "--approve", "no"])
+    assert denied.exit_code == 3, denied.stdout + denied.stderr
+    assert "Denied at gate 'gated'" in denied.stderr
+    assert not after.exists()
 
 
 # --- Disambiguation (existence precedence, §E step 2) ------------------------

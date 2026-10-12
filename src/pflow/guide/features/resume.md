@@ -55,7 +55,7 @@ Behavior worth knowing:
 - **An answer covers one gate, once.** `--approve yes` approves the paused gate only — it is not a standing approval for that step. A paused **loop** step runs the paused iteration on the answer; its next iteration is a new action that pauses again with a new token (the pause output names it: `Loop iteration 2 of up to 3`). Pass `--auto-approve <step>` to approve every remaining iteration at once — the pause output prints that command, and the browser panel's Approve all remaining sends it.
 - **Resuming without an answer flag refuses** and shows the pending question with the exact command; `--approve`/`--choose` on a run that is not paused refuses too.
 - The **edited-workflow refusal** and `--force` (below) apply to paused resumes the same as failed ones, with one addition: editing the paused approval step after approving it refuses — the approval covered the version the human saw. Input overrides (`KEY=VALUE`) work the same way.
-- **A denial needs neither.** `--approve no` runs nothing, so no edit refuses it and it never needs `--force`. It refuses only when the paused step was renamed, removed, or lost its `approval: required` — there is no gate left to deny, and resuming would run the step — and `--force` does not override that.
+- **A denial needs neither.** `--approve no` runs nothing, so the edited-workflow check never refuses it and it never needs `--force` (the workflow must still be valid, as for any run). What it does need is the paused gate: if that step was renamed, removed, no longer reachable from the start, or lost its `approval: required`, the denial refuses — there is no gate left to deny, and resuming could run the step — and `--force` does not override that.
 
 ## Overriding inputs
 

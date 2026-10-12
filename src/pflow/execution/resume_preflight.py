@@ -167,31 +167,30 @@ def _check_denial_reaches_gate(resolved: ResolvedWorkflow, source: ResumeSource)
 
     A denial re-enters the walk at the paused step, whose approval gate fires before anything runs
     and records the "no"; edits elsewhere cannot make that wrong, so none are checked. What it needs
-    is the gate itself: a step renamed or removed since the pause has none to deny, and a step whose
-    ``approval: required`` was removed would RUN on the "no". ``--force`` is consent to re-running
-    steps, which a denial never gives.
+    is the gate itself: a step renamed or removed since the pause has none to deny, one nothing leads
+    to from the start step is one the engine cannot enter, and a step whose ``approval: required``
+    was removed would RUN on the "no". ``--force`` is consent to re-running steps, which a denial
+    never gives. (The CLI also turns the cache off for a denial: a memo hit skips the gate.)
     """
-    step = source.paused_node_id
-    node = _ir_node(resolved.ir, step)
-    if node is not None and node.get("approval") is not None:
-        return
-    if node is None:
-        message = (
-            f"The paused step '{step}' is no longer in the workflow — it was renamed or removed since the run "
-            "paused, so there is no approval gate left to deny."
-        )
+    from pflow.core.workflow_id import step_identity
+
+    step = str(source.paused_node_id)
+    current = step_identity(resolved.ir)
+    if step not in current["steps"]:
+        problem = "is no longer in the workflow — it was renamed or removed since the run paused"
+    elif step not in _reachable(current["steps"], [current["start"]] if current["start"] else []):
+        problem = "is no longer reachable from the workflow's start step, so resume cannot enter it"
+    elif (_ir_node(resolved.ir, step) or {}).get("approval") is None:
+        problem = "no longer has `approval: required`, so resuming would run it instead of recording the denial"
     else:
-        message = (
-            f"The paused step '{step}' no longer has `approval: required`, so resuming would run it instead "
-            "of recording the denial."
-        )
+        return
     raise ResumeNotResumableError(
-        message,
+        f"The paused step '{step}' {problem}.",
         execution_id=source.execution_id,
         trace_path=str(source.path),
         node_id=step,
         suggestions=[
-            f"Restore the step '{step}' with `approval: required` and deny again.",
+            f"Restore '{step}' as it was when the run paused — reachable, with `approval: required` — and deny again.",
             "Or leave the paused run unanswered — nothing runs until it is resumed.",
         ],
     )

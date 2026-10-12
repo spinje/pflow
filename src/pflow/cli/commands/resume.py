@@ -367,7 +367,9 @@ def resume_run(
             output_format=output_format,
             print_flag=print_flag,
             no_trace=no_trace,
-            cache=cache,
+            # A memo hit returns the step's saved result before its approval gate fires, so a denial
+            # would be skipped and the walk would continue past the step — a denial reads no cache.
+            cache=cache and not (approval_answer is not None and not approval_answer[1]),
             auto_approve=auto_approve,
             approval_answer=approval_answer,
             dry_run=dry_run,

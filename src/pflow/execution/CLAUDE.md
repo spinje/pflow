@@ -70,8 +70,9 @@ pause have different result statuses; a usable token also requires persistence.
 `preflight_resume` owns load/staleness/entry checks and returns a side-effect
 refusal for the caller to enforce. Which edits refuse is owned by
 `_check_workflow_identity`'s docstring; a denial is checked by
-`_check_denial_reaches_gate` instead (only that the paused gate still exists;
-`--force`, being re-run consent, waives nothing there). The verdict skips a failed entry only on
+`_check_denial_reaches_gate` instead (only that the walk still meets the paused
+gate; `--force`, being re-run consent, waives nothing there), and the CLI runs a
+denial with the cache off (a memo hit skips the gate). The verdict skips a failed entry only on
 proof it never started on any visit the resume re-runs — from the entry's re-run
 point (the seed slice's own cut, `_resumes_from`) every top-level line of the
 entry is a failed event with no `node.start`
