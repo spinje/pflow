@@ -930,7 +930,7 @@ Here's how to set it up:
 The workflow will automatically pick it up when you run it."
 ```
 
-**Critical**: ALL credentials must be declared as workflow inputs (they are NOT auto-available):
+**Critical**: ALL credentials must be declared as workflow inputs — a `${...}` template reads a stored credential only through a declared input of the same name:
 ```markdown
 ### api_token
 

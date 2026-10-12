@@ -215,8 +215,12 @@ def is_settings_injected(name: str) -> bool:
 def inject_settings_env_vars() -> None:
     """Inject env vars from pflow settings into os.environ.
 
-    This allows LiteLLM (and other tools) to find API keys stored in
-    pflow settings via the standard env-var resolution path. Only injects
+    Registered providers don't need this: ``resolve_provider_api_key`` reads
+    settings itself and the adapter passes the key explicitly. The copy is
+    what lets everything that reads ``os.environ`` find a settings-stored
+    value — LiteLLM for delegated providers (openrouter, groq, ...), agent
+    ``use_api_key`` runs, the curated-provider status column — and shell,
+    code and agent steps inherit it like any exported variable. Only injects
     if the key isn't already set in os.environ (user's actual environment
     takes priority).
 

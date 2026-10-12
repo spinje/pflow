@@ -315,9 +315,7 @@ def prepare_inputs(
             continue
         if input_name not in provided_params or value is not supplied:
             updates[input_name] = value
-        # A settings value copied into the environment stays out of this set, as before (follow-up: the trace's
-        # always-redact set misses it — Task 120 progress log).
-        if source == "settings" and not is_settings_injected(input_name):
+        if source == "settings":
             settings_names.add(input_name)
 
     # Reject undeclared extras (GH #288, symmetric with the sub-workflow check in
