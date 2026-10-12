@@ -76,16 +76,18 @@ def preflight_resume(
 ) -> ResumePreflight:
     """Everything a resume refuses on, in CLI order, with zero click.
 
-    ``load_resume_source`` ladder → workflow-identity gate → between-nodes entry resolution
-    (``entry_node_id is None``) → side-effect verdict (constructed, not raised). Raises
-    ``ResumeSourceError`` subclasses / ``ResumeStaleWorkflowError`` / ``ResumeNotResumableError``
-    exactly as the CLI does today.
+    ``load_resume_source`` ladder → (a denial: its gate-still-there check →) workflow-identity gate →
+    between-nodes entry resolution (``entry_node_id is None``) → side-effect verdict (constructed, not
+    raised). Raises ``ResumeSourceError`` subclasses / ``ResumeStaleWorkflowError`` /
+    ``ResumeNotResumableError`` exactly as the CLI does today.
     """
     source, resolved = _load_source_and_workflow(target, gate_answer=gate_answer)
     # The identity gate applies to --dry-run too (preview mirrors what a real
     # resume would do), but the side-effect confirmation does NOT: a dry-run
     # never runs K, so nothing can fire.
     denying = gate_answer is not None and gate_answer.get("approve") is False
+    if denying:
+        _check_denial_reaches_gate(resolved, source)
     _check_workflow_identity(resolved, source, force=force, denying=denying)
     # A between-nodes source — a killed-between-nodes incomplete run (Decision 7)
     # or a paused escalation (Task 171) — has no entry yet: resolve the
@@ -158,6 +160,40 @@ def _load_source_and_workflow(
 
     resolved = resolve_workflow(target)
     return load_resume_source(workflow_path=workflow_path_id(resolved), gate_answer=gate_answer), resolved
+
+
+def _check_denial_reaches_gate(resolved: ResolvedWorkflow, source: ResumeSource) -> None:
+    """Refuse a denial the resumed walk would not deliver to the paused step's gate — even with --force.
+
+    A denial re-enters the walk at the paused step, whose approval gate records the "no" before the
+    step runs. A step renamed or removed since the pause has no gate, one nothing leads to from the
+    start step cannot be entered, and a step whose ``approval: required`` was removed would RUN on the
+    "no". ``--force`` is consent to re-running steps, which a denial never gives, so it waives none of
+    these. (The CLI also turns the cache off for a denial: a memo hit skips the gate.)
+    """
+    from pflow.core.workflow_id import step_identity
+
+    step = str(source.paused_node_id)
+    current = step_identity(resolved.ir)
+    node = _ir_node(resolved.ir, step)
+    if node is None:
+        problem = "is no longer in the workflow — it was renamed or removed since the run paused"
+    elif step not in _reachable(current["steps"], [current["start"]] if current["start"] else []):
+        problem = "is no longer reachable from the workflow's start step, so resume cannot enter it"
+    elif node.get("approval") is None:
+        problem = "no longer has `approval: required`, so resuming would run it instead of recording the denial"
+    else:
+        return
+    raise ResumeNotResumableError(
+        f"The paused step '{step}' {problem}.",
+        execution_id=source.execution_id,
+        trace_path=str(source.path),
+        node_id=step,
+        suggestions=[
+            f"Restore '{step}' as it was when the run paused — reachable, with `approval: required` — and deny again.",
+            "Or leave the paused run unanswered — nothing runs until it is resumed.",
+        ],
+    )
 
 
 def _check_workflow_identity(
@@ -308,13 +344,15 @@ def _routes(next_steps: Any) -> list[tuple[str, str]]:
     ]
 
 
+def _ir_node(ir: dict[str, Any], node_id: str | None) -> dict[str, Any] | None:
+    """The current IR's top-level step ``node_id``, or ``None`` when the workflow has no such step."""
+    return next((node for node in ir.get("nodes", []) if node.get("id") == node_id), None)
+
+
 def _node_registry_type(ir: dict[str, Any], node_id: str | None) -> str | None:
     """The IR REGISTRY type (``"llm"``/``"shell"``/...) of K — never a trace event's class name."""
-    for node in ir.get("nodes", []):
-        if node.get("id") == node_id:
-            node_type = node.get("type")
-            return node_type if isinstance(node_type, str) else None
-    return None
+    node_type = (_ir_node(ir, node_id) or {}).get("type")
+    return node_type if isinstance(node_type, str) else None
 
 
 def _node_has_loop(ir: dict[str, Any], node_id: str | None) -> bool:
@@ -327,10 +365,7 @@ def _node_has_loop(ir: dict[str, Any], node_id: str | None) -> bool:
     positioned loop step's continuation is the engine's re-entry decision
     (``WorkflowEngine(resume_after=)``).
     """
-    for node in ir.get("nodes", []):
-        if node.get("id") == node_id:
-            return node.get("loop") is not None
-    return False
+    return (_ir_node(ir, node_id) or {}).get("loop") is not None
 
 
 def _single_default_successor(ir: dict[str, Any], node_id: str) -> str | None:

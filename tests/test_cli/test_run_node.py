@@ -95,7 +95,7 @@ def test_pinned_resolves_run_id_and_projects(tmp_path, monkeypatch) -> None:
 
 def test_returns_none_for_a_trace_corrupt_after_its_meta_line(tmp_path, monkeypatch) -> None:
     # PR #543: a trace with a valid (discoverable) meta line but invalid UTF-8 bytes later must degrade to
-    # None (→ 404), not crash the handler — `_read_matching_event`'s whole-file `read_text` would otherwise
+    # None (→ 404), not crash the handler — `_read_trace_lines`'s whole-file `read_text` would otherwise
     # raise UnicodeDecodeError (⊄ OSError). (A fully-non-UTF-8 file is skipped earlier, at discovery.)
     debug = _debug(tmp_path, monkeypatch)
     wf = str(tmp_path / "wf.pflow.md")
@@ -452,6 +452,22 @@ def test_io_input_projects_meta_inputs_value_in_valid_shape(tmp_path, monkeypatc
     assert detail["input"] == {"name": "World"}  # keyed by the input name; value RAW (not stringified)
     assert detail["output"] is None
     assert detail["duration_ms"] is None and detail["tokens"] is None  # an IO node has no execution metrics
+
+
+def test_a_settings_stored_value_is_scrubbed_from_the_panel_and_the_prefill(tmp_path, monkeypatch) -> None:
+    """#801: a value stored in settings never reaches the browser, whatever name carried it — the panel
+    shows it scrubbed, the re-run prefill omits the input (it re-resolves from settings instead)."""
+    from pflow.core.settings import SettingsManager
+
+    SettingsManager().set_env("DEPLOY_TARGET", "prod-cluster-0042")
+    debug = _debug(tmp_path, monkeypatch)
+    wf = str(tmp_path / "wf.pflow.md")
+    _write_io_trace(debug, wf, "20260101-000000-000010", inputs={"target": "prod-cluster-0042", "name": "World"})
+
+    detail = run_node_detail(wf, "run-1", {"node_id": "target", "ancestor_path": [], "port": "in"})
+
+    assert detail is not None and detail["input"] == {"target": "<REDACTED>"}
+    assert read_run_inputs(wf, "run-1") == {"name": "World"}
 
 
 def test_io_input_secret_named_is_redacted(tmp_path, monkeypatch) -> None:

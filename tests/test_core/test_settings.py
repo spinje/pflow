@@ -123,9 +123,7 @@ class TestEnvManagement:
 
         env_vars = settings_manager.list_env(mask_values=True)
 
-        assert env_vars["short"] == "***"  # ≤3 chars
-        assert env_vars["medium"] == "abc***"  # First 3 + ***
-        assert env_vars["long_key"] == "r8_***"  # First 3 + ***
+        assert env_vars == {"short": "*** (2 chars)", "medium": "*** (5 chars)", "long_key": "*** (12 chars)"}
 
     def test_list_env_unmasked(self, settings_manager: SettingsManager) -> None:
         """Test listing environment variables without masking."""
@@ -165,44 +163,13 @@ class TestLLMDefaults:
 
 
 class TestMaskValue:
-    """Test the _mask_value static method."""
+    """``_mask_value`` shows a value's length only — never a prefix, which narrows a guess (#801 F26)."""
 
-    def test_mask_value_empty_string(self) -> None:
-        """Test masking an empty string."""
-        result = SettingsManager._mask_value("")
-        assert result == "***"
-
-    def test_mask_value_one_char(self) -> None:
-        """Test masking a single character."""
-        result = SettingsManager._mask_value("a")
-        assert result == "***"
-
-    def test_mask_value_two_chars(self) -> None:
-        """Test masking two characters."""
-        result = SettingsManager._mask_value("ab")
-        assert result == "***"
-
-    def test_mask_value_three_chars(self) -> None:
-        """Test masking three characters."""
-        result = SettingsManager._mask_value("abc")
-        assert result == "***"
-
-    def test_mask_value_four_chars(self) -> None:
-        """Test masking four characters."""
-        result = SettingsManager._mask_value("abcd")
-        assert result == "abc***"
-
-    def test_mask_value_long_string(self) -> None:
-        """Test masking a long string."""
-        result = SettingsManager._mask_value("r8_abc123xyz")
-        assert result == "r8_***"
-
-    def test_mask_value_unicode(self) -> None:
-        """Test masking unicode characters."""
-        result = SettingsManager._mask_value("emoji🎉test")
-        # Should show first 3 characters (including emoji)
-        assert result.endswith("***")
-        assert len(result) >= 6  # At least "xxx***"
+    def test_masks_to_the_length_whatever_the_value(self) -> None:
+        assert SettingsManager._mask_value("") == "*** (0 chars)"
+        assert SettingsManager._mask_value("ab") == "*** (2 chars)"
+        assert SettingsManager._mask_value("r8_abc123xyz") == "*** (12 chars)"
+        assert SettingsManager._mask_value("emoji🎉test") == "*** (10 chars)"
 
 
 class TestEnvIntegrationWithExistingSettings:
