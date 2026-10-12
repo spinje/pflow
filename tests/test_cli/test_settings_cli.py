@@ -45,7 +45,7 @@ class TestSetEnvCommand:
 
         assert result.exit_code == 0
         assert "✓ Set environment variable: test_key" in result.output
-        assert "Value: tes***" in result.output
+        assert "Value: *** (10 chars)" in result.output
 
         # Verify it was actually saved
         manager = SettingsManager(settings_path=isolated_settings)
@@ -61,7 +61,7 @@ class TestSetEnvCommand:
         result2 = runner.invoke(settings, ["set-env", "api_key", "new_value"])
         assert result2.exit_code == 0
         assert "✓ Set environment variable: api_key" in result2.output
-        assert "Value: new***" in result2.output
+        assert "Value: *** (9 chars)" in result2.output
 
         # Verify the new value
         manager = SettingsManager(settings_path=isolated_settings)
@@ -73,7 +73,7 @@ class TestSetEnvCommand:
 
         assert result.exit_code == 0
         assert "✓ Set environment variable: empty_key" in result.output
-        assert "Value: ***" in result.output
+        assert "Value: *** (0 chars)" in result.output
 
         # Verify empty value was saved
         manager = SettingsManager(settings_path=isolated_settings)
@@ -108,7 +108,8 @@ class TestSetEnvCommand:
         result = runner.invoke(settings, ["set-env", "api_key", "r8_abc123xyz"])
 
         assert result.exit_code == 0
-        assert "Value: r8_***" in result.output
+        assert "Value: *** (12 chars)" in result.output
+        assert "r8_" not in result.output  # no prefix: it narrows a guess (#801 F26)
         # Should NOT show full value
         assert "r8_abc123xyz" not in result.output
 
@@ -212,7 +213,7 @@ class TestListEnvCommand:
 
         assert result.exit_code == 0
         assert "Environment variables:" in result.output
-        assert "api_key: sec***" in result.output
+        assert "api_key: *** (12 chars)" in result.output
 
     def test_list_env_multiple_variables(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test listing with multiple environment variables."""
@@ -224,9 +225,9 @@ class TestListEnvCommand:
 
         assert result.exit_code == 0
         assert "Environment variables:" in result.output
-        assert "key1: val***" in result.output
-        assert "key2: val***" in result.output
-        assert "key3: val***" in result.output
+        assert "key1: *** (6 chars)" in result.output
+        assert "key2: *** (6 chars)" in result.output
+        assert "key3: *** (6 chars)" in result.output
 
     def test_list_env_default_masked(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test that values are masked by default."""
@@ -235,7 +236,7 @@ class TestListEnvCommand:
         result = runner.invoke(settings, ["list-env"])
 
         assert result.exit_code == 0
-        assert "r8_***" in result.output
+        assert "api_key: *** (12 chars)" in result.output
         # Should NOT show full value
         assert "r8_abc123xyz" not in result.output
 
@@ -248,7 +249,7 @@ class TestListEnvCommand:
         assert result.exit_code == 0
         assert "r8_abc123xyz" in result.output
         # Should NOT show masked value
-        assert "r8_***" not in result.output
+        assert "*** (12 chars)" not in result.output
 
     def test_list_env_warning_when_unmasked(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test warning is displayed when showing unmasked values."""
@@ -282,16 +283,17 @@ class TestListEnvCommand:
         result = runner.invoke(settings, ["list-env"])
 
         assert result.exit_code == 0
-        assert "short: ***" in result.output
+        assert "short: *** (2 chars)" in result.output
 
     def test_list_env_long_values(self, runner: CliRunner, isolated_settings: Path) -> None:
-        """Test that long values show first 3 chars + ***."""
+        """Test that long values show their length only — no prefix."""
         runner.invoke(settings, ["set-env", "long", "abcdefghij"])
 
         result = runner.invoke(settings, ["list-env"])
 
         assert result.exit_code == 0
-        assert "long: abc***" in result.output
+        assert "long: *** (10 chars)" in result.output
+        assert "abc" not in result.output
 
     def test_list_env_exit_code(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test that list-env returns exit code 0."""
@@ -318,9 +320,9 @@ class TestShowCommand:
         assert "tok123456" not in result.output
 
         # Assert: Masked values ARE in output
-        assert "sec***" in result.output
-        assert "pas***" in result.output
-        assert "tok***" in result.output
+        assert '"api_key": "*** (12 chars)"' in result.output
+        assert '"password": "*** (10 chars)"' in result.output
+        assert '"token": "*** (9 chars)"' in result.output
 
     def test_show_masks_every_env_value_regardless_of_name(self, runner: CliRunner, isolated_settings: Path) -> None:
         """settings.env is the credential store: show masks every value, like list-env (#696).
@@ -340,9 +342,9 @@ class TestShowCommand:
         assert "FAKEVALUE-STRIPE" not in result.output
         assert '"debug"' not in result.output
         # Presence: every key is listed with the same mask list-env uses, and other sections are untouched
-        assert '"FAL_KEY": "FAK***"' in result.output
-        assert '"STRIPE_KEY": "FAK***"' in result.output
-        assert '"log_level": "deb***"' in result.output
+        assert '"FAL_KEY": "*** (23 chars)"' in result.output
+        assert '"STRIPE_KEY": "*** (21 chars)"' in result.output
+        assert '"log_level": "*** (5 chars)"' in result.output
         assert '"default_model": "openai/gpt-5.2"' in result.output
 
     def test_show_with_empty_env(self, runner: CliRunner, isolated_settings: Path) -> None:
@@ -362,8 +364,8 @@ class TestShowCommand:
         result = runner.invoke(settings, ["show"])
 
         # Assert: Short values fully masked
-        assert '"api_key": "***"' in result.output
-        assert '"token": "***"' in result.output
+        assert '"api_key": "*** (2 chars)"' in result.output
+        assert '"token": "*** (1 chars)"' in result.output
 
         # Assert: Original values not visible
         assert '"ab"' not in result.output
@@ -464,9 +466,9 @@ class TestShowCommand:
         json_output = output[json_start:json_end]
         parsed = json.loads(json_output)
 
-        # Assert: every env value masked (first 3 chars + ***)
-        assert parsed["env"]["api_key"] == "你好1***"
-        assert parsed["env"]["config"] == "🌍te***"
+        # Assert: every env value masked to its length only
+        assert parsed["env"]["api_key"] == "*** (5 chars)"
+        assert parsed["env"]["config"] == "*** (5 chars)"
 
 
 # ============================================================================

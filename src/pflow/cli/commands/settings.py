@@ -45,9 +45,12 @@ def settings() -> None:
       pflow settings llm providers                 # Full list of LLM providers and their env vars
       pflow settings llm models                    # Models you can use with your keys
     \b
-    A stored value fills the declared workflow input of the same name.
+    A stored value fills the declared workflow input of the same name; a ${...}
+    template reads it only through that input.
     Precedence: CLI params > shell env > settings env > workflow defaults.
-    Credentials must still be declared as inputs — they are not injected implicitly.
+    Stored values are also exported into pflow's environment when a run
+    starts (never over a variable your shell exports), so shell, code and
+    agent steps see them like any exported variable.
     """
     pass
 
@@ -318,7 +321,7 @@ def unset_env(key: str) -> None:
 def list_env(show_values: bool) -> None:
     """List all environment variables.
 
-    By default, values are masked showing only the first 3 characters.
+    By default, each value is masked to its length (`*** (N chars)`).
     Use --show-values to display full values (use with caution).
 
     Example:

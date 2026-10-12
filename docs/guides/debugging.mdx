@@ -61,7 +61,7 @@ The report includes:
 - **Batch items** — per-item files showing individual prompts and responses
 - **Sub-workflows** — nested directories mirroring the workflow structure
 
-Values under sensitive names (`api_key`, `token`, `password`, `Authorization`, `Cookie`, …) show as `<REDACTED>` in the report. The trace keeps them raw so resume can restore them. A secret inside free text, such as a command or a prompt, is not detected.
+Values under sensitive names (`api_key`, `token`, `password`, `Authorization`, `Cookie`, …) show as `<REDACTED>` in the report, and so does a run's secret value wherever it appears — in a command, stderr or a response (see [secret values](/reference/cli/settings#secret-values)). The trace keeps them raw so resume can restore them. Any other secret inside free text, such as a key exported only in your shell, is not detected.
 
 Reports are ephemeral — the default location is overwritten each run. The trace files are the durable history. You can regenerate a report from any previous run:
 

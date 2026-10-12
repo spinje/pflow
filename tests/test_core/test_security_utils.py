@@ -14,7 +14,10 @@ from pflow.core.security_utils import (
     mask_sensitive_value,
     redact_sensitive,
     sanitize_parameters,
+    scrub_secret_values,
+    secret_values,
 )
+from pflow.core.settings import SettingsManager
 from pflow.core.trace_report import generate_report
 from tests.shared.trace_jsonl import write_trace_jsonl
 
@@ -176,3 +179,55 @@ def test_report_masks_cookie_headers_of_an_http_step(tmp_path: Path) -> None:
     assert '"Set-Cookie": "<REDACTED>"' in step
     assert '"Accept": "application/json"' in step
     assert '"X-Request-Id": "req-123"' in step
+
+
+class TestSecretValues:
+    """The run's secret-value set: settings-stored values + what the name rule hides in its inputs."""
+
+    def test_settings_values_and_sensitive_inputs_at_any_depth(self) -> None:
+        SettingsManager().set_env("PLAIN_NAMED", "from-settings-1")
+        inputs = {
+            "api_token": "input-token-1",
+            "config": {"nested": {"client_secret": "nested-secret-1"}, "region": "eu-west-1x"},
+            "credentials": ["list-secret-1", {"note": "list-secret-2"}],
+            "name": "neutral-value-1",
+        }
+
+        assert secret_values(inputs) == {
+            "from-settings-1",
+            "input-token-1",
+            "nested-secret-1",
+            "list-secret-1",
+            "list-secret-2",
+        }
+
+    def test_short_templated_and_non_string_values_are_skipped(self) -> None:
+        SettingsManager().set_env("SHORT", "1234567")
+        inputs = {"token_limit": "5", "auth": "${upstream.value}-padded", "api_key": 123456789, "pwd": None}
+
+        assert secret_values(inputs) == frozenset()
+
+    def test_an_auth_scheme_value_adds_its_bare_credential(self) -> None:
+        assert secret_values({"authorization": "Bearer abcdefgh123"}) == {"Bearer abcdefgh123", "abcdefgh123"}
+
+
+class TestScrubSecretValues:
+    def test_replaces_every_occurrence_at_any_depth_without_mutating(self) -> None:
+        raw = {"message": "denied XYZ-secret-1 (XYZ-secret-1)", "items": [("XYZ-secret-1", 3)], "XYZ-secret-1": 1}
+
+        out = scrub_secret_values(raw, frozenset({"XYZ-secret-1"}))
+
+        # Keys are structure — consumers look fields up by key after the scrub — so they stay.
+        assert out == {"message": "denied <REDACTED> (<REDACTED>)", "items": [("<REDACTED>", 3)], "XYZ-secret-1": 1}
+        assert raw["message"] == "denied XYZ-secret-1 (XYZ-secret-1)"
+
+    def test_a_secret_containing_another_is_replaced_whole(self) -> None:
+        out = scrub_secret_values("key=abcdefgh-ijklmnop", frozenset({"abcdefgh", "abcdefgh-ijklmnop"}))
+
+        assert out == "key=<REDACTED>"
+
+    def test_sets_are_descended_too(self) -> None:
+        """A code step may return a ``set``; printers stringify it, so its members are scrubbed first."""
+        out = scrub_secret_values({"result": {"XYZ-secret-1", "plain"}}, frozenset({"XYZ-secret-1"}))
+
+        assert out == {"result": {"<REDACTED>", "plain"}}
