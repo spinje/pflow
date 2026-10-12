@@ -156,13 +156,18 @@ def build_run_outcome(
     )
 
 
+# The store's bookkeeping of node ids (routing, cache hits): what output selection and the step table
+# match node ids against, never data — scrubbing one that equals a stored value would break the match.
+_NODE_ID_RECORDS = frozenset({"__execution__", "__cache_hits__"})
+
+
 def scrub_shared_store(shared: dict[str, Any], secrets: frozenset[str]) -> dict[str, Any]:
-    """A copy of a run's store scrubbed of ``secrets`` — all but ``__execution__``, the run's routing
-    record (node ids an output selector matches on, never data)."""
+    """A copy of a run's store scrubbed of ``secrets`` — every value but its node-id records; top-level
+    keys (node ids, input and output names) stay as they are, so lookups still resolve."""
     if not secrets:
         return shared
     return {
-        key: value if key == "__execution__" else scrub_secret_values(value, secrets) for key, value in shared.items()
+        key: value if key in _NODE_ID_RECORDS else scrub_secret_values(value, secrets) for key, value in shared.items()
     }
 
 

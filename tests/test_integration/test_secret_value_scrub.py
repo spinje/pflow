@@ -16,7 +16,11 @@ import pytest
 from click.testing import CliRunner, Result
 
 from pflow.cli.main import main
+from pflow.core.markdown_parser import parse_markdown
 from pflow.core.settings import SettingsManager
+from pflow.execution.formatters.run_outcome import build_run_outcome
+from pflow.execution.result import RunnerConfig
+from pflow.execution.runner import WorkflowRunner
 from pflow.mcp_server.services.execution_service import ExecutionService
 from pflow.ui.run_node import run_node_detail
 
@@ -398,6 +402,44 @@ echo hello
 """
 
 
+KEYED_OUTPUT = """\
+# Keyed
+
+A code step keys its result by the token.
+
+## Inputs
+
+### api_token
+
+The token.
+
+- type: string
+
+## Steps
+
+### index
+
+Key by the token.
+
+- type: code
+- inputs: { token: "${api_token}" }
+
+```python code
+token: str
+
+result: dict = {token: "denied"}
+```
+
+## Outputs
+
+### out
+
+The keyed result.
+
+- source: ${index.result}
+"""
+
+
 class TestWhereTheSetIsBuiltAndApplied:
     def test_a_secret_cut_by_truncation_never_leaves_a_fragment(self, tmp_path: Path) -> None:
         """The step table caps a batch error at 200 chars — the secret straddles the cut. The data is
@@ -427,3 +469,24 @@ class TestWhereTheSetIsBuiltAndApplied:
 
         assert result.exit_code == 0, result.stderr
         assert result.stdout.strip() == "hello"
+
+    def test_a_secret_used_as_a_key_is_scrubbed(self, tmp_path: Path) -> None:
+        path = str(_write(tmp_path, KEYED_OUTPUT))
+
+        text = _cli(path, f"api_token={INPUT_SECRET}")
+        as_json = _cli("--output-format", "json", path, f"api_token={INPUT_SECRET}")
+
+        assert text.exit_code == 0, text.stderr
+        _assert_scrubbed(text.stdout)
+        assert json.loads(as_json.stdout)["result"]["out"] == {"<REDACTED>": "denied"}
+
+    def test_a_cache_hit_survives_a_settings_value_equal_to_the_step_id(self, tmp_path: Path) -> None:
+        SettingsManager().set_env("TARGET_STEP", "generate-text")
+        path = _write(tmp_path, ONLY_TARGET.replace("- type: shell", "- type: shell\n- cache: true"))
+        assert WorkflowRunner().run(str(path), {}, RunnerConfig()).success  # warms the memo cache
+        result = WorkflowRunner().run(str(path), {}, RunnerConfig())
+        assert result.shared_after["__cache_hits__"] == ["generate-text"]
+
+        outcome = build_run_outcome(result, parse_markdown(path.read_text(encoding="utf-8")).ir, workflow_metadata=None)
+
+        assert outcome.document["execution"]["steps"][0]["cached"] is True

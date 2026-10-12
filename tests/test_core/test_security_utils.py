@@ -217,7 +217,7 @@ class TestScrubSecretValues:
 
         out = scrub_secret_values(raw, frozenset({"XYZ-secret-1"}))
 
-        assert out == {"message": "denied <REDACTED> (<REDACTED>)", "items": [("<REDACTED>", 3)], "XYZ-secret-1": 1}
+        assert out == {"message": "denied <REDACTED> (<REDACTED>)", "items": [("<REDACTED>", 3)], "<REDACTED>": 1}
         assert raw["message"] == "denied XYZ-secret-1 (XYZ-secret-1)"
 
     def test_a_secret_containing_another_is_replaced_whole(self) -> None:
