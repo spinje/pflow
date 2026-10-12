@@ -110,6 +110,9 @@ reads in full, then a verification agent re-executes each finding on `main`, che
 issues, and drafts issue bodies (class, executed evidence, mechanism, closing mechanism, verify at
 start, severity); the orchestrator files them serially after reading each. Never save anything
 into the user's library without the prefix; never touch saved workflows the pass did not create.
+An isolated `HOME` does not isolate the environment: the calling shell may export provider keys
+(`GEMINI_API_KEY`, `OPENAI_API_KEY`, …) that `pflow find` and `llm` steps pick up silently — the brief
+names the keys the pass may use and `env -u`s the rest; verification agents run with every provider key unset.
 
 **Protect your context window.** Do NOT read diffs, plans, or full files yourself — the subagents have expendable context windows. The cheap scope commands above and small targeted reads during verification (an ADR, one flagged function) are the exception, never whole diffs or plans. You only need the task ID and a one-line description to deploy.
 

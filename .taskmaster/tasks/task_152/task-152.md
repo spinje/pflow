@@ -16,7 +16,14 @@ medium
 
 ## Roadmap
 
-next
+later
+
+> **HELD by owner ruling (2026-10-11, orchestration session-15) — do not plan until the trigger fires.** The user: *"right now using the
+> cli works good and we've seen no indication users would prefer an mcp, so we are waiting for more information before deciding
+> wheter parity or removing mcp is the right call"*. The MCP SERVER's future (parity vs removal) is an open strategic question; this
+> task and Task 178's server half wait on it. The MCP CLIENT (nodes, discovery, `probe`, `describe`) is unaffected. Reopen trigger:
+> a user asking for the MCP server, or MCP-server usage appearing in a consumer report. Until then the frozen MCP guide (#749 below)
+> stays stale by decision.
 
 > **Refreshed 2026-10-11 against main `cf8b7fcb` (orchestration session-14; owns #749, closed into this task).**
 > - The guide lives in `src/pflow/guide/` (`core.md`, `nodes/`, `features/`, loaded by `pflow.guide`), not `cli/resources/guide/` —
