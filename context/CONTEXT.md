@@ -160,6 +160,17 @@ it with the decision resumes the Run. Spent by lineage: once a newer Attempt exi
 the same token again is refused. _Avoid_: ticket, token (unqualified — collides with LLM
 tokens), id (unqualified).
 
+**Retention** — the age window after which pflow removes a Run's trace from the trace directory,
+applied when a trace is written, never by a read; everything older than the window goes except the
+Protected traces. A Run's trace is found by its filename, so Retention bounds the directory, not the
+cost of finding a Run. _Avoid_: cleanup, pruning (the act, not the policy), TTL, garbage collection.
+
+**Protected trace** — a trace Retention never removes, whatever its age, because a feature still
+reads it: a Paused Run whose Resume token is still answerable; the newest Success or Degraded full
+run of a Workflow (its Snapshot); the newest run of a Workflow regardless of status; an Attempt until
+the Run it resumed is gone; a trace whose writer is still running. A trace written under an older
+filename grammar is never protected. _Avoid_: pinned, kept, exempt, whitelisted.
+
 **Prompt cache** — provider-side reuse of a static prompt *prefix* across LLM calls, declared
 in a workflow's `## Cache` block (or per-step `prompt_cache:`). Discounts input tokens; the
 step still executes and calls the provider every time. _Avoid_: cache (unqualified), KV cache.

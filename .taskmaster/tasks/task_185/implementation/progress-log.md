@@ -71,3 +71,21 @@ Entry format: ORCHESTRATION.md → "Progress-log entry format".
   sweep (reads the truth before deleting); the lookup side is unchanged.
 - Self-checks: no Critical left open; two residual races stated, not hidden. test-reflect: not applicable (plan).
 - Next: commit; hand back for CP-1.
+
+## [2026-10-13 00:10] task-planner (Fable) — CP-1 rulings folded (Q1–Q6)
+- Did: applied the user's rulings — Q2 default 14 (+reason), Q3 five protected rules, Q4 clean cutover
+  (migration phase and every legacy arm deleted; legacy names parsed only for their timestamp so the
+  sweep ages them out; never protected, never surfaced), Q5 ADR-0018 + CONTEXT.md nouns written, Q6 the
+  tar-backup gate in P5. Spec `## Requirements › Retention` rewritten; D2 ledger row marked decided.
+- Changed: `task-185.md`, `implementation-plan.md` (§0, §1.1, §1.2, §1.4, §1.5, P0–P5, §3, §4),
+  `show-before-code.md` (§9 rulings), `context/adr/0018-185-trace-directory-is-the-index.md`,
+  `context/CONTEXT.md` (Retention, Protected trace).
+- Verified: Q4 precondition at `50f62327` — no existing test asserts that a trace written by an older
+  pflow is found; every old-grammar name under `tests/` is a fixture (composer-built or hand-written);
+  the surfaces that lose pre-upgrade traces are exactly the ruled ones. | Assumed: nothing new.
+- Deviations/surprises: with no renames anywhere, the Viewer-tailer retained-path rule folded in the
+  first review round is dead — removed (deletion test). Phase bundling unchanged (P3 still carries the
+  sweep + settings; nothing emptied).
+- Self-checks: review round 1 was codex (6 lenses); the amendment asks for the FULL plan-mode battery
+  natively on Claude, iterated to zero confirmed Criticals — rounds logged below.
+- Next: commit; Claude battery round 1.

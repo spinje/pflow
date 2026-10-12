@@ -173,3 +173,12 @@ is a sidecar that dies with its trace; retention protects exactly what features 
 bar (hard to reverse, surprising without context, a real trade-off against an index/SQLite). The main
 orchestrator writes it on ruling; draft text is in `implementation-plan.md` §ADR.
 *Recommendation: yes.*
+
+## 9. Rulings (2026-10-12, the user via the main orchestrator)
+
+Q1 accepted. Q2: default **14** (deleting too early is irreversible, disk is not; ~1.5 GB at the owner's
+rate). Q3 accepted plus a fifth rule: the newest run of each Workflow regardless of status. Q4: **clean
+cutover** — no one-time migration and no legacy arm; pre-upgrade traces are invisible to every lookup,
+readable by explicit path, aged out by their parsed timestamp, never protected. Q5 yes — ADR-0018 and the
+CONTEXT.md nouns are on the branch. Q6: consent for P5 on the owner's directory behind a tar-backup gate
+(plan §P5). §5–§6 above are superseded where they differ; the plan is the current truth.

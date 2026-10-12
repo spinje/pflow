@@ -81,7 +81,9 @@ unanswerable, since the resume token IS the trace (ADR-0010). The trace became l
   period do for run logs), with a settings key for the bound; (c) a manual `pflow traces prune` command only.
   (b) chosen — the problem is observed on two machines, and (a)/(c) leave the growth to a user who was never told.
   The bound's defaults and the settings key are the planner's proposal at its checkpoint, shown before building.
-- **D2 — lookup shape (PLANNER, constrained).** Constraints: no per-file reads to answer "which file is run X" or "what is
+- **DECIDED (user, 2026-10-12, CP-1) — D2 shape:** the filename carries the run id, the `--only` flag and attempt lineage;
+  paused-ness is a `.paused` sidecar that dies with its trace; one directory listing is the index (ADR-0018). Clean cutover:
+  no migration of old names and no compatibility arm. Original constraints, for the record: no per-file reads to answer "which file is run X" or "what is
   paused"; a second store only if the deletion test demands it (ADR-0007 keeps trace lifecycles self-contained — a marker
   that dies with its trace is fine, a global index that outlives traces is the "global-GC problem" that ADR rejected); the
   trace FORMAT (meta/event/trailer lines, format version) is out of scope unless a field is genuinely missing; a filename
@@ -112,10 +114,18 @@ drafting time (session-16); the planner re-checks `git log` on those files again
   longer than the trace read itself.
 
 ### Retention (shape per D1)
-- Never removed: a trace whose Run is Paused and not consumed; the newest success/degraded trace of each Workflow; the newest
-  Attempt in any resume chain and the trace it was resumed from; any trace currently open by a writer (advisory lock).
+- The bound is an age window: `runtime.trace_retention_days` (default 14; `0` keeps everything; env override
+  `PFLOW_TRACE_RETENTION_DAYS`), applied when pflow finishes writing a trace. No new CLI subcommand.
+- Never removed, whatever the age — the Protected traces (CONTEXT.md):
+  1. a Paused Run whose token is still answerable (not consumed by a newer Attempt that did work);
+  2. the newest Success/Degraded full run of each Workflow (the `--only` Snapshot);
+  3. the newest run of each Workflow regardless of status (so `pflow report` of the last run works when it failed);
+  4. an Attempt, until the Run it resumed is gone (the source's "already answered" verdict is read from the Attempt);
+  5. any trace currently open by a writer (advisory lock).
 - Removal is a no-op when the policy is off or the bound is not reached; it never runs on a read-only command.
 - A removed trace is never referenced by a stale index or marker (a lookup after removal reports "no such run", not a crash).
+- Cutover: a trace written before this version (old filename grammar) is invisible to every lookup, stays readable by
+  explicit path (`pflow report <path>`, `load_trace_file`), is never protected, and ages out like any other file.
 
 ### Consolidation
 - One function resolves the debug directory; the 8 inline spellings are gone. One recency rule; `report`, the UI, resume and
