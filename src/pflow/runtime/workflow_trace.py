@@ -1102,7 +1102,9 @@ class WorkflowTraceCollector:
         if llm_summary["total_calls"] > 0:
             agg["llm_summary"] = llm_summary
         if self.execution_warnings:
-            agg["warnings"] = self.execution_warnings
+            # Unlike the rest of the trace (raw, for resume), the warnings are display data: written
+            # scrubbed of the run's secret values, as the printed outcome is. Status above reads them raw.
+            agg["warnings"] = scrub_secret_values(self.execution_warnings, secret_values(self.inputs or {}))
         if self.json_output is not None:
             agg["json_output"] = self.json_output
         # Task 171: the pause record rides the trailer (paused_node_id +
@@ -1459,12 +1461,9 @@ class WorkflowTraceCollector:
         if not warnings:
             self.execution_warnings = None
             return
-        # Unlike the rest of the trace (raw, for resume), the warnings are display data: scrubbed of the
-        # run's secret values as the printed outcome is.
-        self.execution_warnings = scrub_secret_values(
-            [warning.to_display_dict() if isinstance(warning, Diagnostic) else warning for warning in warnings],
-            secret_values(self.inputs or {}),
-        )
+        self.execution_warnings = [
+            warning.to_display_dict() if isinstance(warning, Diagnostic) else warning for warning in warnings
+        ]
 
     def mark_last_event_failed(self, node_id: str, *, error: str) -> None:
         """Flip the most recent event for node_id to failed.

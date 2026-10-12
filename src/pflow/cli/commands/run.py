@@ -453,7 +453,7 @@ def _display_execution_result(
     if not text_mode:
         _serialize_json_result(outcome.document, verbose)
     elif succeeded:
-        _handle_text_output(result.shared_after, output_key, ir_data, verbose, print_flag)
+        _handle_text_output(result.shared_after, output_key, ir_data, verbose, print_flag, secrets=outcome.secrets)
 
     if outcome.exit_code:
         ctx.exit(outcome.exit_code)
@@ -904,9 +904,10 @@ def _handle_named_workflow(
         else:
             click.echo(f"cli: Loading workflow from file: {first_arg}", err=True)
         if params:
-            from pflow.core.security_utils import redact_sensitive, scrub_secret_values, secret_values
+            from pflow.core.security_utils import redact_for_display, scrub_secret_values, secret_values
 
-            shown = scrub_secret_values(redact_sensitive(params), secret_values(params))
+            redacted = {name: redact_for_display([name], value) for name, value in params.items()}
+            shown = scrub_secret_values(redacted, secret_values(params))
             click.echo(f"cli: With parameters: {shown}", err=True)
 
     _setup_workflow_execution(ctx, first_arg, source, output_format)

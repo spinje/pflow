@@ -64,6 +64,9 @@ class RunOutcome:
     warnings: list[Diagnostic]
     advisories: list[Diagnostic]
     engine_started: bool
+    # The run's secret values (``secret_values``), already scrubbed from everything above — kept so a
+    # printer that renders from the run's store instead (CLI text stdout) scrubs with the same set.
+    secrets: frozenset[str] = frozenset()
 
     @property
     def exit_code(self) -> int:
@@ -87,9 +90,16 @@ def build_run_outcome(
     ``duration_ms``/``metrics``).
     Values whose producer means ``null`` keep it: the ``total_cost_usd`` pricing tri-state, a
     ``?? null`` output, the canonical gate payload's ``question``/``recommendation``/``iteration``.
-    The document and its Diagnostics are scrubbed of the run's secret values (``run_secret_values``)
-    here, once, so no channel that renders the outcome can print one.
+    The run's secret values are scrubbed from its data before anything is built from it (truncation
+    and JSON parsing then never see a whole secret), and from the finished document (a value the
+    build decoded, the gate from the trace) — so no channel that renders the outcome can print one.
     """
+    secrets = secret_values(getattr(result.trace, "inputs", None) or {})
+    result = replace(
+        result,
+        shared_after=scrub_shared_store(result.shared_after, secrets),
+        diagnostics=[_scrub_diagnostic(diagnostic, secrets) for diagnostic in result.diagnostics],
+    )
     status = _outcome_status(result)
     trace = result.trace
     errors = [] if status is WorkflowStatus.PAUSED else result.errors
@@ -135,38 +145,38 @@ def build_run_outcome(
     if resume_command is not None:
         document["resume_command"] = resume_command
 
-    secrets = run_secret_values(workflow_ir, result.shared_after)
     return RunOutcome(
         document=scrub_secret_values(document, secrets),
         status=status,
-        errors=_scrub_diagnostics(errors, secrets),
-        warnings=_scrub_diagnostics(warnings, secrets),
-        advisories=_scrub_diagnostics(advisories, secrets),
+        errors=errors,
+        warnings=warnings,
+        advisories=advisories,
         engine_started=result.engine_started,
+        secrets=secrets,
     )
 
 
-def run_secret_values(workflow_ir: Mapping[str, Any] | None, shared: Mapping[str, Any]) -> frozenset[str]:
-    """The secret values a run's printed output must not show: ``secret_values`` of the declared inputs
-    ``shared`` holds. A run rejected before its inputs were prepared has none, so only settings values."""
-    declared = (workflow_ir or {}).get("inputs") or {}
-    return secret_values({name: shared[name] for name in declared if name in shared})
-
-
-def _scrub_diagnostics(diagnostics: list[Diagnostic], secrets: frozenset[str]) -> list[Diagnostic]:
-    """Copies whose text fields — what ``format_diagnostic`` renders — are scrubbed of ``secrets``."""
+def scrub_shared_store(shared: dict[str, Any], secrets: frozenset[str]) -> dict[str, Any]:
+    """A copy of a run's store scrubbed of ``secrets`` — all but ``__execution__``, the run's routing
+    record (node ids an output selector matches on, never data)."""
     if not secrets:
-        return diagnostics
-    return [
-        replace(
-            diagnostic,
-            message=scrub_secret_values(diagnostic.message, secrets),
-            title=scrub_secret_values(diagnostic.title, secrets),
-            suggestions=scrub_secret_values(diagnostic.suggestions, secrets),
-            context=scrub_secret_values(diagnostic.context, secrets),
-        )
-        for diagnostic in diagnostics
-    ]
+        return shared
+    return {
+        key: value if key == "__execution__" else scrub_secret_values(value, secrets) for key, value in shared.items()
+    }
+
+
+def _scrub_diagnostic(diagnostic: Diagnostic, secrets: frozenset[str]) -> Diagnostic:
+    """A copy whose text fields — what ``format_diagnostic`` renders — are scrubbed of ``secrets``."""
+    if not secrets:
+        return diagnostic
+    return replace(
+        diagnostic,
+        message=scrub_secret_values(diagnostic.message, secrets),
+        title=scrub_secret_values(diagnostic.title, secrets),
+        suggestions=scrub_secret_values(diagnostic.suggestions, secrets),
+        context=scrub_secret_values(diagnostic.context, secrets),
+    )
 
 
 def _outcome_status(result: ExecutionResult) -> WorkflowStatus:

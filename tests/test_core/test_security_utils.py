@@ -225,6 +225,8 @@ class TestScrubSecretValues:
 
         assert out == "key=<REDACTED>"
 
-    def test_an_empty_set_returns_the_object_itself(self) -> None:
-        raw = {"a": ["b"]}
-        assert scrub_secret_values(raw, frozenset()) is raw
+    def test_sets_are_descended_too(self) -> None:
+        """A code step may return a ``set``; printers stringify it, so its members are scrubbed first."""
+        out = scrub_secret_values({"result": {"XYZ-secret-1", "plain"}}, frozenset({"XYZ-secret-1"}))
+
+        assert out == {"result": {"<REDACTED>", "plain"}}

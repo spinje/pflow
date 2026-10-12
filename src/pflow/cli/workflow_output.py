@@ -127,6 +127,8 @@ def _handle_text_output(
     workflow_ir: dict[str, Any] | None,
     verbose: bool,
     print_flag: bool = False,
+    *,
+    secrets: frozenset[str] = frozenset(),
 ) -> None:
     """Stream a successful run's selected output to stdout (its stderr summary is the run outcome's).
 
@@ -135,13 +137,14 @@ def _handle_text_output(
     pipe consumers receive a clean stream — the stderr completion line already says how the run
     ended, and a literal English fallback on stdout broke ``pflow … -o nonexistent | jq .`` (#400).
 
-    Everything printed here derives from ``shared_storage``, so the store is scrubbed of the run's
-    secret values once, up front — the data, the ``-o`` hint and the output-fill diagnostic alike.
+    Everything printed here derives from ``shared_storage``, so the store is scrubbed of ``secrets``
+    (the run outcome's) once, up front — the data, the ``-o`` hint and the output-fill diagnostic
+    alike; a ``-o`` path's value is scrubbed again after resolution, which decodes JSON text.
     """
     from pflow.core.security_utils import scrub_secret_values
-    from pflow.execution.formatters.run_outcome import run_secret_values
+    from pflow.execution.formatters.run_outcome import scrub_shared_store
 
-    shared_storage = scrub_secret_values(shared_storage, run_secret_values(workflow_ir, shared_storage))
+    shared_storage = scrub_shared_store(shared_storage, secrets)
     # Output precedence lives in the shared classifier (output_utils), so the
     # CLI text path and the JSON/MCP path can never disagree on *which* branch
     # applies. This path renders the chosen branch its own way (streams one
@@ -157,9 +160,9 @@ def _handle_text_output(
         assert output_key is not None, "EXPLICIT_KEY ⇒ output_key truthy"  # type narrowing for mypy  # noqa: S101
         if TemplateResolver.variable_exists(output_key, shared_storage):
             value = TemplateResolver.resolve_value(output_key, shared_storage)
-            _output_with_header(value, print_flag)
+            _output_with_header(scrub_secret_values(value, secrets), print_flag)
         elif not print_flag:
-            hint = _diagnose_path_failure(shared_storage, output_key)
+            hint = scrub_secret_values(_diagnose_path_failure(shared_storage, output_key), secrets)
             # Blank line separates this advisory from the summary block above,
             # matching the other output-section advisories (airy layout).
             click.echo("", err=True)

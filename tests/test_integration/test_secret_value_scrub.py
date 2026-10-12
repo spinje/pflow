@@ -39,6 +39,13 @@ The token.
 
 - type: string
 
+### note
+
+A free-text note.
+
+- type: string
+- default: "none"
+
 ## Steps
 
 ### use-token
@@ -48,6 +55,7 @@ Use the token.
 - type: shell
 - env:
     SERVICE_TOKEN: ${api_token}
+    NOTE: ${note}
 
 ```shell command
 echo "auth failed for $SERVICE_TOKEN with $DEPLOY_KEY" >&2; exit 2
@@ -93,7 +101,7 @@ The printed token.
 CHILD = """\
 # Child
 
-Fails echoing what it was given.
+Item 2 fails echoing the value it was given.
 
 ## Inputs
 
@@ -103,18 +111,25 @@ A value.
 
 - type: string
 
+### i
+
+The item.
+
+- type: string
+
 ## Steps
 
-### fail
+### maybe-fail
 
-Fail with the value.
+Fail on item 2 with the value.
 
 - type: shell
 - env:
     VALUE: ${n}
+    ITEM: ${i}
 
 ```shell command
-echo "denied $VALUE" >&2; exit 3
+if [ "$ITEM" = 2 ]; then echo "denied $VALUE" >&2; exit 3; fi; echo ok
 ```
 """
 
@@ -141,6 +156,7 @@ Run the child.
 - workflow: ./child.pflow.md
 - inputs:
     n: ${api_token}
+    i: ${item}
 - batch:
     items: [1, 2]
     error_handling: continue
@@ -205,10 +221,11 @@ class TestFailedRun:
         assert document["errors"][0]["context"]["shell_env"]["SERVICE_TOKEN"] == "<REDACTED>"  # noqa: S105
 
     def test_verbose_parameters_line(self, tmp_path: Path) -> None:
-        result = _cli("-v", str(_write(tmp_path, FAILING)), f"api_token={INPUT_SECRET}")
+        """By name (``api_token``) and by value: a settings-stored value passed under a neutral name."""
+        result = _cli("-v", str(_write(tmp_path, FAILING)), f"api_token={INPUT_SECRET}", f"note={SETTINGS_SECRET}")
 
         _assert_scrubbed(result.stdout + result.stderr)
-        assert "cli: With parameters: {'api_token': '<REDACTED>'}" in result.stderr
+        assert "cli: With parameters: {'api_token': '<REDACTED>', 'note': '<REDACTED>'}" in result.stderr
 
     def test_report_files_and_echo(self, tmp_path: Path) -> None:
         trace_path = _failed_run_trace(tmp_path)
@@ -266,10 +283,147 @@ class TestSuccessfulRun:
 class TestBatchedChildren:
     """#799 residual 1 — a child's failure reaches the output through shapes no compactor recognises."""
 
-    def test_declared_errors_output_text_and_json(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("extra", [[], ["-o", "each.errors"]])
+    def test_text_stdout(self, tmp_path: Path, extra: list[str]) -> None:
         _write(tmp_path, CHILD, "child.pflow.md")
         parent = str(_write(tmp_path, BATCH_PARENT, "parent.pflow.md"))
 
-        for args in ([parent], ["--output-format", "json", parent], [parent, "-o", "each.errors"]):
-            result = _cli(*args, f"api_token={INPUT_SECRET}")
-            _assert_scrubbed(result.stdout + result.stderr)
+        result = _cli(parent, *extra, f"api_token={INPUT_SECRET}")
+
+        assert result.exit_code == 0, result.stderr
+        _assert_scrubbed(result.stdout)  # the child's failure is the printed DATA, not only a diagnostic
+        assert '"index": 1' in result.stdout
+
+    def test_json_result(self, tmp_path: Path) -> None:
+        _write(tmp_path, CHILD, "child.pflow.md")
+        parent = str(_write(tmp_path, BATCH_PARENT, "parent.pflow.md"))
+
+        result = _cli("--output-format", "json", parent, f"api_token={INPUT_SECRET}")
+
+        assert result.exit_code == 0, result.stderr
+        _assert_scrubbed(json.dumps(json.loads(result.stdout)["result"]["errs"]))
+
+
+LONG_ERROR = """\
+# Long
+
+A batch item fails with a long message ending in the secret.
+
+## Inputs
+
+### api_token
+
+The token.
+
+- type: string
+
+## Steps
+
+### each
+
+Item 2 fails.
+
+- type: shell
+- env:
+    SERVICE_TOKEN: ${api_token}
+    ITEM: ${item}
+- batch:
+    items: [1, 2]
+    error_handling: continue
+
+```shell command
+if [ "$ITEM" = 2 ]; then printf '%0156d %s' 0 "$SERVICE_TOKEN" >&2; exit 3; fi; echo ok
+```
+"""
+
+COLLIDING_OUTPUT = """\
+# Collide
+
+An output reuses the sensitive input's name, so the store's `api_token` is the exit code after the run.
+
+## Inputs
+
+### api_token
+
+The token.
+
+- type: string
+
+## Steps
+
+### show
+
+Print the token.
+
+- type: shell
+- env:
+    SERVICE_TOKEN: ${api_token}
+
+```shell command
+echo "tok=$SERVICE_TOKEN"
+```
+
+## Outputs
+
+### api_token
+
+The exit code.
+
+- source: ${show.exit_code}
+
+### out
+
+The stdout.
+
+- source: ${show.stdout}
+- stdout: true
+"""
+
+ONLY_TARGET = """\
+# Only
+
+A step whose id is also a stored settings value.
+
+## Steps
+
+### generate-text
+
+Say hello.
+
+- type: shell
+
+```shell command
+echo hello
+```
+"""
+
+
+class TestWhereTheSetIsBuiltAndApplied:
+    def test_a_secret_cut_by_truncation_never_leaves_a_fragment(self, tmp_path: Path) -> None:
+        """The step table caps a batch error at 200 chars — the secret straddles the cut. The data is
+        scrubbed before the cap, so no prefix of it survives."""
+        result = _cli("--output-format", "json", str(_write(tmp_path, LONG_ERROR)), f"api_token={INPUT_SECRET}")
+
+        assert "sekret" not in result.stdout + result.stderr
+        steps = json.loads(result.stdout)["execution"]["steps"]
+        assert "<REDACTED>" in steps[0]["batch_error_details"][0]["error"]
+
+    def test_an_output_overwriting_the_input_name_does_not_lose_the_secret(self, tmp_path: Path) -> None:
+        """The set comes from the inputs recorded at run start, not the post-run store."""
+        path = str(_write(tmp_path, COLLIDING_OUTPUT))
+
+        text = _cli(path, f"api_token={INPUT_SECRET}")
+        as_json = _cli("--output-format", "json", path, f"api_token={INPUT_SECRET}")
+
+        assert text.stdout.strip() == "tok=<REDACTED>"
+        _assert_scrubbed(as_json.stdout)
+
+    def test_only_routing_survives_a_settings_value_equal_to_the_step_id(self, tmp_path: Path) -> None:
+        SettingsManager().set_env("TARGET_STEP", "generate-text")
+        path = str(_write(tmp_path, ONLY_TARGET))
+        assert _cli(path).exit_code == 0  # --only restores upstream from a full run's trace
+
+        result = _cli(path, "--only", "generate-text")
+
+        assert result.exit_code == 0, result.stderr
+        assert result.stdout.strip() == "hello"

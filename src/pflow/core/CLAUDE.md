@@ -235,10 +235,12 @@ establish universal coverage.
 Redaction is two rules in `security_utils`: by NAME (`redact_sensitive`, whole-word matching
 plus explicitly supplied keys — never substring matching) and by VALUE (`scrub_secret_values`
 over `secret_values`: settings-stored values + strings under sensitive-named declared inputs,
-8+ chars, #801). The value scrub runs on DATA before rendering, at four seams: `build_run_outcome`
-(CLI JSON/stderr, MCP, the trailer's `json_output`), `cli/workflow_output._handle_text_output`,
-`trace_report.generate_report`, `ui/run_node.run_node_detail`. A secret produced mid-run, or
-exported only in the shell, is not in the set — that is the `secret: true` + provenance design (#183).
+8+ chars, #801). The value scrub runs on DATA before rendering: `build_run_outcome` (from the
+recorded inputs `trace.inputs`; CLI JSON/stderr, MCP, the trailer's `json_output`; its
+`RunOutcome.secrets` feeds `cli/workflow_output._handle_text_output`), `trace_report.generate_report`
+and `ui/run_node.run_node_detail` (settings + `meta.inputs`), the trailer `warnings` write. A secret
+produced mid-run, or exported only in the shell, is not in the set — that is the `secret: true` +
+provenance design (#183).
 Traces store resolved values raw for resume; a reader that displays trace content applies both
 rules. `settings.env` is masked whole by value (`SettingsManager.list_env`), never by name —
 `KEY`-suffixed provider names miss the rule.

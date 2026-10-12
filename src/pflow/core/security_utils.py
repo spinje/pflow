@@ -140,7 +140,7 @@ def scrub_secret_values(obj: Any, secrets: frozenset[str]) -> Any:
     The value-based counterpart of ``redact_sensitive``: it reaches a secret wherever it travelled — an
     error message, shell stderr, a command echo, a workflow result. Applied to data BEFORE it is
     rendered, so truncation or JSON escaping never leaves part of a secret behind. Descends dicts,
-    lists and tuples; dict keys and non-string leaves are kept as they are.
+    lists, tuples and sets; dict keys and non-string leaves are kept as they are.
     """
     if not secrets:
         return obj
@@ -156,8 +156,8 @@ def scrub_secret_values(obj: Any, secrets: frozenset[str]) -> Any:
             return {key: scrub(item) for key, item in value.items()}
         if isinstance(value, list):
             return [scrub(item) for item in value]
-        if isinstance(value, tuple):
-            return tuple(scrub(item) for item in value)
+        if isinstance(value, (tuple, set, frozenset)):
+            return type(value)(scrub(item) for item in value)
         return value
 
     return scrub(obj)
