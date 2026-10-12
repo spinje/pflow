@@ -362,7 +362,7 @@ class SettingsManager:
         """List all environment variables, optionally masking values.
 
         Args:
-            mask_values: If True, mask values showing only first 3 chars
+            mask_values: If True, mask each value (``_mask_value``)
 
         Returns:
             Dictionary of environment variables (possibly masked)
@@ -374,17 +374,8 @@ class SettingsManager:
 
     @staticmethod
     def _mask_value(value: str) -> str:
-        """Mask a value for display (show first 3 chars + ***).
-
-        Args:
-            value: Value to mask
-
-        Returns:
-            Masked value
-        """
-        if len(value) <= 3:
-            return "***"
-        return value[:3] + "***"
+        """Mask a value for display: its length only, never any of its characters (a prefix narrows a guess)."""
+        return f"*** ({len(value)} chars)"
 
     def _validate_permissions(self, settings: PflowSettings | None = None) -> None:
         """Validate file permissions and warn if insecure (defense-in-depth).

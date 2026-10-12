@@ -64,9 +64,9 @@ pflow settings set-env REPLICATE_API_TOKEN r8_...
 pflow settings list-env
 # Output:
 # Environment variables:
-#   ANTHROPIC_API_KEY: sk-***
-#   OPENAI_API_KEY: sk-***
-#   REPLICATE_API_TOKEN: r8_***
+#   ANTHROPIC_API_KEY: *** (108 chars)
+#   OPENAI_API_KEY: *** (56 chars)
+#   REPLICATE_API_TOKEN: *** (40 chars)
 ```
 
 ### Using in Workflows
@@ -302,7 +302,7 @@ $ ls -la ~/.pflow/settings.json
 # Default behavior
 $ pflow settings list-env
 Environment variables:
-  OPENAI_API_KEY: sk-***
+  OPENAI_API_KEY: *** (56 chars)
 
 # Explicit opt-in to view
 $ pflow settings list-env --show-values
@@ -423,21 +423,13 @@ except Exception:
 
 **Implementation** (`settings.py:_mask_value()`):
 
-```python
-@staticmethod
-def _mask_value(value: str) -> str:
-    """Mask a value for display (show first 3 chars + ***)."""
-    if len(value) <= 3:
-        return "***"
-    return value[:3] + "***"
-```
+A masked value shows its length only, never a prefix — a known prefix (`sk-`, `r8_`) narrows a guess (#801):
 
-**Examples**:
-- `"r8_abc123xyz"` → `"r8_***"`
-- `"sk-proj-test"` → `"sk-***"`
-- `"abc"` → `"***"`
-- `"ab"` → `"***"`
-- `""` → `"***"`
+- `"r8_abc123xyz"` → `"*** (12 chars)"`
+- `""` → `"*** (0 chars)"`
+
+Every printed run surface also replaces each stored value wherever it appears in free text
+(`security_utils.secret_values` / `scrub_secret_values`; see `src/pflow/core/CLAUDE.md`).
 
 ---
 

@@ -25,7 +25,7 @@ from pflow.core.metrics import (
     unavailable_models_to_counts,
 )
 from pflow.core.node_type_display import node_type_tag
-from pflow.core.security_utils import is_sensitive_parameter, redact_sensitive
+from pflow.core.security_utils import is_sensitive_parameter, redact_sensitive, scrub_secret_values, secret_values
 from pflow.core.templates import TemplateResolver, to_string
 from pflow.core.trace_io import load_trace_file
 from pflow.core.trace_tree import TraceTree, batch_item_cost, event_cost
@@ -679,6 +679,8 @@ def generate_report(
             version,
         )
         return None
+    # The trace is raw on disk; every file the report writes renders from this scrubbed copy.
+    trace = scrub_secret_values(trace, secret_values(trace.get("inputs") or {}))
 
     # Determine output directory
     is_auto_output = output_path is None or output_path == "auto"

@@ -18,6 +18,7 @@ from pflow.core.diagnostic import Diagnostic, warning_degrades_status
 from pflow.core.exceptions import OnlySnapshotMissingError
 from pflow.core.metrics import MetricsCollector
 from pflow.core.node_type_display import is_model_node_type
+from pflow.core.security_utils import scrub_secret_values, secret_values
 from pflow.core.trace_io import (
     RESERVED_LINE_KEYS,
     TRACE_JSONL_MARKER,
@@ -211,6 +212,26 @@ def _trace_warnings_provably_benign(data: dict[str, Any]) -> bool:
     if not isinstance(warnings, list) or not warnings:
         return False
     return all(not warning_degrades_status(warning) for warning in warnings)
+
+
+# The warning fields status and resume derive from (``_unrecovered_failed_node_ids``,
+# ``warning_degrades_status``) — identity, never display text.
+_WARNING_IDENTITY_KEYS = ("node_id", "type", "recovered", "severity", "source", "id")
+
+
+def _scrubbed_warnings(warnings: list[dict[str, Any]], secrets: frozenset[str]) -> list[dict[str, Any]]:
+    """The trailer's warnings as written: unlike the rest of the trace (raw, for resume) they are display
+    data, so their text is scrubbed of the run's secret values — their identity fields are not, since
+    ``resume_source`` re-derives recovery from them on disk."""
+    return [
+        {
+            **scrub_secret_values(warning, secrets),
+            **{key: warning[key] for key in _WARNING_IDENTITY_KEYS if key in warning},
+        }
+        if isinstance(warning, dict)
+        else warning
+        for warning in warnings
+    ]
 
 
 def _unrecovered_failed_node_ids(
@@ -1101,7 +1122,7 @@ class WorkflowTraceCollector:
         if llm_summary["total_calls"] > 0:
             agg["llm_summary"] = llm_summary
         if self.execution_warnings:
-            agg["warnings"] = self.execution_warnings
+            agg["warnings"] = _scrubbed_warnings(self.execution_warnings, secret_values(self.inputs or {}))
         if self.json_output is not None:
             agg["json_output"] = self.json_output
         # Task 171: the pause record rides the trailer (paused_node_id +

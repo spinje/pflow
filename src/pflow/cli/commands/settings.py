@@ -321,7 +321,7 @@ def unset_env(key: str) -> None:
 def list_env(show_values: bool) -> None:
     """List all environment variables.
 
-    By default, values are masked showing only the first 3 characters.
+    By default, each value is masked to its length (`*** (N chars)`).
     Use --show-values to display full values (use with caution).
 
     Example:
