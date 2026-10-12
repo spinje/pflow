@@ -364,6 +364,8 @@ The exit code tells a wrong call apart from a failed job. The difference is whet
 
 Exit `2` is also what pflow's argument parser returns for a bad option value (`--output-format xml`), so one code means "the call was wrong" whichever layer caught it. With `--output-format json`, a refused run or resume prints a document with `status: "failed"`, just like a failed run's; only the exit code tells them apart. `--validate-only` and `--dry-run` print their own documents (see those sections). An error the argument parser itself catches (a bad option value, an unknown `pflow resume` flag) or a removed command prints plain text on stderr and nothing on stdout. Declining the confirmation prompt of `pflow resume` (answering no, or Ctrl-D) exits `1`.
 
+`pflow probe` exits with the same codes: `0` when the node succeeded, `1` when it ran and failed, `2` when the probe was refused before the node ran (see [pflow probe](/reference/cli/probe)).
+
 Runtime warnings remain visible in stderr, JSON output, traces, and reports; they do not make a completed workflow a process failure.
 
 ## Validation mode

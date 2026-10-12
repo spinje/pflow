@@ -79,7 +79,7 @@ Historical examples where the plan's approach was wrong:
 
 ### 3. Code Path Completeness
 
-pflow has MULTIPLE entry points that often need coordinated changes — the canonical table (entry point × validation applied × key files) is owned by `.claude/agents/review-validation-consistency.md` §Entry Point Consistency; read it there. In short: CLI run (`cli/commands/run.py`, hidden default command), the shared `WorkflowRunner` pipeline (`execution/runner.py`, used by CLI and MCP), the MCP server, and the single-node probe (which bypasses validator and compiler entirely).
+pflow has MULTIPLE entry points that often need coordinated changes — the canonical table (entry point × validation applied × key files) is owned by `.claude/agents/review-validation-consistency.md` §Entry Point Consistency; read it there. In short: CLI run (`cli/commands/run.py`, hidden default command), the shared `WorkflowRunner` pipeline (`execution/runner.py`, used by CLI and MCP), the MCP server, and the single-node probe (`execution/probe.py`, a one-node IR through the same runner).
 
 For the planned changes, ask:
 - Which entry points are affected?

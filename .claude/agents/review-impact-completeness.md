@@ -104,7 +104,6 @@ Historical duplication patterns to watch for recurring (several have since been 
 |---|---|---|
 | `TemplateResolver.resolve_template()` | `output_resolver.py` (manual stripping), `batch_node.py` (manual stripping) | Coalesce, type preservation |
 | `_make_serializable()` | Was duplicated across cache module and trace module | Hashing vs storage semantics |
-| `_extract_node_outputs()` | Error message generation re-derives outputs from registry | Batch-aware vs batch-unaware |
 | Auto-detection functions | 3 divergent implementations with different priority orders | Namespace awareness, key priorities |
 | `is_file_reference()` | Manual path detection in `dependency_discovery.py` | Different heuristics |
 | `resolve_batch_items()` | Was duplicated between `_compute_batch_memo_key()` and `PflowBatchNode.prep()` | Fixed, but watch for recurrence |

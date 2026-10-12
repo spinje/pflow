@@ -101,7 +101,7 @@ def build_run_outcome(
     result = replace(
         result,
         shared_after=scrub_shared_store(result.shared_after, secrets),
-        diagnostics=[_scrub_diagnostic(diagnostic, secrets) for diagnostic in result.diagnostics],
+        diagnostics=[scrub_diagnostic(diagnostic, secrets) for diagnostic in result.diagnostics],
     )
     status = _outcome_status(result)
     trace = result.trace
@@ -175,7 +175,7 @@ def scrub_shared_store(shared: dict[str, Any], secrets: frozenset[str]) -> dict[
     }
 
 
-def _scrub_diagnostic(diagnostic: Diagnostic, secrets: frozenset[str]) -> Diagnostic:
+def scrub_diagnostic(diagnostic: Diagnostic, secrets: frozenset[str]) -> Diagnostic:
     """A copy whose text fields — what ``format_diagnostic`` renders — are scrubbed of ``secrets``."""
     if not secrets:
         return diagnostic
