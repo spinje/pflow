@@ -13,6 +13,7 @@ execution, resource cleanup, and structured results.
 | Wrong failure diagnostic/category | `executor_service.py::build_error_list`, `determine_error_category` |
 | Wrong per-node summary status | `execution_state.py::build_execution_steps` |
 | Dry-run cache/cost/routing prediction | `plan.py`; see Dry-Run Planner below |
+| Probe one node (CLI `probe`, MCP `registry_run`) | `probe.py::probe_node` |
 | Resume refused before execution | `resume_preflight.py::preflight_resume` |
 | Gate prompt or answer rendering | `gate_prompt.py::build_gate_resolver`, `can_prompt`, `format_gate_lines` |
 | Text/JSON/MCP presentation | `formatters/CLAUDE.md` |

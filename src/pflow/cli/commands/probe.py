@@ -35,6 +35,14 @@ def probe_cmd(ctx: click.Context, node_type: str, params: tuple[str, ...], outpu
     \b
         pflow read-fields exec-1763463202-0cd0c8fe result.data.items
 
+    A ${VAR} in a param is filled from the environment or `pflow settings
+    set-env` first (never inside a shell command or code body); an unset
+    one refuses the probe.
+
+    Exit codes: 0 the node succeeded; 1 it ran and failed (the error on
+    stderr); 2 the probe was refused before it ran (unknown node, invalid
+    or unknown param, unset ${VAR}).
+
     \b
     More examples:
         pflow probe http url="https://api.example.com/data"
@@ -45,10 +53,4 @@ def probe_cmd(ctx: click.Context, node_type: str, params: tuple[str, ...], outpu
 
     inject_settings_env_vars()
     verbose = ctx.obj.get("verbose", False) if ctx.obj else False
-    execute_single_node(
-        node_type=node_type,
-        params=params,
-        output_format=output_format or "text",
-        show_structure=(output_format != "json"),
-        verbose=verbose,
-    )
+    execute_single_node(node_type=node_type, params=params, output_format=output_format or "text", verbose=verbose)
