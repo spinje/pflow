@@ -10,7 +10,7 @@ Shared presentation for CLI and MCP. Return strings/dicts; never print or call
 | Wrong selected output/mode | `output_utils.py::select_output_mode` |
 | Full-run fallback output vs `--only` output | `output_utils.py::find_auto_output`, `find_only_output` |
 | How a run ended — the JSON document, CLI stderr summary, MCP text (every status) | `run_outcome.py` (`build_run_outcome` → `RunOutcome`; `render_cli_stderr`, `render_mcp_text`) |
-| `registry_run` probe failure text | `run_outcome.py::format_error_text` |
+| Probe failure text (CLI `probe` stderr, MCP `registry_run`) | `run_outcome.py::format_error_text` |
 | Batch error input is too large/sensitive to display | `batch_errors.py` |
 | Node text/JSON/template paths | `node_output_formatter.py` |
 | Validation diagnostics | `validation_formatter.py` |

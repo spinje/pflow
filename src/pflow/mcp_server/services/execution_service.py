@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.diagnostic import Diagnostic, Severity, exception_to_diagnostics
 from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.exceptions import (
     CompilationError,
@@ -470,157 +470,41 @@ class ExecutionService(BaseService):
             raise ValueError(f"Failed to save workflow: {e}") from e
 
     @classmethod
-    def _cache_execution_result(
-        cls,
-        execution_id: str,
-        node_type: str,
-        parameters: dict[str, Any] | None,
-        outputs: dict[str, Any],
-        action: str | None,
-    ) -> None:
-        """Cache execution results for structure-only mode (Task 89).
-
-        Args:
-            execution_id: Unique execution identifier
-            node_type: Node type identifier
-            parameters: Parameters used for execution
-            outputs: Outputs from execution
-            action: Action result from node execution
-        """
-        # Only cache successful executions
-        if action != "error":
-            from pflow.core.execution_cache import ExecutionCache
-
-            cache = ExecutionCache()
-            try:
-                cache.store(execution_id=execution_id, node_type=node_type, params=parameters or {}, outputs=outputs)
-            except Exception as cache_error:
-                # Log warning but don't fail execution
-                logger.warning(f"Failed to cache execution {execution_id}: {cache_error}")
-
-    @classmethod
     @ensure_stateless
     def run_registry_node(cls, node_type: str, parameters: dict[str, Any] | None = None) -> str:
-        """Execute a single node via synthetic IR through the Runner.
-
-        Args:
-            node_type: Node type to run
-            parameters: Optional parameters for the node
+        """Probe one node (``execution/probe.py::probe_node``, shared with ``pflow probe``).
 
         Returns:
-            Formatted string with node output structure or error message
+            The node's output structure, or its failure text
         """
-        from pflow.execution.result import RunnerConfig
-        from pflow.execution.runner import WorkflowRunner
+        from pflow.execution.probe import probe_node
 
-        # Check registry first (before Runner, for fast "not found" response)
-        registry = Registry()
-        nodes = registry.load()
-        if node_type not in nodes:
-            from pflow.execution.formatters.registry_error_helpers import build_node_not_found_diagnostic
-
-            return format_diagnostic(build_node_not_found_diagnostic(node_type, list(nodes.keys())))
-
-        # Validate parameters at system boundary (MCP concern)
-        node_params: dict[str, Any] = {}
         if parameters:
+            # MCP's boundary check: JSON-serialisable and under the size limit.
             is_valid, error = validate_execution_parameters(parameters)
             if not is_valid:
                 return f"❌ Invalid parameters: {error}"
-            node_params = dict(parameters)
-
-        # Generate execution_id for read_fields two-phase pattern
-        from pflow.core.execution_cache import ExecutionCache
-
-        cache = ExecutionCache()
-        execution_id = cache.generate_execution_id()
 
         try:
-            # Resolve ${ENV_VAR} from os.environ and settings.json
-            # (the compiler's template resolver only resolves from shared store).
-            # A body (a shell command, a code block) or embedded code (JavaScript an MCP
-            # tool runs) is another language: its ${…} is that language's own, never
-            # expanded here.
-            if node_params:
-                from pflow.core.workflow.template_surfaces import param_mode
-                from pflow.mcp.auth_utils import expand_env_vars_nested
-
-                expanded = expand_env_vars_nested(
-                    {
-                        key: value
-                        for key, value in node_params.items()
-                        if param_mode(node_type, key) not in ("body", "embedded")
-                    },
-                    include_settings=True,
-                    raise_on_missing=True,
-                )
-                node_params = {key: expanded.get(key, value) for key, value in node_params.items()}
-
-            # Build synthetic single-node IR
-            synthetic_ir: dict[str, Any] = {
-                "nodes": [{"id": node_type, "type": node_type, "params": node_params}],
-                "edges": [],
-            }
-            # Execute via Runner with cache disabled (registry run is for discovery)
-            # Pass {} as Runner params — all user params are in node.params only.
-            # Passing them as Runner params causes WorkflowValidator Step 7
-            # to flag all node params as "unknown workflow inputs".
-            runner = WorkflowRunner()
-            # registry_run is a single-node probe — no trace persisted (Task 172: trace_enabled=False so
-            # it never streams to ~/.pflow/debug), matching its pre-streaming behavior.
-            result = runner.run(synthetic_ir, {}, RunnerConfig(cache_enabled=False, trace_enabled=False))
-
-            if result.success:
-                # Extract node output from shared store
-                outputs = result.shared_after.get(node_type, {})
-                if not isinstance(outputs, dict):
-                    outputs = {"result": outputs}
-
-                # Cache for read_fields pattern
-                cls._cache_execution_result(
-                    execution_id=execution_id,
-                    node_type=node_type,
-                    parameters=parameters,
-                    outputs=outputs,
-                    action=None,
-                )
-
-                # Extract execution time from metrics
-                exec_time_ms = 0
-                if result.metrics:
-                    total_ms, _wf_ms = result.metrics._calculate_durations()
-                    exec_time_ms = int(total_ms)
-
-                # Format output
-                from pflow.core.settings import SettingsManager
-                from pflow.execution.formatters.node_output_formatter import format_node_output
-
-                settings = SettingsManager().load()
-                output_mode = settings.registry.output_mode
-
-                formatted = format_node_output(
-                    node_type=node_type,
-                    action="default",
-                    outputs=outputs,
-                    shared_store=result.shared_after,
-                    execution_time_ms=exec_time_ms,
-                    registry=registry,
-                    format_type="structure",
-                    verbose=True,
-                    execution_id=execution_id,
-                    output_mode=output_mode,
-                )
-
-                if not isinstance(formatted, str):
-                    raise TypeError(f"Expected str from structure format, got {type(formatted)}")
-                return formatted
-            else:
+            probe = probe_node(node_type, dict(parameters or {}))
+            if not probe.success:
                 from pflow.execution.formatters.run_outcome import format_error_text
 
-                return format_error_text(result.errors, _mcp_surfaced_diagnostics(result.diagnostics))
+                return format_error_text(probe.errors, _mcp_surfaced_diagnostics(probe.warnings))
 
+            from pflow.core.settings import SettingsManager
+            from pflow.execution.formatters.node_output_formatter import format_structure_output
+
+            return format_structure_output(
+                probe.node_type,
+                probe.outputs,
+                probe.outputs,
+                Registry(),
+                probe.execution_time_ms,
+                verbose=True,
+                execution_id=probe.execution_id,
+                output_mode=SettingsManager().load().registry.output_mode,
+            )
         except Exception as e:
             logger.error(f"Failed to run node {node_type}: {e}", exc_info=True)
-            from pflow.execution.formatters.registry_error_helpers import enrich_for_probe
-
-            return "\n".join(format_diagnostic(d) for d in enrich_for_probe(e, node_type))
+            return "\n".join(format_diagnostic(d) for d in exception_to_diagnostics(e))

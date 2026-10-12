@@ -1,6 +1,6 @@
 """Tests for registry_run MCP node support.
 
-After Task 138, run_registry_node() routes through WorkflowRunner with
+run_registry_node() calls the shared probe (execution/probe.py::probe_node), which routes through WorkflowRunner with
 synthetic IR. Tests verify behavior through the MCP service method, mocking
 at the Runner level or using real shell execution where feasible.
 """
@@ -22,7 +22,7 @@ class TestRegistryRunMCP:
         We verify the synthetic IR is correctly constructed by checking that
         the Runner receives it with the right node type and params.
         """
-        with patch("pflow.execution.runner.WorkflowRunner") as mock_runner_cls:
+        with patch("pflow.execution.probe.WorkflowRunner") as mock_runner_cls:
             # Configure mock runner to return success
             mock_runner = MagicMock()
             mock_runner_cls.return_value = mock_runner
@@ -34,7 +34,7 @@ class TestRegistryRunMCP:
             )
 
             # Registry must recognize the node type
-            with patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_cls:
+            with patch("pflow.execution.probe.Registry") as mock_registry_cls:
                 mock_registry = MagicMock()
                 mock_registry_cls.return_value = mock_registry
                 mock_registry.load.return_value = {
@@ -61,7 +61,7 @@ class TestRegistryRunMCP:
 
     def test_regular_node_not_affected(self):
         """Verify regular (non-MCP) nodes work via synthetic IR through Runner."""
-        with patch("pflow.execution.runner.WorkflowRunner") as mock_runner_cls:
+        with patch("pflow.execution.probe.WorkflowRunner") as mock_runner_cls:
             mock_runner = MagicMock()
             mock_runner_cls.return_value = mock_runner
             mock_runner.run.return_value = ExecutionResult(
@@ -69,7 +69,7 @@ class TestRegistryRunMCP:
                 shared_after={"shell": {"stdout": "test output"}},
             )
 
-            with patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_cls:
+            with patch("pflow.execution.probe.Registry") as mock_registry_cls:
                 mock_registry = MagicMock()
                 mock_registry_cls.return_value = mock_registry
                 mock_registry.load.return_value = {
@@ -98,7 +98,7 @@ class TestRegistryRunMCP:
         so resolved values end up in node.params.
         """
         with (
-            patch("pflow.execution.runner.WorkflowRunner") as mock_runner_cls,
+            patch("pflow.execution.probe.WorkflowRunner") as mock_runner_cls,
             patch.dict("os.environ", {"TEST_API_KEY": "secret-token-12345"}),
         ):
             mock_runner = MagicMock()
@@ -108,7 +108,7 @@ class TestRegistryRunMCP:
                 shared_after={"http": {"response": "ok"}},
             )
 
-            with patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_cls:
+            with patch("pflow.execution.probe.Registry") as mock_registry_cls:
                 mock_registry = MagicMock()
                 mock_registry_cls.return_value = mock_registry
                 mock_registry.load.return_value = {
@@ -130,7 +130,7 @@ class TestRegistryRunMCP:
     def test_template_resolution_nested_structures(self):
         """Verify ${var} templates are resolved in nested dicts and lists."""
         with (
-            patch("pflow.execution.runner.WorkflowRunner") as mock_runner_cls,
+            patch("pflow.execution.probe.WorkflowRunner") as mock_runner_cls,
             patch.dict("os.environ", {"API_KEY": "key123", "API_SECRET": "secret456"}),
         ):
             mock_runner = MagicMock()
@@ -140,7 +140,7 @@ class TestRegistryRunMCP:
                 shared_after={"http": {"response": "ok"}},
             )
 
-            with patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_cls:
+            with patch("pflow.execution.probe.Registry") as mock_registry_cls:
                 mock_registry = MagicMock()
                 mock_registry_cls.return_value = mock_registry
                 mock_registry.load.return_value = {
@@ -167,7 +167,7 @@ class TestRegistryRunMCP:
     def test_template_resolution_from_settings_json(self):
         """Verify ${var} templates are resolved from settings.json."""
         with (
-            patch("pflow.execution.runner.WorkflowRunner") as mock_runner_cls,
+            patch("pflow.execution.probe.WorkflowRunner") as mock_runner_cls,
             patch.dict("os.environ", {}, clear=True),
             patch("pflow.core.settings.SettingsManager") as mock_settings_cls,
         ):
@@ -178,7 +178,7 @@ class TestRegistryRunMCP:
                 shared_after={"http": {"response": "ok"}},
             )
 
-            with patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_cls:
+            with patch("pflow.execution.probe.Registry") as mock_registry_cls:
                 mock_registry = MagicMock()
                 mock_registry_cls.return_value = mock_registry
                 mock_registry.load.return_value = {
@@ -210,7 +210,7 @@ class TestRegistryRunMCP:
         with (
             patch.dict("os.environ", {}, clear=True),
             patch("pflow.core.settings.SettingsManager") as mock_settings_cls,
-            patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_cls,
+            patch("pflow.execution.probe.Registry") as mock_registry_cls,
         ):
             mock_registry = MagicMock()
             mock_registry_cls.return_value = mock_registry
@@ -237,3 +237,17 @@ class TestRegistryRunMCP:
         assert "Command: echo oops >&2; exit 1" in result
         assert "Workflow execution failed" not in result
         assert "trace_path:" not in result
+
+    def test_failure_text_is_the_cli_probe_failure_text(self):
+        """One probe, two channels: registry_run answers a failed node with exactly the text `pflow probe`
+        prints on stderr — both render the shared probe's errors through ``format_error_text``."""
+        import click.testing
+
+        from pflow.cli.commands.probe import probe_cmd
+
+        command = "echo oops >&2; exit 1"
+        mcp_text = ExecutionService.run_registry_node("shell", parameters={"command": command})
+        cli = click.testing.CliRunner(mix_stderr=False).invoke(probe_cmd, ["shell", f"command={command}"])
+
+        assert cli.exit_code == 1
+        assert cli.stderr == mcp_text + "\n"

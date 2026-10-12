@@ -133,8 +133,7 @@ pflow has multiple entry points that apply different validation:
 | CLI `--validate-only` | Full `WorkflowValidator.validate()` only — no compilation, no execution | `cli/commands/run.py` (validate-only branch) → `WorkflowRunner.validate()` |
 | CLI `--dry-run` | Full validation + compilation + plan builder (no execution) | `cli/commands/run.py` → `WorkflowRunner.plan()` |
 | MCP server | Routes through the same `WorkflowRunner` | `mcp_server/services/execution_service.py` |
-| CLI `pflow probe` | No workflow validator/compiler — `execute_single_node` calls `node.run()` directly, with the two-phase `ExecutionCache` (not the memoization cache) | `cli/commands/_probe_impl.py` |
-| MCP `registry_run` | Synthetic single-node IR through `WorkflowRunner.run()` and its validation/compilation path; memo cache and trace disabled | `mcp_server/services/execution_service.py::run_registry_node` |
+| CLI `pflow probe` + MCP `registry_run` | One shared probe: a one-node IR through `WorkflowRunner.run()` and its validation/compilation path; memo cache and trace disabled, outputs in the two-phase `ExecutionCache` | `execution/probe.py::probe_node` |
 | Saved workflows | Same as CLI; resolved by `execution/workflow_resolver.py` | `cli/commands/run.py` |
 
 For any validation change, ask:
@@ -228,7 +227,6 @@ These boundaries and gaps exist today. If changes touch these areas, check wheth
 - **The pre-existing gaps above** — note if a change worsens one, never report the unchanged gap as new. The documented coalesce field/path behavior is supported behavior, not a gap exemption.
 - **Static validation not seeing runtime-only facts.** The validator sees declared types and structure, not values — "validation doesn't check the actual data" is the architecture, not drift. Drift requires a check that COULD be static and is missing/contradictory.
 - **Permissive mode being lenient** — it's a mode (`template_resolution_mode`), not a bug.
-- **The CLI probe path lacking workflow validation** — by design; it runs `node.run()` directly for fast iteration. Flag only if a change routes real workflow execution through it. MCP `registry_run` instead uses the runner validation/compilation path.
 - **Asymmetry that validation deliberately delegates to runtime defense-in-depth** (e.g. opaque `inputs: ${item}` skipping the static child-input check, caught per item by `type_child_inputs`) — the split is documented; verify the runtime half still exists instead of flagging the static half.
 - **A rule NOT being replicated into every layer.** The correct shape is usually one owning layer plus a runtime backstop — demand replication only where a bypass path or the user experience requires it; "add this check everywhere" is noise, not defense.
 
