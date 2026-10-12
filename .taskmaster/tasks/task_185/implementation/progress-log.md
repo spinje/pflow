@@ -118,3 +118,47 @@ Entry format: ORCHESTRATION.md → "Progress-log entry format".
 - Changed: `implementation-plan.md` (§0, §1.1–§1.6, P1–P5, §3, §4), ADR-0018 rewritten, CONTEXT.md
   Protected trace qualifier, `show-before-code.md` §10.
 - Next: commit; round 2 (same six lenses) on the re-amended plan.
+
+## [2026-10-13 03:10] task-planner (Fable) — Claude plan battery, ROUND 2 (6 lenses, opus/high, native)
+- Lenses: the same six (round 1 had verified Criticals in plan + architecture/impact, and the fold
+  rewrote §1.1/§1.3/§1.5 — every lens's surface changed). Reported Criticals: 2 (review-plan C1 and
+  silent-failures C1 — the same finding). **Verified Criticals: 1**: the "three-outcome fail-closed"
+  sweep reads were specified on the lenient twins, which return `None` on any `OSError`
+  (`resume_source.py:165,1114`, `run_tailer.py:67,126`) — as written the sweep fails OPEN (EMFILE → "no
+  trailer" → a pending pause or the Snapshot deleted) and the planned test mocked the helper, not the
+  fault. Folded: strict readers (`read_trace_*_strict` raising `Unreadable`; lenient twins wrap them),
+  `is_trace_locked(strict=)`, `workflow_file_state` three-outcome stat, the fault test injected at
+  `builtins.open`/`os.stat`.
+- Other dispositions (CONFIRMED → folded): legacy arm's `(.+)` swallowed dotted names (short ids,
+  non-hex `from`, future tags) → legacy name group dot-free, unrecognised = not a trace, `.from-` accepts
+  the id charset, unknown tags parse and are ignored, composer takes a `datetime` and asserts
+  parse-back, shared fixture helper converts the 102 short-timestamp sites; nameless traces ARE produced
+  (`workflow.pflow.md` → "workflow") → the name segment is always written; version-skew hazard stated
+  backwards (an older pflow CAN answer a newer pause; its legacy-named Attempt is invisible → double
+  answer) → ADR/P4 corrected, consumption arm over legacy names flagged as the user's call; settings:
+  `model_dump` dropped the typo → `extra="allow"` (unknown keys survive, never fail validation) +
+  `model_extra` check, no raw second parse (also closes the two-reads race), invalid env → `None`, older
+  versions dropping the key documented with the env opt-out; `is_file()` swallows PermissionError on 3.14
+  → three-outcome stat, unknown keeps the group; hidden deleted-file pauses counted on `resume list`;
+  "vanished Attempt = consumed" cannot be built via `_iter_workflow_traces` → `_find_consuming_attempt`
+  iterates its own candidates with three outcomes (loader raises a retryable error on a read fault);
+  sweep after a mid-run fault → `_trace_dir` recorded at `_open_stream`; rule numbering → spec order
+  (1 pause, 2 Snapshot, 3 newest run, 4 Attempt, 5 writer), spec Solution line + qualifier edited;
+  rule-2 walk bounded to aged candidates (over-protect ≤1/group) + agreement test; rule 3 protects the
+  source of a newest Attempt; hash-collision circularity → head-read each file about to be removed;
+  legacy-count clause data paths (preflight re-raise, `list_paused_runs(listing=)`, `load_snapshot_or_raise`
+  miss path, `traces_list.py`); `is_trace_locked` FileNotFound → False; lazy import in `finalize`;
+  docs wording vs the file-exists rule; `debugging.mdx:66`; Task-159 case 03/06 rebuilt with 07–09;
+  `tests/CLAUDE.md`; `find_workflow_trace` through the cached listing with one scoping rule.
+- REFUTED / not folded: none refuted. Not folded: the Viewer `run-not-found` banner and `/api/run-inputs`
+  404 legacy clause (`web/` untouched; noted); the three "valid pause" checks (`/api/gate` stays one
+  conjunct stricter — documented).
+- Changed: `implementation-plan.md` (§1.1–§1.6, P1, P3, P4, P5, §4), `task-185.md` (Solution line,
+  rule qualifier), ADR-0018 (grammar, additive rule, fail-closed, settings, version-skew hazard).
+- Round 3 selection (per-lens rule): KEEP review-plan and review-silent-failures (verified Critical),
+  review-concurrency-safety (W1 important; the consumption iterator was rewritten), review-architecture-fit
+  (W1 grammar — the parser was rewritten), review-impact-completeness (its W1 added consumers/data paths);
+  RETIRE review-feature-interactions (no Critical; its findings were wording/docs and a renumbering, all
+  folded; no new mechanism in its domain); ADD review-test-fidelity (plan mode — two rounds found the
+  planned tests mocking the wrong seam and fixtures that would pass for free).
+- Next: commit; round 3.

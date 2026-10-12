@@ -6,7 +6,7 @@ Every pflow surface that needs a Run — `pflow resume <id>`, `pflow resume list
 `--only` Snapshot, the Viewer's gate panel — used to find it by opening every file in `~/.pflow/debug`,
 because the trace filename carried only a workflow hash, a display name and a start time, and the
 directory had no bound (30,000 traces made `resume list` a 25-second command). Decision: **the trace
-filename carries every fact a lookup filters on** — `workflow-trace-{hash8}[-{name}].{execution_id}
+filename carries every fact a lookup filters on** — `workflow-trace-{hash8}-{name}.{execution_id}
 [.only][.from-{src8}]-{started}.json` (`core/trace_dir.trace_filename`, the one composer;
 `parse_trace_filename`, the one parser) — so a lookup is one `os.scandir` of the directory
 (`trace_dir.list_traces`) plus reads of only the files in its answer. The start timestamp stays the
@@ -50,20 +50,26 @@ until it ages out, is never protected, and ages out by the timestamp its old nam
 
 ## Consequences
 
-- **The grammar is additive-only.** A new fact becomes another optional dot-tag between the id and the
-  timestamp; the timestamp stays last and every grammar pflow has composed stays parseable — at least
-  for its timestamp, so the sweep can age it out. A pending Resume token is found only by its name, so
-  dropping an arm would strand issued tokens and re-open unbounded growth.
+- **The grammar is additive-only, and an older reader ignores what it does not know.** A new fact
+  becomes another optional dot-tag between the id and the timestamp; a reader parses unknown tags and
+  ignores them; the name segment is always present; the timestamp stays last; every grammar pflow has
+  composed stays parseable — at least for its timestamp, so the sweep can age it out. A name that
+  matches no grammar is not a trace: never listed, never deleted. A pending Resume token is found only
+  by its name, so dropping an arm would strand issued tokens and re-open unbounded growth.
 - **The name and the marker are the index; the trailer is the truth.** A lookup trusts the index; a
   consumer that acts (`resume list`, the sweep) reads the trailer of each marked trace. A crash between
   marker and trailer leaves a marker beside an `incomplete` trace, which every marker consumer ignores
   and the sweep removes with its trace. A marker write that fails disables streaming before any trailer
   exists, so the run is non-durable on every surface at once.
 - **Deletion reads the truth and fails closed.** The sweep classifies from names wherever it can (the
-  newest run per Workflow, Attempt lineage, legacy names) and reads at most one trailer per Workflow
-  per sweep for the Snapshot; a file it cannot read is kept, and so is its whole Workflow group that
-  sweep. A trace with a `run.complete` trailer had every earlier line fully flushed (the writer disables
-  streaming on the first fault), so a trailer is sufficient evidence of a usable Snapshot.
+  newest run per Workflow, Attempt lineage, legacy names) and reads only the aged files it is about to
+  judge — for the Snapshot it walks a Workflow's aged traces newest-first until the first success, so
+  it may keep one aged success beside a younger one, never the reverse. It reads through strict readers
+  that distinguish "gone" from "could not read": a file it cannot read is kept, and so is its whole
+  Workflow group that sweep; a workflow file whose existence cannot be determined keeps its group. A
+  trace with a `run.complete` trailer had every earlier line fully flushed (the writer disables
+  streaming on the first fault), so a trailer is sufficient evidence of a usable Snapshot; the one
+  residual is a success trailer over zero events, which the loader skips and the sweep would protect.
 - **Consumption evidence outlives its source.** Whether a Resume token was already answered is read
   from the Attempt that answered it (`resume_source._find_consuming_attempt`), so an Attempt is removed
   only after its source is gone, chains unwind root-first, and a source whose removal failed keeps its
@@ -71,13 +77,17 @@ until it ages out, is never protected, and ages out by the timestamp its old nam
   The loader re-checks that its source still exists after the consumption check, and an Attempt that
   vanished mid-check counts as consumed, so a concurrent sweep makes a resume refuse — never
   double-answer. `resumed_from` stays pure lineage for data (ADR-0010).
-- **Retention is configured leniently.** The settings model ignores unknown keys (a strict model would
-  turn a typo into a whole-file fallback that drops API keys and is written back by the next settings
-  command); instead the sweep reads the raw `runtime` mapping and prunes nothing — with a warning —
-  when it sees an unknown key there or when the file failed to load. `SettingsManager.save()` refuses
-  after a failed load.
+- **Retention is configured leniently.** The `runtime` settings model allows unknown keys and keeps
+  them through a save (a strict model would turn a typo into a whole-file fallback that drops API keys
+  and is written back by the next settings command; an ignoring model would erase the typo on the next
+  save and switch deletion on silently); the sweep prunes nothing — with a warning — when it sees an
+  unknown `runtime` key, when the file failed to load, or when the environment override is not a
+  non-negative integer. `SettingsManager.save()` refuses after a failed load. An older pflow's settings
+  write still drops the key: `PFLOW_TRACE_RETENTION_DAYS=0` is the opt-out that survives it.
 - Every trace path printed before this version keeps working with `pflow report <path>` until the
   trace ages out; the run behind it is not listed anywhere. Do not run pre- and post-185 pflow versions
-  against one `~/.pflow`: the older one cannot see the newer one's pauses as pauses. Task 121
+  against one `~/.pflow`: an older pflow can see and answer a newer pflow's pause, and its answer —
+  written under the old grammar — is invisible to the newer one, which would offer the token again;
+  answer each pause with the version that issued it. Task 121
   (record/replay of `agent` steps from traces) will need a durable-recording rule of its own — nothing
   is pinned for it here.

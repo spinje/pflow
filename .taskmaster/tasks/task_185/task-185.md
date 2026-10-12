@@ -68,8 +68,7 @@ unanswerable, since the resume token IS the trace (ADR-0010). The trace became l
   mechanism (what the filename carries, whether a small marker/index exists beside the traces, how paused-ness is visible
   without a tail read) is the planner's — see D2.
 - **The directory is bounded.** pflow keeps the traces the product still needs and removes the rest on a policy the user
-  rules (D1). Removal never takes a trace a feature depends on: a pending Paused Run (its token), the newest success/degraded
-  trace per Workflow (the `--only` Snapshot), and the newest Attempt of any resume chain plus what it was resumed from.
+  rules (D1). Removal never takes a Protected trace (the five rules under Requirements › Retention).
 - **One resolver, one recency rule.** The debug directory is resolved in one place; "newest" means one thing everywhere.
 - **The docs stop advising the destructive `rm`**; `--no-trace` vs `--report` precedence is stated where the flags are.
 
@@ -120,6 +119,8 @@ drafting time (session-16); the planner re-checks `git log` on those files again
   1. a Paused Run whose token is still answerable (not consumed by a newer Attempt that did work);
   2. the newest Success/Degraded full run of each Workflow (the `--only` Snapshot);
   3. the newest run of each Workflow regardless of status (so `pflow report` of the last run works when it failed);
+  — rules 1–3 only while the Workflow's file still exists (resume and `--only` re-resolve it; an inline `ir-hash:`
+  identity never qualifies) — the planner's amendment, pending the user's confirmation at handback;
   4. an Attempt, until the Run it resumed is gone (the source's "already answered" verdict is read from the Attempt);
   5. any trace currently open by a writer (advisory lock).
 - Removal is a no-op when the policy is off or the bound is not reached; it never runs on a read-only command.
