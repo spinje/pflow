@@ -573,6 +573,27 @@ class TestWorkflowTraceCollector:
             assert trace_data["final_status"] == "success"
             assert trace_data["warnings"][0]["source"] == "parser"
 
+    def test_warnings_are_scrubbed_of_the_run_secret_values(self, streaming_collector, temp_home):
+        """The trailer's warnings are display data (#801): a secret input's value echoed in a warning is
+        scrubbed, while the run's recorded inputs stay raw for resume."""
+        secret = "sekret-warning-0123"  # noqa: S105 - scrub sentinel
+        with patch("pathlib.Path.home", return_value=temp_home):
+            streaming_collector.inputs = {"api_token": secret}
+            streaming_collector.set_warnings([
+                Diagnostic(
+                    severity=Severity.WARNING,
+                    message=f"Upstream said: denied {secret}",
+                    source="runtime",
+                    context={"detail": secret},
+                )
+            ])
+
+            trace_data = load_trace_file(streaming_collector.save_to_file())
+
+        assert trace_data["warnings"][0]["message"] == "Upstream said: denied <REDACTED>"
+        assert trace_data["warnings"][0]["detail"] == "<REDACTED>"
+        assert trace_data["inputs"] == {"api_token": secret}
+
     @pytest.mark.parametrize("source", ["parser", "validator"])
     def test_final_status_success_with_definition_warning_dict(self, streaming_collector, temp_home, source):
         """Dict-shaped parser/validator WARNINGs are definition advisories, not runtime degradation."""

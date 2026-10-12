@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Final
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.diagnostic_render import format_diagnostic, head_tail_preview
 from pflow.core.gate import masked_gate_dict
+from pflow.core.security_utils import scrub_secret_values, secret_values
 from pflow.core.templates import TemplateResolver
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.execution_state import build_execution_steps
@@ -86,6 +87,8 @@ def build_run_outcome(
     ``duration_ms``/``metrics``).
     Values whose producer means ``null`` keep it: the ``total_cost_usd`` pricing tri-state, a
     ``?? null`` output, the canonical gate payload's ``question``/``recommendation``/``iteration``.
+    The document and its Diagnostics are scrubbed of the run's secret values (``run_secret_values``)
+    here, once, so no channel that renders the outcome can print one.
     """
     status = _outcome_status(result)
     trace = result.trace
@@ -132,14 +135,38 @@ def build_run_outcome(
     if resume_command is not None:
         document["resume_command"] = resume_command
 
+    secrets = run_secret_values(workflow_ir, result.shared_after)
     return RunOutcome(
-        document=document,
+        document=scrub_secret_values(document, secrets),
         status=status,
-        errors=errors,
-        warnings=warnings,
-        advisories=advisories,
+        errors=_scrub_diagnostics(errors, secrets),
+        warnings=_scrub_diagnostics(warnings, secrets),
+        advisories=_scrub_diagnostics(advisories, secrets),
         engine_started=result.engine_started,
     )
+
+
+def run_secret_values(workflow_ir: Mapping[str, Any] | None, shared: Mapping[str, Any]) -> frozenset[str]:
+    """The secret values a run's printed output must not show: ``secret_values`` of the declared inputs
+    ``shared`` holds. A run rejected before its inputs were prepared has none, so only settings values."""
+    declared = (workflow_ir or {}).get("inputs") or {}
+    return secret_values({name: shared[name] for name in declared if name in shared})
+
+
+def _scrub_diagnostics(diagnostics: list[Diagnostic], secrets: frozenset[str]) -> list[Diagnostic]:
+    """Copies whose text fields — what ``format_diagnostic`` renders — are scrubbed of ``secrets``."""
+    if not secrets:
+        return diagnostics
+    return [
+        replace(
+            diagnostic,
+            message=scrub_secret_values(diagnostic.message, secrets),
+            title=scrub_secret_values(diagnostic.title, secrets),
+            suggestions=scrub_secret_values(diagnostic.suggestions, secrets),
+            context=scrub_secret_values(diagnostic.context, secrets),
+        )
+        for diagnostic in diagnostics
+    ]
 
 
 def _outcome_status(result: ExecutionResult) -> WorkflowStatus:

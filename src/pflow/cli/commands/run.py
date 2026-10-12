@@ -904,7 +904,10 @@ def _handle_named_workflow(
         else:
             click.echo(f"cli: Loading workflow from file: {first_arg}", err=True)
         if params:
-            click.echo(f"cli: With parameters: {params}", err=True)
+            from pflow.core.security_utils import redact_sensitive, scrub_secret_values, secret_values
+
+            shown = scrub_secret_values(redact_sensitive(params), secret_values(params))
+            click.echo(f"cli: With parameters: {shown}", err=True)
 
     _setup_workflow_execution(ctx, first_arg, source, output_format)
     execute_json_workflow(ctx, resolved_workflow, stdin_data, output_key, params, output_format, input_sources)

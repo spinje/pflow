@@ -134,7 +134,14 @@ def _handle_text_output(
     is produced (``-o`` miss, no declared outputs, no auto-detect match), stdout stays empty so
     pipe consumers receive a clean stream — the stderr completion line already says how the run
     ended, and a literal English fallback on stdout broke ``pflow … -o nonexistent | jq .`` (#400).
+
+    Everything printed here derives from ``shared_storage``, so the store is scrubbed of the run's
+    secret values once, up front — the data, the ``-o`` hint and the output-fill diagnostic alike.
     """
+    from pflow.core.security_utils import scrub_secret_values
+    from pflow.execution.formatters.run_outcome import run_secret_values
+
+    shared_storage = scrub_secret_values(shared_storage, run_secret_values(workflow_ir, shared_storage))
     # Output precedence lives in the shared classifier (output_utils), so the
     # CLI text path and the JSON/MCP path can never disagree on *which* branch
     # applies. This path renders the chosen branch its own way (streams one

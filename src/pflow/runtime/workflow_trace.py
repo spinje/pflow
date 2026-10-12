@@ -18,6 +18,7 @@ from pflow.core.diagnostic import Diagnostic, warning_degrades_status
 from pflow.core.exceptions import OnlySnapshotMissingError
 from pflow.core.metrics import MetricsCollector
 from pflow.core.node_type_display import is_model_node_type
+from pflow.core.security_utils import scrub_secret_values, secret_values
 from pflow.core.trace_io import (
     RESERVED_LINE_KEYS,
     TRACE_JSONL_MARKER,
@@ -1458,9 +1459,12 @@ class WorkflowTraceCollector:
         if not warnings:
             self.execution_warnings = None
             return
-        self.execution_warnings = [
-            warning.to_display_dict() if isinstance(warning, Diagnostic) else warning for warning in warnings
-        ]
+        # Unlike the rest of the trace (raw, for resume), the warnings are display data: scrubbed of the
+        # run's secret values as the printed outcome is.
+        self.execution_warnings = scrub_secret_values(
+            [warning.to_display_dict() if isinstance(warning, Diagnostic) else warning for warning in warnings],
+            secret_values(self.inputs or {}),
+        )
 
     def mark_last_event_failed(self, node_id: str, *, error: str) -> None:
         """Flip the most recent event for node_id to failed.

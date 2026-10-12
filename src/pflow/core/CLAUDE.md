@@ -232,13 +232,16 @@ escapes values or guarantees shell safety. External MCP schema names follow a
 separate discovery/argument path; incoming MCP execution-name validation does not
 establish universal coverage.
 
-Redaction uses whole-word sensitive-name matching plus explicitly supplied keys.
-Use `security_utils` instead of substring matching. Arbitrary secrets embedded in
-values may remain visible; this is not universal secret detection.
-Value-level scanning was deliberately deferred in #183; verify an observed leak before broadening this contract.
-Traces store resolved values raw for resume; a reader that displays trace content calls
-`redact_sensitive` (`trace_report.py`, `ui/run_node.py`). `settings.env` is masked whole by
-value (`SettingsManager.list_env`), never by name — `KEY`-suffixed provider names miss the rule.
+Redaction is two rules in `security_utils`: by NAME (`redact_sensitive`, whole-word matching
+plus explicitly supplied keys — never substring matching) and by VALUE (`scrub_secret_values`
+over `secret_values`: settings-stored values + strings under sensitive-named declared inputs,
+8+ chars, #801). The value scrub runs on DATA before rendering, at four seams: `build_run_outcome`
+(CLI JSON/stderr, MCP, the trailer's `json_output`), `cli/workflow_output._handle_text_output`,
+`trace_report.generate_report`, `ui/run_node.run_node_detail`. A secret produced mid-run, or
+exported only in the shell, is not in the set — that is the `secret: true` + provenance design (#183).
+Traces store resolved values raw for resume; a reader that displays trace content applies both
+rules. `settings.env` is masked whole by value (`SettingsManager.list_env`), never by name —
+`KEY`-suffixed provider names miss the rule.
 
 ## Other local constraints
 

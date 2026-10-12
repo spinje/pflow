@@ -6,7 +6,7 @@ sensitive parameters across CLI and MCP server contexts.
 
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 # Sensitive parameter names to mask/redact
@@ -83,7 +83,8 @@ def redact_sensitive(obj: Any) -> Any:
     and ``--only`` loading read the trace directly. Descends every nested dict and list, so a nested
     ``headers.Authorization`` or a list-of-dicts secret is caught. Unlike ``sanitize_parameters`` it neither
     truncates long strings nor drops ``__`` keys — a debugging view shows the full realized value.
-    Accepted boundary: a secret inside a free-text string (a command, a prompt) has no key to match.
+    A secret inside a free-text string (a command, an error message) has no key to match — the
+    value scrub (``scrub_secret_values``) covers it.
     """
     if isinstance(obj, dict):
         return {
@@ -93,6 +94,73 @@ def redact_sensitive(obj: Any) -> Any:
     if isinstance(obj, list):
         return [redact_sensitive(item) for item in obj]
     return obj
+
+
+# A secret value shorter than this is never scrubbed: short values under sensitive names are common
+# (`auth_type: basic`, `TOKEN_LIMIT: "5"`) and replacing them inside free text corrupts unrelated data.
+# The same floor `llm_client._mask_key_material` uses.
+MIN_SECRET_LENGTH = 8
+_AUTH_SCHEME = re.compile(r"(?i)^(?:bearer|basic|token)\s+(\S+)$")
+
+
+def secret_values(inputs: Mapping[str, Any]) -> frozenset[str]:
+    """The values no printed surface of a run may show, given the run's declared ``inputs``.
+
+    Every value stored in pflow settings (``pflow settings set-env`` — read from the settings file, never
+    from ``os.environ``), plus every string the name rule hides in ``inputs`` (the value under a
+    sensitive-named input or nested key, at any depth). A ``Bearer``/``Basic``/``Token`` value adds its
+    bare credential too, since that is what a server echoes. Strings only; values shorter than
+    ``MIN_SECRET_LENGTH`` or holding an unresolved ``${`` template are skipped. A secret a step
+    produces mid-run is not in the set — nothing marks it secret at run start.
+    """
+    from pflow.core.settings import SettingsManager
+
+    values = [*SettingsManager().list_env(mask_values=False).values(), *_sensitive_strings(inputs)]
+    credentials = [match.group(1) for value in values if (match := _AUTH_SCHEME.match(value))]
+    return frozenset(
+        value for value in [*values, *credentials] if len(value) >= MIN_SECRET_LENGTH and "${" not in value
+    )
+
+
+def _sensitive_strings(obj: Any, hidden: bool = False) -> Iterable[str]:
+    """Every string in ``obj`` that sits under a sensitive-named key (``hidden`` once one is passed)."""
+    if isinstance(obj, Mapping):
+        for key, value in obj.items():
+            yield from _sensitive_strings(value, hidden or (isinstance(key, str) and is_sensitive_parameter(key)))
+    elif isinstance(obj, (list, tuple)):
+        for item in obj:
+            yield from _sensitive_strings(item, hidden)
+    elif hidden and isinstance(obj, str):
+        yield obj
+
+
+def scrub_secret_values(obj: Any, secrets: frozenset[str]) -> Any:
+    """Return a copy of ``obj`` with every occurrence of each value in ``secrets`` replaced by ``<REDACTED>``.
+
+    The value-based counterpart of ``redact_sensitive``: it reaches a secret wherever it travelled — an
+    error message, shell stderr, a command echo, a workflow result. Applied to data BEFORE it is
+    rendered, so truncation or JSON escaping never leaves part of a secret behind. Descends dicts,
+    lists and tuples; dict keys and non-string leaves are kept as they are.
+    """
+    if not secrets:
+        return obj
+    ordered = sorted(secrets, key=len, reverse=True)  # a secret containing another is replaced whole
+
+    def scrub(value: Any) -> Any:
+        if isinstance(value, str):
+            for secret in ordered:
+                if secret in value:
+                    value = value.replace(secret, "<REDACTED>")
+            return value
+        if isinstance(value, dict):
+            return {key: scrub(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [scrub(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(scrub(item) for item in value)
+        return value
+
+    return scrub(obj)
 
 
 def redact_for_display(names: Iterable[str], value: Any) -> Any:
