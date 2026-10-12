@@ -54,7 +54,8 @@ Behavior worth knowing:
 - **A token is consumed by its answer.** The resumed attempt supersedes the paused run; a second answer refuses and names the newer attempt. Each later gate in the same workflow pauses again as a **new** token.
 - **An answer covers one gate, once.** `--approve yes` approves the paused gate only — it is not a standing approval for that step. A paused **loop** step runs the paused iteration on the answer; its next iteration is a new action that pauses again with a new token (the pause output names it: `Loop iteration 2 of up to 3`). Pass `--auto-approve <step>` to approve every remaining iteration at once — the pause output prints that command, and the browser panel's Approve all remaining sends it.
 - **Resuming without an answer flag refuses** and shows the pending question with the exact command; `--approve`/`--choose` on a run that is not paused refuses too.
-- The **edited-workflow refusal** and `--force` (below) apply to paused resumes the same as failed ones, with one addition: editing the paused approval step after approving it refuses — the approval covered the version the human saw. Input overrides (`KEY=VALUE`) work the same way.
+- The **edited-workflow refusal** and `--force` (below) apply to paused resumes the same as failed ones, denials included (`--approve no` after an edit to a step before the gate needs `--force`), with one addition: editing the paused approval step after approving it refuses — the approval covered the version the human saw. Input overrides (`KEY=VALUE`) work the same way.
+- **A denial needs the paused gate.** If the paused step was renamed, removed, no longer reachable from the start, or lost its `approval: required`, `--approve no` refuses — there is no gate left to deny, and resuming could run the step — and `--force` does not override that.
 
 ## Overriding inputs
 
@@ -76,7 +77,7 @@ The failed step runs **again** from the start (for a loop step: the failed itera
   - **For AI agents** (no terminal): resume **refuses with a clear error** rather than silently repeating the side effect. Confirm with your human that re-running the step is safe, then re-run with `--force`.
 - A failed step that **never started** — it failed resolving its `${...}` templates (a typo, a missing field) before it ran — resumes without confirmation: nothing fired. A batch step whose item failed that way had already started (earlier items ran), so it still asks.
 
-`--force` bypasses this confirmation **and** the edited-workflow check below.
+`--force` is consent to re-running steps: it bypasses this confirmation **and** the edited-workflow check below.
 
 ## Other behavior worth knowing
 
