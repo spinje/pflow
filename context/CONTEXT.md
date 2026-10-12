@@ -167,7 +167,8 @@ cost of finding a Run. _Avoid_: cleanup, pruning (the act, not the policy), TTL,
 
 **Protected trace** — a trace Retention never removes, whatever its age, because a feature still
 reads it: a Paused Run whose Resume token is still answerable; the newest Success or Degraded full
-run of a Workflow (its Snapshot); the newest run of a Workflow regardless of status; an Attempt until
+run of a Workflow (its Snapshot); the newest run of a Workflow regardless of status — those three only
+while the Workflow's file still exists, since resume and `--only` re-resolve it; an Attempt until
 the Run it resumed is gone; a trace whose writer is still running. A trace written under an older
 filename grammar is never protected. _Avoid_: pinned, kept, exempt, whitelisted.
 

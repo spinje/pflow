@@ -182,3 +182,16 @@ cutover** — no one-time migration and no legacy arm; pre-upgrade traces are in
 readable by explicit path, aged out by their parsed timestamp, never protected. Q5 yes — ADR-0018 and the
 CONTEXT.md nouns are on the branch. Q6: consent for P5 on the owner's directory behind a tar-backup gate
 (plan §P5). §5–§6 above are superseded where they differ; the plan is the current truth.
+
+## 10. Amendments from the Claude plan battery (2026-10-13, round 1 — pending the user's confirmation)
+
+Three findings verified against the code and the owner's directory change ruled items; the plan proceeds
+on them unless overruled: (a) **Q1 field order** — the start timestamp stays LAST
+(`…[-{name}].{execution_id}[.only][.from-{src8}]-{started}.json`) so pre-185 pflow versions sharing
+`~/.pflow` (other worktrees, a lagging install) still order and find post-185 traces; (b) **rules 1, 2
+and 5 apply only while the Workflow's file exists** — 2,074 of the owner's 2,267 recorded workflow
+identities are deleted worktrees/scratchpads and all 26 pending pauses belong to deleted files, so
+without the qualifier the protected set and the per-run sweep cost grow without end; consequence:
+`resume list` stops showing pauses whose workflow file is gone; (c) no `extra="forbid"` on the settings
+model (a typo would drop API keys for every run and be written back by the next settings command) —
+the sweep itself refuses to prune on an unknown `runtime` key, and `save()` refuses after a failed load.

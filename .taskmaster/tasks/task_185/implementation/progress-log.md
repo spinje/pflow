@@ -89,3 +89,32 @@ Entry format: ORCHESTRATION.md → "Progress-log entry format".
 - Self-checks: review round 1 was codex (6 lenses); the amendment asks for the FULL plan-mode battery
   natively on Claude, iterated to zero confirmed Criticals — rounds logged below.
 - Next: commit; Claude battery round 1.
+
+## [2026-10-13 01:30] task-planner (Fable) — Claude plan battery, ROUND 1 (6 lenses, opus/high, native)
+- Lenses: review-plan, review-architecture-fit, review-concurrency-safety, review-feature-interactions,
+  review-silent-failures, review-impact-completeness. Reported Criticals: 3 (plan C1 sweep cost;
+  impact C1 + architecture C1 `extra="forbid"` wipe). **Verified Criticals: 2** (the two distinct ones).
+- Dispositions (CONFIRMED → folded): sweep re-reads every protected aged trace each run (~5 s/run at the
+  owner's shape) → cost model: names-only where possible, ≤1 tail per group, file-exists qualifier on
+  rules 1/2/5 (amends ruled rules — flagged), second-sweep benchmark; `extra="forbid"` → dropped, sweep
+  reads the raw `runtime` mapping, `load_error` + `save()` refusal; marker-after-trailer contradiction
+  and the false "heals it" claim (all six lenses) → marker BEFORE trailer, no healing; unreadable
+  candidate treated as "no trailer → delete" / one bad file aborts the sweep → three-outcome reads, per-
+  candidate try, group kept on uncertainty, warning-level; raw re-read crash + the ADR residual → post-
+  check `path.exists()` and vanished-Attempt-counts-as-consumed (residual closed); rule-4 wording
+  inversion → waves defined root-first; `_stream_path.parent` after nulling → directory captured first,
+  sweep unconditional; version skew with pre-185 readers → timestamp LAST (amends Q1 field order —
+  flagged); rule 1 immortal unanswerable pauses → shared `answerable_pause` predicate (+ file exists);
+  Task-159 cases 07/08/09 hand-write old names + case 15/03 sed mask + case 12/04 guide text → P1/P4;
+  twins differ on UnicodeDecodeError → union; miss messages after cutover → legacy count clause on
+  every surface; mid-task fan-out sweeps the real HOME before the P5 gate → env=0 from P3, gate at P3
+  start, tar off /private/tmp (handback item); env override leaking into settings.json → read in the
+  sweep, never applied to the settings object; subprocess env fixture → `set_isolated_home` too;
+  `trace_dir` in `runtime/` drags the engine into ui → `core/trace_dir.py`; ADR-0007 "delete freely" →
+  P4 amendment; grammar additive-only → ADR; orphan markers → collected; disk-full never sweeps → sweep
+  after a stream fault too; report shortlist lazy → stated.
+- REFUTED / not folded: none refuted outright; "throttle 1-in-N" (plan C1's suggested fix) not adopted —
+  the cost model removes the cause instead of hiding it. `web/` banner copy left as is (true wording).
+- Changed: `implementation-plan.md` (§0, §1.1–§1.6, P1–P5, §3, §4), ADR-0018 rewritten, CONTEXT.md
+  Protected trace qualifier, `show-before-code.md` §10.
+- Next: commit; round 2 (same six lenses) on the re-amended plan.
