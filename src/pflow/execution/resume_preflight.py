@@ -11,9 +11,9 @@ side-effect confirm, dispatch).
 Two deliberate scope boundaries:
 
 - **No settings env-var injection.** ``inject_settings_env_vars()`` stays in the CLI: the in-process
-  CLI resume runs the workflow moments later (a resumed tail reaching an LLM node needs the
-  settings-stored keys in ``os.environ``); pre-flight makes no LLM call, and the server must not be
-  coupled to settings I/O through this seam.
+  CLI resume runs the workflow moments later (a resumed tail reaching a delegated-provider LLM node or
+  an agent step reads settings-stored keys from ``os.environ``); pre-flight makes no LLM call, and the
+  server must not be coupled to settings I/O through this seam.
 - **No compile.** The server wraps this with ``WorkflowRunner.preflight`` — the validate + compile its
   spawned child will do (as ``/api/run``'s ``_preflight`` does); the CLI compiles in-process moments later
   and surfaces the error interactively — a compile here would just run it twice there.

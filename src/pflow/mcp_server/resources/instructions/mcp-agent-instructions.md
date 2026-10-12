@@ -949,11 +949,11 @@ pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
 pflow settings set-env OPENAI_API_KEY "sk-..."
 pflow settings set-env GEMINI_API_KEY "..."
 
-# Or as plain shell env vars (LiteLLM picks them up directly)
+# Or as plain shell env vars (pflow reads the environment before settings)
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-**Critical**: Settings variables and env variables must be declared as inputs (not auto-available):
+**Critical**: Declare every credential as an input — a `${...}` template reads a settings or env variable only through a declared input of the same name. Settings values are also exported into the environment of shell, code and agent steps, like any exported variable, but only the declared input makes the workflow say what it needs:
 ```markdown
 ### api_token
 
@@ -2057,7 +2057,7 @@ I need to clarify a few details:
 | Execution time | "Quick" | 3-5 min for complex | Set expectations |
 | Template paths | "Simple" | Complex nesting | Test and document |
 | Error handling | "Automatic" | Need explicit checks | Add validation nodes |
-| Settings | "Available" | Must declare as inputs | Always add to inputs |
+| Settings | "Available" | `${...}` reads them only via declared inputs | Always add to inputs |
 | Node discovery | "Finds all" | Might miss some | Try different queries |
 | Async ops | "Need polling" | Prefer:wait often works | Try header first |
 
