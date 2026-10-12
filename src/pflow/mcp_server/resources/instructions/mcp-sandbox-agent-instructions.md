@@ -2044,7 +2044,7 @@ I need to clarify a few details:
 | Execution time | "Quick" | 3-5 min for complex | Set expectations |
 | Template paths | "Simple" | Complex nesting | Test and document |
 | Error handling | "Automatic" | Need explicit checks | Add validation nodes |
-| Settings | "Available" | Must declare as inputs | Always add to inputs |
+| Settings | "Available" | `${...}` reads them only via declared inputs | Always add to inputs |
 | Node discovery | "Finds all" | Might miss some | Try different queries |
 | Async ops | "Need polling" | Prefer:wait often works | Try header first |
 

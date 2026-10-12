@@ -142,7 +142,7 @@ pflow settings set-env api_token "..."
 </Warning>
 
 **Where a stored value goes:**
-- It fills the declared workflow input of the same name. A `${...}` template reads it only through that input, and `pflow history` shows that input as `<REDACTED>`, whatever its name.
+- It fills the declared workflow input of the same name. A `${...}` template reads it only through that input.
 - It is exported into pflow's environment when a run starts, unless your shell already exports that name. Shell, code and agent steps see it like any other exported variable, and LLM providers that LiteLLM handles itself (such as OpenRouter) find their keys there.
 
 **Alternative:** Set the key as a shell environment variable instead. pflow reads `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, and provider-specific equivalents from your environment first, then from settings.
