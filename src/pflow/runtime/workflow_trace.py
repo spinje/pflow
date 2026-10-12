@@ -214,6 +214,26 @@ def _trace_warnings_provably_benign(data: dict[str, Any]) -> bool:
     return all(not warning_degrades_status(warning) for warning in warnings)
 
 
+# The warning fields status and resume derive from (``_unrecovered_failed_node_ids``,
+# ``warning_degrades_status``) — identity, never display text.
+_WARNING_IDENTITY_KEYS = ("node_id", "type", "recovered", "severity", "source", "id")
+
+
+def _scrubbed_warnings(warnings: list[dict[str, Any]], secrets: frozenset[str]) -> list[dict[str, Any]]:
+    """The trailer's warnings as written: unlike the rest of the trace (raw, for resume) they are display
+    data, so their text is scrubbed of the run's secret values — their identity fields are not, since
+    ``resume_source`` re-derives recovery from them on disk."""
+    return [
+        {
+            **scrub_secret_values(warning, secrets),
+            **{key: warning[key] for key in _WARNING_IDENTITY_KEYS if key in warning},
+        }
+        if isinstance(warning, dict)
+        else warning
+        for warning in warnings
+    ]
+
+
 def _unrecovered_failed_node_ids(
     final_events: dict[str, dict[str, Any]],
     execution_warnings: list[dict[str, Any]] | None,
@@ -1102,9 +1122,7 @@ class WorkflowTraceCollector:
         if llm_summary["total_calls"] > 0:
             agg["llm_summary"] = llm_summary
         if self.execution_warnings:
-            # Unlike the rest of the trace (raw, for resume), the warnings are display data: written
-            # scrubbed of the run's secret values, as the printed outcome is. Status above reads them raw.
-            agg["warnings"] = scrub_secret_values(self.execution_warnings, secret_values(self.inputs or {}))
+            agg["warnings"] = _scrubbed_warnings(self.execution_warnings, secret_values(self.inputs or {}))
         if self.json_output is not None:
             agg["json_output"] = self.json_output
         # Task 171: the pause record rides the trailer (paused_node_id +

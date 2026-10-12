@@ -706,7 +706,8 @@ class TestWorkflowTraceCollector:
 
         assert trace_data["final_status"] == "degraded"
         assert trace_data["failed_node_ids"] == []
-        assert trace_data["warnings"][0]["node_id"] == "<REDACTED>"  # the display copy is scrubbed
+        assert trace_data["warnings"][0]["node_id"] == "fetch-data"  # identity stays: resume re-derives from it
+        assert trace_data["warnings"][0]["message"] == "Node '<REDACTED>' failed \u2014 on-error \u2192 'recover'"
 
     def test_final_status_degraded_with_recovered_api_warning(self, streaming_collector, temp_home):
         """API warnings routed through on-error should be degraded, not failed."""

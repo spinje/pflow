@@ -90,9 +90,11 @@ def build_run_outcome(
     ``duration_ms``/``metrics``).
     Values whose producer means ``null`` keep it: the ``total_cost_usd`` pricing tri-state, a
     ``?? null`` output, the canonical gate payload's ``question``/``recommendation``/``iteration``.
-    The run's secret values are scrubbed from its data before anything is built from it (truncation
-    and JSON parsing then never see a whole secret), and from the finished document (a value the
-    build decoded, the gate from the trace) — so no channel that renders the outcome can print one.
+    The run's secret values are scrubbed from its DATA before anything is built from it — the store,
+    the diagnostics, a paused gate's request — so truncation and JSON parsing never see a whole
+    secret and no channel that renders the outcome can print one. The document's own fields
+    (statuses, node ids, counts) are never scrubbed: a stored value that happens to equal one of
+    them must not rewrite the contract.
     """
     secrets = secret_values(getattr(result.trace, "inputs", None) or {})
     result = replace(
@@ -135,7 +137,7 @@ def build_run_outcome(
         document["total_cost_usd"] = metrics_summary["total_cost_usd"]
         _mirror_pricing_tri_state(document, metrics_summary)
         document["metrics"] = metrics_summary["metrics"]
-    gate = _gate_payload(result, status)
+    gate = _gate_payload(result, status, secrets)
     execution = _execution_block(workflow_ir, result.shared_after, metrics_summary, gate)
     if execution is not None:
         document["execution"] = execution
@@ -146,7 +148,7 @@ def build_run_outcome(
         document["resume_command"] = resume_command
 
     return RunOutcome(
-        document=scrub_secret_values(document, secrets),
+        document=document,
         status=status,
         errors=errors,
         warnings=warnings,
@@ -263,11 +265,15 @@ def _compact_step(step: dict[str, Any]) -> dict[str, Any]:
     return {**step, "batch_error_details": compacted}
 
 
-def _gate_payload(result: ExecutionResult, status: WorkflowStatus) -> dict[str, Any] | None:
+def _gate_payload(result: ExecutionResult, status: WorkflowStatus, secrets: frozenset[str]) -> dict[str, Any] | None:
     """The masked ``GateRequest`` dict of a paused or denied run — one shape for both (``node_id`` inside)."""
     if status is WorkflowStatus.PAUSED and result.trace is not None:  # a durable pause always has its trace
         request = (result.trace.pause_request or {}).get("gate_request")
-        return masked_gate_dict(request) if isinstance(request, dict) else None
+        if not isinstance(request, dict):
+            return None
+        # The request comes from the trace, not the scrubbed store: scrub what it shows, not who it is.
+        identity = {key: request[key] for key in ("node_id", "node_type", "kind") if key in request}
+        return masked_gate_dict({**scrub_secret_values(request, secrets), **identity})
     if status is WorkflowStatus.DENIED:
         for error in result.errors:
             context = error.context or {}

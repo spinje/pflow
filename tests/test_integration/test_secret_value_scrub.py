@@ -402,6 +402,36 @@ echo hello
 """
 
 
+GATED = """\
+# Gated
+
+A gated step whose params carry the token under a plain name.
+
+## Inputs
+
+### api_token
+
+The token.
+
+- type: string
+
+## Steps
+
+### gated-send
+
+Send the token.
+
+- type: shell
+- approval: required
+- env:
+    RAW: "prefix ${api_token} suffix"
+
+```shell command
+echo "sent $RAW"
+```
+"""
+
+
 class TestWhereTheSetIsBuiltAndApplied:
     def test_a_secret_cut_by_truncation_never_leaves_a_fragment(self, tmp_path: Path) -> None:
         """The step table caps a batch error at 200 chars — the secret straddles the cut. The data is
@@ -431,6 +461,21 @@ class TestWhereTheSetIsBuiltAndApplied:
 
         assert result.exit_code == 0, result.stderr
         assert result.stdout.strip() == "hello"
+        assert "Ran only 'generate-text'" in result.stderr  # the summary matches the raw step id
+
+    def test_the_document_fields_are_never_rewritten(self, tmp_path: Path) -> None:
+        """A stored value equal to a status word must not rewrite the JSON contract — only run DATA is
+        scrubbed, never the document's own statuses and node ids."""
+        SettingsManager().set_env("RUN_STATUS", "completed")
+        SettingsManager().set_env("TARGET_STEP", "generate-text")
+
+        document = json.loads(_cli("--output-format", "json", str(_write(tmp_path, ONLY_TARGET))).stdout)
+
+        assert document["execution"]["steps"][0] == {
+            **document["execution"]["steps"][0],
+            "node_id": "generate-text",
+            "status": "completed",
+        }
 
     def test_a_cache_hit_survives_a_settings_value_equal_to_the_step_id(self, tmp_path: Path) -> None:
         SettingsManager().set_env("TARGET_STEP", "generate-text")
@@ -442,3 +487,16 @@ class TestWhereTheSetIsBuiltAndApplied:
         outcome = build_run_outcome(result, parse_markdown(path.read_text(encoding="utf-8")).ir, workflow_metadata=None)
 
         assert outcome.document["execution"]["steps"][0]["cached"] is True
+
+    def test_a_paused_gate_shows_its_preview_scrubbed_and_its_step_id_raw(self, tmp_path: Path) -> None:
+        """The gate request comes from the trace, not the scrubbed store: its content is scrubbed, its
+        identity (the step an ``--auto-approve`` names) is not, even when a stored value equals it."""
+        SettingsManager().set_env("GATED_STEP", "gated-send")
+
+        result = _cli("--output-format", "json", str(_write(tmp_path, GATED)), f"api_token={INPUT_SECRET}")
+
+        assert result.exit_code == 4, result.stderr
+        _assert_scrubbed(result.stdout + result.stderr)
+        gate = json.loads(result.stdout)["gate"]
+        assert gate["node_id"] == "gated-send"
+        assert gate["preview"]["env"]["RAW"] == "prefix <REDACTED> suffix"
