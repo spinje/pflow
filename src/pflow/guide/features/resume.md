@@ -18,7 +18,8 @@ Workflow trace saved: ~/.pflow/debug/workflow-trace-….json
 
 With `--output-format json`, the document names the run (`execution_id`, `trace_path` — on every
 run that wrote a trace) and, when the failed step can be resumed, carries the literal `resume_command`.
-A failed `--only` run offers neither: it records only its one step, so re-run it with `--only`.
+A failed `--only` run still names its `execution_id` and `trace_path` (read it with `pflow report <trace_path>`),
+but it has no `resume_command` and prints no resume hint: it recorded only its one step, so re-run that step with `--only`.
 
 Resume restores the already-completed upstream steps' outputs from the saved run (it does **not** re-run them) and continues execution from the failed step onward. The resumed attempt is a **new run with its own trace**, linked to the original run by `execution.resumed_from` (with `execution.nodes_restored`) in its JSON output and a `⤷ Resumed from <id> at '<step>'` line on stderr — whatever it ends in: success, failure, a pause or a denial. Its `execution.nodes_executed` counts only the steps it ran.
 

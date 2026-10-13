@@ -1266,3 +1266,65 @@ the sweep runs on both paths.
   check off → 1 failed; strict=True back → 1 failed. ADR-0018 and the plan's As-built block were reworded. W4
   duplicate keys are unchanged. `make check` exit 0; `make test` 12025 passed (the earlier `"0"`-fails param was
   removed, the new test added). Not committed.
+
+## [2026-10-13 12:25] task-orchestrator (Opus) — gate round 2 + falsifier closed; round 3 dispatched
+- Did: committed `95bb37e6`. Round 2 tally: 2 verified Criticals (report's second read silently skipped; stored
+  `settings.env` opt-out lost when injection aborts) — fixed; falsifier: 0 Critical, 4 settings edges BROKEN (typo inside
+  the word, `init`/`reset` over a dangling link, bool → 1-day window, duplicate keys) — all fixed (`reviews/falsifier-r1.md`).
+- Rulings (mine, importance 2): typo detection by the stems `reten`/`retain` over settings keys, `settings.env` keys and
+  `PFLOW_` variables; a bool never validates as days (validator), a quoted number still loads (StrictInt reverted — a
+  whole-file load failure drops the user's env keys); duplicate JSON keys fail the load (a later save would otherwise drop
+  the opt-out silently); `settings show` prints the effective retention window.
+- Round 3 (per-lens): RERUN silent-failures ×2 + test-fidelity (verified Criticals in round 2), agent-ux and
+  feature-interactions (surface changed: messages; `--only` resume refusal; settings load failures). RETIRED:
+  impact-completeness (round-2 finding was plan staleness, fixed by "As built" blocks), simplicity (suggestion applied,
+  no Critical). → `reviews/gate-r3.md`. Round 3 still finding a verified Critical ⇒ hand back (user's rule).
+- [RULING relayed by the main orchestrator, 12:30] lenses dispatch through the codex (astra) fan-out by default — Claude only
+  with a stated, logged reason; the falsifier stays a direct launch and counts toward the ≤3-round bound; a round on newly
+  added surface does not reset the count; round 3 finding a verified Critical ⇒ hand back. Conforming: every round of this
+  task ran on codex; the falsifier ran with round 2; `gate-r3` (running) is the last round.
+- [RULING correction relayed, 12:40] the builders are Claude, so astra (codex fan-out) IS the cross-family lens — every lens
+  runs on astra; a Claude lens only when stakes are unusually high AND astra reached diminishing returns (after two astra
+  passes), reason logged. Conforming (all three rounds on astra; no Claude lens used).
+- Round 3 (`reviews/gate-r3.md`): 0 Critical; 3 Warnings (array-hidden opt-out; `settings show` vs execution resolution
+  order; guide wording on failed `--only` runs) → gate-runner fixing. No round 4 (bound reached; no verified Critical).
+- main moved to `18036088` (#861 resume denial, #862 probe, #864 run/resume/describe text, #870 validate) — merge before PR
+  and re-run every gate.
+
+## [2026-10-13 12:45] task-phase-implementer (Opus, gate-runner) — gate round 3 (`reviews/gate-r3.md`) dispositioned
+- Did: verified all 3 Warnings at `95bb37e6` and fixed all 3. The report has 0 Criticals and 0 Suggestions.
+- **An opt-out hidden in an array — CONFIRMED, FIXED.** `_mentions_retention` is still the one recursive walk,
+  and now descends lists as well as dicts. New param `inside-an-array` (`{"runtime_settings":
+  [{"trace_retention_days": 0}]}`) → `None` + one warning. Mutation: dicts only → 1 failed.
+- **`settings show` and a run disagree — CONFIRMED** (`show` hit the typo check before the stored override; a
+  run gets the injected override first). **FIXED with ONE resolution order** in `retention_days()`, serving both
+  callers:
+  1. the process override;
+  2. a failed load → `None`;
+  3. the stored exact `settings.env` override;
+  4. `PFLOW_` process misspellings;
+  5. file/`settings.env` typos;
+  6. the file key.
+
+  Why stored-exact before the typo checks: startup injection exports that value into `os.environ`, where a run
+  cannot tell it from a shell export, and the shell export winning is ruled precedence. So the only order a
+  non-injected caller (`show`, or a run whose injection aborted) can share with an injected run is the stored
+  exact value winning too. The typo checks then guard only the case with no exact override anywhere, which is
+  the case they exist for.
+
+  Test `test_settings_show_and_a_run_resolve_the_same_window[run-after-startup-injection|injection-skipped]`:
+  a typo'd file key + stored `"3"` → `show` says "3 days" AND a real run removes a 5-day trace. Mutation (stored
+  read moved back after the typo checks) → 2 failed. Real probe (subprocess, real injection, isolated HOME):
+  `show` printed "Trace retention in effect: 3 days" and a real run removed the 5-day trace.
+- **Guide line about failed `--only` runs — CONFIRMED.** `run_outcome.py:118-120` still emits `execution_id` and
+  `trace_path` when a trace exists, plus the "Workflow trace saved" line; only `resume_command` and the hint are
+  suppressed. **FIXED** (guide `resume.md`): "A failed `--only` run still names its `execution_id` and
+  `trace_path` (read it with `pflow report <trace_path>`), but it has no `resume_command` and prints no resume
+  hint: it recorded only its one step, so re-run that step with `--only`." The `cli/index.mdx` sentence is about
+  the printed resume command only and stays accurate.
+- Verified: `make check` exit 0; `make test` 12028 passed (+3); `pytest -m trace_files` 729 passed. No
+  `pflow ui` running. Not committed.
+- Deviations/surprises: none beyond the ordering rationale above. The docstring now lists the order, so the
+  rule has one home.
+- Self-checks: fully happy? Yes. test-reflect: all 3 new tests (2 params of the agreement test, 1 array param)
+  are mutation-killed.

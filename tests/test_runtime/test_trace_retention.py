@@ -967,6 +967,7 @@ def test_the_env_override_wins_over_the_file(
         (None, {"registry": {"trace_retention_days": 0}}, "sets registry.trace_retention_days"),
         (None, {"registry": {"nodes": {"trace_retention_days": 0}}}, "sets registry.nodes.trace_retention_days"),
         (None, {"runtime_settings": {"trace_retention_days": 0}}, "sets runtime_settings"),
+        (None, {"runtime_settings": [{"trace_retention_days": 0}]}, "sets runtime_settings"),
         (None, {"env": {"PFLOW_TRACE_RETENTION_DAY": "0"}}, "sets env.PFLOW_TRACE_RETENTION_DAY"),
         (None, {"env": {"pflow_trace_retention_days": "0"}}, "sets env.pflow_trace_retention_days"),
         (None, {"runtime": {"trace_retension_days": 0}}, "runtime.trace_retension_days"),
@@ -985,6 +986,7 @@ def test_the_env_override_wins_over_the_file(
         "misplaced-in-registry",
         "misplaced-in-registry-nodes",
         "inside-an-unknown-section",
+        "inside-an-array",
         "misspelled-in-env",
         "wrong-case-in-env",
         "typo-inside-the-word",
@@ -1391,6 +1393,28 @@ def test_a_run_that_sweeps_warns_about_insecure_settings_exactly_once(
     assert not aged.exists(), "the sweep ran and read the settings file"
     insecure = [record for record in caplog.records if "insecure permissions" in record.getMessage()]
     assert len(insecure) == 1, [record.getMessage() for record in insecure]
+
+
+@pytest.mark.parametrize("injected", [True, False], ids=["run-after-startup-injection", "injection-skipped"])
+def test_settings_show_and_a_run_resolve_the_same_window(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, injected: bool
+) -> None:
+    """A typo'd file key beside a stored exact override of 3: a run sees the override (startup injection
+    exports it, or retention reads it from settings.env) and `settings show` must say the same — 3 days —
+    never "removes no trace" while the run deletes."""
+    monkeypatch.delenv("PFLOW_TRACE_RETENTION_DAYS")
+    _settings_file(tmp_path, {"runtime": {"trace_retension_days": 0}, "env": {"PFLOW_TRACE_RETENTION_DAYS": "3"}})
+    aged = trace(debug, deleted(tmp_path, "w"), 5)  # older than 3 days, younger than the default 14
+
+    shown = CliRunner().invoke(cli, ["settings", "show"])
+    assert shown.exit_code == 0, shown.output
+    assert "Trace retention in effect: 3 days" in shown.output
+
+    if injected:
+        monkeypatch.setenv("PFLOW_TRACE_RETENTION_DAYS", "3")  # what settings-env injection does at run start
+    result = _invoke(_workflow(tmp_path, "ok", _OK))
+    assert result.exit_code == 0, result.output
+    assert not aged.exists(), "the run applied the same 3-day window show reported"
 
 
 def test_a_run_over_a_broken_settings_file_says_so_exactly_once(

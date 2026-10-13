@@ -71,17 +71,34 @@ class SweepReport:
 
 
 def retention_days() -> int | None:
-    """The age window in days — the ``PFLOW_TRACE_RETENTION_DAYS`` override when set (in the process
-    environment, else stored in ``settings.env``), else ``runtime.trace_retention_days``.
+    """The age window in days. ``0`` keeps everything; ``None`` means "cannot tell — prune nothing", always with
+    a warning. ONE resolution order, so ``pflow settings show`` and a run's sweep never disagree:
 
-    ``0`` keeps everything. ``None`` means "cannot tell — prune nothing", with a warning: the override is not a
-    whole number ≥ 0 (an opt-out typed as ``never`` must not fall through to the default and delete), the
-    settings file failed to load, or something that looks like the opt-out is spelled or placed wrong — a
-    settings key at any level, a ``settings.env`` name, or (override unset) a ``PFLOW_`` process variable
-    (``_looks_like_retention``). The override is never written to the settings file."""
+    1. ``PFLOW_TRACE_RETENTION_DAYS`` in the process environment;
+    2. the settings file failed to load → ``None``;
+    3. ``PFLOW_TRACE_RETENTION_DAYS`` stored in ``settings.env`` — what startup injection exports, so a run
+       sees it at step 1 and ``show`` (which injects nothing) sees it here; read directly so a skipped or
+       aborted injection never loses it;
+    4. a misspelled override in the process (a ``PFLOW_`` variable, ``_misspelled_env_variable``) → ``None``;
+    5. an opt-out spelled or placed wrong in the file — any unknown key at any level, or a ``settings.env``
+       name (``_mentions_retention``, ``_misspelled_env_override``) → ``None``;
+    6. ``runtime.trace_retention_days``.
+
+    An override that is not a whole number ≥ 0 is ``None`` (``never`` must not fall through to the default and
+    delete). The override is never written to the settings file."""
     raw = os.environ.get(RETENTION_ENV_VAR)
     if raw is not None:
         return _override_days(raw, RETENTION_ENV_VAR)
+    manager = SettingsManager()
+    settings = manager.load()
+    if manager.load_error is not None:
+        logger.warning(
+            "trace retention skipped: %s could not be loaded (%s)", manager.settings_path, manager.load_error
+        )
+        return None
+    stored = settings.env.get(RETENTION_ENV_VAR)
+    if stored is not None:
+        return _override_days(stored, f"env.{RETENTION_ENV_VAR} in {manager.settings_path}")
     misspelled = sorted(name for name in os.environ if _misspelled_env_variable(name))
     if misspelled:
         # One warning: a settings.env typo reaches here too (startup copies settings.env into os.environ), so
@@ -91,13 +108,6 @@ def retention_days() -> int | None:
             "does not read — the variable is %s, spelled exactly (0 keeps every trace)",
             ", ".join(misspelled),
             RETENTION_ENV_VAR,
-        )
-        return None
-    manager = SettingsManager()
-    settings = manager.load()
-    if manager.load_error is not None:
-        logger.warning(
-            "trace retention skipped: %s could not be loaded (%s)", manager.settings_path, manager.load_error
         )
         return None
     suspects = [
@@ -113,11 +123,6 @@ def retention_days() -> int | None:
             RETENTION_ENV_VAR,
         )
         return None
-    stored = settings.env.get(RETENTION_ENV_VAR)
-    if stored is not None:
-        # Startup injection copies it into os.environ — unless it skipped it (an empty value) or aborted on an
-        # earlier entry; retention never depends on that copy.
-        return _override_days(stored, f"env.{RETENTION_ENV_VAR} in {manager.settings_path}")
     return settings.runtime.trace_retention_days
 
 
@@ -144,10 +149,12 @@ def _looks_like_retention(name: str) -> bool:
 
 
 def _mentions_retention(key: str, value: Any) -> bool:
-    """Whether an unknown settings key — or any key nested in its value — looks like the retention setting."""
+    """Whether an unknown settings key — or any key nested in its value, through objects and arrays — looks like
+    the retention setting."""
     if _looks_like_retention(key):
         return True
-    return isinstance(value, dict) and any(_mentions_retention(str(k), v) for k, v in value.items())
+    children = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else ()
+    return any(_mentions_retention(str(k), v) for k, v in children)
 
 
 def _misspelled_env_override(name: str) -> bool:
