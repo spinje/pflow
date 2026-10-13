@@ -162,3 +162,22 @@ Entry format: ORCHESTRATION.md → "Progress-log entry format".
   folded; no new mechanism in its domain); ADD review-test-fidelity (plan mode — two rounds found the
   planned tests mocking the wrong seam and fixtures that would pass for free).
 - Next: commit; round 3.
+
+## [2026-10-13 00:55] task-planner (Fable) — ROUND 3 interrupted by a session limit; state + partial fold
+- State: worktree clean at `a4534ebd` (round 2 folded). Round 3 had six lenses live (plan, silent-failures,
+  concurrency, architecture-fit, impact-completeness, test-fidelity); five died with the limit (no
+  report), **architecture-fit delivered**: no Critical; W1 unknown tags/sidecars must KEEP (a deleter
+  honours what it does not understand — Task 121's future recordings vs older lanes), W2 ADR-0002:93-94
+  still says the timestamp format is free to change (verified), S1 pre-#378 hash-less names are
+  unrecognised (claim narrowed; owner's dir has 0), S2 scope the unknown-settings-key rule to
+  `*retention*` keys at root + runtime (`extra="allow"` on both models). All four folded (plan §1.1,
+  §1.5, P3, P4; ADR-0018). Also noted: main moved to `1df9ceb3` (#857) touching `configuration.mdx`
+  and `resume_preflight.py` — the plan's line cites there shift by a few lines; re-grep at P1.
+- Q4 confirmation (coordinator's question): the legacy arm is used for exactly two things — (a) the
+  sweep parses an old name's timestamp to age it out; (b) `list_traces` COUNTS legacy names so every
+  miss message can say "N traces written by an earlier pflow version are not searched" (round-1
+  silent-failures W6 + impact W5: every surface otherwise misreports "No trace files found" beside 29k
+  files). No lookup ever returns a legacy entry. (b) is an addition beyond the ruling's letter — one
+  integer, trivially removable; flagged at handback.
+- Resume point: relaunch the five dead lenses on `a4534ebd`+this fold (per-lens rule: all five had
+  verified/important findings in round 2 or their surface changed); architecture-fit retired (clean).

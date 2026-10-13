@@ -121,8 +121,10 @@ close it but contradicts the ruled cutover — flagged at handback as the user's
   group admits no dot** (the old sanitizer never produced one), so a dotted name that fails the current
   arm is NOT legacy. Three classes result: current (a lookup result), legacy (parsed for its timestamp
   only — never a lookup result, aged out by the sweep, never protected: the ruled cutover), and
-  **unrecognised** (a dotted name the current arm rejects, a wrong hash width, junk) — not a trace: never
-  listed, never deleted, never counted. `pflow report <path>` and `load_trace_file` read any of them
+  **unrecognised** (a dotted name the current arm rejects, a wrong hash width, a pre-#378 hash-less
+  name, junk) — not a trace: never listed, never deleted, never counted. The timestamp's FORMAT
+  (`%Y%m%d-%H%M%S-%f`) and the tag charset (`[a-z][A-Za-z0-9_-]*`) are part of the grammar from here
+  (ADR-0002's "the timestamp format is free to change" is amended in P4). `pflow report <path>` and `load_trace_file` read any of them
   by explicit path.
 
 ### 1.2 Module `src/pflow/core/trace_dir.py` (new; mechanism, no policy)
@@ -259,7 +261,11 @@ only if it has at least one candidate. Per group:
   also requires non-empty `nodes` and a `2.` version: a success trailer with zero events is a rare
   residual the ADR states; P3 adds an agreement test between the sweep's pick and `load_full_run_events`);
 - rule 4 (Attempt outlives its source): names only;
-- rule 5 (open writer): one strict lock probe per candidate actually about to be removed.
+- rule 5 (open writer): one strict lock probe per candidate actually about to be removed;
+- **unknown facts keep:** a current-grammar candidate carrying a dot-tag this version does not know, or
+  with a sidecar beside it other than `.paused` (any `{trace}.json.{x}` in the raw scandir), is kept —
+  a later pflow's "keep this" fact (Task 121's recordings) must be honoured by every older binary
+  sharing the directory, not only by binaries built after it; lookups still ignore unknown tags.
 Identity grouping: the hash narrows; the file-exists qualifier and the per-path rules use the head of
 the group's newest entry (one head read per examined group). Each candidate chosen for removal is
 head-read once more (it is about to be deleted; 0.4 ms) and, if its `workflow_path` differs from the
@@ -317,9 +323,11 @@ RAW scandir, whatever grammar) are unlinked.
   other value → `logger.warning` and **`None`** (an opt-out typed as `never` or `-1` must not fall
   through to the default and delete); the env is read HERE and never applied to the settings object, so
   a one-shot `PFLOW_TRACE_RETENTION_DAYS=1 pflow settings …` can never persist `1`. Then the settings
-  FILE, read ONCE through `SettingsManager().load()`: `load_error` set → `None`; else any key in
-  `settings.runtime.model_extra` → `None` (`RuntimeSettings` gets `model_config = ConfigDict(extra=
-  "allow")`: unknown keys never fail validation — so no whole-file fallback, no API-key drop — and they
+  FILE, read ONCE through `SettingsManager().load()`: `load_error` set → `None`; else any extra key
+  whose name contains `retention` in `settings.model_extra` (root — a misplaced opt-out) or
+  `settings.runtime.model_extra` → `None`; other unknown keys are ignored (a newer pflow's future
+  `runtime.*` key must not switch an older lane's retention off and warn on every run). Both
+  `PflowSettings` and `RuntimeSettings` get `model_config = ConfigDict(extra="allow")`: unknown keys never fail validation — so no whole-file fallback, no API-key drop — and they
   SURVIVE `model_dump()`, so a `pflow settings set-env …` after a typo does not silently erase the typo
   and switch deletion on; a misspelled `trace_retention_day: 0` therefore keeps retention off, with a
   warning, until the user fixes it). No second raw parse of the file. A pre-185 pflow's settings write
@@ -536,6 +544,8 @@ orchestrator starts at P1. No handback is owed for CP-1.
     open fails on POSIX → kept; `workflow_file_state` → `unknown` (monkeypatched `os.stat` raising
     `PermissionError`) → the group is kept; a `FileNotFoundError` mid-sweep removes nothing else and is
     not counted; an unrecognised dotted name in the dir survives every sweep.
+  - Unknown facts keep: an aged trace with an unknown tag (`.recording`) and one with an unknown
+    sidecar (`….json.claim`) survive the sweep; the same traces are still found by id and listed.
   - Agreement: on a mixed fixture (young + aged successes, `.only`, failed, degraded, empty-`nodes`
     success), the trace rule 2 protects is the one `load_full_run_events` picks, or is older than it
     (the one-file over-protection), never newer.
@@ -611,7 +621,9 @@ orchestrator starts at P1. No handback is owed for CP-1.
   - Stale "MCP writes no trace" claims: `workflow_trace.py:553-555,983-984` (P1 already), ADR-0010
     `:149-150` → "`--no-trace` runs write no trace and are therefore unresumable; MCP runs stream traces
     like the CLI" (write discipline: the rule, not the incident). ADR-0007 `:18,:23` ("delete freely"):
-    one amendment line pointing at ADR-0018 (a trace is deleted by Retention, never freely).
+    one amendment line pointing at ADR-0018 (a trace is deleted by Retention, never freely). ADR-0002
+    `:93-94` ("the timestamp format is free to change"): one amendment line — the format is part of the
+    filename grammar since ADR-0018.
   - Cutover sentence everywhere a lookup is described (debugging.mdx, `cli/index.mdx`, guide `resume.md`
     / `approval.md` / `ui.md`, MCP instructions `:853`): "traces written by an earlier pflow version are
     not searched; pflow tells you how many; read one with `pflow report <path>`; do not run pre- and
