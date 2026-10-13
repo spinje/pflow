@@ -23,6 +23,8 @@ Usage:
 from datetime import datetime, timezone
 from typing import Any
 
+from pflow.core.text_format import count_noun
+
 
 def format_execution_history(
     metadata: dict[str, Any],
@@ -90,8 +92,7 @@ def _format_compact(
     parts = []
 
     # Execution count
-    times_text = "time" if execution_count == 1 else "times"
-    parts.append(f"{execution_count} {times_text}")
+    parts.append(count_noun(execution_count, "time"))
 
     # Timestamp
     if timestamp:
@@ -137,8 +138,7 @@ def _format_detailed(
     lines = []
 
     # Execution count
-    times_text = "time" if execution_count == 1 else "times"
-    lines.append(f"  Runs: {execution_count} {times_text}")
+    lines.append(f"  Runs: {count_noun(execution_count, 'time')}")
 
     # Timestamp
     if timestamp:
@@ -229,22 +229,22 @@ def _format_relative_time(dt: datetime) -> str:
         return "just now"
     elif seconds < 3600:
         minutes = int(seconds / 60)
-        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+        return f"{count_noun(minutes, 'minute')} ago"
     elif seconds < 86400:
         hours = int(seconds / 3600)
-        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+        return f"{count_noun(hours, 'hour')} ago"
     elif seconds < 604800:
         days = int(seconds / 86400)
-        return f"{days} day{'s' if days != 1 else ''} ago"
+        return f"{count_noun(days, 'day')} ago"
     elif seconds < 2592000:
         weeks = int(seconds / 604800)
-        return f"{weeks} week{'s' if weeks != 1 else ''} ago"
+        return f"{count_noun(weeks, 'week')} ago"
     elif seconds < 31536000:
         months = int(seconds / 2592000)
-        return f"{months} month{'s' if months != 1 else ''} ago"
+        return f"{count_noun(months, 'month')} ago"
     else:
         years = int(seconds / 31536000)
-        return f"{years} year{'s' if years != 1 else ''} ago"
+        return f"{count_noun(years, 'year')} ago"
 
 
 def _format_parameters(params: dict[str, Any], max_length: int = 100) -> str:

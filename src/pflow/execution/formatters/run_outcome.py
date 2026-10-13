@@ -18,6 +18,7 @@ from pflow.core.diagnostic_render import format_diagnostic, head_tail_preview
 from pflow.core.gate import masked_gate_dict
 from pflow.core.security_utils import scrub_secret_values, secret_values
 from pflow.core.templates import TemplateResolver
+from pflow.core.text_format import count_noun, labelled_lines
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.execution_state import build_execution_steps
 from pflow.execution.formatters.batch_errors import (
@@ -127,7 +128,7 @@ def build_run_outcome(
         document["error"] = (
             printed_errors[0]["message"]
             if len(printed_errors) == 1
-            else f"Workflow execution failed ({len(printed_errors)} errors)"
+            else f"Workflow execution failed ({len(printed_errors)} errors)"  # 2+, and a JSON contract
         )
     document["errors"] = printed_errors
     document["warnings"] = [diagnostic.to_output_dict() for diagnostic in warnings]
@@ -471,12 +472,12 @@ def completion_line(outcome: RunOutcome) -> list[str]:
     took = f"{duration_ms / 1000:.3f}s{_cache_suffix(execution)}"
     warning_count = len(outcome.warnings)
     if outcome.status is WorkflowStatus.FAILED:
-        noted = f" ({warning_count} warnings)" if warning_count else ""
+        noted = f" ({count_noun(warning_count, 'warning')})" if warning_count else ""
         return [f"❌ Workflow failed{noted} after {took}"]
     if outcome.status is WorkflowStatus.DEGRADED:
         return [f"⚠️ Workflow completed with warnings in {took}"]
     if warning_count:
-        return [f"⚠️ Workflow completed with {warning_count} warnings in {took}"]
+        return [f"⚠️ Workflow completed with {count_noun(warning_count, 'warning')} in {took}"]
     if any(step.get("has_stderr") for step in execution.get("steps", [])):
         # A shell step exited 0 but wrote stderr: the glyph says "look", the stderr block says what.
         return [f"⚠️ Workflow completed in {took}"]
@@ -521,8 +522,8 @@ def errors_block(errors: list[Diagnostic], warnings: list[Diagnostic], *, verbos
         return [format_diagnostic(errors[0], verbose=verbose).rstrip("\n")]
     if not errors:
         return [_NO_ERROR_DETAILS]
-    noted = f", {len(warnings)} warning{'s' if len(warnings) != 1 else ''}" if warnings else ""
-    lines = [f"❌ Workflow execution failed ({len(errors)} errors{noted})"]
+    noted = f", {count_noun(len(warnings), 'warning')}" if warnings else ""
+    lines = [f"❌ Workflow execution failed ({count_noun(len(errors), 'error')}{noted})"]
     for number, error in enumerate(errors, 1):
         lines += ["", format_diagnostic(error, verbose=verbose, error_number=number).rstrip("\n")]
     return lines
@@ -621,8 +622,9 @@ def render_cli_stderr(outcome: RunOutcome, *, text_mode: bool, print_flag: bool,
         (summary and "trace_path" in document, [f"Workflow trace saved: {document.get('trace_path')}"]),
     ]
     lines = _join_blocks([block for shown, block in blocks if shown])
-    # The leading blank separates the summary from the progress stream, which -p never prints.
-    return lines[1:] if print_flag else lines
+    # The leading blank separates the summary from the progress stream — which -p never prints,
+    # and which a run refused before its engine started never began (cli/commands/run.py announce_start).
+    return lines[1:] if print_flag or not outcome.engine_started else lines
 
 
 def render_mcp_text(outcome: RunOutcome) -> str:
@@ -787,9 +789,9 @@ def format_cost_summary_lines(document: dict[str, Any]) -> list[str]:
     tokens_total = metrics.get("workflow", {}).get("tokens_total", 0)
     detail_parts: list[str] = []
     if total_llm_calls > 0:
-        detail_parts.append(f"{total_llm_calls} call{'s' if total_llm_calls != 1 else ''}")
+        detail_parts.append(count_noun(total_llm_calls, "call"))
     if tokens_total > 0:
-        detail_parts.append(f"{tokens_total:,} tokens")
+        detail_parts.append(count_noun(tokens_total, "token"))
     if detail_parts:
         return [f"💰 Cost: ${total_cost:.4f} ({', '.join(detail_parts)})"]
     return [f"💰 Cost: ${total_cost:.4f}"]
@@ -816,10 +818,7 @@ def format_only_indicator(only_node: str, nodes_skipped: int, *, ran: bool) -> s
     single-node workflow) — the shorter form still announces the mode (sub-issue
     8a in Task 149's code review).
     """
-    others = ""
-    if nodes_skipped > 0:
-        noun = "node" if nodes_skipped == 1 else "nodes"
-        others = f", {nodes_skipped} other {noun} not executed"
+    others = f", {count_noun(nodes_skipped, 'other node')} not executed" if nodes_skipped > 0 else ""
     if ran:
         return f"  ⤷ Ran only '{only_node}' (--only){others}"
     return f"  ⤷ Only '{only_node}' was selected (--only); it did not run{others}"
@@ -846,8 +845,7 @@ def format_resume_indicator(
     if entry_node and entry_iteration > 1:
         at_clause += f" (iteration {entry_iteration})"
     if nodes_restored > 0:
-        noun = "step" if nodes_restored == 1 else "steps"
-        return f"  ⤷ Resumed from {resumed_from}{at_clause} — {nodes_restored} upstream {noun} restored"
+        return f"  ⤷ Resumed from {resumed_from}{at_clause} — {count_noun(nodes_restored, 'upstream step')} restored"
     return f"  ⤷ Resumed from {resumed_from}{at_clause}"
 
 
@@ -859,7 +857,7 @@ def format_stderr_warnings(steps: list[dict[str, Any]]) -> list[str]:
 
     Returns ``[]`` when no step has stderr; otherwise a leading blank line, the
     ``⚠️  Shell stderr (exit code 0):`` header, and one bullet per step whose stderr
-    preview keeps head and tail (``head_tail_preview``), continuation lines indented.
+    preview keeps head and tail (``head_tail_preview``), its further lines hung under the first.
     """
     stderr_warnings = [
         (step.get("node_id", "unknown"), step.get("stderr", ""))
@@ -872,7 +870,6 @@ def format_stderr_warnings(steps: list[dict[str, Any]]) -> list[str]:
 
     lines = ["", "⚠️  Shell stderr (exit code 0):"]
     for node_id, stderr in stderr_warnings:
-        indented = head_tail_preview(stderr).replace("\n", "\n     ")
-        lines.append(f"  • {node_id}: {indented}")
+        lines.extend(labelled_lines(f"  • {node_id}: ", head_tail_preview(stderr)))
 
     return lines

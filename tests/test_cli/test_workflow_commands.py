@@ -479,6 +479,51 @@ class TestWorkflowDescribeCommand:
             f"  pflow '{typed_path}' subject=<value>\n"
         )
 
+    def test_workflow_help_is_describe_plus_its_source(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """#847: ``<file> --help`` shows the file's description and one heading, and both surfaces
+        print an output's declared type the way they print an input's."""
+        workflow_path = tmp_path / "draft files" / "typed.pflow.md"
+        workflow_path.parent.mkdir()
+        write_workflow_file(
+            {
+                "inputs": {"score": {"type": "integer", "required": True, "description": "A score"}},
+                "outputs": {
+                    "total": {"type": "integer", "description": "Number counted", "source": "${count.stdout}"},
+                    "note": {"description": "Untyped note", "source": "${count.stdout}"},
+                },
+                "nodes": [{"id": "count", "type": "shell", "params": {"command": "echo 1"}}],
+            },
+            workflow_path,
+            title="Typed",
+            description="Count things per author.",
+        )
+        typed_path = "./draft files/typed.pflow.md"
+        monkeypatch.chdir(tmp_path)
+
+        with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
+            MockWM.return_value.exists.return_value = False
+            described = invoke_cli(["describe", typed_path])
+        helped = invoke_cli([typed_path, "--help"])
+
+        assert described.exit_code == helped.exit_code == 0
+        assert described.output == (
+            f"Workflow: {typed_path}\n"
+            "Description: Count things per author.\n"
+            "\n"
+            "Inputs:\n"
+            "  - score (integer, required): A score\n"
+            "\n"
+            "Outputs:\n"
+            "  - total (integer): Number counted\n"
+            "  - note: Untyped note\n"
+            "\n"
+            "Example Usage:\n"
+            f"  pflow '{typed_path}' score=<integer>\n"
+        )
+        assert helped.output == described.output.replace(
+            f"Workflow: {typed_path}\n", f"Workflow: typed.pflow.md\nSource: {typed_path}\n", 1
+        )
+
     def test_describe_workflow_no_inputs_outputs(self) -> None:
         """Test describing a workflow with no inputs or outputs."""
         mock_metadata = {

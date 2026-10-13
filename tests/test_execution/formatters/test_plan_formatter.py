@@ -41,6 +41,7 @@ def test_format_plan_text_header_uses_basename_not_full_path() -> None:
         f"header must lead with 'Dry-run for <basename>', got: {first_line!r}"
     )
     assert "/absolute/path/to/" not in first_line, "full path must not appear in the text header"
+    assert first_line == "Dry-run for my-workflow.pflow.md: 1 node"  # #806: not "1 nodes"
 
 
 def test_format_plan_text_summary_translates_class_names() -> None:

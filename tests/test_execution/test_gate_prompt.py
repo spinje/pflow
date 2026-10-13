@@ -220,7 +220,7 @@ class TestPreviewRendering:
         build_gate_resolver(frozenset(), _FakeOC())(request)
         return capsys.readouterr().err
 
-    def test_secret_values_masked_long_values_shown_in_full_newlines_escaped(self, monkeypatch, capsys):
+    def test_secret_values_masked_long_values_shown_in_full_multiline_values_hang(self, monkeypatch, capsys):
         # #746: the approver consents to the whole value — a long one is never cut.
         long_note = "x" * 490 + "END_MARKER"
         rendered = self._rendered(
@@ -229,7 +229,8 @@ class TestPreviewRendering:
             capsys,
         )
         assert "sk-super-secret" not in rendered
-        assert "line1\\nline2" in rendered
+        # #806: a multi-line value keeps its lines, the second hung under the value column (not "line1\\nline2").
+        assert "   body:     line1\n" + " " * 13 + "line2\n" in rendered
         assert long_note in rendered
         assert "chars)" not in rendered
         assert "Approval required: notify (ShellNode)" in rendered

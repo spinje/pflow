@@ -22,7 +22,7 @@ def format_workflow_interface(name: str, metadata: dict[str, Any]) -> str:
         Formatted markdown string showing:
         - Workflow name and description
         - Input parameters (required/optional, descriptions, defaults)
-        - Output values (with descriptions)
+        - Output values (declared type, descriptions)
         - Example usage command
 
     Example:
@@ -34,7 +34,7 @@ def format_workflow_interface(name: str, metadata: dict[str, Any]) -> str:
         ...             "verbose": {"type": "boolean", "description": "Verbose output", "default": False}
         ...         },
         ...         "outputs": {
-        ...             "analysis": {"description": "PR analysis results"}
+        ...             "analysis": {"type": "object", "description": "PR analysis results"}
         ...         }
         ...     }
         ... }
@@ -48,13 +48,13 @@ def format_workflow_interface(name: str, metadata: dict[str, Any]) -> str:
             Default: false
         <BLANKLINE>
         Outputs:
-          - analysis: PR analysis results
+          - analysis (object): PR analysis results
         <BLANKLINE>
         Example Usage:
           pflow pr-analyzer repo=<string>
     """
     ir = metadata.get("ir", {})
-    description = metadata.get("description", "No description")
+    description = metadata.get("description") or "No description"
 
     # Build formatted sections
     lines = []
@@ -133,7 +133,7 @@ def _format_outputs_section(ir: dict[str, Any]) -> str:
         ir: Workflow IR containing outputs specification
 
     Returns:
-        Formatted outputs section with descriptions
+        Formatted outputs section — a declared type in parentheses, then the description
     """
     if not ir.get("outputs"):
         return "\nOutputs: None"
@@ -143,7 +143,8 @@ def _format_outputs_section(ir: dict[str, Any]) -> str:
     for output_name, config in ir["outputs"].items():
         desc = config.get("description", "")
         stdout_marker = " [stdout]" if config.get("stdout") is True else ""
-        lines.append(f"  - {output_name}{stdout_marker}: {desc}")
+        declared_type = f" ({config['type']})" if isinstance(config.get("type"), str) else ""
+        lines.append(f"  - {output_name}{stdout_marker}{declared_type}: {desc}")
 
     return "\n".join(lines)
 

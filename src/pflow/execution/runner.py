@@ -147,6 +147,7 @@ class WorkflowRunner:
         workflow_name: str | None = None,
         resume_source: "ResumeSource | None" = None,
         input_sources: "Mapping[str, InputSource] | None" = None,
+        on_engine_start: Callable[[], None] | None = None,
     ) -> ExecutionResult:
         """Execute a workflow and return structured results.
 
@@ -171,6 +172,8 @@ class WorkflowRunner:
             input_sources: Where each supplied ``params`` value came from (stdin, a
                 recorded run, an MCP call …); an absent key is a CLI argument. The
                 input boundary (``prepare_inputs``) types and names each value by it.
+            on_engine_start: Called once, when the engine is handed the compiled workflow — the
+                moment ``engine_started`` turns True. Never called for a run refused before it.
 
         Returns:
             ExecutionResult -- always. Never raises (except KeyboardInterrupt/SystemExit).
@@ -259,6 +262,8 @@ class WorkflowRunner:
                 input_sources,
             )
             engine_started = True
+            if on_engine_start is not None:
+                on_engine_start()
             return self._execute(
                 engine,
                 compiled,

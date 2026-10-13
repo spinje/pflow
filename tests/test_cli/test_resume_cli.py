@@ -458,7 +458,7 @@ def test_step_that_began_on_an_earlier_visit_still_needs_confirmation(home, tmp_
 
     result = _runner().invoke(cli, ["resume", exec_id])
     assert result.exit_code == 2
-    assert "Resuming re-runs step 'save' (a shell step)" in result.stdout + result.stderr
+    assert "Resuming re-runs the shell step 'save'," in result.stdout + result.stderr
     assert out.read_text(encoding="utf-8").splitlines() == ["fired x"]  # nothing re-fired
 
 
@@ -526,7 +526,7 @@ def test_entry_restored_by_a_resumed_attempt_still_needs_confirmation(home, tmp_
 
     result = _runner().invoke(cli, ["resume", attempt_id])
     assert result.exit_code == 2
-    assert "Resuming re-runs step 'k' (a shell step)" in result.stdout + result.stderr
+    assert "Resuming re-runs the shell step 'k'," in result.stdout + result.stderr
     assert out.read_text(encoding="utf-8").splitlines() == ["K fired a"]  # nothing re-fired
 
 
@@ -609,7 +609,7 @@ def test_batched_sub_workflow_host_still_needs_confirmation(home, tmp_path):
 
     result = _runner().invoke(cli, ["resume", exec_id])
     assert result.exit_code == 2
-    assert "Resuming re-runs step 'host' (a workflow step)" in result.stdout + result.stderr
+    assert "Resuming re-runs the workflow step 'host'," in result.stdout + result.stderr
     assert out.read_text(encoding="utf-8").splitlines() == ["fired a"]  # nothing re-fired
 
 
@@ -725,7 +725,7 @@ def test_run_killed_inside_a_batched_host_resumes_at_the_host(home, tmp_path):
     assert (source.entry_node_id, source.last_completed_node_id) == ("host", None)
     refused = _runner().invoke(cli, ["resume", exec_id])
     assert refused.exit_code == 2
-    assert "Resuming re-runs step 'host' (a workflow step)" in refused.stdout + refused.stderr
+    assert "Resuming re-runs the workflow step 'host'," in refused.stdout + refused.stderr
     assert out.read_text(encoding="utf-8").splitlines() == ["fired a", "fired b"]  # nothing re-fired
 
 
@@ -771,7 +771,7 @@ def test_stale_refusal_names_the_edited_restored_step(home, shell_wf):
     assert "'step1' was edited. Resume re-runs nothing before 'step2'" in combined
     # step2 (shell) started in the source run, and --force also waives its side-effect
     # confirmation — the stale refusal is the only place the agent can learn that (#690).
-    assert "--force also re-runs 'step2' (a shell step that already started" in combined
+    assert "--force also re-runs the shell step 'step2', which already started" in combined
 
 
 def test_an_edit_after_the_resume_point_passes_the_identity_gate(home, shell_wf):
@@ -780,7 +780,7 @@ def test_an_edit_after_the_resume_point_passes_the_identity_gate(home, shell_wf)
     shell_wf.write_text(shell_wf.read_text(encoding="utf-8").replace('echo "done', 'echo "finished'), "utf-8")
     result = _runner().invoke(cli, ["resume", exec_id, "mode=ok"])
     assert result.exit_code == 2
-    assert "Resuming re-runs step 'step2' (a shell step)" in result.stdout + result.stderr
+    assert "Resuming re-runs the shell step 'step2'," in result.stdout + result.stderr
     assert "Workflow changed" not in result.stdout + result.stderr
 
 
@@ -1551,7 +1551,7 @@ def test_stale_refusal_names_a_between_iterations_loop_step_as_the_resume_point(
     combined = refused.stdout + refused.stderr
     assert "'seed' was edited. Resume re-runs nothing before 'rounds' (iteration 3)" in combined
     assert "Its iterations before 3 are restored too, so an edit to 'rounds' applies from iteration 3 on." in combined
-    assert "--force also re-runs 'rounds' (a workflow step that already started" in combined
+    assert "--force also re-runs the workflow step 'rounds', which already started" in combined
 
 
 def test_editing_the_loop_step_resumed_mid_loop_applies_from_that_iteration(home, tmp_path, monkeypatch):
@@ -1581,7 +1581,7 @@ def test_killed_between_loop_iterations_continues_with_the_engine_decision_e2e(h
     refused = _runner().invoke(cli, ["resume", exec_id])
     assert refused.exit_code == 2
     combined = refused.stdout + refused.stderr
-    assert "Resuming re-runs step 'rounds' (a workflow step)" in combined
+    assert "Resuming re-runs the workflow step 'rounds'," in combined
     assert [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] == rounds[:2]
 
     resumed = _runner().invoke(cli, ["resume", exec_id, "--force"])

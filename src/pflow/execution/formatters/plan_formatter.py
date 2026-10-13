@@ -10,6 +10,7 @@ import click
 from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.duration_format import format_duration
 from pflow.core.node_type_display import node_type_tag
+from pflow.core.text_format import count_noun
 
 if TYPE_CHECKING:
     from pflow.execution.result import Plan, PlanEntry
@@ -64,10 +65,10 @@ def format_plan_text(plan: Plan, answered_gate_ids: frozenset[str] = frozenset()
     so the preview never tells an agent to pre-approve a gate it has already answered.
     """
     lines: list[str] = []
-    header_bits = [f"{plan.summary.total} nodes"]
+    header_bits = [count_noun(plan.summary.total, "node")]
     sub_count = sum(1 for entry in plan.entries if entry.status == "sub_workflow")
     if sub_count:
-        header_bits.append(f"{sub_count} sub-workflow{'s' if sub_count != 1 else ''}")
+        header_bits.append(count_noun(sub_count, "sub-workflow"))
     # Base name only for readability — JSON keeps the full `plan.workflow` value
     # as a stable agent contract.
     workflow_label = Path(plan.workflow).name if plan.workflow else plan.workflow
@@ -123,7 +124,7 @@ def format_plan_text(plan: Plan, answered_gate_ids: frozenset[str] = frozenset()
         )
         lines.append(f"Estimated cost: ≈ {_format_cost(effective_cost)}  ({basis_label})")
     if effective_nwh > 0:
-        lines.append(f"  ({effective_nwh} LLM node{'s' if effective_nwh != 1 else ''} without cost history)")
+        lines.append(f"  ({count_noun(effective_nwh, 'LLM node')} without cost history)")
 
     effective_duration = (
         plan.summary.estimated_duration_ms_including_nested
@@ -138,7 +139,7 @@ def format_plan_text(plan: Plan, answered_gate_ids: frozenset[str] = frozenset()
     if effective_duration > 0:
         lines.append(f"Estimated duration: ~{format_duration(effective_duration)}  (historical, actual may vary)")
     if effective_nwdh > 0:
-        lines.append(f"  ({effective_nwdh} node{'s' if effective_nwdh != 1 else ''} without duration history)")
+        lines.append(f"  ({count_noun(effective_nwdh, 'node')} without duration history)")
 
     # Agent-facing caution: the totals above exclude any sub-workflow the
     # planner couldn't resolve (`workflow: ${var}`). Cost-gating must know
@@ -150,8 +151,7 @@ def format_plan_text(plan: Plan, answered_gate_ids: frozenset[str] = frozenset()
     )
     if effective_opaque > 0:
         lines.append(
-            f"  ⚠ {effective_opaque} opaque sub-workflow{'s' if effective_opaque != 1 else ''} — "
-            "totals above exclude their cost/duration"
+            f"  ⚠ {count_noun(effective_opaque, 'opaque sub-workflow')} — totals above exclude their cost/duration"
         )
 
     _append_gate_footer(lines, plan.entries, answered_gate_ids)
@@ -257,8 +257,7 @@ def _render_entry_line(entry: PlanEntry, indent: str) -> str:
     if entry.status == "sub_workflow":
         ref = entry.sub_plan.workflow if entry.sub_plan else "<unknown>"
         count = entry.sub_plan.summary.total if entry.sub_plan else 0
-        suffix = "s" if count != 1 else ""
-        return f"{indent}▸ {entry.node_id}  [sub-workflow '{ref}' ({count} node{suffix}){approval_tag}]"
+        return f"{indent}▸ {entry.node_id}  [sub-workflow '{ref}' ({count_noun(count, 'node')}){approval_tag}]"
 
     if entry.status == "opaque":
         reason = (
@@ -347,9 +346,8 @@ def _append_gate_footer(
     if not gated:
         return
     flags = " ".join(f"--auto-approve={node_id}" for node_id in gated)
-    plural = "s" if len(gated) != 1 else ""
     lines.append(
-        f"⏸ {len(gated)} step{plural} pause{'' if plural else 's'} for approval at run time "
+        f"⏸ {count_noun(len(gated), 'step')} {'pauses' if len(gated) == 1 else 'pause'} for approval at run time "
         f"({', '.join(gated)}); non-interactive runs need {flags}"
     )
 

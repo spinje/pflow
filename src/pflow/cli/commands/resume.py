@@ -76,7 +76,7 @@ def _prompt_or_raise_side_effect(
         controller.prepare_for_prompt()
         try:
             confirmed = click.confirm(
-                f"Resuming re-runs step '{refusal.node_id}' (a {refusal.node_type} step) "
+                f"Resuming re-runs the {refusal.node_type} step '{refusal.node_id}', "
                 "and its side effects may fire again. Continue?",
                 default=False,
                 err=True,

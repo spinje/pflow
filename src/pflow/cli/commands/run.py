@@ -30,6 +30,7 @@ from pflow.core.shell_integration import (
     read_stdin_enhanced,
 )
 from pflow.core.stdio_reservation import reserve_stdout
+from pflow.core.text_format import count_noun
 from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution.result import ResolvedWorkflow
@@ -253,11 +254,6 @@ def execute_json_workflow(
     progress_enabled = not print_flag
     gate_resolver = _prepare_gate_resolver(ctx, ir_data, output_controller)
 
-    if effective_verbose:
-        click.echo(f"cli: Starting workflow execution with {ctx.obj['total_nodes']} node(s)", err=True)
-    if progress_enabled:
-        click.echo(f"Executing workflow ({len(ir_data.get('nodes', []))} nodes):", err=True)
-
     workflow_name = ctx.obj.get("workflow_name")
     result = None
 
@@ -278,6 +274,9 @@ def execute_json_workflow(
                 # run leaves it absent (None) — the runner then behaves exactly as before.
                 resume_source=ctx.obj.get("resume_source"),
                 input_sources=input_sources,
+                on_engine_start=partial(
+                    _announce_start, ctx.obj["total_nodes"], verbose=effective_verbose, progress=progress_enabled
+                ),
             )
         _display_execution_result(ctx, result, output_key, ir_data, output_format, effective_verbose)
 
@@ -300,6 +299,16 @@ def execute_json_workflow(
         if trace and config.trace_enabled:
             _finalize_trace_and_report(ctx, trace)
         _cleanup_temp_files(stdin_data, effective_verbose)
+
+
+def _announce_start(total_nodes: int, *, verbose: bool, progress: bool) -> None:
+    """The progress header — printed once the engine starts (``on_engine_start``), so a run refused
+    before it (an invalid input, a validation error) never looks like it ran."""
+    nodes = count_noun(total_nodes, "node")
+    if verbose:
+        click.echo(f"cli: Starting workflow execution with {nodes}", err=True)
+    if progress:
+        click.echo(f"Executing workflow ({nodes}):", err=True)
 
 
 def _prepare_gate_resolver(
@@ -818,30 +827,20 @@ def _validate_and_prepare_workflow_params(
     return params, ({stdin_input: "stdin"} if stdin_input is not None else {}), stdin_data
 
 
-def _show_workflow_help(
-    first_arg: str,
-    workflow_ir: dict[str, Any],
-    source: str | None,
-) -> None:
-    """Display workflow help information."""
-    from pflow.cli.workflow_interface import format_workflow_interface_for_cli
+def _show_workflow_help(first_arg: str, resolved: ResolvedWorkflow) -> None:
+    """Display the workflow's interface — what ``pflow describe`` shows, plus where it was loaded from."""
+    from pflow.cli.workflow_interface import format_workflow_interface_for_cli, resolved_interface_metadata
 
+    library = resolved.source == "library"
     name = os.path.basename(first_arg) if "/" in first_arg else first_arg
-    metadata = {"ir": workflow_ir}
-
-    if "description" in workflow_ir:
-        metadata["description"] = workflow_ir["description"]
-
-    click.echo(f"\nWorkflow: {name}")
-    if source == "library":
-        click.echo("Source: Saved workflow")
-    else:
-        click.echo(f"Source: {first_arg}")
-    click.echo()
-
-    example_name = name if source == "library" else shlex.quote(first_arg)
-    formatted = format_workflow_interface_for_cli(name, metadata, example_name=example_name)
-    click.echo(formatted)
+    click.echo(
+        format_workflow_interface_for_cli(
+            name,
+            resolved_interface_metadata(resolved),
+            example_name=name if library else shlex.quote(first_arg),
+            source="Saved workflow" if library else first_arg,
+        )
+    )
 
 
 def _setup_workflow_execution(
@@ -893,7 +892,7 @@ def _handle_named_workflow(
         return False
 
     if remaining_args and "--help" in remaining_args:
-        _show_workflow_help(first_arg, workflow_ir, source)
+        _show_workflow_help(first_arg, resolved_workflow)
         return True
 
     params, input_sources, stdin_data = _validate_and_prepare_workflow_params(workflow_ir, remaining_args)

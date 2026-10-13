@@ -69,7 +69,7 @@ class TestFormatWorkflowInterface:
         assert "Description: No description" in result
 
     def test_formats_workflow_with_empty_description(self):
-        """FORMAT: Workflow with empty description shows empty value."""
+        """FORMAT: an empty description (a saved workflow with no H1 prose) reads as "No description"."""
         metadata = {
             "description": "",
             "ir": {
@@ -79,8 +79,7 @@ class TestFormatWorkflowInterface:
 
         result = format_workflow_interface("test", metadata)
 
-        assert "Description: " in result
-        # Empty description should be preserved, not replaced with "No description"
+        assert "\nDescription: No description\n" in result
 
     def test_formats_workflow_with_special_characters_in_descriptions(self):
         """FORMAT: Descriptions with special characters are preserved."""

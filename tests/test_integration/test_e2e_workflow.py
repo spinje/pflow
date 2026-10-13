@@ -251,7 +251,7 @@ def test_verbose_execution_output(tmp_path):
 
         # Should show verbose execution info
         assert result.exit_code == 0
-        assert "Starting workflow execution with 2 node(s)" in result.output
+        assert "Starting workflow execution with 2 nodes" in result.output
         assert "Workflow execution completed" in result.output
         assert "Workflow completed" in result.output
 
