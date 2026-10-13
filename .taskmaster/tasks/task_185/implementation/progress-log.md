@@ -1328,3 +1328,33 @@ the sweep runs on both paths.
   rule has one home.
 - Self-checks: fully happy? Yes. test-reflect: all 3 new tests (2 params of the agreement test, 1 array param)
   are mutation-killed.
+
+## [2026-10-13 13:30] task-orchestrator (Opus) — gate closed; main merged; P5 real directory: lookups measured, FIRST SWEEP BLOCKED
+- Did: round-3 fixes committed `571e202f` (3 Warnings; 0 Critical in round 3 → the gate is closed at 3 rounds + 1
+  falsifier, all on astra). Merged origin/main `18036088` (#861 #862 #864 #870) → `b0c7bd20`; one conflict in
+  `guide/features/resume.md` (kept both: the retention bullet + main's denial bullets). On the merged tree: `make check`
+  green; `make test-all-local` 12,137 passed, 2 skipped.
+- Backup gate (fail-closed, re-checked before any real-dir write): `tar -tf …/pflow-debug-backup-2026-10-12.tar | wc -l`
+  = 30,182 ≥ 29,000 → PASS. Real `settings show`: "Trace retention in effect: 14 days"; no retention variable exported.
+- Owner's real `~/.pflow/debug` (31,396 files; 2.4+ GB), `time`, macOS, warm-ish cache:
+  | lookup | BEFORE (pre-185 = main checkout) | AFTER (this branch, read-only, env=0) |
+  |---|---|---|
+  | `pflow resume list` | 16.77 s (also 14.92 s / 4.15 s warm earlier today; spec baseline 24.8 s) | 0.28 s → "No paused runs." + "31395 traces written by an earlier pflow version are not searched" |
+  | `pflow resume <uuid>` (by-id miss = full by-id scan before) | 3.93 s (7.29 s earlier) | 0.26 s, aged-out hint + legacy count |
+  | `pflow report` (no path) | 0.38 s | 0.28 s (picks the newest CURRENT-grammar trace — ruled cutover) |
+  | `pflow --version` (startup floor) | — | 0.20 s |
+- **BLOCKED:** the plan's first real-directory sweep (one `uv run pflow <trivial workflow>` with the real HOME, retention
+  on) was refused by the Claude Code harness's auto-mode permission classifier ("Irreversible Local Destruction") — NOT
+  attempted any other way (no workaround). Consequently not run on the real dir: the first sweep's timing, `--only` on a
+  new-grammar Snapshot, and the Viewer gate callout on a real paused run (each needs a trace write into the real dir;
+  the callout itself was screenshotted on an isolated HOME in P2, and `/api/gate` audited at 0.12 s / one file on 30k by
+  the falsifier).
+- Strongest non-production substitute already in hand: the 30k synthetic bench (`bench/build_bench.py`, half legacy,
+  2,500 identities, 1,000 young failures): first sweep 2.09–3.6 s (30,000 → 3,786–4,454 files), second 0.27 s, 0 protected
+  traces missing (bench `check` manifest + falsifier's 24-trace real-run fixture with every rule).
+- Resume point: hand back for the main orchestrator's ruling — (a) the user runs the first sweep command themselves (recipe
+  below) and I record the numbers, (b) the user grants the permission and I run it, or (c) the substitute is approved.
+  Decision-independent close-out (task-review, spec status) proceeds now; `create-pr` waits for the ruling.
+  Recipe (a): `cd /Users/andfal/projects/pflow-worktrees/feat-task-185-run-lookup && ls ~/.pflow/debug | wc -l && time uv run
+  pflow scratchpads/task-185/real/p5ok.pflow.md && ls ~/.pflow/debug | wc -l && time uv run pflow
+  scratchpads/task-185/real/p5ok.pflow.md --only one --dry-run`.

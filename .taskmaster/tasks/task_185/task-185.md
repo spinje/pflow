@@ -10,7 +10,11 @@ match), and keep the directory bounded without breaking the three features that 
 
 ## Status
 
-not started
+done
+
+## Completed
+
+2026-10-13
 
 ## Priority
 
