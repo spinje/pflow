@@ -1343,8 +1343,9 @@ class OnlySnapshotMissingError(PflowError):
     recent full successful run (read from ``~/.pflow/debug/``) instead of
     re-walking the graph — so side-effecting upstream nodes (``gh pr create``)
     don't re-fire on every iteration. When no usable trace exists (the workflow
-    was never run fully, was run only with ``--no-trace``, or only ``--only``
-    traces exist), there is nothing to restore from. This is a HARD error rather
+    was never run fully, was run only with ``--no-trace``, only ``--only``
+    traces exist, or its trace aged out of ``runtime.trace_retention_days``),
+    there is nothing to restore from. This is a HARD error rather
     than a silent re-walk: re-walking would re-fire upstream side effects, which
     is precisely what #443 set out to stop.
     """

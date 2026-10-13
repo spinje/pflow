@@ -63,14 +63,14 @@ The report includes:
 
 Values under sensitive names (`api_key`, `token`, `password`, `Authorization`, `Cookie`, …) show as `<REDACTED>` in the report, and so does a run's secret value wherever it appears — in a command, stderr or a response (see [secret values](/reference/cli/settings#secret-values)). The trace keeps them raw so resume can restore them. Any other secret inside free text, such as a key exported only in your shell, is not detected.
 
-Reports are ephemeral — the default location is overwritten each run. The trace files are the durable history. You can regenerate a report from any previous run:
+Reports are ephemeral — the default location is overwritten each run. The trace files are the run history, kept for the [retention window](#trace-retention). You can regenerate a report from any run in that window:
 
 ```bash
 # Most recent trace
 pflow report
 
 # A specific past run
-pflow report ~/.pflow/debug/workflow-trace-my-workflow-20260323-150000.json -o /tmp/old
+pflow report ~/.pflow/debug/workflow-trace-3f2a1b9c-my-workflow.0b7e6a52-1c4d-4e8f-9a3b-5d6c7e8f9a0b-20260323-150000-123456.json -o /tmp/old
 ```
 
 Report directories are generated snapshots. pflow replaces the whole directory
@@ -97,7 +97,7 @@ Each node gets its own file, so you can diff just the node you changed. With sto
 
 pflow automatically saves detailed execution traces:
 
-- **Location**: `~/.pflow/debug/workflow-trace-*.json`
+- **Location**: `~/.pflow/debug/workflow-trace-{hash}-{name}.{run id}-{start time}.json` (a paused run also gets an empty `.paused` file beside its trace)
 - **When**: Every workflow run (success or failure)
 - **Content**: Per-node timing, inputs, outputs, template resolutions, errors
 
@@ -106,6 +106,12 @@ Traces are the raw data behind execution reports. Your agent can read these dire
 <Tip>
 Traces are saved automatically. Use `--no-trace` if you want to disable this (the `--report` flag overrides `--no-trace`).
 </Tip>
+
+<Note>
+Traces written by an earlier pflow version use an older filename. `pflow resume`, `pflow resume list`, `pflow report` and the Viewer don't search them — each says how many it skipped. You can still read one with `pflow report <path>`, and it ages out like any other trace. After upgrading, `--only` needs one full run first.
+
+Answer pending pauses before upgrading, and don't run an older and a newer pflow against the same `~/.pflow`: an older pflow can answer a newer pflow's pause without the newer one seeing that answer, an older pflow's `settings` command drops `trace_retention_days` from the settings file, and the newer pflow ages out the older one's traces — pending pauses included — after the window. If you must mix versions and want to keep every trace, set both opt-outs: `trace_retention_days: 0` in the settings file (read by every pflow process) and `PFLOW_TRACE_RETENTION_DAYS=0` (survives an older version's settings write, but only for processes that inherit it — an MCP server launched by a desktop app does not see your shell's exports).
+</Note>
 
 ## What only you can fix
 
@@ -141,14 +147,27 @@ pflow mcp sync --all
 
 See [adding MCP servers](/guides/adding-mcp-servers) for setup details.
 
-### Disk cleanup
+### Trace retention
 
-Trace files accumulate over time. pflow doesn't auto-delete them. If disk space becomes an issue:
+pflow removes traces older than the retention window — 14 days by default — each time it finishes writing a trace. Read-only commands (`pflow report`, `pflow resume list`, `pflow ui`) never remove anything. Whatever their age, pflow keeps:
 
-```bash
-# Remove old traces (check contents first if needed)
-rm ~/.pflow/debug/workflow-trace-*.json
+- a paused run still waiting for an answer
+- each workflow's newest successful run (what `--only` restores from)
+- each workflow's newest run, whatever its status (what `pflow report` shows)
+- a resumed run's trace, until the run it resumed is gone
+- a trace a running workflow is still writing
+
+The first three are kept only while the workflow file still exists — `--only` and `pflow resume` need the file.
+
+To change the window, set `runtime.trace_retention_days` in `~/.pflow/settings.json` (`0` keeps every trace):
+
+```json
+{ "runtime": { "trace_retention_days": 30 } }
 ```
+
+`PFLOW_TRACE_RETENTION_DAYS` overrides it for one process and is never saved. If pflow can't trust the setting — the settings file fails to load, a retention-looking key is misspelled or in the wrong section, or the variable isn't a whole number of days — it removes nothing and prints a warning saying why.
+
+Don't delete traces by hand: removing a trace breaks `--only`, `pflow resume`, the answer to a pending pause and `pflow report` for that run.
 
 ## Summary
 
@@ -158,6 +177,6 @@ rm ~/.pflow/debug/workflow-trace-*.json
 | Agent needs more context | Your agent (reads trace files) |
 | API key not configured | You (agent tells you the command) |
 | MCP server not connected | You (agent guides you) |
-| Disk space from traces | You (manual cleanup) |
+| Disk space from traces | pflow (retention; `trace_retention_days`) |
 
 pflow is built for self-correction. Your agent has the tools and knowledge to debug most issues — you only step in for setup tasks that require human access.

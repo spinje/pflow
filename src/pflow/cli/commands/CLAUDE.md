@@ -14,6 +14,7 @@ match their command; these are the less obvious ownership boundaries:
 | Workflow save and discovery | `save.py` → `core/workflow/save_service.py`; `find.py` → `core/workflow/discovery.py` |
 | Guide composition | `guide.py` → `pflow.guide` |
 | Cache analysis | `analyze_cache.py` → `core/prompt_cache_analysis/` |
+| `pflow report` with no path | `report.py:_latest_complete_trace` — the newest COMPLETE trace by start time from one `core/trace_dir.list_traces` listing |
 | Optional web UI | `ui.py` lazily loads the `[ui]` backend; see `src/pflow/ui/CLAUDE.md` |
 
 `resume.py` imports `run.py:execute_json_workflow` locally when dispatching to avoid

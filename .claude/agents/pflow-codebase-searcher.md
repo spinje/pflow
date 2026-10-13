@@ -91,6 +91,7 @@ Project docs are loaded as CLAUDE.md context — read them first instead of rest
 | Recorded decision (ADR) | `glob "context/adr/*.md"` |
 | Task by topic | `grep -l "keyword" .taskmaster/tasks/*/task-*.md .taskmaster/tasks/*/task-review.md` |
 | Config/settings | `read src/pflow/core/settings.py` |
+| Trace lookup / filename grammar / retention | `read src/pflow/core/trace_dir.py` (one listing is the index: `list_traces`, `find_trace`, the strict/lenient readers); `read src/pflow/runtime/trace_retention.py` (what a sweep removes and keeps); ADR-0018 |
 | LLM providers / model listing | `read src/pflow/core/llm_providers.py` (`CURATED_PROVIDERS`, `provider_models`); command `llm_models` in `src/pflow/cli/commands/settings.py` |
 | Node interface format | `grep "Interface:" src/pflow/nodes/` |
 

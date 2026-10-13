@@ -51,7 +51,8 @@ async def workflow_execute(
     Built-in behaviors:
     - Cost, tokens, and per-node results are returned in the response. Each run
       also streams a trace file to ~/.pflow/debug (same as the CLI) — usable for
-      `pflow report`, `analyze-cache`, and `pflow resume`.
+      `pflow report`, `analyze-cache`, and `pflow resume` within the retention
+      window (`runtime.trace_retention_days`, 14 days by default).
     - Returns explicit errors with suggestions for fixing
     - Steps declaring `approval: required` pause for a human. MCP runs cannot
       prompt, so an unapproved gate PAUSES THE RUN DURABLY: the response reports

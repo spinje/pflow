@@ -653,3 +653,68 @@ the sweep runs on both paths.
   - Gates: `make check` exit 0. `make test` 11957 passed (+7 over 11950, 0 failed); against the start-of-phase
     baseline that is 11895 → 11957 (+62). `pytest -m trace_files` 681 passed. The engine/`web/`/`workflow_executor`
     diff is empty.
+
+## [2026-10-13 03:19] task-phase-implementer (Opus) — P4 done (docs, help, guide, MCP instructions, ADRs, instruction files)
+- Did: worked through every item on the plan's P4 list, reconciled ADR-0018 with what was built, and added the
+  `--help` precedence line.
+- Changed:
+  - **Help and docstrings:** `cli/commands/run.py` (`--no-trace` help); `guide/entry.md` (the `--help` Run Options);
+    `core/exceptions.py::OnlySnapshotMissingError` (docstring ONLY — `_DEFAULT_SUGGESTION` untouched);
+    `mcp_server/tools/execution_tools.py` (`workflow_execute` docstring).
+  - **Docs:** `docs/guides/debugging.mdx` (filename pattern, example name, the "within the retention window"
+    sentence, "Disk cleanup" → "Trace retention", the cutover + version-skew Note, the summary row);
+    `docs/reference/configuration.mdx` (the field, the env row, the fake `PFLOW_TRACE_*` table replaced by the real
+    trace configuration, the `debug/` row → "Caution"); `docs/reference/cli/index.mdx` (`--report`/`--report-dir`
+    rows + precedence, two `trace_path` examples, the pattern + retention + older-traces bullets, the report
+    example); `docs/reference/cli/analyze-cache.mdx` (example name); `docs/how-it-works/approval-gates.mdx`.
+  - **Guide and MCP:** `guide/features/{resume,approval,ui,prompt-caching}.md`; `mcp-agent-instructions.md:853`
+    (pattern + retention sentence; the `:2099` `jq` recipe left alone).
+  - **ADRs:** ADR-0018 (Deletion bullet: the identity read may be one young file, the unreadable granularity,
+    `nodes_executed > 0` — the "zero-event residual" sentence was false and is gone, collisions per path; Settings
+    bullet: every model `extra="allow"`, the one recursive walk, the permissions warning once per file per
+    process); ADR-0007 / ADR-0002 amendment lines; ADR-0010 `:149-150` corrected in place.
+  - **Instruction files:** `.claude/skills/deep-review/SKILL.md` (sensitive paths: `core/trace_dir.py`,
+    `runtime/trace_retention.py`); `.claude/agents/review-architecture-fit.md` (door 5: the filename grammar + the
+    `.paused` sidecar); `.claude/agents/pflow-codebase-searcher.md` (search row); `make sync-claude-assets` (3
+    files); `runtime/CLAUDE.md` (a row + one paragraph); `cli/commands/CLAUDE.md` (report row);
+    `architecture/reference/template-variables.md:1749`.
+  - **Task-159 baseline:** `run-case.sh` (`PFLOW_TRACE_RETENTION_DAYS=0` in its `env -i`); case
+    `12/04-guide-auto-detect` regenerated.
+- Verified:
+  - `make check` exit 0. `make test` 11957 passed, 0 failed (unchanged — a docs phase). `tests/test_docs` 24
+    passed. Task-159 `verify.sh` 88 passed, 0 drifted (run after the regeneration, and again after the
+    `entry.md` edit). The regenerated case drifted only by the one pattern line.
+  - Isolated HOME, every call with `PFLOW_TRACE_RETENTION_DAYS=0` and provider keys unset:
+    - `pflow guide resume` renders the "Runs are kept for a window" bullet;
+    - `pflow guide approval` renders the retention + older-version sentence;
+    - `pflow guide ui` renders the retention-window run-id sentence;
+    - `pflow --help` shows the `--report` / `--no-trace` precedence lines.
+  - Assumed: Mintlify renders the new anchor `/guides/debugging#trace-retention` (heading "Trace retention" →
+    slug `trace-retention`; not built locally).
+- Deviations/surprises:
+  1. **The `--help` precedence needed `guide/entry.md`, not only `run.py`.** `pflow --help` renders `entry.md`'s
+     Run Options and `run` is a hidden command, so the `run.py` option help is not what an agent sees. The spec's
+     "stated in `--help`" required the two `entry.md` lines (`--report` … even with `--no-trace`; `--no-trace` and
+     what it costs).
+  2. **The Task-159 harness now pins `PFLOW_TRACE_RETENTION_DAYS=0`.** `run-case.sh` builds its env with `env -i`,
+     which strips any exported variable. A case that seeds aged fixture traces and then finalizes a run would
+     otherwise sweep its own fixtures, depending on the calendar date. This mirrors the conftest change; the
+     harness HOME was already isolated, so it is a determinism fix, not a safety one.
+  3. ADR amendment lines carry "(Task 185)" and no date. ADR precedent is "Amended <date>"; I followed your
+     no-dates instruction.
+  4. The cutover text is concentrated, not repeated in full. The whole hazard list (answer pending pauses before
+     upgrading; an older pflow can answer a newer pause unseen; an older `settings` write drops the key; set both
+     opt-outs and why — the env var is per process and an MCP server launched by a desktop app does not inherit it;
+     the newer pflow ages out the older lane's traces; `--only` needs one full run after upgrading) lives in
+     `debugging.mdx`'s Note. `cli/index.mdx`, guide `resume`/`approval`/`ui` and the MCP instructions carry the
+     short form (not searched / says how many / `pflow report <path>`); guide `resume` also carries "answer
+     pending pauses before upgrading" (write discipline: one home).
+  5. `architecture/historical/*` still show old patterns — left unchanged as historical records.
+  6. `docs/reference/configuration.mdx` still lists `PFLOW_SHELL_STRICT`; it exists in `nodes/shell/shell.py`, so it
+     stays.
+- Self-checks: fully happy? — yes. Phrases grepped before writing: "retention window", "one recency rule", "listing
+  is the index", "delete freely". No restated invariant now has two homes — the runtime paragraph points to
+  ADR-0018 and `core/trace_dir.py` instead of restating them. test-reflect: not needed — a docs phase that added no
+  tests.
+- Next: orchestrator — verify, commit P4; the P3 mid-task review findings come to me afterwards (the review
+  artifacts `reviews/midtask-p3.*` are untouched).

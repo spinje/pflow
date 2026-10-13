@@ -1744,9 +1744,9 @@ uv run pflow --validate-only workflow.pflow.md
 # Run with verbose logging
 uv run pflow --log-level DEBUG workflow.pflow.md
 
-# Run with trace file
-uv run pflow --trace workflow.pflow.md
-# → Outputs: ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
+# Every run writes a trace file (unless --no-trace)
+uv run pflow workflow.pflow.md
+# → Outputs: ~/.pflow/debug/workflow-trace-{hash}-{name}.{run id}-{start time}.json
 
 # Check specific parameter
 uv run pflow --param test_value=123 workflow.pflow.md

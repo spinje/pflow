@@ -1251,7 +1251,7 @@ pflow analyze-cache workflow.pflow.md --format=json       # machine-readable out
 ```
 
 Trace files live at
-`~/.pflow/debug/workflow-trace-<hash>-<name>-<timestamp>.json`. The default
+`~/.pflow/debug/workflow-trace-<hash>-<name>.<run-id>-<timestamp>.json`. The default
 command auto-loads the most recent matching trace when one exists. Use
 `--list-traces` when the loaded trace looks stale or you need the paste-ready
 `--from-trace` command for a specific run.

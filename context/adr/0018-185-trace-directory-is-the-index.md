@@ -69,15 +69,20 @@ until it ages out, is never protected, and ages out by the timestamp its old nam
   marker and trailer leaves a marker beside an `incomplete` trace, which every marker consumer ignores
   and the sweep removes with its trace. A marker write that fails disables streaming before any trailer
   exists, so the run is non-durable on every surface at once.
-- **Deletion reads the truth and fails closed.** The sweep classifies from names wherever it can (the
-  newest run per Workflow, Attempt lineage, legacy names) and reads only the aged files it is about to
-  judge — for the Snapshot it walks a Workflow's aged traces newest-first until the first success, so
-  it may keep one aged success beside a younger one, never the reverse. It reads through strict readers
-  that distinguish "gone" from "could not read": a file it cannot read is kept, and so is its whole
-  Workflow group that sweep; a workflow file whose existence cannot be determined keeps its group. A
-  trace with a `run.complete` trailer had every earlier line fully flushed (the writer disables
-  streaming on the first fault), so a trailer is sufficient evidence of a usable Snapshot; the one
-  residual is a success trailer over zero events, which the loader skips and the sweep would protect.
+- **Deletion reads the truth and fails closed.** The sweep classifies from names wherever it can
+  (Attempt lineage, legacy names) and otherwise reads only what it judges: per Workflow with an aged
+  trace, the head of its newest trace — the Workflow's identity and newest run, walking back past
+  head-less files (a run whose meta write hit a full disk), so this one read may be of a young file —
+  then aged files only. For the Snapshot it walks a Workflow's aged traces newest-first until the first
+  success that executed a step, so it may keep one aged success beside a younger one, never the
+  reverse. It reads through strict readers that distinguish "gone" from "could not read": a file it
+  cannot read is always kept, and its whole Workflow group is kept that sweep when the file could be
+  what protects the others — the Workflow's newest trace, a marked trace, a trace newer than the
+  Snapshot pick, or an Attempt; a workflow file whose existence cannot be determined keeps its group.
+  A trace with a `run.complete` trailer had every earlier line fully flushed (the writer disables
+  streaming on the first fault), so a trailer carrying `nodes_executed > 0` is sufficient evidence of a
+  usable Snapshot. A hash collision is judged per workflow path: a trace whose head names another
+  workflow gets that workflow's newest-run and Snapshot rules.
 - **Consumption evidence outlives its source.** Whether a Resume token was already answered is read
   from the Attempt that answered it (`resume_source._find_consuming_attempt`), so an Attempt is removed
   only after its source is gone, chains unwind root-first, and a source whose removal failed keeps its
@@ -85,13 +90,16 @@ until it ages out, is never protected, and ages out by the timestamp its old nam
   The loader re-checks that its source still exists after the consumption check, and an Attempt that
   vanished mid-check counts as consumed, so a concurrent sweep makes a resume refuse — never
   double-answer. `resumed_from` stays pure lineage for data (ADR-0010).
-- **Retention is configured leniently.** Every settings model (the root and each section) allows unknown keys
-  and keep them through a save (a strict model would turn a typo into a whole-file fallback that drops
+- **Retention is configured leniently.** Every settings model (the root and each section) allows
+  unknown keys and keeps them through a save (a strict model would turn a typo into a whole-file fallback that drops
   API keys and is written back by the next settings command; an ignoring model would erase the typo on
   the next save and switch deletion on silently); the sweep prunes nothing — with a warning — when a key
-  that looks like the retention key sits in the wrong place or spelling, when the file failed to load,
+  that looks like the retention key sits in the wrong place or spelling at any level (one walk over every
+  model's unknown keys, including keys inside an unknown section), when the file failed to load,
   or when the environment override is not a non-negative integer; other unknown keys are ignored, so a
-  newer version's future key never switches an older lane's retention off. `SettingsManager.save()` refuses after a failed load. An older pflow's settings
+  newer version's future key never switches an older lane's retention off. `SettingsManager.save()` refuses after a failed load. The sweep reads the
+  settings once more per run, so the insecure-permissions warning is printed once per settings file per
+  process, not once per load. An older pflow's settings
   write still drops the key: `PFLOW_TRACE_RETENTION_DAYS=0` is the opt-out that survives it.
 - Every trace path printed before this version keeps working with `pflow report <path>` until the
   trace ages out; the run behind it is not listed anywhere. Do not run pre- and post-185 pflow versions

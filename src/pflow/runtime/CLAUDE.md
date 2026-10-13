@@ -18,6 +18,7 @@ Compiles workflow IR into bare nodes plus `NodeConfig`, then executes it through
 | Read a trace file | `core/trace_io.py::load_trace_file` |
 | Where traces live, their filename grammar, finding a run | `core/trace_dir.py` (one listing, then reads of only the files in the answer) |
 | Snapshot restoration or resume refusal | `resume_source.py`; snapshot selection in `workflow_trace.py` |
+| Which old traces are removed, which are kept | `trace_retention.py` (swept from `WorkflowTraceCollector.finalize`, never by a read) |
 | Declared output cannot resolve | `output_resolver.py::populate_declared_outputs` |
 | Dry-run differs from execution | `engine/plan_node.py::plan_node`, then `execution/CLAUDE.md` → Dry-Run Planner |
 
@@ -118,6 +119,12 @@ traces and blobs. Consumers checking the reconstructed format accept major
 version 2 (`startswith("2.")`), not an exact minor version. Automatic discovery
 can skip unreadable candidates; explicit `analyze-cache --from-trace` input
 raises a load error instead. Do not invent a universal catch-and-skip policy.
+
+A trace is found by its filename, never by opening files (ADR-0018): the grammar and
+the one listing live in `core/trace_dir.py`; paused-ness is a `.paused` sidecar that
+`finalize` writes before the trailer. Retention runs at the end of `finalize` and
+reads only through `trace_dir`'s strict readers — a lenient reader's `None` would
+read "unreadable" as "removable".
 
 Loop position (2.8.0): a loop node's events carry `iteration` (stamped from
 `__iteration__` in `engine/instrumentation.py::record_trace`; absent on every other

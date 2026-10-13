@@ -146,9 +146,10 @@ refuses naming the place — and a gate whose resume would seed one stays `faile
 
 ## Consequences
 
-- **The trace is now load-bearing for two core features, not one.** `--no-trace` / MCP in-memory
-  runs write no trace and are therefore unresumable — surfaced as a hard error, never a silent
-  re-run (same posture ADR-0002 set for `--only`).
+- **The trace is now load-bearing for two core features, not one.** `--no-trace` runs write no trace
+  and are therefore unresumable — surfaced as a hard error, never a silent re-run (same posture
+  ADR-0002 set for `--only`); MCP runs stream traces like the CLI. A trace is removed only by
+  Retention, which keeps a pending pause and an Attempt's source (ADR-0018).
 - **UI/report consumers must join attempt chains via `resumed_from`** or one logical execution
   renders as several disconnected runs. 164 shipped this as meta-only with NO chain UI; closing it
   is **owned by Task 171** (owner decision 2026-07-04 — it already touches run-status rendering for
