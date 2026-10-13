@@ -53,8 +53,13 @@ until it ages out, is never protected, and ages out by the timestamp its old nam
 - **The grammar is additive-only, and an older reader ignores what it does not know.** A new fact
   becomes another optional dot-tag between the id and the timestamp; a reader parses unknown tags and
   ignores them; the name segment is always present; the timestamp stays last; every grammar pflow has
-  composed stays parseable — at least for its timestamp, so the sweep can age it out. A name that
-  matches no grammar is not a trace: never listed, never deleted. A pending Resume token is found only
+  composed stays parseable — at least for its timestamp, so the sweep can age it out: every grammar
+  since the hash prefix (#378); the rare pre-#378 hash-less names are unrecognised. The timestamp's
+  format and the tag charset (`[a-z][A-Za-z0-9_-]*`) are part of the grammar (amends ADR-0002's "free
+  to change"). A name that matches no grammar is not a trace: never listed, never deleted. **A deleter
+  keeps what it does not understand:** a trace carrying an unknown tag or an unknown sidecar is never
+  removed by this version's sweep, so a later version's protection rule is honoured by every older
+  binary sharing the directory. A pending Resume token is found only
   by its name, so dropping an arm would strand issued tokens and re-open unbounded growth.
 - **The name and the marker are the index; the trailer is the truth.** A lookup trusts the index; a
   consumer that acts (`resume list`, the sweep) reads the trailer of each marked trace. A crash between
