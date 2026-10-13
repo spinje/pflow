@@ -52,8 +52,6 @@ _MCP_ADVISORY_SOURCES = frozenset({"parser", "validator"})
 # the document whole, and tools write the cause last. The trace (``trace_path``) keeps every value whole.
 DOCUMENT_EXCERPT_HEAD_CHARS: Final = 1_000
 DOCUMENT_EXCERPT_TAIL_CHARS: Final = 4_000
-# Never cut: a gate's request, which the approver consents to whole (``core/gate.py::masked_preview``).
-_UNCUT_KEYS = frozenset({"gate"})
 
 
 @dataclass(frozen=True)
@@ -171,18 +169,21 @@ def build_run_outcome(
 
 
 def _printed(diagnostic: Diagnostic) -> dict[str, Any]:
-    """The diagnostic as the document prints it: redacted (``to_output_dict``), long strings excerpted."""
-    printed: dict[str, Any] = _excerpted(diagnostic.to_output_dict())
+    """The diagnostic as the document prints it: redacted (``to_output_dict``), long strings excerpted —
+    except a gate's request (``context.gate``), which the approver consents to whole (``gate.masked_preview``)."""
+    output = diagnostic.to_output_dict()
+    printed: dict[str, Any] = _excerpted(output)
+    if "gate" in (output.get("context") or {}):
+        printed["context"]["gate"] = output["context"]["gate"]
     return printed
 
 
 def _excerpted(value: Any) -> Any:
-    """A copy of ``value`` with every string past the document window cut to its head and tail
-    (``_UNCUT_KEYS`` excepted)."""
+    """A copy of ``value`` with every string past the document window cut to its head and tail."""
     if isinstance(value, str):
         return head_tail_preview(value, DOCUMENT_EXCERPT_HEAD_CHARS, DOCUMENT_EXCERPT_TAIL_CHARS)
     if isinstance(value, dict):
-        return {key: item if key in _UNCUT_KEYS else _excerpted(item) for key, item in value.items()}
+        return {key: _excerpted(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):  # a tuple prints as a JSON array too
         return [_excerpted(item) for item in value]
     return value

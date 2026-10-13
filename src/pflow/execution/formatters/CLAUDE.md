@@ -34,7 +34,7 @@ section function both renderers compose — never assemble a run-ending dict els
 The document's optional keys are absent, never `null`; a producer's `null` (the cost
 tri-state, a `?? null` output, the gate payload) stays.
 The document cuts every long string in a diagnostic or a step to a head+tail excerpt
-(`_excerpted`, #843; a gate's request is never cut); text sections preview from the whole
+(`_printed`, #843; a gate's request, `context.gate`, is never cut); text sections preview from the whole
 values — `RunOutcome.errors`/`.steps`, never the document's excerpted copies.
 
 ## Easy-to-confuse behavior

@@ -671,14 +671,17 @@ class TestTheDocumentExcerptsLongStrings:
         assert document["advisories"][0]["suggestions"] == [cut]
         assert document["diagnostics"] == [*document["warnings"], *document["advisories"]]
 
-    def test_a_gate_request_is_never_cut(self) -> None:
-        """The approver consents to the whole value (#746): a refused gate's request prints whole."""
+    def test_a_gate_request_is_never_cut_and_only_the_request_is_spared(self) -> None:
+        """The approver consents to the whole value (#746): a refused gate's request prints whole. A key
+        that merely shares the name — a child step called ``gate``, a response field — is cut as usual."""
         command = "echo " + "x" * 10_000
         gate = _error("Gate needs a human", node_id="deploy", category="gate", gate={"preview": {"command": command}})
+        body = _error("HTTP 500", node_id="fetch", raw_response={"gate": command})
 
-        document = _outcome(_failed(gate), {}).document
+        document = _outcome(_failed(gate, body), {}).document
 
         assert document["errors"][0]["context"]["gate"] == {"preview": {"command": command}}
+        assert document["errors"][1]["context"]["raw_response"] == {"gate": head_tail_preview(command, HEAD, TAIL)}
 
     def test_a_batch_child_failure_is_cut_in_the_document_and_previewed_whole_in_text(self, tmp_path: Path) -> None:
         child = tmp_path / "child.pflow.md"
