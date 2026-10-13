@@ -1,5 +1,3 @@
-Executing workflow (1 nodes):
-
 ⚠️ Warnings:
   ⚠ [cache.unused-chunk] Cache chunk 'article' is declared in ## Cache but no node references it via prompt_cache:.
     → Remove 'article' from ## Cache, OR reference it from a node's `- prompt_cache: [article]`.

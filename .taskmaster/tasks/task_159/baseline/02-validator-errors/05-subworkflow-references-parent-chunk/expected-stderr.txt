@@ -1,7 +1,5 @@
-Executing workflow (1 nodes):
 WARNING: Found 1 unused inputs
 WARNING: Template validation found 1 errors
-
 ⚠️ Warnings:
   ⚠ [cache.unused-chunk] Cache chunk 'article' is declared in ## Cache but no node references it via prompt_cache:.
     → Remove 'article' from ## Cache, OR reference it from a node's `- prompt_cache: [article]`.
