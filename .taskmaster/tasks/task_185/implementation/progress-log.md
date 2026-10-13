@@ -1374,3 +1374,11 @@ the sweep runs on both paths.
   are never protected); restorable from the backup tar. Nothing protected by the five rules is missing.
 - Verified on HEAD (main `18036088` merged): `make check` green; `make test-all-local` 12,137 passed, 2 skipped; Task-159 `verify.sh` 88 passed, 0 drifted.
 - Next: commit, `create-pr`, #860 comment.
+
+## [2026-10-13 14:50] task-orchestrator (Opus) — PR #871 opened; main `f97c348f` merged
+- Did: `create-pr` → PR #871 (closes #542 only — `closingIssuesReferences` = [542]; #860/#734/#729/#763 "Refs", not closing);
+  #860 commented with the exact scrub site (`ui/server.py::gate`, after the `load_trace_file(entry.path)` try block).
+  Merged origin/main `f97c348f` (#863: run-document excerpts) — one conflict in `docs/reference/cli/index.mdx`'s
+  `--no-trace` row (kept both: the `--report` precedence and #863's excerpt clause). On the merged tree: `make check`
+  green, `make test-all-local` 12,145 passed, 2 skipped.
+- Next: push; wait for CI on the new head (tests-and-type-check, tests-windows, baseline-oracle); hand back.
