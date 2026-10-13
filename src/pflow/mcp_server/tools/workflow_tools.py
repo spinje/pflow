@@ -81,7 +81,7 @@ async def workflow_describe(
     Returns workflow interface showing:
     - Workflow name and description
     - Input parameters (required/optional, types, defaults)
-    - Output values (with descriptions)
+    - Output values (declared types, descriptions)
     - Example usage command
 
     Typical usage pattern:

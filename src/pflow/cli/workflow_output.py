@@ -11,6 +11,7 @@ import click
 
 from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.templates import TemplateResolver
+from pflow.core.text_format import count_noun
 from pflow.execution.formatters.output_utils import OutputMode, select_output_mode
 
 
@@ -392,7 +393,7 @@ def _render_batch_compact_summary(node_id: str, value: dict[str, Any], print_fla
     total_ms = timing.get("total_items_ms")
     duration = f" in {total_ms / 1000:.1f}s" if isinstance(total_ms, (int, float)) else ""
 
-    safe_output(f"batch {node_id}: {success_count}/{count} items succeeded{duration}")
+    safe_output(f"batch {node_id}: {success_count:,}/{count_noun(count, 'item')} succeeded{duration}")
     if print_flag:
         return
     hint = f"use `-o {node_id}.results` for full payload"

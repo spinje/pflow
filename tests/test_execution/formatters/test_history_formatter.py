@@ -79,6 +79,15 @@ class TestFormatExecutionHistory:
         assert "limit=20" in result
         assert "api_key=<REDACTED>" in result
 
+    def test_detailed_mode_hangs_a_multi_line_parameter(self):
+        """#806: a parameter value with a newline stays under its label, never at column 0."""
+        result = format_execution_history(
+            {"execution_count": 1, "last_execution_success": True, "last_execution_params": {"message": "a\nb"}},
+            mode="detailed",
+        )
+
+        assert "  Last Parameters: message=a\n" + " " * len("  Last Parameters: ") + "b" in result
+
     def test_no_execution_count_returns_none(self):
         """Test returns None when no execution count."""
         rich_metadata = {}

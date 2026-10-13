@@ -1766,7 +1766,7 @@ class ResumeSideEffectConfirmationError(ResumeSourceError):
     ):
         self.node_type = node_type
         super().__init__(
-            f"Resuming re-runs step '{node_id}' (a {node_type} step), and its side effects may fire again. "
+            f"Resuming re-runs the {node_type} step '{node_id}', and its side effects may fire again. "
             "This run is non-interactive (agent/MCP/pipe — no terminal to confirm on), so resume refuses "
             "rather than repeat them silently.",
             execution_id=execution_id,
@@ -1906,8 +1906,8 @@ class ResumeStaleWorkflowError(ResumeSourceError):
             )
             if rerun_node_type is not None:
                 suggestions[1] += (
-                    f" --force also re-runs '{entry_node_id}' (a {rerun_node_type} step that already started in the "
-                    "original run), so its side effects may fire again — if you are an AI agent, confirm that "
+                    f" --force also re-runs the {rerun_node_type} step '{entry_node_id}', which already started in the "
+                    "original run, so its side effects may fire again — if you are an AI agent, confirm that "
                     "with your human first."
                 )
         named = [*changed, *([self.resume_point] if resume_point_missing and self.resume_point else [])]

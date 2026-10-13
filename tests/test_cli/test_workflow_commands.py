@@ -54,6 +54,34 @@ def invoke_cli(args: list[str]) -> Any:
         sys.stderr = original_stderr
 
 
+_TYPED_SAVED_WF = """# Typed
+
+Count things per author.
+
+## Inputs
+
+### score
+
+A score.
+
+- type: integer
+- required: true
+
+## Steps
+
+### count
+
+Count.
+
+- type: shell
+- env: {SCORE: "${score}"}
+
+```shell command
+echo "$SCORE"
+```
+"""
+
+
 class TestWorkflowListCommand:
     """Tests for the `pflow list` command."""
 
@@ -477,6 +505,72 @@ class TestWorkflowDescribeCommand:
             "\n"
             "Example Usage:\n"
             f"  pflow '{typed_path}' subject=<value>\n"
+        )
+
+    def test_workflow_help_is_describe_plus_its_source(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """#847: ``<file> --help`` shows the file's description and one heading, and both surfaces
+        print an output's declared type the way they print an input's."""
+        workflow_path = tmp_path / "draft files" / "typed.pflow.md"
+        workflow_path.parent.mkdir()
+        write_workflow_file(
+            {
+                "inputs": {"score": {"type": "integer", "required": True, "description": "A score"}},
+                "outputs": {
+                    "total": {"type": "integer", "description": "Number counted", "source": "${count.stdout}"},
+                    "note": {"description": "Untyped note", "source": "${count.stdout}"},
+                },
+                "nodes": [{"id": "count", "type": "shell", "params": {"command": "echo 1"}}],
+            },
+            workflow_path,
+            title="Typed",
+            description="Count things per author.",
+        )
+        typed_path = "./draft files/typed.pflow.md"
+        monkeypatch.chdir(tmp_path)
+
+        with patch("pflow.cli.commands.describe.WorkflowManager") as MockWM:
+            MockWM.return_value.exists.return_value = False
+            described = invoke_cli(["describe", typed_path])
+        helped = invoke_cli([typed_path, "--help"])
+
+        assert described.exit_code == helped.exit_code == 0
+        assert described.output == (
+            f"Workflow: {typed_path}\n"
+            "Description: Count things per author.\n"
+            "\n"
+            "Inputs:\n"
+            "  - score (integer, required): A score\n"
+            "\n"
+            "Outputs:\n"
+            "  - total (integer): Number counted\n"
+            "  - note: Untyped note\n"
+            "\n"
+            "Example Usage:\n"
+            f"  pflow '{typed_path}' score=<integer>\n"
+        )
+        assert helped.output == described.output.replace(
+            f"Workflow: {typed_path}\n", f"Workflow: typed.pflow.md\nSource: {typed_path}\n", 1
+        )
+
+    def test_saved_workflow_help_is_describe_plus_its_source(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#847: a saved workflow's ``--help`` reads the same stored metadata ``describe`` does — its
+        description and its run history — under one heading."""
+        from pflow.core.workflow.manager import WorkflowManager
+
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        (tmp_path / ".pflow" / "debug").mkdir(parents=True)
+        WorkflowManager().save("typed-wf", _TYPED_SAVED_WF)
+        assert invoke_cli(["typed-wf", "score=7"]).exit_code == 0  # records the run history
+
+        described = invoke_cli(["describe", "typed-wf"])
+        helped = invoke_cli(["typed-wf", "--help"])
+
+        assert "Description: Count things per author.\n" in described.output
+        assert "Execution History:\n  Runs: 1 time\n" in described.output
+        assert helped.output == described.output.replace(
+            "Workflow: typed-wf\n", "Workflow: typed-wf\nSource: Saved workflow\n", 1
         )
 
     def test_describe_workflow_no_inputs_outputs(self) -> None:
