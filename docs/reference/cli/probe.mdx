@@ -25,4 +25,4 @@ pflow probe <NODE> [PARAMS...] --output-format json
 | `1` | The node ran and failed (a shell exit code, an HTTP error, a raised exception) | The error on stderr — the same diagnostic `pflow run` prints for that step |
 | `2` | The probe was refused before the node ran: an unknown or ambiguous node, an invalid or unknown param, an unset `${VAR}` | The error on stderr |
 
-With `--output-format json`, stdout always carries one document. A failure's document has `"success": false` and an `errors` list (plus `warnings`); a successful one has neither key.
+With `--output-format json`, stdout always carries one document. A failure's document has `"success": false` and an `errors` list (plus `warnings`); a successful one omits `errors` and carries `warnings` only when there are any.

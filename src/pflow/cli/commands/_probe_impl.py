@@ -15,7 +15,7 @@ from pflow.execution.formatters.run_outcome import (
     EXIT_CODES,
     EXIT_REJECTED,
     diagnostic_sections,
-    format_error_text,
+    errors_block,
     partition_surfaced_diagnostics,
 )
 from pflow.execution.probe import ProbeResult, probe_node
@@ -37,14 +37,18 @@ def execute_single_node(node_type: str, params: tuple[str, ...], output_format: 
     if verbose and probe.execution_id:
         click.echo(f"💾 Stored execution in cache: {probe.execution_id}", err=True)
 
+    # The same sections MCP's `format_error_text` composes; `-v` adds an error's technical details.
+    warnings, advisories = partition_surfaced_diagnostics(probe.warnings)
+    sections = diagnostic_sections(warnings, advisories)
     if output_format == "json":
         click.echo(json.dumps(_json_document(probe, execution_params, verbose), indent=2, default=str))
     elif probe.success:
         click.echo(_format_success_text(probe, execution_params, verbose))
-        if probe.warnings:
-            click.echo("\n".join(diagnostic_sections(*partition_surfaced_diagnostics(probe.warnings))), err=True)
+        if sections:
+            click.echo("\n".join(sections), err=True)
     else:
-        click.echo(format_error_text(probe.errors, probe.warnings), err=True)
+        errors = errors_block(probe.errors, warnings, verbose=verbose)
+        click.echo("\n".join([*errors, *(["", *sections] if sections else [])]), err=True)
 
     if not probe.success:
         sys.exit(EXIT_CODES[WorkflowStatus.FAILED] if probe.ran else EXIT_REJECTED)

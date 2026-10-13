@@ -15,6 +15,7 @@ import pytest
 from pflow.cli.commands.probe import probe_cmd
 from pflow.cli.commands.read_fields import read_fields
 from pflow.core.node import Node
+from pflow.core.user_errors import UserFriendlyError
 from pflow.mcp.manager import MCPServerManager
 from pflow.mcp.registrar import MCPRegistrar
 from pflow.registry.registry import Registry
@@ -31,6 +32,15 @@ class FakeImagesNode(Node):
     def post(self, shared: dict[str, Any], prep_res: Any, exec_res: Any) -> str:
         shared["result"] = exec_res
         return "default"
+
+
+class FakeNoShellNode(Node):
+    """Raises the user-friendly error a node raises when its platform lacks a tool (technical details included)."""
+
+    def prep(self, shared: dict[str, Any]) -> Any:
+        raise UserFriendlyError(
+            title="No shell", explanation="No POSIX shell was found.", technical_details="checked PATH and /bin"
+        )
 
 
 @pytest.fixture
@@ -231,6 +241,36 @@ def test_file_path_in_a_content_param_loads_the_file_as_in_a_workflow(
 
     assert result.exit_code == 0, result.stdout
     assert json.loads(result.stdout)["outputs"]["stdout"] == "test content"
+
+
+def test_failure_after_the_node_completed_keeps_its_outputs(runner: click.testing.CliRunner) -> None:
+    """A code node that escalates completes, then the non-interactive probe fails at the gate: the
+    failure (exit 1) still carries what the node produced."""
+    code = "code=result: dict = {'work': 'partial', 'escalation': 'Which approach?'}"
+
+    result = runner.invoke(probe_cmd, ["code", code, "--output-format", "json"])
+
+    assert result.exit_code == 1
+    output = json.loads(result.stdout)
+    assert output["success"] is False
+    assert output["outputs"]["result"]["work"] == "partial"
+    assert output["errors"][0]["title"] == "Gate needs a human"
+
+
+def test_verbose_failure_adds_the_technical_details(runner: click.testing.CliRunner) -> None:
+    """Without `-v` the error points at `--verbose`; with it, the technical details print — as `pflow run -v` does."""
+    registry = Registry()
+    nodes = registry.load()
+    nodes["no-shell"] = {"module": FakeNoShellNode.__module__, "class_name": FakeNoShellNode.__name__, "interface": {}}
+    registry.save(nodes)
+
+    plain = runner.invoke(probe_cmd, ["no-shell"])
+    verbose = runner.invoke(probe_cmd, ["no-shell"], obj={"verbose": True})
+
+    assert plain.exit_code == verbose.exit_code == 1
+    assert "Run with --verbose for technical details." in plain.stderr
+    assert "checked PATH and /bin" not in plain.stderr
+    assert "Technical details:\nchecked PATH and /bin" in verbose.stderr
 
 
 # --- Refused before the node ran: exit 2 (the call is wrong) ---

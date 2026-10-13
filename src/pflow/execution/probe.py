@@ -19,6 +19,7 @@ from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
 from pflow.registry import Registry
 from pflow.registry.node_id import normalize_node_id
+from pflow.runtime.node_state import get_node_output
 
 logger = logging.getLogger(__name__)
 
@@ -71,20 +72,21 @@ def probe_node(node_type: str, params: dict[str, Any]) -> ProbeResult:
     result = WorkflowRunner().run(workflow_ir, {}, RunnerConfig(cache_enabled=False, trace_enabled=False))
     execution_time_ms = int(result.metrics.workflow_nodes.get(resolved, 0)) if result.metrics else 0
     warnings = [d for d in result.diagnostics if d.severity is not Severity.ERROR]
+    # Wherever the run left them: a failure record, or the node's own key when the run failed after
+    # the node completed (a non-interactive escalation).
+    outputs = _as_outputs(get_node_output(result.shared_after, resolved))
 
     if not result.success:
-        failure = result.shared_after.get("__failures__", {}).get(resolved, {})
         return ProbeResult(
             node_type=resolved,
             success=False,
             ran=result.engine_started,
-            outputs=_as_outputs(failure.get("data", {}) if isinstance(failure, dict) else {}),
+            outputs=outputs,
             errors=result.errors,
             warnings=warnings,
             execution_time_ms=execution_time_ms,
         )
 
-    outputs = _as_outputs(result.shared_after.get(resolved, {}))
     return ProbeResult(
         node_type=resolved,
         success=True,
@@ -101,6 +103,8 @@ def _refused(node_type: str, errors: list[Diagnostic]) -> ProbeResult:
 
 
 def _as_outputs(value: Any) -> dict[str, Any]:
+    if value is None:  # the node never ran
+        return {}
     return value if isinstance(value, dict) else {"result": value}
 
 
