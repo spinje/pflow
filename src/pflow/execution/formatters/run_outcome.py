@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Final
 
@@ -48,6 +48,11 @@ _NO_ERROR_DETAILS = "❌ Workflow execution failed — no error details were rec
 # Advisories MCP shows: definition-quality notes with no other surface. Runtime INFO (an empty
 # batch) duplicates data an MCP caller can read, so only the CLI renders it; the document has all.
 _MCP_ADVISORY_SOURCES = frozenset({"parser", "validator"})
+# A diagnostic's or step's string longer than this window — a step's stdout/stderr, a response body, a
+# tool error, at any depth — reaches the document as its head and tail (``_excerpted``): an agent reads
+# the document whole, and tools write the cause last. The trace (``trace_path``) keeps every value whole.
+DOCUMENT_EXCERPT_HEAD_CHARS: Final = 1_000
+DOCUMENT_EXCERPT_TAIL_CHARS: Final = 4_000
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,9 @@ class RunOutcome:
     # The run's secret values (``secret_values``), already scrubbed from everything above — kept so a
     # printer that renders from the run's store instead (CLI text stdout) scrubs with the same set.
     secrets: frozenset[str] = frozenset()
+    # The step table before the document's excerpts: a text preview of a step's stderr or of a batch
+    # item's child failure is cut from the whole value, so the count it says it omitted is true.
+    steps: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def exit_code(self) -> int:
@@ -108,7 +116,7 @@ def build_run_outcome(
     errors = [] if status is WorkflowStatus.PAUSED else result.errors
     surfaced = [diagnostic for diagnostic in result.diagnostics if diagnostic.severity is not Severity.ERROR]
     warnings, advisories = partition_surfaced_diagnostics(surfaced)
-    printed_errors = [error.to_output_dict() for error in errors]
+    printed_errors = [_printed(error) for error in errors]
     metrics_summary = _metrics_summary(result)
 
     document: dict[str, Any] = {
@@ -131,9 +139,9 @@ def build_run_outcome(
             else f"Workflow execution failed ({len(printed_errors)} errors)"  # 2+, and a JSON contract
         )
     document["errors"] = printed_errors
-    document["warnings"] = [diagnostic.to_output_dict() for diagnostic in warnings]
-    document["advisories"] = [diagnostic.to_output_dict() for diagnostic in advisories]
-    document["diagnostics"] = printed_errors + [diagnostic.to_output_dict() for diagnostic in surfaced]
+    document["warnings"] = [_printed(diagnostic) for diagnostic in warnings]
+    document["advisories"] = [_printed(diagnostic) for diagnostic in advisories]
+    document["diagnostics"] = printed_errors + [_printed(diagnostic) for diagnostic in surfaced]
     if metrics_summary is not None:
         document["duration_ms"] = metrics_summary["duration_ms"]
         document["total_cost_usd"] = metrics_summary["total_cost_usd"]
@@ -142,7 +150,7 @@ def build_run_outcome(
     gate = _gate_payload(result, status, secrets)
     execution = _execution_block(workflow_ir, result.shared_after, metrics_summary, gate)
     if execution is not None:
-        document["execution"] = execution
+        document["execution"] = {**execution, "steps": _excerpted(execution["steps"])}
     if gate is not None:
         document["gate"] = gate
     resume_command = _resume_command(document, status, trace, gate)
@@ -157,7 +165,29 @@ def build_run_outcome(
         advisories=advisories,
         engine_started=result.engine_started,
         secrets=secrets,
+        steps=execution["steps"] if execution is not None else [],
     )
+
+
+def _printed(diagnostic: Diagnostic) -> dict[str, Any]:
+    """The diagnostic as the document prints it: redacted (``to_output_dict``), long strings excerpted —
+    except a gate's request (``context.gate``), which the approver consents to whole (``gate.masked_preview``)."""
+    output = diagnostic.to_output_dict()
+    printed: dict[str, Any] = _excerpted(output)
+    if "gate" in (output.get("context") or {}):
+        printed["context"]["gate"] = output["context"]["gate"]
+    return printed
+
+
+def _excerpted(value: Any) -> Any:
+    """A copy of ``value`` with every string past the document window cut to its head and tail."""
+    if isinstance(value, str):
+        return head_tail_preview(value, DOCUMENT_EXCERPT_HEAD_CHARS, DOCUMENT_EXCERPT_TAIL_CHARS)
+    if isinstance(value, dict):
+        return {key: _excerpted(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):  # a tuple prints as a JSON array too
+        return [_excerpted(item) for item in value]
+    return value
 
 
 # The store's bookkeeping of node ids (routing, cache hits): what output selection and the step table
@@ -597,7 +627,7 @@ def render_cli_stderr(outcome: RunOutcome, *, text_mode: bool, print_flag: bool,
     """
     document = outcome.document
     status = outcome.status
-    steps = (document.get("execution") or {}).get("steps", [])
+    steps = outcome.steps
     batch_errors = format_batch_errors_section(steps)
     must_act = text_mode
     summary = not print_flag
@@ -635,7 +665,7 @@ def render_mcp_text(outcome: RunOutcome) -> str:
     ``resume_command:``). Runtime INFO advisories are left to the document (``_MCP_ADVISORY_SOURCES``).
     """
     document = outcome.document
-    steps = (document.get("execution") or {}).get("steps", [])
+    steps = outcome.steps
     workflow = document["workflow"]
     # MCP-only: an agent calling the tool has no command line naming the workflow it ran. The CLI
     # summary dropped this line as redundant (PR #470) — do not "restore parity" there.

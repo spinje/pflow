@@ -38,6 +38,13 @@ def test_longer_text_keeps_exact_head_and_tail_and_names_the_omitted_count(omitt
     assert head_tail_preview(head + middle + tail) == f"{head} … [{omitted:,} chars omitted] … {tail}"
 
 
+@pytest.mark.parametrize(
+    ("head", "tail", "expected"), [(3, 4, "HHH … [2 chars omitted] … TTTT"), (3, 0, "HHH … [6 chars omitted] … ")]
+)
+def test_a_caller_window_sets_the_head_and_tail(head: int, tail: int, expected: str) -> None:
+    assert head_tail_preview("HHHmmTTTT", head=head, tail=tail) == expected
+
+
 def test_failed_reference_shell_block_shows_the_stderr_tail() -> None:
     """``${build.stdout}`` after ``build`` failed: the block under the reference ends with the cause."""
     stderr = "noise line\n" * 100 + "fatal: CAUSE-AT-TAIL"

@@ -129,7 +129,7 @@ Nothing upstream re-runs — completed steps are restored from the paused trace.
 | `-o, --output-key KEY` | Specific shared store key to output |
 | `--output-format text\|json` | Output format (default: text) |
 | `-p, --print` | Minimal output: suppress header, summary, and warnings |
-| `--no-trace` | Disable workflow trace saving (`--report` / `--report-dir` re-enable it) |
+| `--no-trace` | Disable workflow trace saving (`--report` / `--report-dir` re-enable it); a JSON document then keeps only excerpts of long step output |
 | `--report` | Write an execution report (a directory of markdown files) to `~/.pflow/reports/`; turns tracing on even with `--no-trace` |
 | `--report-dir DIR` | Write the execution report to `DIR` (implies `--report`) |
 | `--cache/--no-cache` | Enable/disable memoization cache reads (default: enabled) |
@@ -338,6 +338,8 @@ Every way a run ends — success, failure, a paused gate, a denied gate — prin
 | `resume_command` | The exact next command: `pflow resume <id>` on a resumable failure, the `--approve`/`--choose` answer on a pause |
 
 Values under a sensitive name (`token`, `password`, `authorization`, `cookie`, …) print as `<REDACTED>` at any depth of a diagnostic, in every JSON document — a run's result, a pause, a denial, `--validate-only`, and `--dry-run`. A run's secret values — stored with `pflow settings set-env`, or passed to a sensitive-named input — are replaced with `<REDACTED>` anywhere in the document, `result` included ([secret values](/reference/cli/settings#secret-values)). The trace keeps them raw for `pflow resume`; `pflow report` masks them too.
+
+A long string in a diagnostic or a step — a step's stdout or stderr, a response body, a tool's error — prints as its first 1,000 and last 4,000 characters around a `… [N chars omitted] …` marker, so the document stays readable whole and keeps the cause a tool prints last. A gate's content is never cut. The trace at `trace_path` keeps every value whole (`pflow report` reads it); under `--no-trace` the excerpt is the only copy.
 
 </Expandable>
 

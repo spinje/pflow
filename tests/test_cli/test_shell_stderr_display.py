@@ -7,10 +7,13 @@ Related bug: Shell node stderr not surfaced in error messages
 """
 
 import json
+from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from pflow.cli.main import main
+from pflow.core.trace_io import load_trace_file
 from tests.shared.markdown_utils import write_workflow_file
 
 
@@ -88,16 +91,18 @@ class TestShellStderrDisplay:
         error = output["errors"][0]
         assert "stderr content here" in error["context"]["shell_stderr"]
 
+    @pytest.mark.trace_files
     def test_long_output_previews_keep_the_tail_where_the_cause_is(self, tmp_path):
-        """Long stderr and stdout show their head AND tail in every text preview (#755).
+        """Long stderr and stdout show their head AND tail in every preview (#755, #843).
 
         Tools write the cause last, after progress noise. Each cause marker sits only at
-        the very end of ~1,100 chars and is printed via ``%s`` so it never appears in the
-        command text — the text channels must show it, and JSON keeps the whole stderr.
+        the very end of ~7,600 chars and is printed via ``%s`` so it never appears in the
+        command text. The text channels preview it; the JSON document carries a wider
+        head+tail excerpt (#843) — the trace keeps the whole stderr.
         """
         command = (
-            "i=0; while [ $i -lt 60 ]; do printf 'progress-noise-%02d ' $i >&2; "
-            "printf 'stdout-noise-%02d ' $i; i=$((i+1)); done; "
+            "i=0; while [ $i -lt 400 ]; do printf 'progress-noise-%03d ' $i >&2; "
+            "printf 'stdout-noise-%03d ' $i; i=$((i+1)); done; "
             "printf 'STDOUT-%s-TAIL' AT; printf 'CAUSE-%s-TAIL' AT >&2; exit 3"
         )
         workflow = {
@@ -114,21 +119,56 @@ class TestShellStderrDisplay:
         headline = next(line for line in lines if line.startswith("Command failed with exit code 3:"))
         details = next(line for line in lines if line.startswith("    Stderr: "))
         for preview in (headline, details):
-            assert "progress-noise-00" in preview  # the head stays
-            assert "progress-noise-30" not in preview  # the middle is cut
+            assert "progress-noise-000" in preview  # the head stays
+            assert "progress-noise-030" not in preview  # the middle is cut
             assert "chars omitted]" in preview
             assert preview.endswith("CAUSE-AT-TAIL")  # the tail stays
         stdout = next(line for line in lines if line.startswith("    Stdout: "))
-        assert "stdout-noise-00" in stdout
-        assert "stdout-noise-30" not in stdout
+        assert "stdout-noise-000" in stdout
+        assert "stdout-noise-030" not in stdout
         assert "chars omitted]" in stdout
         assert stdout.endswith("STDOUT-AT-TAIL")
 
         as_json = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
-        error = json.loads(as_json.stdout)["errors"][0]
-        assert error["context"]["shell_stderr"].startswith("progress-noise-00")
-        assert "progress-noise-30" in error["context"]["shell_stderr"]  # JSON carries the full text
-        assert error["context"]["shell_stderr"].endswith("CAUSE-AT-TAIL")
+        document = json.loads(as_json.stdout)
+        context = document["errors"][0]["context"]
+        for field, noise, cause in (("shell_stderr", "progress", "CAUSE"), ("shell_stdout", "stdout", "STDOUT")):
+            excerpt = context[field]
+            assert excerpt.startswith(f"{noise}-noise-000")
+            assert f"{noise}-noise-100" not in excerpt  # the document cuts the middle (#843) ...
+            assert " chars omitted] … " in excerpt
+            assert excerpt.endswith(f"{cause}-AT-TAIL")
+        trace = load_trace_file(Path(document["trace_path"]))
+        node_output = next(event for event in trace["nodes"] if event["node_id"] == "noisy")["node_output"]
+        # ... and the trace keeps both whole
+        assert node_output["stderr"] == "".join(f"progress-noise-{i:03d} " for i in range(400)) + "CAUSE-AT-TAIL"
+        assert node_output["stdout"] == "".join(f"stdout-noise-{i:03d} " for i in range(400)) + "STDOUT-AT-TAIL"
+
+    def test_a_secret_on_the_excerpt_cut_never_prints_in_part(self, tmp_path):
+        """The run's secret values are scrubbed before the document cuts its excerpt (#801, #843).
+
+        The token straddles the excerpt's head boundary (char 1,000): cutting first would print
+        its first half, which no value scrub can then recognise.
+        """
+        token = "tok-0123456789-abcdefghij"  # noqa: S105 - scrub sentinel
+        workflow_path = tmp_path / "leak.pflow.md"
+        workflow_path.write_text(
+            "# Leak\n\nEchoes a token mid-noise.\n\n## Inputs\n\n### api_token\n\nThe token.\n\n"
+            "- type: string\n- required: true\n\n## Steps\n\n### noisy\n\nNoise around the token.\n\n"
+            "- type: shell\n- env: {TOKEN: ${api_token}}\n\n```shell command\n"
+            'printf "%0990d" 0 >&2; printf "$TOKEN" >&2; printf "%09000d" 0 >&2; exit 1\n```\n',
+            encoding="utf-8",
+        )
+
+        result = CliRunner(mix_stderr=False).invoke(
+            main, ["--output-format", "json", str(workflow_path), f"api_token={token}"]
+        )
+
+        excerpt = json.loads(result.stdout)["errors"][0]["context"]["shell_stderr"]
+        assert excerpt.startswith("0" * 990 + "<REDACTED>")
+        assert " chars omitted] … " in excerpt
+        assert token[:10] not in result.stdout
+        assert token[10:] not in result.stdout
 
     def test_no_stderr_section_when_stderr_empty(self, tmp_path):
         """No stderr section should appear when shell has no stderr output."""
