@@ -101,7 +101,9 @@ until it ages out, is never protected, and ages out by the timestamp its old nam
   model's unknown keys, including keys inside an unknown section, plus any `settings.env` name containing
   `TRACE_RETENTION` other than the exact override — never the user's other variables), when the file failed to load (only no directory entry at the path means "no file"; a file that
   cannot be read, or a link whose target is unavailable, is a failed load),
-  or when the environment override is not a non-negative integer; other unknown keys are ignored, so a
+  when the environment override is not a non-negative integer, or when — the override unset — a process
+  environment variable in pflow's own namespace looks like it (`PFLOW_…RETENTION…`; other tools' variables
+  never count; a `settings.env` typo exported at startup is reported once); other unknown keys are ignored, so a
   newer version's future key never switches an older lane's retention off. `SettingsManager.save()` refuses after a failed load. The sweep reads the
   settings once more per run, so the insecure-permissions warning is printed once per settings file per
   process, not once per load. An older pflow's settings

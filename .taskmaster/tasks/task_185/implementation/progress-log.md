@@ -1101,3 +1101,12 @@ the sweep runs on both paths.
   exit 0; `make test` 11990 passed; `pytest -m trace_files` 702 passed. The diff against the merge-base for
   `src/pflow/runtime/engine`, `web/` and `workflow_executor.py` is empty. No `pflow ui` left running. Nothing
   committed.
+- Addendum [10:40] (ruling: build the shell-env guard, importance 2): `retention_days()` now returns `None` with ONE
+  warning when the override is unset and any `os.environ` name starts with `PFLOW_` and contains `RETENTION`
+  (case-insensitive). The exact variable still wins. Because a `settings.env` typo exported at startup hits this
+  check first, it is reported once. Tests (+7): 3 misspellings, the once-only case, `OTEL_…`/`TEMPO_…` ignored
+  with the control pruned, exact `0`/`3` wins. Mutations: guard off → 4 failed; no `PFLOW_` bound → 1 failed;
+  exact not winning → 2 failed. The once-only test is a regression guard for the early return (a duplicate
+  warning after it is unreachable). Also updated: ADR-0018's settings sentence and the `debugging.mdx` "can't
+  trust the setting" line. Real probe (isolated HOME): a settings.env typo and a shell typo each gave exactly
+  1 warning. `make check` exit 0; `make test` 11997 passed. Not committed.

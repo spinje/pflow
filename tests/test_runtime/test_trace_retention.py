@@ -1009,6 +1009,65 @@ def test_a_setting_that_cannot_be_trusted_prunes_nothing_with_a_warning(
     assert len(warnings) == 1 and "trace retention skipped" in warnings[0] and says in warnings[0], warnings
 
 
+def _retention_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [record.getMessage() for record in caplog.records if record.name == "pflow.runtime.trace_retention"]
+
+
+@pytest.mark.parametrize("name", ["PFLOW_TRACE_RETENTION_DAY", "pflow_trace_retention_days", "PFLOW_RETENTION_DAYS"])
+def test_a_misspelled_override_in_the_environment_prunes_nothing_with_one_warning(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, name: str
+) -> None:
+    monkeypatch.delenv("PFLOW_TRACE_RETENTION_DAYS")
+    monkeypatch.setenv(name, "0")
+    aged = trace(debug, deleted(tmp_path, "w"), 400)
+
+    with caplog.at_level(logging.WARNING):
+        sweep_after_write(debug)
+
+    assert aged.exists()
+    [warning] = _retention_warnings(caplog)
+    assert f"trace retention skipped: the environment sets {name}" in warning
+
+
+def test_a_settings_env_typo_exported_at_startup_is_reported_once(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Startup copies settings.env into os.environ, so the same typo is in both places: one warning, not two."""
+    monkeypatch.delenv("PFLOW_TRACE_RETENTION_DAYS")
+    _settings_file(tmp_path, {"env": {"PFLOW_TRACE_RETENTION_DAY": "0"}})
+    monkeypatch.setenv("PFLOW_TRACE_RETENTION_DAY", "0")  # what settings-env injection does in a real process
+    aged = trace(debug, deleted(tmp_path, "w"), 400)
+
+    with caplog.at_level(logging.WARNING):
+        sweep_after_write(debug)
+
+    assert aged.exists()
+    [warning] = _retention_warnings(caplog)
+    assert "PFLOW_TRACE_RETENTION_DAY (directly or through settings.env)" in warning
+
+
+def test_other_tools_retention_variables_never_switch_retention_off(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.delenv("PFLOW_TRACE_RETENTION_DAYS")
+    monkeypatch.setenv("OTEL_TRACE_RETENTION_DAYS", "0")
+    monkeypatch.setenv("TEMPO_RETENTION", "1h")
+    aged = trace(debug, deleted(tmp_path, "w"), 15)
+
+    with caplog.at_level(logging.WARNING):
+        sweep_after_write(debug)
+
+    assert not aged.exists()
+    assert _retention_warnings(caplog) == []
+
+
+@pytest.mark.parametrize("value", ["0", "3"])
+def test_the_exact_override_wins_over_a_misspelled_one(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("PFLOW_TRACE_RETENTION_DAYS", value)
+    monkeypatch.setenv("PFLOW_TRACE_RETENTION_DAY", "0")
+    assert retention_days() == int(value)
+
+
 @pytest.mark.parametrize("section", ["runtime", "llm"])
 def test_a_misspelled_opt_out_survives_a_settings_write(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, section: str

@@ -76,9 +76,21 @@ def retention_days() -> int | None:
     ``0`` keeps everything. ``None`` means "cannot tell — prune nothing", with a warning: the env value is not
     a whole number ≥ 0 (an opt-out typed as ``never`` must not fall through to the default and delete), the
     settings file failed to load, or it holds a retention-looking key anywhere outside
-    ``runtime.trace_retention_days`` (a misplaced or misspelled opt-out, at any level — ``env`` included). The
+    ``runtime.trace_retention_days`` (a misplaced or misspelled opt-out, at any level — ``env`` included), or
+    — with the override unset — the environment holds a misspelling of it (``_misspelled_env_variable``). The
     env value is never written to the settings file."""
     raw = os.environ.get(RETENTION_ENV_VAR)
+    misspelled = sorted(name for name in os.environ if _misspelled_env_variable(name))
+    if raw is None and misspelled:
+        # One warning: a settings.env typo reaches here too (startup copies settings.env into os.environ), so
+        # the settings check below never reports it a second time.
+        logger.warning(
+            "trace retention skipped: the environment sets %s (directly or through settings.env), which pflow "
+            "does not read — the variable is %s (0 keeps every trace)",
+            ", ".join(misspelled),
+            RETENTION_ENV_VAR,
+        )
+        return None
     if raw is not None:
         try:
             days = int(raw)
@@ -125,6 +137,14 @@ def _misspelled_env_override(name: str) -> bool:
     The exact name reaches ``os.environ`` through settings-env injection; ``settings.env`` also carries the
     user's own variables, so only a ``TRACE_RETENTION`` name counts — any other key leaves retention on."""
     return name != RETENTION_ENV_VAR and "TRACE_RETENTION" in name.upper()
+
+
+def _misspelled_env_variable(name: str) -> bool:
+    """Whether a process environment name looks like the override but is not it (``PFLOW_TRACE_RETENTION_DAY``).
+    Only pflow's own ``PFLOW_`` namespace counts: other tools' variables (``OTEL_…_RETENTION``) never switch
+    pflow's retention off."""
+    upper = name.upper()
+    return name != RETENTION_ENV_VAR and upper.startswith("PFLOW_") and "RETENTION" in upper
 
 
 def sweep_after_write(directory: Path) -> None:
