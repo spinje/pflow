@@ -176,8 +176,22 @@ class TestACallerCannotSupplyAReservedName:
         assert result.exit_code == 2, result.stderr
         assert "TypeError" not in result.stderr
 
+    @pytest.mark.parametrize("mode", [(), ("--validate-only",), ("--dry-run",)], ids=["run", "validate", "dry-run"])
+    @pytest.mark.parametrize("name", ["_pflow_x", "bad$name"])
+    def test_every_mode_refuses_with_the_runners_name_error(
+        self, project: Path, mode: tuple[str, ...], name: str
+    ) -> None:
+        """One owner for the rule: `--validate-only` refuses what the run refuses, with the same
+        message — never "✓ Workflow is valid" for a reserved name, nor "Unknown input" for a bad one."""
+        result = _invoke(*mode, project / "a" / "main.pflow.md", f"{name}=1")
+
+        assert result.exit_code == 2, result.stdout + result.stderr
+        assert get_parameter_validation_error(name) in result.stdout + result.stderr
+        assert "Workflow is valid" not in result.stdout
+        assert "Unknown input" not in result.stdout + result.stderr
+
     def test_resume_refuses_a_reserved_override(self, project: Path) -> None:
-        """Resume overrides reach the runner without the CLI's own name check."""
+        """Resume overrides reach the runner's name check like every other way in."""
         run_id = _failed_run_id(project / "a" / "fail.pflow.md")
 
         result = _invoke("resume", run_id, "go=ok", "--force", "_pflow_stack=zzz", "__custom__=1")

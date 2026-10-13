@@ -509,7 +509,8 @@ class WorkflowRunner:
     ) -> ValidationResult:
         """Validate a workflow without executing it.
 
-        The structure is validated with placeholder values for every declared input; then
+        A supplied name that no input can have (``check_parameter_names``) refuses first, as in ``run``.
+        Otherwise the structure is validated with placeholder values for every declared input; then
         the values the caller DID supply are checked at the input boundary
         (``check_supplied_inputs``: declared type, undeclared names), so ``--validate-only``
         with values refuses what the run would. A missing input is not an error here.
@@ -535,6 +536,14 @@ class WorkflowRunner:
 
             from pflow.core.validation_utils import validate_with_placeholder_inputs
             from pflow.runtime.compilation import check_supplied_inputs
+            from pflow.runtime.compilation.ir_preparation import check_parameter_names
+
+            # The name rule refuses first, exactly as ``run`` does (``_prepare_workflow``).
+            name_errors = check_parameter_names(params)
+            if name_errors:
+                return ValidationResult(
+                    valid=False, diagnostics=deduplicate_diagnostics([*resolved.diagnostics, *name_errors])
+                )
 
             validator_diagnostics = validate_with_placeholder_inputs(
                 resolved.ir, workflow_file=Path(file_path) if file_path else None

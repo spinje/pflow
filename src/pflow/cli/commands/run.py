@@ -19,9 +19,9 @@ from pflow.cli.param_parsing import parse_workflow_params
 from pflow.cli.workflow_output import _create_workflow_metadata
 from pflow.cli.workflow_resolution import is_likely_workflow_name
 from pflow.core import StdinData
-from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.diagnostic import Severity
 from pflow.core.diagnostic_render import format_diagnostic
-from pflow.core.exceptions import ReportGenerationError, WorkflowNotFoundError, WorkflowValidationError
+from pflow.core.exceptions import ReportGenerationError, WorkflowNotFoundError
 from pflow.core.output_controller import OutputController
 from pflow.core.shell_integration import (
     read_stdin as read_stdin_content,
@@ -31,7 +31,6 @@ from pflow.core.shell_integration import (
 )
 from pflow.core.stdio_reservation import reserve_stdout
 from pflow.core.text_format import count_noun
-from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution.result import ResolvedWorkflow
 from pflow.execution.workflow_resolver import resolve_workflow
@@ -796,33 +795,15 @@ def _validate_report_dir_before_execution(report_dir: str | None) -> None:
     validate_report_output_dir(report_dir, allow_unmarked_existing=False)
 
 
-def _validate_and_prepare_workflow_params(
+def _prepare_workflow_params(
     workflow_ir: dict[str, Any],
     remaining_args: tuple[str, ...],
 ) -> tuple[dict[str, Any], dict[str, InputSource], str | StdinData | None]:
-    """Validate parameter names and route stdin: ``(params, input_sources, stdin_data)`` — every
+    """Parse ``name=value`` params and route stdin: ``(params, input_sources, stdin_data)`` — every
     value is text; the stdin-routed input is labelled ``stdin``, the rest are CLI arguments.
-    ``stdin_data`` is what was read from stdin (None when nothing was), kept for temp-file cleanup."""
+    ``stdin_data`` is what was read from stdin (None when nothing was), kept for temp-file cleanup.
+    Names are the runner's to check (``check_parameter_names``), on run, validate and plan alike."""
     params: dict[str, Any] = dict(parse_workflow_params(remaining_args))
-
-    invalid_keys = [k for k in params if not is_valid_parameter_name(k)]
-    if invalid_keys:
-        raise WorkflowValidationError(
-            summary="Invalid parameter names",
-            validation_errors=[
-                Diagnostic(
-                    severity=Severity.ERROR,
-                    source="validator",
-                    title="Validation Error",
-                    message=f"Invalid parameter name(s): {', '.join(invalid_keys)}",
-                    suggestions=[
-                        "Parameter names cannot contain shell special characters ($, |, >, <, &, ;, etc.)",
-                    ],
-                    context={"category": "validation"},
-                )
-            ],
-        )
-
     stdin_input, stdin_data = _route_stdin_to_params(workflow_ir, params)
     return params, ({stdin_input: "stdin"} if stdin_input is not None else {}), stdin_data
 
@@ -902,7 +883,7 @@ def _handle_named_workflow(
         _show_workflow_help(first_arg, resolved_workflow)
         return True
 
-    params, input_sources, stdin_data = _validate_and_prepare_workflow_params(workflow_ir, remaining_args)
+    params, input_sources, stdin_data = _prepare_workflow_params(workflow_ir, remaining_args)
 
     if verbose:
         if source == "library":
