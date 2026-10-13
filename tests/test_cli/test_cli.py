@@ -376,6 +376,34 @@ def test_report_autoselect_ranks_by_start_time_not_mtime(tmp_path: Path, monkeyp
 
     assert result.exit_code == 0, result.stderr
     assert f"Using latest trace: {later}" in result.stderr
+    assert "Skipped a newer trace" not in result.stderr  # every trace read fine (the disclosure's absence)
+
+
+def test_report_autoselect_names_a_newer_trace_it_could_not_read(tmp_path: Path, monkeypatch):
+    """A newer trace that cannot be read is named on stderr: "latest" never silently means an older run."""
+    import builtins
+    import errno
+    import io
+
+    debug_dir = tmp_path / ".pflow" / "debug"
+    debug_dir.mkdir(parents=True)
+    older = _write_jsonl_trace(debug_dir / _report_trace_name("run-b", datetime(2026, 1, 1)), _COMPLETE_TRACE_LINES)
+    newer = _write_jsonl_trace(debug_dir / _report_trace_name("run-a", datetime(2026, 1, 2)), _COMPLETE_TRACE_LINES)
+    real_open = builtins.open
+
+    def faulty(file: Any, *args: Any, **kwargs: Any) -> Any:
+        if str(file) == str(newer):
+            raise PermissionError(errno.EACCES, "Permission denied")
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(builtins, "open", faulty)
+    monkeypatch.setattr(io, "open", faulty)
+    result = click.testing.CliRunner(mix_stderr=False).invoke(main, ["report"])
+
+    assert result.exit_code == 0, result.stderr
+    assert f"Using latest trace: {older}" in result.stderr
+    assert f"Skipped a newer trace — could not read trace {newer}: Permission denied" in result.stderr
 
 
 def test_report_autoselect_only_incomplete_errors_clearly(tmp_path: Path, monkeypatch):

@@ -269,13 +269,13 @@ def test_scan_traces_caches_unchanged_files(tmp_path, monkeypatch):
     _write_trace(_tp(debug, wf, "20260101-000000-000001"), wf, complete=True)
 
     calls = {"n": 0}
-    real_read_meta = rt.read_trace_meta
+    real_read_meta = rt.read_trace_meta_strict
 
     def counting_read_meta(path):
         calls["n"] += 1
         return real_read_meta(path)
 
-    monkeypatch.setattr(rt, "read_trace_meta", counting_read_meta)
+    monkeypatch.setattr(rt, "read_trace_meta_strict", counting_read_meta)
     assert len(rt.scan_traces(wf, debug_dir=debug)) == 1
     assert calls["n"] == 1, "the finished trace is opened once to populate the cache"
     assert len(rt.scan_traces(wf, debug_dir=debug)) == 1
@@ -319,17 +319,54 @@ def test_scan_traces_caches_unreadable_files(tmp_path, monkeypatch):
     )
 
     calls = {"n": 0}
-    real = rt.read_trace_meta
+    real = rt.read_trace_meta_strict
 
     def counting(path):
         calls["n"] += 1
         return real(path)
 
-    monkeypatch.setattr(rt, "read_trace_meta", counting)
+    monkeypatch.setattr(rt, "read_trace_meta_strict", counting)
     assert rt.scan_traces(debug_dir=debug) == []
     assert calls["n"] == 1, "the unreadable file is opened once to cache the negative verdict"
     assert rt.scan_traces(debug_dir=debug) == []
     assert calls["n"] == 1, "the negative verdict is served from cache — not re-opened on the next poll"
+
+
+@pytest.mark.parametrize("fault_on", [1, 2], ids=["meta-read", "trailer-read"])
+def test_scan_traces_never_caches_a_read_fault(tmp_path, monkeypatch, fault_on):
+    """A fault reading a trace (a permission blip, EMFILE) is not a fact about the file: the run is skipped
+    for that poll and found by the next one, although the file never changed — never hidden (or shown as
+    unfinished) until it is next written."""
+    import builtins
+    import errno
+    import io
+
+    import pflow.ui.run_tailer as rt
+
+    rt._SCAN_CACHE.clear()
+    rt._DIR_LIST_CACHE.clear()
+    debug = tmp_path / "debug"
+    debug.mkdir()
+    wf = "/wf.pflow.md"
+    path = _tp(debug, wf, "20260101-000000-000001")
+    _write_trace(path, wf, complete=True, final_status="success")
+    real_open = builtins.open
+    opens = {"n": 0}
+
+    def faulty(file, *args, **kwargs):
+        if str(file) == str(path):
+            opens["n"] += 1
+            if opens["n"] == fault_on:
+                raise OSError(errno.EMFILE, "Too many open files")
+        return real_open(file, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(builtins, "open", faulty)
+        patched.setattr(io, "open", faulty)
+        assert rt.scan_traces(wf, debug_dir=debug) == []
+
+    [candidate] = rt.scan_traces(wf, debug_dir=debug)
+    assert (candidate["path"], candidate["complete"], candidate["final_status"]) == (path, True, "success")
 
 
 def test_scan_traces_never_lists_or_opens_a_name_outside_the_grammar(tmp_path, monkeypatch):
@@ -352,13 +389,13 @@ def test_scan_traces_never_lists_or_opens_a_name_outside_the_grammar(tmp_path, m
         _write_trace(debug / name, wf, complete=True)
 
     opened: list[str] = []
-    real = rt.read_trace_meta
+    real = rt.read_trace_meta_strict
 
     def spy(path):
         opened.append(path.name)
         return real(path)
 
-    monkeypatch.setattr(rt, "read_trace_meta", spy)
+    monkeypatch.setattr(rt, "read_trace_meta_strict", spy)
     assert [c["path"] for c in rt.scan_traces(debug_dir=debug)] == [good]
     assert opened == [good.name]
 
@@ -394,13 +431,13 @@ def test_scan_traces_is_hash_scoped_to_a_workflow(tmp_path, monkeypatch):
     _write_trace(b_path, wf_b, complete=True)
 
     opened: list[str] = []
-    real = rt.read_trace_meta
+    real = rt.read_trace_meta_strict
 
     def spy(path):
         opened.append(path.name)
         return real(path)
 
-    monkeypatch.setattr(rt, "read_trace_meta", spy)
+    monkeypatch.setattr(rt, "read_trace_meta_strict", spy)
     cands = rt.scan_traces(wf_a, debug_dir=debug)
     assert [c["meta"]["workflow_path"] for c in cands] == [wf_a], "scoped scan returns only this workflow"
     assert a_path.name in opened, "A's trace was read (the spy is on the path the scan takes)"

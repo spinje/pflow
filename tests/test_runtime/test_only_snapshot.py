@@ -1155,3 +1155,71 @@ def test_an_only_run_without_its_name_tag_is_still_excluded_by_its_meta(tmp_path
     loaded = load_full_run_events(wf, debug_dir=tmp_path)
     assert loaded is not None
     assert loaded[0][0]["node_output"]["stdout"] == "FULL"
+
+
+# ---------------------------------------------------------------------------
+# A newer trace that cannot be read is never walked past (stale upstream)
+# ---------------------------------------------------------------------------
+
+
+def _faulted_opens(monkeypatch: pytest.MonkeyPatch, path: Path, error: OSError, *, nth: int | None = None) -> None:
+    """Every open of ``path`` (or only its ``nth``) raises ``error``; ``builtins.open`` and ``io.open`` both."""
+    import builtins
+    import io
+    import itertools
+
+    real_open = builtins.open
+    seen = itertools.count(1)
+
+    def faulty(file: Any, *args: Any, **kwargs: Any) -> Any:
+        if str(file) == str(path) and (nth is None or next(seen) == nth):
+            raise error
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", faulty)
+    monkeypatch.setattr(io, "open", faulty)
+
+
+def _two_successes(tmp_path: Path) -> tuple[str, Path, Path]:
+    wf = "ir-hash:two-successes"
+    older = _write_trace(
+        tmp_path, wf, timestamp="20260101-000000", nodes=[{"node_id": "fetch", "node_output": {"stdout": "OLD"}}]
+    )
+    newer = _write_trace(
+        tmp_path, wf, timestamp="20260601-000000", nodes=[{"node_id": "fetch", "node_output": {"stdout": "NEW"}}]
+    )
+    return wf, older, newer
+
+
+@pytest.mark.parametrize("nth", [None, 2], ids=["every-read", "the-full-load"])
+def test_an_unreadable_newer_snapshot_refuses_never_restores_an_older_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nth: int | None
+) -> None:
+    """The newer success cannot be read (at the tail read, or only at the full load after a clean tail): the
+    lookup refuses, naming that file — the older run's upstream is never restored as if it were the latest."""
+    import errno
+
+    from pflow.core.exceptions import OnlySnapshotUnreadableError
+
+    wf, _older, newer = _two_successes(tmp_path)
+    _faulted_opens(monkeypatch, newer, PermissionError(errno.EACCES, "Permission denied"), nth=nth)
+
+    with pytest.raises(OnlySnapshotUnreadableError) as raised:
+        load_snapshot_or_raise(wf, "next", debug_dir=tmp_path)
+
+    assert raised.value.trace_path == str(newer)
+    assert "Permission denied" in str(raised.value)
+
+
+def test_a_newer_snapshot_that_vanished_falls_through_to_the_older_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control: gone (Retention, or a race) is not unreadable — the next run is the newest that exists."""
+    import errno
+
+    wf, _older, newer = _two_successes(tmp_path)
+    _faulted_opens(monkeypatch, newer, FileNotFoundError(errno.ENOENT, "No such file"))
+
+    events, _status = load_snapshot_or_raise(wf, "next", debug_dir=tmp_path)
+
+    assert events[0]["node_output"]["stdout"] == "OLD"

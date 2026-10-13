@@ -171,7 +171,8 @@ node. Synthetic warmup cost/count treatment is canonical in `engine/CLAUDE.md`
 → Synthetic Cache Warmup Item.
 
 `load_snapshot_or_raise` selects a reusable full run for `--only` and fails loudly
-when none exists. A degraded snapshot carries a warning advisory; do not restore
+when none exists — or when a newer candidate trace cannot be read (never walk past it to
+an older run, like resume's by-workflow selection). A degraded snapshot carries a warning advisory; do not restore
 potentially partial upstream data silently. `resume_source.load_resume_source` owns resume selection,
 gate-resolution folding, and refusal checks. The resume entry is a *(step,
 iteration)* pair: `resume_iteration` is the one reader of the events' `iteration`

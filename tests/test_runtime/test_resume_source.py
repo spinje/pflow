@@ -30,6 +30,7 @@ from pflow.core.exceptions import (
     ResumeNotResumableError,
     ResumeSideEffectConfirmationError,
     ResumeSourceMissingError,
+    ResumeSourceUnreadableError,
     ResumeStaleWorkflowError,
     ResumeStillRunningError,
     ResumeSupersededError,
@@ -1693,6 +1694,29 @@ def test_a_source_that_vanishes_after_the_consumption_check_refuses_as_missing(t
         load_resume_source(execution_id="src", debug_dir=tmp_path)
 
 
+def test_a_source_that_cannot_be_checked_after_the_consumption_check_refuses_as_unreadable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The post-check is a ``stat`` that keeps "gone" apart from "cannot tell": a permission fault there is
+    the retryable unreadable refusal, never "removed while it was being resumed" (``Path.exists()`` on
+    Python 3.14 reads it as absent)."""
+    import errno
+    import os
+
+    path = _write_trace(tmp_path, execution_id="src", timestamp="20260101-000000")
+    real_stat = os.stat
+
+    def stat(target: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        if str(target) == str(path):
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return real_stat(target, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", stat)
+    with pytest.raises(ResumeSourceUnreadableError) as refused:
+        load_resume_source(execution_id="src", debug_dir=tmp_path)
+    assert refused.value.trace_path == str(path)
+
+
 def test_an_attempt_that_vanishes_mid_check_counts_as_consuming(tmp_path: Path, monkeypatch) -> None:
     """Fail closed: an attempt listed but gone when loaded is read as consumption (Retention removes an
     attempt only after its source), so the token is refused rather than answered a second time."""
@@ -1836,8 +1860,9 @@ def test_list_paused_runs_hides_and_counts_a_pause_whose_workflow_file_is_gone(t
         gate_request=_APPROVAL_REQUEST,
     )
     listing = list_paused_runs(debug)
-    assert ([run.execution_id for run in listing.runs], listing.hidden_missing_file) == (["pending"], 0)
+    assert ([run.execution_id for run in listing.runs], listing.hidden_missing_file) == (["pending"], [])
 
     workflow_file.unlink()
     listing = list_paused_runs(debug)
-    assert (listing.runs, listing.hidden_missing_file) == ([], 1)
+    assert listing.runs == []
+    assert [run.execution_id for run in listing.hidden_missing_file] == ["pending"]

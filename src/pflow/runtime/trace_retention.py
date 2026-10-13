@@ -31,9 +31,10 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from pflow.core.exceptions import ResumeSourceUnreadableError
+from pflow.core.path_state import PathState, path_state
 from pflow.core.settings import SettingsManager, unknown_settings_keys
 from pflow.core.trace_dir import (
     TraceEntry,
@@ -43,7 +44,6 @@ from pflow.core.trace_dir import (
     paused_marker,
     read_trace_meta_and_lock_strict,
     read_trace_trailer_strict,
-    workflow_file_state,
 )
 from pflow.core.trace_tree import normalize_workflow_path_key
 from pflow.runtime.resume_source import _find_consuming_attempt, answerable_pause
@@ -59,15 +59,14 @@ _WINDOWS_UNLINK_RETRY_DELAY = 0.05
 
 @dataclass(frozen=True)
 class SweepReport:
-    """What one sweep did. ``protected`` counts aged traces kept by a rule; ``skipped`` the removals that
-    failed; ``unreadable`` the aged traces kept because they could not be read (``unreadable_paths``);
-    ``unchecked_workflows`` the workflow files whose existence could not be determined (their traces kept)."""
+    """What one sweep did: how many traces it removed, and what it could not judge or remove — ``skipped``
+    the traces whose removal failed (``"<path>: <cause>"``), ``unreadable`` the aged traces kept because they
+    could not be read, ``unchecked_workflows`` the workflow files whose existence could not be determined
+    (their traces kept)."""
 
     removed: int = 0
-    protected: int = 0
-    skipped: int = 0
-    unreadable: int = 0
-    unreadable_paths: tuple[Path, ...] = ()
+    skipped: tuple[str, ...] = ()
+    unreadable: tuple[Path, ...] = ()
     unchecked_workflows: tuple[str, ...] = ()
 
 
@@ -77,7 +76,8 @@ def retention_days() -> int | None:
     ``0`` keeps everything. ``None`` means "cannot tell — prune nothing", with a warning: the env value is not
     a whole number ≥ 0 (an opt-out typed as ``never`` must not fall through to the default and delete), the
     settings file failed to load, or it holds a retention-looking key anywhere outside
-    ``runtime.trace_retention_days`` (a misplaced or misspelled opt-out, at any level). The env value is never written to the settings file."""
+    ``runtime.trace_retention_days`` (a misplaced or misspelled opt-out, at any level — ``env`` included). The
+    env value is never written to the settings file."""
     raw = os.environ.get(RETENTION_ENV_VAR)
     if raw is not None:
         try:
@@ -100,12 +100,14 @@ def retention_days() -> int | None:
     suspects = [
         ".".join(path) for path, value in unknown_settings_keys(settings) if _mentions_retention(path[-1], value)
     ]
+    suspects += [f"env.{name}" for name in settings.env if _misspelled_env_override(name)]
     if suspects:
         logger.warning(
             "trace retention skipped: %s sets %s, which pflow does not read — the setting is "
-            "runtime.trace_retention_days (0 keeps every trace)",
+            "runtime.trace_retention_days, or %s in env (0 keeps every trace)",
             manager.settings_path,
             ", ".join(sorted(suspects)),
+            RETENTION_ENV_VAR,
         )
         return None
     return settings.runtime.trace_retention_days
@@ -118,6 +120,13 @@ def _mentions_retention(key: str, value: Any) -> bool:
     return isinstance(value, dict) and any(_mentions_retention(str(k), v) for k, v in value.items())
 
 
+def _misspelled_env_override(name: str) -> bool:
+    """Whether a ``settings.env`` name looks like the env override but is not it (``PFLOW_TRACE_RETENTION_DAY``).
+    The exact name reaches ``os.environ`` through settings-env injection; ``settings.env`` also carries the
+    user's own variables, so only a ``TRACE_RETENTION`` name counts — any other key leaves retention on."""
+    return name != RETENTION_ENV_VAR and "TRACE_RETENTION" in name.upper()
+
+
 def sweep_after_write(directory: Path) -> None:
     """Apply Retention to ``directory`` after a trace was written there. Never raises: a fault is a warning,
     and a run's outcome never depends on its sweep."""
@@ -127,27 +136,35 @@ def sweep_after_write(directory: Path) -> None:
             return
         report = prune_traces(directory, keep_days=days)
         if report.skipped or report.unreadable or report.unchecked_workflows:
-            logger.warning("trace retention %s; the next run retries", _problems(report))
+            logger.warning("trace retention %s", _problems(report))
     except Exception as exc:
         logger.warning("trace retention failed, no further traces removed: %s", exc)
 
 
 def _problems(report: SweepReport) -> str:
-    """The one warning's body: what this sweep could not judge or remove, naming the first three of each."""
+    """The one warning's body: what this sweep could not judge or remove, naming the first three of each and
+    what to check — a fault that outlives the next run's retry is a permission or filesystem problem."""
 
     def first_three(items: tuple[Any, ...]) -> str:
-        return f" ({', '.join(str(item) for item in items[:3])})" if items else ""
+        more = f", and {len(items) - 3} more" if len(items) > 3 else ""
+        return f" ({'; '.join(str(item) for item in items[:3])}{more})"
 
     parts = []
     if report.unreadable:
-        parts.append(f"kept {report.unreadable} unreadable trace(s){first_three(report.unreadable_paths)}")
+        parts.append(
+            f"kept {len(report.unreadable)} unreadable trace(s){first_three(report.unreadable)} — "
+            "check those files (their permissions, or whether they are corrupt)"
+        )
     if report.unchecked_workflows:
         parts.append(
             f"kept the traces of {len(report.unchecked_workflows)} workflow(s) whose file could not be checked"
             f"{first_three(report.unchecked_workflows)}"
         )
     if report.skipped:
-        parts.append(f"could not remove {report.skipped} trace(s)")
+        parts.append(
+            f"could not remove {len(report.skipped)} trace(s){first_three(report.skipped)} — the next run "
+            "retries; if this repeats, check the permissions of the trace directory and those files"
+        )
     return "; ".join(parts)
 
 
@@ -207,8 +224,9 @@ class _Sweep:
         self.cutoff = cutoff
         self.protected: set[Path] = set()
         self.unreadable: dict[Path, None] = {}  # insertion-ordered set
+        self.skipped: dict[Path, str] = {}  # removals that failed, with their cause
         self._heads: dict[Path, tuple[dict[str, Any] | None, bool | None]] = {}
-        self._states: dict[str, Literal["present", "absent", "unknown"]] = {}
+        self._states: dict[str, PathState] = {}
         # Traces a classification read found unfinished (no trailer): their writer may finalize before the
         # unlink, so the removal re-reads them (``_still_removable``).
         self._unfinished: set[Path] = set()
@@ -236,14 +254,12 @@ class _Sweep:
                     self.protected.add(entry.path)
                 else:
                     candidates.append(entry)
-        removed, skipped, kept_attempts = self._remove_in_waves(candidates)
+        removed = self._remove_in_waves(candidates)
         self._remove_orphan_markers()
         return SweepReport(
             removed=removed,
-            protected=len(self.protected - set(self.unreadable)) + kept_attempts,
-            skipped=skipped,
-            unreadable=len(self.unreadable),
-            unreadable_paths=tuple(self.unreadable),
+            skipped=tuple(f"{path}: {cause}" for path, cause in self.skipped.items()),
+            unreadable=tuple(self.unreadable),
             unchecked_workflows=tuple(path for path, state in self._states.items() if state == "unknown"),
         )
 
@@ -262,12 +278,12 @@ class _Sweep:
             self._unfinished.add(entry.path)
         return trailer
 
-    def _file_state(self, workflow_path: str) -> Literal["present", "absent", "unknown"]:
+    def _file_state(self, workflow_path: str) -> PathState:
         """Rules 1-3 apply only while this is ``present`` (one stat per path per sweep); an inline
         ``ir-hash:`` identity has no file."""
         if workflow_path not in self._states:
             self._states[workflow_path] = (
-                "absent" if workflow_path.startswith("ir-hash:") else workflow_file_state(workflow_path)
+                "absent" if workflow_path.startswith("ir-hash:") else path_state(workflow_path)
             )
         return self._states[workflow_path]
 
@@ -466,13 +482,13 @@ class _Sweep:
 
     # --- removal ---
 
-    def _remove_in_waves(self, candidates: list[TraceEntry]) -> tuple[int, int, int]:
+    def _remove_in_waves(self, candidates: list[TraceEntry]) -> int:
         """Rule 4: an Attempt goes only once its source is gone. Wave 1 removes every candidate that is not an
         Attempt and the Attempts whose source is already absent; each later wave the Attempts whose source the
-        previous wave removed. A source that could not be removed keeps its Attempts. Returns ``(removed,
-        skipped, attempts kept)``."""
+        previous wave removed. A source that could not be removed keeps its Attempts. Returns how many traces
+        were removed."""
         present = Counter(entry.execution_id[:8] for entry in self.listing.traces if entry.execution_id)
-        removed = skipped = kept = 0
+        removed = 0
         pending = candidates
         while pending:
             wave = [entry for entry in pending if not _source_present(entry, present)]
@@ -481,42 +497,38 @@ class _Sweep:
             in_wave = {entry.path for entry in wave}
             pending = [entry for entry in pending if entry.path not in in_wave]
             for entry in wave:
-                outcome = self._remove(entry)
-                if outcome == "removed":
+                if self._remove(entry):
                     removed += 1
                     if entry.execution_id:
                         present[entry.execution_id[:8]] -= 1
-                elif outcome == "skipped":
-                    skipped += 1
-                elif entry.path not in self.unreadable:  # a re-check fault is reported as unreadable
-                    kept += 1
-        return removed, skipped, len(pending) + kept
+        return removed
 
-    def _remove(self, entry: TraceEntry) -> Literal["removed", "kept", "skipped"]:
+    def _remove(self, entry: TraceEntry) -> bool:
         """Unlink a trace, then its marker (never the marker first: a pause must not lose its index entry while
         its trace stays) — re-checking before each attempt that the trace did not finalize since it was judged.
-        ``skipped``: it could not be removed (kept, retried next sweep)."""
+        ``False``: kept — it finalized meanwhile, or its removal failed (recorded in ``skipped``, retried next
+        sweep)."""
         for attempt in (1, 2):
             if not self._still_removable(entry):
-                return "kept"
+                return False
             try:
                 entry.path.unlink(missing_ok=True)
                 break
             except PermissionError as exc:
                 transient = getattr(exc, "winerror", None) in _WINDOWS_TRANSIENT_UNLINK_ERRORS
                 if attempt == 2 or not transient:
-                    logger.debug("Could not remove trace %s", entry.path, exc_info=True)
-                    return "skipped"
+                    self.skipped[entry.path] = exc.strerror or str(exc)
+                    return False
                 time.sleep(_WINDOWS_UNLINK_RETRY_DELAY)  # Windows: another process holds it open
-            except OSError:
-                logger.debug("Could not remove trace %s", entry.path, exc_info=True)
-                return "skipped"
+            except OSError as exc:
+                self.skipped[entry.path] = exc.strerror or str(exc)
+                return False
         if entry.paused:
             try:
                 paused_marker(entry.path).unlink(missing_ok=True)
             except OSError:  # an orphan marker; the next sweep removes it
                 logger.debug("Could not remove marker of %s", entry.path, exc_info=True)
-        return "removed"
+        return True
 
     def _still_removable(self, entry: TraceEntry) -> bool:
         """The facts a judgment rested on still hold. A writer finishing between the listing and the unlink

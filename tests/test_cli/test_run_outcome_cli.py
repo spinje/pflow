@@ -853,7 +853,7 @@ class TestTheTraceNameAndThePausedMarker:
         assert source.paused_node_id is None and source.gate_request is None
         assert (source.entry_node_id, source.last_completed_node_id) == (None, "two")
         listing = list_paused_runs()
-        assert (listing.runs, listing.hidden_missing_file) == ([], 0)
+        assert (listing.runs, listing.hidden_missing_file) == ([], [])
         from starlette.testclient import TestClient
 
         from pflow.ui.server import create_app

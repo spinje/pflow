@@ -30,7 +30,6 @@ from pflow.core.trace_dir import (
     read_trace_trailer,
     read_trace_trailer_strict,
     trace_filename,
-    workflow_file_state,
     workflow_hash,
     workflow_hashes,
 )
@@ -354,7 +353,6 @@ def test_lock_probe_reports_held_free_and_gone(tmp_path: Path) -> None:
     with open(path, encoding="utf-8") as writer:
         fcntl.flock(writer.fileno(), fcntl.LOCK_EX)
         assert is_trace_locked(path) is True
-        assert is_trace_locked(path, strict=True) is True
     assert is_trace_locked(tmp_path / "gone.json") is False, "no file, no writer — never 'maybe live'"
 
 
@@ -372,7 +370,7 @@ def test_lock_probe_on_a_filesystem_without_flock_is_unknown_not_locked(tmp_path
 
 
 @_unix_only
-def test_lock_probe_open_fault_is_unknown_leniently_and_unreadable_strictly(tmp_path: Path, monkeypatch) -> None:
+def test_lock_probe_open_fault_is_unknown(tmp_path: Path, monkeypatch) -> None:
     import builtins
 
     path = _lines(tmp_path / "t.json", _META)
@@ -385,18 +383,3 @@ def test_lock_probe_open_fault_is_unknown_leniently_and_unreadable_strictly(tmp_
 
     monkeypatch.setattr(builtins, "open", failing_open)
     assert is_trace_locked(path) is None
-    with pytest.raises(TraceUnreadableError):
-        is_trace_locked(path, strict=True)
-
-
-def test_workflow_file_state_has_three_outcomes(tmp_path: Path, monkeypatch) -> None:
-    present = _touch(tmp_path, "wf.pflow.md")
-    assert workflow_file_state(str(present)) == "present"
-    assert workflow_file_state(str(tmp_path / "gone.pflow.md")) == "absent"
-    assert workflow_file_state(str(present / "child")) == "absent"  # a file in the path: NotADirectoryError
-
-    def denied(_path, *args, **kwargs):
-        raise PermissionError(errno.EACCES, "denied")
-
-    monkeypatch.setattr(os, "stat", denied)
-    assert workflow_file_state(str(present)) == "unknown"

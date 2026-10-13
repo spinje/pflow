@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Literal, TextIO
 
 from pflow.core.diagnostic import Diagnostic, warning_degrades_status
-from pflow.core.exceptions import OnlySnapshotMissingError
+from pflow.core.exceptions import OnlySnapshotMissingError, OnlySnapshotUnreadableError
 from pflow.core.metrics import MetricsCollector
 from pflow.core.node_type_display import is_model_node_type
 from pflow.core.security_utils import scrub_secret_values, secret_values
@@ -22,12 +22,13 @@ from pflow.core.trace_dir import (
     AGED_OUT_HINT,
     TraceEntry,
     TraceListing,
+    TraceUnreadableError,
     debug_dir,
     is_filename_safe_id,
     legacy_note,
     list_traces,
     paused_marker,
-    read_trace_trailer,
+    read_trace_trailer_strict,
     trace_filename,
     workflow_hashes,
 )
@@ -98,10 +99,9 @@ def _lock_trace_handle(handle: TextIO) -> None:
 
 
 def _iter_workflow_traces(
-    debug_dir: Path | None,
+    entries: Iterable[TraceEntry],
     workflow_path: str,
     *,
-    entries: Iterable[TraceEntry] | None = None,
     unreadable: Literal["skip", "raise"] = "skip",
 ) -> Iterator[tuple[Path, dict[str, Any]]]:
     """Yield ``(path, trace_data)`` for this workflow's reusable traces, newest-first.
@@ -111,12 +111,11 @@ def _iter_workflow_traces(
     ``prompt_cache_analysis.trace_loading._collect_candidate_traces``) so their
     selection scaffolding cannot drift. Applies, in order:
 
-    - the listing's entries whose filename carries one of the workflow's hashes
-      (``trace_dir.workflow_hashes``) and no ``.only`` tag — ``entries`` when the
-      caller already listed (or shortlisted) the directory, else one
-      ``trace_dir.list_traces(debug_dir)``; no file outside them is opened;
+    - the caller's listing (or shortlist) entries whose filename carries one of the workflow's hashes
+      (``trace_dir.workflow_hashes``) and no ``.only`` tag; no file outside them is opened;
     - parse, skipping unparseable / non-dict / vanished files — and files that exist but cannot be read,
-      unless ``unreadable="raise"`` (resume: skipping one would select an OLDER run) re-raises the ``OSError``;
+      unless ``unreadable="raise"`` (resume and the Snapshot: skipping one would select an OLDER run)
+      re-raises the ``OSError``;
     - a contents-level ``workflow_path`` collision guard (the hash can collide;
       the stored path is the discriminator);
     - the ``format_version.startswith("2.")`` gate;
@@ -132,8 +131,7 @@ def _iter_workflow_traces(
     """
     normalized_workflow_path = normalize_workflow_path_key(workflow_path)
     hashes = workflow_hashes(workflow_path)
-    candidates = entries if entries is not None else list_traces(debug_dir).traces
-    for entry in candidates:
+    for entry in entries:
         if entry.workflow_hash not in hashes or entry.only:
             continue
         trace_file = entry.path
@@ -291,6 +289,9 @@ def load_full_run_events(
     or no usable trace exists. An empty ``nodes`` list is treated as NO match
     (a zero-event success trace can't seed a usable snapshot), so callers can
     distinguish "no usable snapshot" from "empty snapshot".
+
+    A candidate that exists but cannot be read is never walked past (the next one is an OLDER run, whose
+    upstream would be restored as if it were the latest): its ``OSError`` propagates, naming the file.
     """
     if not workflow_path:
         return None
@@ -299,9 +300,9 @@ def load_full_run_events(
     shortlist = (
         entry
         for entry in listing.traces
-        if entry.workflow_hash in hashes and not entry.only and _trailer_is_reusable(entry.path)
+        if entry.workflow_hash in hashes and not entry.only and _may_be_reusable(entry.path)
     )
-    for _path, data in _iter_workflow_traces(debug_dir, workflow_path, entries=shortlist):
+    for _path, data in _iter_workflow_traces(shortlist, workflow_path, unreadable="raise"):
         final_status = str(data.get("final_status") or "success")
         if final_status not in ("success", "degraded"):
             continue
@@ -313,9 +314,15 @@ def load_full_run_events(
     return None
 
 
-def _trailer_is_reusable(path: Path) -> bool:
-    """Whether a trace's trailer (one tail read) names a reusable full-run status — the Snapshot shortlist."""
-    trailer = read_trace_trailer(path)
+def _may_be_reusable(path: Path) -> bool:
+    """The Snapshot shortlist, from one tail read: a trailer naming a reusable full-run status. A tail that
+    cannot be read or parsed is not ruled out — the full load decides (and refuses a file it cannot read)."""
+    try:
+        trailer = read_trace_trailer_strict(path)
+    except FileNotFoundError:
+        return False
+    except TraceUnreadableError:
+        return True
     return trailer is not None and str(trailer.get("final_status") or "success") in ("success", "degraded")
 
 
@@ -344,7 +351,10 @@ def load_snapshot_or_raise(
     if snapshot_events:
         return snapshot_events, "success"
     listing = list_traces(debug_dir)  # one enumeration: the lookup AND its miss message
-    loaded = load_full_run_events(workflow_path, listing=listing)
+    try:
+        loaded = load_full_run_events(workflow_path, listing=listing)
+    except OSError as exc:
+        raise OnlySnapshotUnreadableError(only_node, str(exc.filename), exc.strerror or str(exc)) from exc
     if not loaded:
         note = legacy_note(listing.legacy_count)
         causes = (f"If the workflow ran before, {AGED_OUT_HINT}.", *((f"{note}.",) if note is not None else ()))

@@ -265,17 +265,74 @@ def test_a_pause_whose_workflow_file_is_gone_is_hidden_counted_and_refused(home)
     assert run_id in _runner().invoke(cli, ["resume", "list"]).stdout
 
     workflow_file.unlink()
+    hidden_line = (
+        f"1 paused run is not listed because its workflow file no longer exists: {run_id} ({workflow_file}). "
+        "Restore the workflow file at that path to answer it."
+    )
     text = _runner().invoke(cli, ["resume", "list"])
-    assert text.stdout == "No paused runs.\n1 paused run is not listed: its workflow file no longer exists.\n"
+    assert text.stdout == f"No paused runs.\n{hidden_line}\n"
     as_json = _runner().invoke(cli, ["resume", "list", "--output-format", "json"])
     assert json.loads(as_json.stdout) == []
-    assert "1 paused run is not listed: its workflow file no longer exists." in as_json.stderr
+    assert hidden_line in as_json.stderr
     refused = _runner().invoke(cli, ["resume", run_id, "--approve", "yes"])
     assert refused.exit_code == 2  # the resume refuses the same pause the list hid
     assert "The workflow for this run no longer exists" in refused.stderr
 
     workflow_file.write_text("# gone\n", encoding="utf-8")
     assert run_id in _runner().invoke(cli, ["resume", "list"]).stdout
+
+
+def test_hidden_pauses_beyond_three_are_counted_not_dropped(home):
+    """Four pauses of deleted workflows: three are named, the fourth is still counted."""
+    ids = [f"0b7e6a52-1c4d-4e8f-9a3b-5d6c7e8f9a0{n}" for n in range(4)]
+    for run_id in ids:
+        _write_paused_trace(
+            home / ".pflow" / "debug",
+            execution_id=run_id,
+            gate_request=_APPROVAL_GATE,
+            workflow_path="/gone/wf.pflow.md",
+        )
+
+    text = _runner().invoke(cli, ["resume", "list"]).stdout
+
+    assert "4 paused runs are not listed because their workflow file no longer exists: " in text
+    assert sum(run_id in text for run_id in ids) == 3
+    assert "(/gone/wf.pflow.md); and 1 more. Restore the workflow file at its path to answer one." in text
+
+
+def test_a_marked_trace_that_cannot_be_read_is_reported_never_dropped(home, monkeypatch):
+    """A pending pause whose trace cannot be read may still be answerable: `resume list` names it (and the
+    read error) instead of answering "No paused runs." as if nothing were pending — beside a readable row."""
+    import builtins
+    import errno
+    import io
+
+    debug = home / ".pflow" / "debug"
+    readable_id = "0b7e6a52-1c4d-4e8f-9a3b-5d6c7e8f9a01"
+    unreadable_id = "0b7e6a52-1c4d-4e8f-9a3b-5d6c7e8f9a02"
+    _write_paused_trace(debug, execution_id=readable_id, gate_request=_APPROVAL_GATE)
+    locked = _write_paused_trace(debug, execution_id=unreadable_id, gate_request=_APPROVAL_GATE)
+    real_open = builtins.open
+
+    def faulty(file: Any, *args: Any, **kwargs: Any) -> Any:
+        if str(file) == str(locked):
+            raise PermissionError(errno.EACCES, "Permission denied")
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", faulty)
+    monkeypatch.setattr(io, "open", faulty)
+    expected = (
+        f"1 paused run could not be read and may still be pending: could not read trace {locked}: "
+        "Permission denied. Retry; if it keeps failing, check the trace file's permissions."
+    )
+
+    text = _runner().invoke(cli, ["resume", "list"])
+    assert text.exit_code == 0, text.stderr
+    assert readable_id in text.stdout and unreadable_id not in text.stdout.replace(str(locked), "")
+    assert text.stdout.rstrip("\n").endswith(expected)
+    as_json = _runner().invoke(cli, ["resume", "list", "--output-format", "json"])
+    assert [row["execution_id"] for row in json.loads(as_json.stdout)] == [readable_id]
+    assert expected in as_json.stderr
 
 
 def test_a_pause_whose_workflow_file_cannot_be_checked_is_listed_with_a_note(home, monkeypatch):

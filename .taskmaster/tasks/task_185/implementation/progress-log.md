@@ -840,3 +840,264 @@ the sweep runs on both paths.
 - Self-checks: fully happy? — yes. test-reflect: each new test fails under its mutation (above); both controls
   are the presence half of their absence assertions.
 - Next: orchestrator — verify, commit; then P5 (synthetic benchmark), not started.
+
+## [2026-10-13 08:25] task-phase-implementer (Opus) — P5 synthetic benchmark (30k files, isolated HOME)
+- Did: wrote `implementation/bench/build_bench.py`. `build HOME` refuses the real home and a non-empty debug dir.
+  It produces 30,000 entries (117 MB):
+  - two REAL runs (a paused gate run with its `.paused` marker; a full two-step run, the Snapshot);
+  - one identity with 1,000 young failures and 5 aged successes;
+  - 2,500 workflow hashes (250 with workflow files present); one `--only` trace;
+  - 15,000 legacy names (aged 15–300 days); current-grammar runs spread over 0–60 days.
+
+  It also writes `bench-manifest.json` with the ids to time against and the 505 traces Retention must keep. `check
+  HOME` reports which of those are missing. Built in 2.9 s. Timing driver (gitignored):
+  `scratchpads/task-185/bench_time.sh` — `/usr/bin/time -p`, `PFLOW_TRACE_RETENTION_DAYS=0` unless `RET` is set,
+  provider keys unset, isolated HOME `scratchpads/task-185/benchhome.AKX6`.
+- Verified (3 runs each, wall time; the spec bound is < 1 s per lookup, against the 24 s baseline):
+
+  | Command (30,000 files, 15,000 legacy) | Exit | real |
+  |---|---|---|
+  | `pflow --version` (startup floor) | 0 | 0.18 s |
+  | `pflow resume list` | 0 | 0.29–0.30 s (one cold run 0.47 s) |
+  | `pflow resume <paused id> --approve yes --dry-run` | 0 | 0.33–0.34 s |
+  | `pflow resume <unknown uuid>` (by-id miss) | 2 | 0.29–0.30 s |
+  | `pflow report` | 0 | 0.30–0.31 s |
+  | `pflow snap.pflow.md --only shape --dry-run` | 0 | 0.34 s |
+  | `curl /api/gate?run=<paused id>` (`pflow ui`, free port 61088) | 200 | 0.12–0.14 s |
+  | `curl /api/gate?run=<unknown>` | 404 | 0.14 s |
+  | FIRST sweep: one real run with `PFLOW_TRACE_RETENTION_DAYS=14` | 0 | 3.06 s (run + sweep) |
+  | SECOND sweep: the same real run again | 0 | 0.27 s (run + sweep) |
+
+  - Every lookup is within ~0.16 s of the startup floor.
+  - The by-id miss prints the aged-out hint and "15000 traces written by an earlier pflow version are not
+    searched".
+  - Sweep effect: 30,000 → 3,786 entries after the first sweep (every legacy name gone, 0 left); +1 after the
+    second (that run's own trace). `build_bench.py check`: all 505 protected traces present, `missing: []`.
+  - `resume list` before and after shows the same pending pause.
+  - A real `snap.pflow.md --only shape` after the sweeps exits 0, restoring `fetch` from the Snapshot.
+  - No retention warning on either sweep. The Viewer was killed (`pgrep` empty); dev servers: none.
+- Deviations/surprises:
+  - `resume <paused> --dry-run` alone exits 2 ("Paused gate needs an answer") — correct behaviour — so the timed
+    form adds `--approve yes`.
+  - The by-id miss exits 2: the existing "No run to resume" exit code, not something new.
+  - The first sweep's 3.06 s includes ~0.2 s of run and startup; the rest is ~26 k unlinks plus classification.
+    That is in line with the plan's "~2 s once, for ~20k files" estimate.
+- Self-checks: fully happy? — yes, on synthetic data. The owner's real directory (behind the backup gate) is
+  still P5's next step, owned by the orchestrator. test-reflect: not needed — a benchmark script, not a test.
+- Next: orchestrator — the real-directory gate and run.
+
+## [2026-10-13 05:00] task-orchestrator (Opus) — completion gate round 1 dispatched; P5 real-dir run moved AFTER the gate
+- Did: P3 review round 2 fixed (`b748e43f`) — dangling settings symlink / workflow-link conflation closed as one class;
+  P5 synthetic bench committed (`0cb28a3e`; numbers in the P5-bench entry: every lookup ≤ 0.34 s wall on 30k files).
+  Completion gate round 1 dispatched via the codex fan-out (main checkout's pre-185 pflow, env=0) → `reviews/gate-r1.md`.
+  Partition: silent-failures ×2 (seam A lookups; seam B retention+settings), concurrency-safety (retention, trace_dir,
+  finalize, consumption, run_tailer, settings dedupe), test-fidelity (tests/ + Task-159), agent-ux (all user-facing text
+  + docs/guide/MCP); WHOLE diff: impact-completeness, feature-interactions, simplicity, spec-conformance.
+  `review-falsifier` runs LAST (direct launch) after round-1 fixes land. `make test-all-local` running in parallel
+  (`scratchpads/task-185/orch-test-all-local.txt`).
+- Deviation (sequencing, importance 1): the plan has P5's real-directory sweep before the gate; I run it AFTER the gate's
+  fixes land — the real-dir sweep is irreversible (backup notwithstanding) and should run the code that ships.
+- Gate-runner: a FRESH Opus `task-phase-implementer` (both builders are at ~550–600k tokens) packeted with spec + plan +
+  this log + the report.
+
+## [2026-10-13 09:00] task-phase-implementer (Opus, fresh gate-runner) — completion gate round 1: START
+- Did: read spec, plan, this log in full, `show-before-code.md` §9–§11, ADR-0018, and `reviews/gate-r1.md` in full
+  (8 lenses / 9 reports). Inventory: 3 Criticals (settings.env key; seam-A C1 unreadable newest Snapshot; seam-A C2
+  unreadable pending pause), 9 Warnings, 7 Suggestions (incl. 4 inside the convergent groups). Dispositions follow in
+  the entry below once each is verified against code at `0cb28a3e`.
+- Resume point if this run is lost: nothing changed yet beyond this entry; restart from the report.
+
+## [2026-10-13 10:05] task-phase-implementer (Opus, fresh gate-runner) — completion gate round 1 (`reviews/gate-r1.md`) dispositioned
+- Did: verified every finding against the code at `0cb28a3e`. Fixed 3/3 Criticals, 7 of 9 Warnings (2 partly, with
+  named follow-ups), 5 of 7 Suggestions. Each fix has a regression test that fails without it: the mutation was
+  run for real and judged by the counted `N failed`. Real-surface probes ran under isolated HOMEs in
+  `scratchpads/task-185/gate-r1-*` (`pf.sh`, provider keys unset).
+- Changed:
+  - Runtime: `runtime/trace_retention.py`, `runtime/workflow_trace.py`, `runtime/resume_source.py`.
+  - Core: `core/settings.py`, `core/trace_dir.py`, `core/exceptions.py` (`OnlySnapshotUnreadableError`), NEW
+    `core/path_state.py`, `core/prompt_cache_analysis/trace_loading.py`.
+  - CLI: `cli/commands/report.py`, `cli/commands/resume.py`.
+  - UI: `ui/server.py`, `ui/run_tailer.py`.
+  - Docs and records: `docs/guides/debugging.mdx`, `docs/reference/cli/index.mdx`, guide `features/resume.md`,
+    `mcp-agent-instructions.md`, ADR-0018 (the settings.env sentence), `runtime/CLAUDE.md` (the `--only`
+    refusal), `core/CLAUDE.md` (a `path_state` row).
+  - Tests: 9 test files, plus NEW `tests/test_core/test_path_state.py`. The bench is `bench/build_bench.py`.
+
+**Criticals:**
+1. **A misspelled retention key inside `settings.env` — CONFIRMED, FIXED as part of the misplaced-key class.**
+   - Cause, read at `trace_retention.py:100` and `settings.py:179`: `unknown_settings_keys` walks `model_extra`.
+     `env` is a declared `dict` field, so its names were never examined.
+   - Fix: inside the one suspects computation, `retention_days` also flags any `settings.env` name that contains
+     `TRACE_RETENTION` (case-insensitive) other than the exact `PFLOW_TRACE_RETENTION_DAYS`. The narrow bound
+     keeps a user's own variables from switching retention off. The exact key keeps working, because every
+     writer's startup injection copies it into `os.environ`.
+   - Tests: params `misspelled-in-env` and `wrong-case-in-env`, which give `None` and one warning. The control
+     `env-names-that-are-not-misspellings` (`S3_RETENTION_DAYS`, `API_TOKEN`, the exact name) gives 14 and
+     prunes.
+   - Mutations: dropping the env check → 2 failed; dropping the exact-name exclusion → 1 failed; widening it to
+     `RETENTION` → 1 failed.
+   - Verified on the real surface (own HOME; the variable left UNSET, because a set variable would bypass the
+     settings path):
+     - `pflow settings set-env PFLOW_TRACE_RETENTION_DAY 0`, then a real run → stderr `WARNING: trace retention
+       skipped: …settings.json sets env.PFLOW_TRACE_RETENTION_DAY, which pflow does not read — …`. The 40-day
+       trace was kept.
+     - The exact key via `set-env` → no warning, the trace kept (injection works).
+     - Key removed → the default 14 removed the trace.
+2. **An unreadable newest Snapshot silently restores an older run (seam A C1) — CONFIRMED** (lenient
+   `read_trace_trailer` in the shortlist, `unreadable="skip"` in the full load). **FIXED as a class: "a
+   newest-X selection walks past a trace it cannot read".**
+   - `--only`: the shortlist tail read is strict. Gone → skip; cannot read → let the full load decide. The full
+     load runs with `unreadable="raise"`. `load_snapshot_or_raise` maps the `OSError` to the new
+     `OnlySnapshotUnreadableError(PflowError)` ("Snapshot trace unreadable", names the file, remedy: retry / fix
+     permissions / move it aside). The engine line is unchanged: the error propagates as
+     `OnlySnapshotMissingError` already does.
+   - `pflow report` auto-select prints `Skipped a newer trace — could not read trace <path>: <reason>` and
+     continues.
+   - Resume by workflow was already closed (P1/P2 03:45).
+   - Tests: `test_an_unreadable_newer_snapshot_refuses_never_restores_an_older_run[every-read|the-full-load]`;
+     the vanished control falls through to the older run; the report test is paired with an absence assertion.
+   - Mutations: a lenient tail → 1 failed; skip mode → 2 failed; dropping the report echo → 1 failed.
+   - Real surface: two real full runs, the newest `chmod 000` → `--only shape` exits 1 with the diagnostic. After
+     the permissions are restored, `--only` restores the newest run. `report` names the unreadable newest trace.
+3. **An unreadable pending pause answers "No paused runs." (seam A C2) — CONFIRMED** (lenient head and tail in
+   `list_paused_runs`). **FIXED.**
+   - The reads are strict now. `PausedRunListing.unreadable` carries the read errors (path + reason), and
+     `resume list` prints `1 paused run could not be read and may still be pending: could not read trace <path>:
+     Permission denied. Retry; …` (stdout in text mode, stderr in JSON).
+   - A marked trace with no trailer is still not a pause (ADR).
+   - Test: a CLI test with a readable row beside an unreadable one, text and JSON. Mutation: → 1 failed.
+   - Real surface: a real paused run, `chmod 000` → the line printed under "No paused runs."; JSON `[]` + stderr.
+
+**Warnings:**
+- UI read faults → absence / wrong status — CONFIRMED.
+  - **FIXED (backend):**
+    - `/api/gate` distinguishes three load outcomes: gone since the listing → the aged-out 404; cannot read →
+      500 `Could not read the trace of run … (<path>): Permission denied. Retry.`; corrupt → not paused. The
+      browser's `parseErrorBody` renders any `{error}` inline, so `web/` is untouched.
+    - `run_tailer._file_facts` reads strictly and never caches a read fault (only a readable file's facts are
+      cached; the next poll retries).
+  - Tests: gate `[unreadable|removed-since-the-listing]`, never "not paused", the path named once;
+    `test_scan_traces_never_caches_a_read_fault[meta-read|trailer-read]`. Four scan-cache spies retargeted to
+    `read_trace_meta_strict`.
+  - Mutations: the FNF arm → 1 failed; PermissionError-as-corrupt → 1 failed; lenient reads → both new params
+    failed.
+  - Real surface: `pflow ui --port <free> --no-open` (isolated HOME) → gate 200 / 500 (chmod 000) / 200. Server
+    killed; `pgrep` is empty.
+  - **SKIPPED part (needs `web/`)**: the pinned resolver (`find_workflow_trace`) still reads leniently, so an
+    unreadable pinned run is `run-not-found`. That SSE event takes no payload (`events.ts`), so a distinct
+    "unreadable" needs a `web/` change → follow-up, with the run-not-found banner's legacy/aged-out clauses
+    (03:20 #3).
+- `Path.exists()` post-check on Python 3.14 — CONFIRMED (the venv is 3.14.0). **FIXED**: `path.stat()` inside
+  `_refuse_unreadable`. Test: an `os.stat` PermissionError → `ResumeSourceUnreadableError`. The `exists()`
+  mutation → 1 failed.
+- No sweep-level test of an unreadable consumption check — CONFIRMED. **ADDED**:
+  `test_an_attempt_the_pause_rule_cannot_read_keeps_the_pause_and_is_named` (dead zero-work Attempt, a fault at
+  its first open only, a newer success, a control).
+  - Mutations: `consumer = "x"` in the handler → 1 failed; handler removed → 1 failed (the sweep aborts and the
+    control survives).
+- Hidden pauses cannot be identified — CONFIRMED. **FIXED**: `hidden_missing_file` is now `list[PausedRun]`.
+  - The line names the token and workflow path (the first three, "; and N more"), with "Restore the workflow
+    file at that path to answer it."
+  - Before: `1 paused run is not listed: its workflow file no longer exists.`
+  - After: `1 paused run is not listed because its workflow file no longer exists: <token> (<path>). Restore
+    the workflow file at that path to answer it.`
+  - This is additive text on the ruled count line; the count stays. Tests: the existing exact-stdout test was
+    updated, and a 4-hidden test was added. Mutation → 3 failed.
+- P5 fixture lacked 1,000 young failures — CONFIRMED (`hours=1+n` ages 664 of them past 14 days). **FIXED**:
+  10 minutes apart (oldest 6.94 d), and all 1,000 are in the manifest's keep list (1,504 entries).
+  - Re-measured on a fresh 30k build (`benchhome.r1.CJEr`, built under a separate guard HOME):
+    - first sweep 2.09 s (run + sweep);
+    - second sweep 0.27 s, steady state 0.25–0.26 s, against a 0.23 s retention-off floor of the same run;
+    - `check`: 4,452 files, 1,504 protected, `missing: []` (all 1,000 young failures survive).
+  - `bench.path` now points at the new home.
+- Prefix-collision scenario lacked listing/protection — CONFIRMED. **ADDED**: two aged pending sources
+  `pause-aaaa1`/`pause-aaaa2`, one consumed, plus a newer success. The other is protected, listed and resumable.
+  Dropping the `resumed_from == id` confirmation → 1 failed. `trace()` gained `execution_id=`.
+- Docs promise skipped counts the Viewer does not show (agent-ux, convergent #1) — CONFIRMED. **FIXED (docs)**:
+  `debugging.mdx`, `cli/index.mdx`, guide `resume.md` and the MCP instructions now say "a command that finds
+  nothing says how many it skipped (so does the Viewer's gate panel; its run history and run links don't)".
+  `--only` was added to the searched list. The Viewer disclosure itself (feature-interactions Suggestion,
+  `/api/runs` empty list) → **SKIPPED, needs `web/`**; joins the follow-up above.
+- Retention removal failures are logged at debug only (agent-ux) — CONFIRMED. **FIXED**: the warning names the
+  first three `<path>: <cause>` and says "the next run retries; if this repeats, check the permissions of the
+  trace directory and those files". Unreadable keeps say "check those files (their permissions, or whether they
+  are corrupt)". The Windows-retry test asserts the path, the cause and the remedy.
+- "Completion coverage is incomplete" (feature-interactions; every lens's coverage limitations) — not a code
+  finding. **NOTED** for the orchestrator's round-2 decision.
+
+**Suggestions:**
+- `_iter_workflow_traces` requires `entries`, and `list_paused_runs(listing=)` is gone — **APPLIED**: the
+  ignored `debug_dir`/`None` argument and two fallback modes are deleted. 4 call sites and 2 test sites updated.
+- Remove the unused `SweepReport.protected` tally — **APPLIED** together with the diagnostics fix:
+  `SweepReport(removed, skipped: tuple[str], unreadable: tuple[Path], unchecked_workflows)`. The kept-attempts
+  bookkeeping, the third return value and `unreadable_paths` are gone; `_remove` returns `bool`.
+- Duplicate `_no_entry` — **APPLIED** as NEW `core/path_state.py::path_state` (present/absent/unknown). It
+  absorbs `trace_dir.workflow_file_state` and both `_no_entry` copies. Settings, retention, resume and the
+  `resume list` cell call it. The unit test moved to `test_path_state.py` and gained the dangling-symlink case.
+  Not touched, as outside this diff: `execution/workflow_resolver._file_exists`, the same idea → consolidation
+  candidate.
+- Unused strict lock mode — **APPLIED**: `is_trace_locked(path)` only. The two strict test assertions were
+  dropped; `read_trace_meta_and_lock_strict` is the deleter's probe, covered by
+  `test_an_unreadable_removal_candidate_is_kept`.
+- Remove the Pydantic field-constraint test — **APPLIED**. Proof that the constraint is still guarded:
+  - dropping `ge=0` → 1 failed (`test_the_cli_refuses_the_write_and_reset_still_recovers`);
+  - default 14 → 7 → 7 failed.
+- Remove the private-cache `isinstance(…, tuple)` assertion — **SKIPPED**: plan P2 mandates it as the
+  thread-safety guard, and it is the only assertion that fails if the cached listing becomes a mutable list
+  (sorted in place across threads).
+- Example run ids in `cli/index.mdx:258,290` — **APPLIED**: each `trace_path` now carries its `execution_id`.
+- Verified:
+  - `make check` exit 0.
+  - `make test`: 11990 passed, 0 failed. My baseline at HEAD was 11973 passed, 0 failed: +19 new, −2 deleted.
+  - `pytest -m trace_files` 702 passed.
+  - Task-159 `verify.sh`: see the addendum.
+  - `git diff c357671b` (merge-base) is empty for `src/pflow/runtime/engine`, `web/` and `workflow_executor.py`.
+    Against the CURRENT `origin/main` the only line is main's own later commit to
+    `web/src/components/ResumeControl.test.tsx` (main moved; this branch never touched it).
+  - No trace-format change.
+  - Assumed: Windows behaviour of `path_state` and of the strict reads (`tests-windows` on the PR).
+- Deviations/surprises:
+  - "The Critical" was three. The two seam-A Criticals sat under the report's "Convergent findings" heading, not
+    its "Critical" section.
+  - C1's class reaches past the plan: §1.4 called `_iter_workflow_traces`'s OSError-skip "right for `--only`".
+    I judged that wrong under the same rule the orchestrator applied to resume (03:45), because a skip seeds
+    stale upstream. Rated importance 2: it changes behaviour only when a trace that exists cannot be read, and it
+    is reversible.
+  - Side effects, stated:
+    - Retention keeps an unreadable trace forever, so `--only` keeps refusing until the user fixes or moves the
+      file. The message says so.
+    - A newer unreadable FAILED run (or a hash collider's) also refuses, because a fault cannot be classified.
+  - Seen while probing: strict-reader errors repeated the path (`{path}: [Errno 13] …: '{path}'`). They now say
+    `could not read trace <path>: <strerror>` in `trace_dir`; the gate 500 was fixed the same way.
+  - The Viewer history now SKIPS a trace whose last line is corrupt and newline-terminated (before, it was listed
+    as "incomplete"). Such a file is not producible by the writer.
+  - `analyze-cache` autoload still skips an unreadable trace silently (`unreadable="skip"`). It is left as is:
+    the spec puts analyze-cache's loading out of scope, autoload is a documented convenience (DD#34), and the
+    chosen trace is disclosed. → follow-up candidate.
+- **Needs your decision (not built):**
+  - (a) A misspelled override exported in the SHELL (`PFLOW_TRACE_RETENTION_DAY=0 pflow …`) still leaves
+    retention on silently. That is the same class, but closing it means scanning `os.environ`.
+  - Recommendation: flag only `PFLOW_`-prefixed names containing `RETENTION` other than the exact one. pflow
+    owns that namespace, which avoids catching unrelated tracing-tool variables such as `*_TRACE_RETENTION*`.
+    Importance 3 (a new env-driven behaviour), so I did not decide it.
+  - (b) Residual: an EMPTY exact key in `settings.env` is skipped by injection → 14. This is pre-existing
+    injection behaviour; not built.
+- Self-checks:
+  - Fully happy? Yes for the fixes. Doubts are stated above: the `--only` permanence, the "No paused runs." line
+    sitting above the unreadable line, and the analyze-cache residual.
+  - test-reflect (applied to the new tests): every new test is mutation-killed (counts above). Two weaker
+    assertions were tightened: the report pair and the gate path-once check. Deleted 1 redundant test (Pydantic
+    constraint) and kept the tuple pin (reason above).
+- Lenses whose surface changed materially (round-2 input):
+  - silent-failures, both seams: `--only`, report, `resume list`, gate, the scan cache, the settings.env check,
+    the sweep's reporting;
+  - agent-ux: 6 new or changed messages;
+  - simplicity: `path_state`, the `SweepReport` reshape, the iterator signature;
+  - test-fidelity: 19 new tests;
+  - feature-interactions: `--only` refusal × Retention keeping unreadable files;
+  - concurrency-safety, minor: the removal bookkeeping only, no ordering or lock change.
+- Next: orchestrator — round-2 selection; decide (a); commit.
+- Addendum [10:20]: Task-159 `verify.sh` 88 passed, 0 drifted. Final rerun after the last edits: `make check`
+  exit 0; `make test` 11990 passed; `pytest -m trace_files` 702 passed. The diff against the merge-base for
+  `src/pflow/runtime/engine`, `web/` and `workflow_executor.py` is empty. No `pflow ui` left running. Nothing
+  committed.

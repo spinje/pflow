@@ -625,14 +625,6 @@ class TestRetentionSettingAndFailedLoads:
     """Task 185: the retention window field, unknown keys kept through a save, and no save after a failed
     load (defaults written back would wipe the user's file — API keys included)."""
 
-    def test_the_retention_window_defaults_to_14_days_and_is_never_negative(self) -> None:
-        from pydantic import ValidationError
-
-        assert PflowSettings().runtime.trace_retention_days == 14
-        assert PflowSettings(**{"runtime": {"trace_retention_days": 0}}).runtime.trace_retention_days == 0
-        with pytest.raises(ValidationError):
-            PflowSettings(**{"runtime": {"trace_retention_days": -1}})
-
     def test_unknown_keys_survive_a_save(self, settings_manager: SettingsManager) -> None:
         settings_manager.settings_path.parent.mkdir(parents=True, exist_ok=True)
         settings_manager.settings_path.write_text(

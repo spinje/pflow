@@ -689,10 +689,11 @@ def test_streamed_trace_is_read_by_all_disk_consumers(tmp_path, mock_llm_client,
     assert "ask" in (tmp_path / "report" / "summary.md").read_text(encoding="utf-8")
 
     # Consumer 2 — the shared autoload iterator (analyze-cache + --only snapshot) finds + parses it.
+    from pflow.core.trace_dir import list_traces
     from pflow.runtime.workflow_trace import _iter_workflow_traces, load_full_run_events
 
     debug_dir = tmp_path / ".pflow" / "debug"
-    found = list(_iter_workflow_traces(debug_dir, wf_path))
+    found = list(_iter_workflow_traces(list_traces(debug_dir).traces, wf_path))
     assert any(p == streamed_path for p, _ in found), "autoload must find the streamed trace"
     assert all(d.get("final_status") == "success" for _, d in found)
     # --only snapshot loader returns the streamed run's nodes (the engine seeds upstream from this).
@@ -743,7 +744,9 @@ def test_crash_truncated_streamed_trace_is_rejected_as_truth_by_consumers(tmp_pa
 
     # The shared iterator MUST still yield it — moving a final_status filter in here would break the
     # analyze-cache failed-bucket fallback (the load-bearing invariant on _iter_workflow_traces).
-    assert any(p == path for p, _ in _iter_workflow_traces(debug_dir, wf_path)), "iterator yields incomplete traces"
+    assert any(p == path for p, _ in _iter_workflow_traces(list_traces(debug_dir).traces, wf_path)), (
+        "iterator yields incomplete traces"
+    )
     # --only: the incomplete trace is the only one → NO usable snapshot (never seeded as truth).
     assert load_full_run_events(wf_path, debug_dir=debug_dir) is None, "crash trace must not be a --only snapshot"
     # analyze-cache: incomplete is bucketed NON-reusable (failed), never 'successful'.

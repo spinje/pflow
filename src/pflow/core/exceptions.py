@@ -1378,6 +1378,37 @@ class OnlySnapshotMissingError(PflowError):
         ]
 
 
+class OnlySnapshotUnreadableError(PflowError):
+    """Raised when ``--only`` meets a trace of this workflow that exists but cannot be read.
+
+    Walking past it would restore upstream from an OLDER run as if it were the latest (stale data, and
+    nothing would say so), so the run refuses — the Snapshot twin of ``ResumeSourceUnreadableError``.
+    """
+
+    def __init__(self, only_node: str, trace_path: str, reason: str):
+        self.only_node = only_node
+        self.trace_path = trace_path
+        super().__init__(
+            f"--only '{only_node}' could not read a newer run's trace ({trace_path}: {reason}), so it will not "
+            f"restore upstream from an older one."
+        )
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="Snapshot trace unreadable",
+                source="runtime",
+                suggestions=[
+                    "Retry. If it keeps failing, fix that file's permissions — or move it out of ~/.pflow/debug "
+                    "to restore from the run before it."
+                ],
+                context={"category": "execution_failure", "trace_path": self.trace_path},
+            )
+        ]
+
+
 class GateDenied(PflowError):
     """A human denied an approval Gate (Task 125).
 

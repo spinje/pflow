@@ -224,7 +224,7 @@ def _collect_candidate_traces(
 
     successful: list[tuple[Path, dict[str, Any]]] = []
     failed: list[tuple[Path, dict[str, Any]]] = []
-    for trace_file, data in _iter_workflow_traces(None, workflow_path, entries=listing.traces):
+    for trace_file, data in _iter_workflow_traces(listing.traces, workflow_path):
         # Absent final_status → "success" (back-compat: pre-2.1 / synthetic fixtures). Only
         # success/degraded are reusable; "failed" and "incomplete" (a crash-tail trace with no
         # run.complete trailer, Task 133) route to the non-reusable failed bucket.

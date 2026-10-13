@@ -13,6 +13,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from pflow.core.path_state import path_state
+
 logger = logging.getLogger(__name__)
 
 
@@ -150,17 +152,6 @@ class PflowSettings(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
 
 
-def _no_entry(path: Path) -> bool:
-    """Whether nothing at all is at ``path`` — not even a dangling symlink."""
-    try:
-        os.lstat(path)
-    except (FileNotFoundError, NotADirectoryError):
-        return True
-    except OSError:
-        return False
-    return False
-
-
 def _first_insecure_warning(settings_path: Path) -> bool:
     """Whether this process has not yet warned about ``settings_path``'s permissions (and now has)."""
     with _INSECURE_PERMISSIONS_LOCK:
@@ -224,7 +215,7 @@ class SettingsManager:
                 data = json.load(f)
             return PflowSettings(**data)
         except (FileNotFoundError, NotADirectoryError) as e:
-            if _no_entry(self.settings_path):
+            if path_state(self.settings_path) == "absent":
                 return PflowSettings()
             self.load_error = f"{e} (the path exists but its target cannot be read)"
             logger.warning(f"Failed to load settings from {self.settings_path} ({self.load_error}); using defaults")

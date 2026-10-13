@@ -108,7 +108,7 @@ Traces are saved automatically. Use `--no-trace` if you want to disable this (th
 </Tip>
 
 <Note>
-Traces written by an earlier pflow version use an older filename. `pflow resume`, `pflow resume list`, `pflow report` and the Viewer don't search them — each says how many it skipped. You can still read one with `pflow report <path>`, and it ages out like any other trace. After upgrading, `--only` needs one full run first.
+Traces written by an earlier pflow version use an older filename. `pflow resume`, `pflow resume list`, `pflow report`, `--only` and the Viewer don't search them. When one of the commands finds nothing, it says how many older traces it skipped (so does the Viewer's gate panel; its run history and run links don't). You can still read one with `pflow report <path>`, and it ages out like any other trace. After upgrading, `--only` needs one full run first.
 
 Answer pending pauses before upgrading, and don't run an older and a newer pflow against the same `~/.pflow`: an older pflow can answer a newer pflow's pause without the newer one seeing that answer, an older pflow's `settings` command drops `trace_retention_days` from the settings file, and the newer pflow ages out the older one's traces — pending pauses included — after the window. If you must mix versions and want to keep every trace, set both opt-outs: `trace_retention_days: 0` in the settings file (read by every pflow process) and `PFLOW_TRACE_RETENTION_DAYS=0` (survives an older version's settings write, but only for processes that inherit it — an MCP server launched by a desktop app does not see your shell's exports).
 </Note>

@@ -27,8 +27,9 @@ def _latest_complete_trace(ctx: click.Context) -> Path:
     Eager-``meta`` (Task 173) means an in-flight or crash-before-first-completion run leaves a ``meta``-only /
     ``incomplete`` file from t=0; picking it would shadow the user's last good run with a hollow "incomplete,
     0 nodes" report. So walk newest-first, lazily: a tail read rules out an unfinished trace, and only a
-    finished one is fully loaded to confirm it — never a read of every file."""
-    from pflow.core.trace_dir import legacy_note, list_traces, read_trace_trailer
+    finished one is fully loaded to confirm it — never a read of every file. A newer trace it cannot read is
+    named on stderr, so "latest" never silently means an older run."""
+    from pflow.core.trace_dir import TraceUnreadableError, legacy_note, list_traces, read_trace_trailer_strict
 
     listing = list_traces()
     note = legacy_note(listing.legacy_count)
@@ -36,14 +37,18 @@ def _latest_complete_trace(ctx: click.Context) -> Path:
     if not listing.traces:
         click.echo(f"No trace files found in ~/.pflow/debug/{unsearched}", err=True)
         ctx.exit(1)
-    chosen = next(
-        (
-            entry.path
-            for entry in listing.traces
-            if read_trace_trailer(entry.path) is not None and _trace_is_complete(entry.path)
-        ),
-        None,
-    )
+    chosen: Path | None = None
+    for entry in listing.traces:
+        try:
+            finished = read_trace_trailer_strict(entry.path) is not None
+        except FileNotFoundError:
+            continue
+        except TraceUnreadableError as exc:
+            click.echo(f"Skipped a newer trace — {exc}", err=True)
+            continue
+        if finished and _trace_is_complete(entry.path):
+            chosen = entry.path
+            break
     if chosen is None:
         click.echo(
             "No completed trace found in ~/.pflow/debug/ (only in-flight or interrupted runs). "

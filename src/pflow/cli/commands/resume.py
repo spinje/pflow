@@ -451,7 +451,7 @@ def resume_list(output_format: str) -> None:
 
     listing = list_paused_runs()
     runs = listing.runs
-    unlisted = _unlisted_lines(listing.hidden_missing_file, listing.legacy_count if not runs else 0)
+    unlisted = _unlisted_lines(listing.hidden_missing_file, listing.unreadable, listing.legacy_count if not runs else 0)
 
     if output_format.lower() == "json":
         document = [
@@ -508,24 +508,41 @@ def resume_list(output_format: str) -> None:
 def _workflow_cell(run: PausedRun) -> str:
     """The WORKFLOW column; flags a row whose workflow file's existence could not be determined (a
     permission fault) — listed, because it may still be answerable, but a resume may refuse."""
-    from pflow.core.trace_dir import workflow_file_state
+    from pflow.core.path_state import path_state
 
     name = run.workflow_name or "?"
-    if run.workflow_path is not None and workflow_file_state(run.workflow_path) == "unknown":
+    if run.workflow_path is not None and path_state(run.workflow_path) == "unknown":
         return f"{name} (workflow file unreadable)"
     return name
 
 
-def _unlisted_lines(hidden_missing_file: int, legacy_count: int) -> list[str]:
-    """What ``resume list`` could not show, said out loud: a hidden pending pause is never silent."""
+def _unlisted_lines(hidden: list[PausedRun], unreadable: list[str], legacy_count: int) -> list[str]:
+    """What ``resume list`` could not show, said out loud: a hidden or unreadable pending pause is never
+    silent, and each names enough (token and workflow path, or the file and the read error) to act on."""
     from pflow.core.trace_dir import legacy_note
 
     lines: list[str] = []
-    if hidden_missing_file:
-        subject = "1 paused run is" if hidden_missing_file == 1 else f"{hidden_missing_file} paused runs are"
-        owner = "its" if hidden_missing_file == 1 else "their"
-        lines.append(f"{subject} not listed: {owner} workflow file no longer exists.")
+    if hidden:
+        one = len(hidden) == 1
+        subject = "1 paused run is" if one else f"{len(hidden)} paused runs are"
+        named = _first_three([f"{run.execution_id} ({run.workflow_path})" for run in hidden])
+        lines.append(
+            f"{subject} not listed because {'its' if one else 'their'} workflow file no longer exists: {named}. "
+            f"Restore the workflow file at {'that path' if one else 'its path'} to answer "
+            f"{'it' if one else 'one'}."
+        )
+    if unreadable:
+        subject = "1 paused run" if len(unreadable) == 1 else f"{len(unreadable)} paused runs"
+        lines.append(
+            f"{subject} could not be read and may still be pending: {_first_three(unreadable)}. "
+            "Retry; if it keeps failing, check the trace file's permissions."
+        )
     note = legacy_note(legacy_count)
     if note is not None:
         lines.append(f"{note} (read one with `pflow report <path>`).")
     return lines
+
+
+def _first_three(items: list[str]) -> str:
+    more = f"; and {len(items) - 3} more" if len(items) > 3 else ""
+    return "; ".join(items[:3]) + more

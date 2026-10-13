@@ -19,7 +19,7 @@ import logging
 import re
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, NoReturn
 
@@ -35,17 +35,18 @@ from pflow.core.exceptions import (
     ResumeSupersededError,
 )
 from pflow.core.gate import GATE_KIND_APPROVAL, GATE_KIND_ESCALATION, option_labels
+from pflow.core.path_state import PathState, path_state
 from pflow.core.trace_dir import (
     AGED_OUT_HINT,
     TraceEntry,
     TraceListing,
+    TraceUnreadableError,
     find_trace,
     is_trace_locked,
     legacy_note,
     list_traces,
-    read_trace_meta,
-    read_trace_trailer,
-    workflow_file_state,
+    read_trace_meta_strict,
+    read_trace_trailer_strict,
     workflow_hashes,
 )
 from pflow.core.trace_dir import debug_dir as default_debug_dir
@@ -332,9 +333,7 @@ def _select_resume_trace(
         # A candidate that cannot be read is never skipped past (that would resume an OLDER run): the
         # iterator raises it and the one mapping refuses retryably. A vanished one falls through.
         with _refuse_unreadable(None, None, "a run of this workflow"):
-            for trace_file, data in _iter_workflow_traces(
-                debug_dir, workflow_path, entries=listing.traces, unreadable="raise"
-            ):
+            for trace_file, data in _iter_workflow_traces(listing.traces, workflow_path, unreadable="raise"):
                 # Skip a DEAD zero-work attempt (a refused --force resume / crash before
                 # the first step) so `resume <workflow>` falls through to the older
                 # resumable run instead of wedging on it. A killed-mid-step trace is NOT
@@ -984,8 +983,7 @@ def load_resume_source(
     # Attempts, so a source still present had no consumer when it was checked; a vanished one refuses.
     try:
         with _refuse_unreadable(path, source_execution_id, "this run's trace"):
-            if not path.exists():
-                raise FileNotFoundError(path)
+            path.stat()  # never ``exists()``: on Python 3.14 it reads a permission fault as "removed"
             entry_node_id, last_completed_node_id = _resolve_resume_entry(path, data, source_execution_id)
 
             events = list(data.get("nodes") or [])
@@ -1125,10 +1123,13 @@ class PausedRun:
 @dataclass(frozen=True)
 class PausedRunListing:
     """``list_paused_runs``' answer: the pending rows, newest first, and what the list could not show —
-    pending pauses hidden because their workflow file no longer exists, and pre-185 traces not searched."""
+    pending pauses hidden because their workflow file no longer exists (each still names its token and
+    path), marked traces it could not read (the read errors, each naming its file), and the count of
+    pre-185 traces not searched."""
 
     runs: list[PausedRun]
-    hidden_missing_file: int = 0
+    hidden_missing_file: list[PausedRun] = field(default_factory=list)
+    unreadable: list[str] = field(default_factory=list)
     legacy_count: int = 0
 
 
@@ -1155,51 +1156,59 @@ def answerable_pause(
     entry: TraceEntry,
     meta: dict[str, Any] | None,
     trailer: dict[str, Any] | None,
-    file_state: Literal["present", "absent", "unknown"],
+    file_state: PathState,
 ) -> Literal["yes", "no", "unknown"]:
     """Can this trace's Resume token still be answered (consumption aside)? The ONE predicate ``resume
     list`` and Retention's rule 1 share, so the list, the resume verdict and retention agree.
 
     A well-formed pause record (``is_pause_record``) whose workflow file is ``present`` → ``yes``; its file
     ``absent`` → ``no`` (a by-id resume re-resolves the file and refuses, so the token can never be
-    spent); ``unknown`` → ``unknown``. Pure: callers pass the reads (lenient for a display, strict for a
-    deleter) and ``trace_dir.workflow_file_state``."""
+    spent); ``unknown`` → ``unknown``. Pure: callers pass the strict reads (a fault is reported by the
+    caller, never read as "no pause") and ``path_state.path_state``."""
     if not is_pause_record(entry, meta, trailer) or file_state == "absent":
         return "no"
     return "yes" if file_state == "present" else "unknown"
 
 
-def list_paused_runs(debug_dir: Path | None = None, *, listing: TraceListing | None = None) -> PausedRunListing:
+def list_paused_runs(debug_dir: Path | None = None) -> PausedRunListing:
     """Pending paused runs (answerable ∧ not consumed), newest first — ``pflow resume list`` (Task 171).
 
-    Reads only the marked traces of one listing (``listing`` when the caller already has one). A row is
-    shown when ``answerable_pause`` says ``yes`` or ``unknown`` (the workflow file's existence could not be
-    determined — the renderer notes it) and ``_find_consuming_attempt`` — the ONE consumption policy shared
-    with the loader — finds no consumer, so the list and a resume verdict can never disagree. A valid,
-    unconsumed pause whose workflow file is gone is not listed but COUNTED (``hidden_missing_file``): a
-    hidden pause is never silent. A candidate that vanishes mid-check is skipped. No live-lock probe: a
-    paused trace is finalized, so its writer lock is never held.
+    Reads only the marked traces of one listing. A row is shown when ``answerable_pause`` says ``yes`` or
+    ``unknown`` (the workflow file's existence could not be determined — the renderer notes it) and
+    ``_find_consuming_attempt`` — the ONE consumption policy shared with the loader — finds no consumer, so
+    the list and a resume verdict can never disagree. Nothing pending is dropped silently: a valid,
+    unconsumed pause whose workflow file is gone is returned in ``hidden_missing_file``, and a marked trace
+    that cannot be read (it may be pending) in ``unreadable``. A candidate that vanishes mid-check is
+    skipped; a marked trace with no trailer (a crash between the marker and the trailer) is not a pause.
+    No live-lock probe: a paused trace is finalized, so its writer lock is never held.
     """
-    listing = listing if listing is not None else list_traces(debug_dir)
+    listing = list_traces(debug_dir)
     pending: list[PausedRun] = []
-    hidden = 0
+    hidden: list[PausedRun] = []
+    unreadable: list[str] = []
     for entry in listing.traces:
         if not entry.paused:
             continue
-        meta = read_trace_meta(entry.path)
-        trailer = read_trace_trailer(entry.path)
+        try:
+            meta = read_trace_meta_strict(entry.path)
+            trailer = read_trace_trailer_strict(entry.path)
+        except FileNotFoundError:
+            continue
+        except TraceUnreadableError as exc:
+            unreadable.append(str(exc))
+            continue
         if meta is None or trailer is None or not is_pause_record(entry, meta, trailer):
             continue
         workflow_path = str(meta["workflow_path"])
-        verdict = answerable_pause(entry, meta, trailer, workflow_file_state(workflow_path))
+        verdict = answerable_pause(entry, meta, trailer, path_state(workflow_path))
         execution_id = str(meta.get("execution_id") or "")
         if execution_id and _find_consuming_attempt(workflow_path, execution_id, entries=listing.traces) is not None:
             continue
-        if verdict == "no":
-            hidden += 1
-            continue
-        pending.append(_paused_run_row(entry.path, meta, trailer))
-    return PausedRunListing(runs=pending, hidden_missing_file=hidden, legacy_count=listing.legacy_count)
+        row = _paused_run_row(entry.path, meta, trailer)
+        (hidden if verdict == "no" else pending).append(row)
+    return PausedRunListing(
+        runs=pending, hidden_missing_file=hidden, unreadable=unreadable, legacy_count=listing.legacy_count
+    )
 
 
 def _paused_run_row(path: Path, meta: dict[str, Any], trailer: dict[str, Any]) -> PausedRun:

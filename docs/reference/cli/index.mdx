@@ -255,7 +255,7 @@ Every way a run ends — success, failure, a paused gate, a denied gate — prin
   "status": "success",
   "workflow": {"action": "unsaved", "name": "/path/to/report.pflow.md"},
   "execution_id": "75b7b20d-3513-4ba7-8ac8-21374cb106a6",
-  "trace_path": "/home/you/.pflow/debug/workflow-trace-aa1da5d4-report.6f1c2b9e-3d4a-4b5c-8e7f-0a1b2c3d4e5f-20261012-012756-179612.json",
+  "trace_path": "/home/you/.pflow/debug/workflow-trace-aa1da5d4-report.75b7b20d-3513-4ba7-8ac8-21374cb106a6-20261012-012756-179612.json",
   "result": {"verdict": "two-value"},
   "errors": [],
   "warnings": [],
@@ -287,7 +287,7 @@ Every way a run ends — success, failure, a paused gate, a denied gate — prin
   "status": "failed",
   "workflow": {"action": "unsaved", "name": "/path/to/report.pflow.md"},
   "execution_id": "b1473c07-7a53-41a4-8f47-47d3b0d24c38",
-  "trace_path": "/home/you/.pflow/debug/workflow-trace-863aff80-report.9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d-20261012-012756-628402.json",
+  "trace_path": "/home/you/.pflow/debug/workflow-trace-863aff80-report.b1473c07-7a53-41a4-8f47-47d3b0d24c38-20261012-012756-628402.json",
   "error": "Command failed with exit code 1: boom",
   "errors": [
     {
@@ -514,7 +514,7 @@ By default, pflow saves execution traces to `~/.pflow/debug/`:
 
 - **Workflow traces**: `workflow-trace-{hash}-{name}.{run id}-{start time}.json` — a paused run also gets an empty `.paused` file beside its trace
 - **Retention**: traces older than `runtime.trace_retention_days` (14 days by default) are removed when pflow finishes writing a trace; pending pauses and each workflow's newest run and newest successful run are kept while the workflow file exists. See [trace retention](/guides/debugging#trace-retention)
-- **Older traces**: traces written by an earlier pflow version are not searched by `pflow resume`, `pflow report` or the Viewer (each says how many it skipped); read one with `pflow report <path>`
+- **Older traces**: traces written by an earlier pflow version are not searched by `pflow resume`, `pflow report`, `--only` or the Viewer (a command that finds nothing says how many it skipped); read one with `pflow report <path>`
 
 Generate a structured execution report (one markdown file per node):
 

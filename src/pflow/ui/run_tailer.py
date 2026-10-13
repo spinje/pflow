@@ -30,19 +30,21 @@ from typing import Any, TypedDict
 
 from pflow.core.trace_dir import (
     TraceEntry,
+    TraceUnreadableError,
     find_trace,
     is_trace_locked,
     list_traces,
     read_trace_meta,
+    read_trace_meta_strict,
     read_trace_trailer,
+    read_trace_trailer_strict,
     workflow_hash,
 )
 from pflow.core.trace_dir import debug_dir as default_debug_dir
 from pflow.core.trace_tree import event_cost
 
-# `is_trace_locked` / `read_trace_meta` / `read_trace_trailer` live in `core/trace_dir` (shared with the
-# resume loader); this module calls them through its own namespace, so `monkeypatch.setattr(run_tailer, …)`
-# reaches every call here.
+# `is_trace_locked` and the trace readers live in `core/trace_dir` (shared with the resume loader); this
+# module calls them through its own namespace, so `monkeypatch.setattr(run_tailer, …)` reaches every call here.
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +104,10 @@ class TraceCandidate(TypedDict):
 # `discover_live_trace` and `/api/runs`). A trace's `meta` head is written once and a FINISHED trace's tail
 # never changes, so keying on (mtime, size) lets a scan skip the open+parse for every UNCHANGED file —
 # turning a poll over a large ~/.pflow/debug from O(N opens) into O(N stats) + a read of only the one growing
-# live file. The verdict is cached even when a file has NO valid meta head (None) — a pre-Task-172
-# single-object trace or junk — so the bulk of a long-lived debug dir (old-format files) is probed ONCE, not
-# re-opened every poll. Without it an idle viewer re-opens+parses every trace 4x/s (Task 173 perf finding).
+# live file. A readable file with NO meta head (None — junk, a write cut short) is cached too, so it is
+# probed ONCE, not re-opened every poll; a READ FAULT is never cached (it is not a fact about the file — the
+# next poll retries, so a transient fault never hides a run until the file changes). Without the cache an
+# idle viewer re-opens+parses every trace 4x/s (Task 173 perf finding).
 # (mtime, size) not mtime alone so an append is never missed on a coarse-mtime filesystem. Lock-guarded:
 # scan_traces runs in the Starlette threadpool (/api/runs) AND via asyncio.to_thread (the tailer).
 # Callers MUST treat a returned candidate's `meta` dict as READ-ONLY — it is shared by reference across
@@ -146,23 +149,27 @@ def _cached_listing(directory: Path, wf_hash: str | None) -> tuple[TraceEntry, .
 
 def _file_facts(path: Path, mtime: float, size: int) -> tuple[dict[str, Any] | None, bool, str | None, str | None]:
     """The (meta, complete, final_status, paused_node_id) for one trace, served from _SCAN_CACHE on an
-    unchanged (mtime, size) or read fresh — caching a None-meta NEGATIVE verdict too so an unreadable file
-    isn't re-opened every poll. One ``read_trace_trailer`` derives all three tail facts (never read the tail
-    twice). Only ``paused_node_id`` is cached off a paused trailer — NOT the bulky ``gate_request`` (kept
-    off the scan/cache/wire; ``/api/gate`` re-reads it on demand). Callers must treat the returned `meta`
-    as read-only (it's the cached object)."""
+    unchanged (mtime, size) or read fresh — caching a None-meta NEGATIVE verdict of a readable file too, so
+    it isn't re-opened every poll; a file that could not be read (or vanished) is skipped this poll and NOT
+    cached. One trailer read derives all three tail facts (never read the tail twice). Only
+    ``paused_node_id`` is cached off a paused trailer — NOT the bulky ``gate_request`` (kept off the
+    scan/cache/wire; ``/api/gate`` re-reads it on demand). Callers must treat the returned `meta` as
+    read-only (it's the cached object)."""
     with _SCAN_CACHE_LOCK:
         hit = _SCAN_CACHE.get(path)
     if hit is not None and hit[0] == mtime and hit[1] == size:
         return hit[2], hit[3], hit[4], hit[5]
-    meta = read_trace_meta(path)  # I/O OUTSIDE the lock
+    try:  # I/O OUTSIDE the lock
+        meta = read_trace_meta_strict(path)
+        trailer = read_trace_trailer_strict(path) if meta is not None else None
+    except (OSError, TraceUnreadableError):
+        return None, False, None, None
     if meta is not None:
         # This meta is an IDENTITY probe (execution_id / workflow_path / start_time), cached for the process
         # lifetime per trace. `inputs` is raw and potentially large (Task 175) and `step_identity` is
         # resume-only (Task 180); no cache consumer reads either — run_node re-reads the file.
         meta.pop("inputs", None)
         meta.pop("step_identity", None)
-    trailer = read_trace_trailer(path) if meta is not None else None
     complete = trailer is not None
     raw_status = trailer.get("final_status") if trailer is not None else None
     final_status = raw_status if isinstance(raw_status, str) else None

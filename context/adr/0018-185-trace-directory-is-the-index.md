@@ -98,7 +98,8 @@ until it ages out, is never protected, and ages out by the timestamp its old nam
   API keys and is written back by the next settings command; an ignoring model would erase the typo on
   the next save and switch deletion on silently); the sweep prunes nothing — with a warning — when a key
   that looks like the retention key sits in the wrong place or spelling at any level (one walk over every
-  model's unknown keys, including keys inside an unknown section), when the file failed to load (only no directory entry at the path means "no file"; a file that
+  model's unknown keys, including keys inside an unknown section, plus any `settings.env` name containing
+  `TRACE_RETENTION` other than the exact override — never the user's other variables), when the file failed to load (only no directory entry at the path means "no file"; a file that
   cannot be read, or a link whose target is unavailable, is a failed load),
   or when the environment override is not a non-negative integer; other unknown keys are ignored, so a
   newer version's future key never switches an older lane's retention off. `SettingsManager.save()` refuses after a failed load. The sweep reads the

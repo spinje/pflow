@@ -1273,6 +1273,41 @@ class TestGateEndpoint:
         trace_reads = [name for name in opened if name.startswith("workflow-trace-")]
         assert trace_reads == [target.name]
 
+    @pytest.mark.parametrize(
+        ("error", "status", "says"),
+        [
+            (PermissionError(13, "Permission denied"), 500, "Could not read the trace of run 'target-run' ("),
+            (FileNotFoundError(2, "No such file or directory"), 404, "aged out of `runtime.trace_retention_days`"),
+        ],
+        ids=["unreadable", "removed-since-the-listing"],
+    )
+    def test_a_found_trace_that_cannot_be_loaded_is_never_called_not_paused(
+        self, tmp_path: Path, monkeypatch, error: OSError, status: int, says: str
+    ) -> None:
+        """Found by id, then the load fails: a file that cannot be read is a 500 naming it (the run may still
+        be paused), one removed since the listing (Retention) is the not-found 404 — never "not paused"."""
+        import builtins
+        import io
+
+        debug = self._debug_dir(tmp_path, monkeypatch)
+        target = _write_paused_trace(debug, "/wf.pflow.md", execution_id="target-run", gate_request=_APPROVAL_GATE)
+        real_open = builtins.open
+
+        def faulty(file, *args, **kwargs):
+            if str(file) == str(target):
+                raise error
+            return real_open(file, *args, **kwargs)
+
+        client = _client()
+        with monkeypatch.context() as patched:
+            patched.setattr(builtins, "open", faulty)
+            patched.setattr(io, "open", faulty)
+            response = client.get("/api/gate", params={"run": "target-run"})
+        assert response.status_code == status
+        assert says in response.json()["error"]
+        assert "not paused" not in response.json()["error"]
+        assert response.json()["error"].count(str(target)) <= 1  # the path is named once, never repeated
+
     def test_non_paused_run_is_404(self, tmp_path: Path, monkeypatch) -> None:
         debug = self._debug_dir(tmp_path, monkeypatch)
         _write_paused_trace(

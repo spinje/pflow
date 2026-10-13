@@ -29,7 +29,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, BinaryIO, Literal
+from typing import Any, BinaryIO
 
 from pflow.core.exceptions import PflowError
 from pflow.core.trace_tree import normalize_workflow_path_key
@@ -285,14 +285,14 @@ def read_trace_meta_strict(path: Path) -> dict[str, Any] | None:
     except FileNotFoundError:
         raise
     except OSError as exc:
-        raise TraceUnreadableError(f"could not read trace {path}: {exc}") from exc
+        raise TraceUnreadableError(f"could not read trace {path}: {exc.strerror or exc}") from exc
     return _meta_from_first_line(first, path)
 
 
 def read_trace_meta_and_lock_strict(path: Path) -> tuple[dict[str, Any] | None, bool | None]:
-    """``read_trace_meta_strict`` and ``is_trace_locked(strict=True)`` through ONE open — what a deleter
-    needs of a file it is about to remove. Same outcomes as the two: ``FileNotFoundError`` propagates, a read
-    or open fault raises ``TraceUnreadableError``."""
+    """``read_trace_meta_strict`` and the ``is_trace_locked`` probe through ONE open — what a deleter needs of
+    a file it is about to remove. ``FileNotFoundError`` propagates; a read or open fault raises
+    ``TraceUnreadableError`` (never "unknown": a deleter keeps what it cannot read)."""
     try:
         with open(path, "rb") as handle:
             first = handle.readline()
@@ -300,7 +300,7 @@ def read_trace_meta_and_lock_strict(path: Path) -> tuple[dict[str, Any] | None, 
     except FileNotFoundError:
         raise
     except OSError as exc:
-        raise TraceUnreadableError(f"could not read trace {path}: {exc}") from exc
+        raise TraceUnreadableError(f"could not read trace {path}: {exc.strerror or exc}") from exc
     return _meta_from_first_line(first, path), locked
 
 
@@ -353,7 +353,7 @@ def read_trace_trailer_strict(path: Path) -> dict[str, Any] | None:
     except FileNotFoundError:
         raise
     except OSError as exc:
-        raise TraceUnreadableError(f"could not read trace {path}: {exc}") from exc
+        raise TraceUnreadableError(f"could not read trace {path}: {exc.strerror or exc}") from exc
     if not parsed and tail.endswith(b"\n"):
         raise TraceUnreadableError(f"corrupt last line in trace {path}")
     return trailer
@@ -375,23 +375,21 @@ def read_trace_trailer(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def is_trace_locked(path: Path, *, strict: bool = False) -> bool | None:
+def is_trace_locked(path: Path) -> bool | None:
     """Is a live writer holding this trace? ``True`` held / ``False`` free or gone / ``None`` unknown.
 
     The writer holds an exclusive ``flock`` for the run's life and the kernel releases it on any exit, so
     this detects death, not hang. The probe takes a SHARED non-blocking lock on a separate fd (two
     consumers probing a free file never contend) and releases it at once. ``None`` when liveness cannot be
-    determined: no ``fcntl`` (Windows), a filesystem without ``flock``, or an open fault — which raises
-    ``TraceUnreadableError`` instead under ``strict``. A vanished file has no writer: ``False``."""
+    determined: no ``fcntl`` (Windows), a filesystem without ``flock``, or an open fault. A vanished file
+    has no writer: ``False``. A deleter probes through ``read_trace_meta_and_lock_strict`` instead."""
     if sys.platform == "win32":
         return None
     try:
         handle = open(path, "rb")  # noqa: SIM115 — closed by the with-block below
     except FileNotFoundError:
         return False
-    except OSError as exc:
-        if strict:
-            raise TraceUnreadableError(f"could not open trace {path} to probe its lock: {exc}") from exc
+    except OSError:
         return None
     with handle:
         return _probe_lock(handle)
@@ -412,32 +410,4 @@ def _probe_lock(handle: BinaryIO) -> bool | None:
     except OSError:
         return None
     fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-    return False
-
-
-def workflow_file_state(path: str) -> Literal["present", "absent", "unknown"]:
-    """Whether a recorded workflow file exists — three outcomes, from one ``os.stat``.
-
-    Not ``Path.is_file()``: it raises ``PermissionError`` on Python 3.10-3.13 and returns ``False`` on
-    3.14, so "cannot tell" would read as either a crash or "deleted". ``absent`` means no directory entry
-    at the path: a symlink whose target is unavailable (an unmounted volume) is ``unknown``, not deleted."""
-    try:
-        os.stat(path)
-    except ValueError:
-        return "absent"
-    except (FileNotFoundError, NotADirectoryError):
-        return "absent" if _no_entry(path) else "unknown"
-    except OSError:
-        return "unknown"
-    return "present"
-
-
-def _no_entry(path: str) -> bool:
-    """Whether nothing at all is at ``path`` — not even a dangling symlink."""
-    try:
-        os.lstat(path)
-    except (FileNotFoundError, NotADirectoryError):
-        return True
-    except OSError:
-        return False
     return False

@@ -117,6 +117,7 @@ def trace(
     resumed_from: Path | None = None,
     gate_lines: tuple[dict[str, Any], ...] = (),
     finished: bool = True,
+    execution_id: str | None = None,
 ) -> Path:
     """A production-shaped trace started ``days`` before NOW: meta, events, and (``finished``) the trailer the
     collector writes — ``final_status``, ``nodes_executed`` (non-restored events), the pause record."""
@@ -124,7 +125,7 @@ def trace(
         events = [_event("a", status="failed" if status == "failed" else "success")]
     data: dict[str, Any] = {
         "format_version": TRACE_FORMAT_VERSION,
-        "execution_id": next(_ids),
+        "execution_id": execution_id or next(_ids),
         "workflow_name": "wf",
         "workflow_path": workflow,
         "only_node": "a" if only else None,
@@ -341,7 +342,7 @@ def test_a_sweep_keeps_exactly_the_protected_traces(
     legacy_paths = {str(path) for path in legacy_names}
     assert not legacy_paths & set(opened), "a legacy name is removed on its age alone, never read"
     assert str(unrecognised) not in opened
-    assert report.unreadable == 0
+    assert len(report.unreadable) == 0
     assert report.removed == len([path for path in gone if not path.name.endswith(".paused")])
 
     # The features the protected set exists for still work on the pruned directory.
@@ -349,7 +350,7 @@ def test_a_sweep_keeps_exactly_the_protected_traces(
     assert snapshot is not None and snapshot[1] == "success"
     paused = list_paused_runs(debug)
     assert {run.execution_id for run in paused.runs} == {run_id(pending)} | ({run_id(source)} if POSIX else set())
-    assert paused.hidden_missing_file == 0
+    assert paused.hidden_missing_file == []
     resumed = load_resume_source(execution_id=run_id(pending), debug_dir=debug, gate_answer={"approve": True})
     assert resumed.entry_node_id == "gated"
     reported = CliRunner().invoke(cli, ["report", "-o", str(tmp_path / "report")])
@@ -468,7 +469,12 @@ def test_an_attempt_outlives_its_source(
     if not fault:
         assert not source.exists() and not attempt.exists() and not paused_marker(source).exists()
         return
-    assert (report.skipped, source.exists(), paused_marker(source).exists(), attempt.exists()) == (1, True, True, True)
+    assert (len(report.skipped), source.exists(), paused_marker(source).exists(), attempt.exists()) == (
+        1,
+        True,
+        True,
+        True,
+    )
     # The answer is still on disk, so the token stays spent: not listed, and refused as superseded.
     assert list_paused_runs(debug).runs == []
     with pytest.raises(ResumeSupersededError):
@@ -491,6 +497,28 @@ def test_an_attempt_chain_unwinds_root_first(
 
     assert newest.exists() and not root.exists()
     assert (first.exists(), second.exists()) == ((True, True) if fault else (False, False))
+
+
+def test_a_pause_whose_id_prefix_another_consumed_pause_shares_stays_listed_resumable_and_protected(
+    tmp_path: Path, debug: Path
+) -> None:
+    """Two pending sources share their first 8 id characters (the `.from-` tag), one consumed: the other is
+    still protected (a newer success is the newest run and the Snapshot, so only rule 1 keeps it), listed
+    and resumable — the tag narrows, the Attempt's ``resumed_from`` decides."""
+    workflow = present(tmp_path, "w")
+    consumed = trace(debug, workflow, 50, status="paused", execution_id="pause-aaaa1")
+    pending = trace(debug, workflow, 45, status="paused", execution_id="pause-aaaa2")
+    attempt = _denied_attempt(debug, workflow, 40, consumed)
+    assert ".from-pause-aa-" in attempt.name
+    trace(debug, workflow, 30)
+
+    prune(debug)
+
+    assert pending.exists() and paused_marker(pending).exists()
+    assert not consumed.exists()
+    assert [run.execution_id for run in list_paused_runs(debug).runs] == ["pause-aaaa2"]
+    resumed = load_resume_source(execution_id="pause-aaaa2", debug_dir=debug, gate_answer={"approve": True})
+    assert resumed.entry_node_id == "gated"
 
 
 def test_the_newest_run_being_an_attempt_keeps_its_source(tmp_path: Path, debug: Path) -> None:
@@ -534,6 +562,29 @@ def test_an_unreadable_pending_pause_is_kept_with_one_warning(
     assert str(pause) in warnings[0].getMessage()
 
 
+def test_an_attempt_the_pause_rule_cannot_read_keeps_the_pause_and_is_named(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Rule 1's consumption check cannot load the pause's Attempt (one fault, at that load only — the removal
+    probe of the Attempt later reads fine): it may have answered the token or not, so the pause and its marker
+    stay and the one warning names the Attempt. A newer success is the workflow's newest run and Snapshot, so
+    only rule 1 could keep the pause."""
+    workflow = present(tmp_path, "w")
+    pause = trace(debug, workflow, 40, status="paused")
+    attempt = trace(debug, workflow, 35, status="failed", events=[], resumed_from=pause)  # dead, zero work
+    trace(debug, workflow, 30)
+    control = trace(debug, deleted(tmp_path, "other"), 30)
+    monkeypatch.setenv("PFLOW_TRACE_RETENTION_DAYS", str(WINDOW))
+
+    with faulted_opens(monkeypatch, attempt, emfile, nth=1), caplog.at_level(logging.WARNING):
+        sweep_after_write(debug)
+
+    assert pause.exists() and paused_marker(pause).exists() and attempt.exists()
+    assert not control.exists()
+    warnings = [record.getMessage() for record in caplog.records if record.name == "pflow.runtime.trace_retention"]
+    assert len(warnings) == 1 and "kept 1 unreadable trace(s)" in warnings[0] and str(attempt) in warnings[0]
+
+
 def test_an_unreadable_newest_trace_keeps_its_whole_group_even_without_a_snapshot(
     tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -547,7 +598,7 @@ def test_an_unreadable_newest_trace_keeps_its_whole_group_even_without_a_snapsho
 
     assert all(path.exists() for path in group)
     assert not control.exists()
-    assert report.unreadable == 1
+    assert len(report.unreadable) == 1
 
 
 @pytest.mark.parametrize("nth", [None, 2], ids=["every-read", "the-trailer-read"])
@@ -565,7 +616,7 @@ def test_an_unreadable_newest_success_keeps_its_whole_group(
 
     assert older_success.exists() and failure.exists() and newest_success.exists()
     assert not control.exists()
-    assert report.unreadable == 1
+    assert len(report.unreadable) == 1
 
 
 def test_an_unreadable_removal_candidate_is_kept(tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -582,7 +633,7 @@ def test_an_unreadable_removal_candidate_is_kept(tmp_path: Path, debug: Path, mo
 
     assert candidate.exists()
     assert not removable.exists() and not control.exists()
-    assert report.unreadable == 1
+    assert len(report.unreadable) == 1
 
 
 def test_an_unreadable_trailer_on_an_older_trace_keeps_that_trace(
@@ -598,7 +649,7 @@ def test_an_unreadable_trailer_on_an_older_trace_keeps_that_trace(
     with faulted_opens(monkeypatch, unreadable_tail, emfile, nth=1):  # its first open is the walk's tail read
         report = prune(debug)
 
-    assert report.unreadable == 1, "the fault hit the tail read"
+    assert len(report.unreadable) == 1, "the fault hit the tail read"
     assert unreadable_tail.exists()
     assert not older.exists()
 
@@ -620,12 +671,12 @@ def test_an_unreadable_attempt_or_a_trace_newer_than_the_snapshot_keeps_its_grou
     # The attempt's first open is the probe; the newer run's first is the walk's tail read, its second the probe.
     with faulted_opens(monkeypatch, attempt, emfile):
         report = prune(debug)
-    assert (report.unreadable, oldest.exists(), source.exists(), control.exists()) == (1, True, True, False)
+    assert (len(report.unreadable), oldest.exists(), source.exists(), control.exists()) == (1, True, True, False)
 
     attempt.unlink()
     with faulted_opens(monkeypatch, newer_than_snapshot, emfile, nth=2):
         report = prune(debug)
-    assert (report.unreadable, oldest.exists(), source.exists(), snapshot.exists()) == (1, True, True, True)
+    assert (len(report.unreadable), oldest.exists(), source.exists(), snapshot.exists()) == (1, True, True, True)
 
 
 def test_a_workflow_file_that_cannot_be_checked_keeps_its_group(
@@ -669,7 +720,7 @@ def test_a_trace_that_vanishes_mid_sweep_is_not_counted_and_exposes_nothing(
 
     assert snapshot.exists() and next_newest.exists() and vanishing.exists()
     assert not control.exists()
-    assert report.unreadable == 0
+    assert len(report.unreadable) == 0
 
 
 @pytest.mark.skipif(not POSIX, reason="advisory flock is POSIX-only")
@@ -734,7 +785,10 @@ def test_a_windows_sharing_violation_retries_once_then_skips_and_continues(
 
     assert attempts == [held, held]
     assert held.exists() and not other.exists()
-    assert any("could not remove 1 trace(s)" in record.getMessage() for record in caplog.records)
+    [warning] = [record.getMessage() for record in caplog.records if record.name == "pflow.runtime.trace_retention"]
+    # Actionable: which file, why, and what to check if the next run's retry fails too.
+    assert f"could not remove 1 trace(s) ({held}: The process cannot access the file)" in warning
+    assert "check the permissions of the trace directory and those files" in warning
 
 
 def test_a_sweep_that_raises_never_escapes(
@@ -795,7 +849,7 @@ def test_two_interleaved_sweeps_leave_exactly_the_protected_set(
     report = prune(debug)  # sweep X, on the listing it took before Y
 
     assert names(debug) == {pending.name, paused_marker(pending).name, newest.name}
-    assert report.unreadable == 0
+    assert len(report.unreadable) == 0
 
 
 # ── The cost model ────────────────────────────────────────────────────────────────────────────────────
@@ -853,8 +907,14 @@ def _settings_file(tmp_path: Path, data: dict[str, Any]) -> Path:
 
 @pytest.mark.parametrize(
     "settings",
-    [None, {"llm": {"foo": True}, "registry": {"nodes": {"bar": 1}}}],
-    ids=["no-file", "unrelated-unknown-keys"],
+    [
+        None,
+        {"llm": {"foo": True}, "registry": {"nodes": {"bar": 1}}},
+        # The user's own variables, and the exact override name — a real process copies that into os.environ
+        # (settings-env injection, skipped under pytest); only a misspelling of it is a suspect.
+        {"env": {"S3_RETENTION_DAYS": "1", "API_TOKEN": "x", "PFLOW_TRACE_RETENTION_DAYS": "0"}},
+    ],
+    ids=["no-file", "unrelated-unknown-keys", "env-names-that-are-not-misspellings"],
 )
 def test_no_env_prunes_at_the_default(
     tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, settings: dict[str, Any] | None
@@ -906,6 +966,8 @@ def test_the_env_override_wins_over_the_file(
         (None, {"registry": {"trace_retention_days": 0}}, "sets registry.trace_retention_days"),
         (None, {"registry": {"nodes": {"trace_retention_days": 0}}}, "sets registry.nodes.trace_retention_days"),
         (None, {"runtime_settings": {"trace_retention_days": 0}}, "sets runtime_settings"),
+        (None, {"env": {"PFLOW_TRACE_RETENTION_DAY": "0"}}, "sets env.PFLOW_TRACE_RETENTION_DAY"),
+        (None, {"env": {"pflow_trace_retention_days": "0"}}, "sets env.pflow_trace_retention_days"),
     ],
     ids=[
         "env-word",
@@ -918,6 +980,8 @@ def test_the_env_override_wins_over_the_file(
         "misplaced-in-registry",
         "misplaced-in-registry-nodes",
         "inside-an-unknown-section",
+        "misspelled-in-env",
+        "wrong-case-in-env",
     ],
 )
 def test_a_setting_that_cannot_be_trusted_prunes_nothing_with_a_warning(

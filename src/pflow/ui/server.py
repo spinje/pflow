@@ -1571,20 +1571,29 @@ def gate(request: Request) -> Response:
     except OSError as exc:
         return _json({"error": f"Could not read the trace directory: {exc}"}, status_code=500)
     entry = find_trace(listing.traces, run_id)  # the run id is in the filename: one listing, no scan
+    note = legacy_note(listing.legacy_count)
+    unsearched = f" {note}." if note else ""
+    not_found = _json(
+        {"error": f"No run {run_id!r} was found — if it ran before, {AGED_OUT_HINT}.{unsearched}"}, status_code=404
+    )
     if entry is None:
-        note = legacy_note(listing.legacy_count)
-        unsearched = f" {note}." if note else ""
-        return _json(
-            {"error": f"No run {run_id!r} was found — if it ran before, {AGED_OUT_HINT}.{unsearched}"},
-            status_code=404,
-        )
+        return not_found
     # Read the pause record through the resume loader's own reader (not the scan-cache fact, never the
     # raw trailer line): the trace interns strings >= 1 KB as `$pflow_blob` refs whose bodies sit on
     # earlier lines, so only the full read gives the panel the text `pflow resume` will act on (#720).
+    # Three outcomes: gone since the listing (Retention) is the not-found 404; a file that cannot be read is
+    # a 500 naming it (the run may still be paused); a corrupt one is "not paused".
     try:
         trace: dict[str, Any] = load_trace_file(entry.path)
-    except (json.JSONDecodeError, OSError):
+    except FileNotFoundError:
+        return not_found
+    except json.JSONDecodeError:
         trace = {}
+    except OSError as exc:
+        return _json(
+            {"error": f"Could not read the trace of run {run_id!r} ({entry.path}): {exc.strerror or exc}. Retry."},
+            status_code=500,
+        )
     gate_request = trace.get("gate_request")
     paused_node_id = trace.get("paused_node_id")
     if (
