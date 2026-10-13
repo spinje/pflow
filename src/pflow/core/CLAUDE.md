@@ -70,7 +70,8 @@ these structures rather than canned suggestions. Context-key conventions live in
 `runtime/template_validation/CLAUDE.md`.
 
 A failed step's stdout/stderr previewed in a diagnostic goes through `head_tail_preview`
-(head + tail; tools write the cause last) — never a head-only `[:N]` slice.
+(head + tail; tools write the cause last) — never a head-only `[:N]` slice. The text
+channels use its default window; the JSON run document passes a wider one (`run_outcome.py`).
 
 ## Template language (`templates.py`)
 

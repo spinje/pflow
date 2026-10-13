@@ -730,16 +730,17 @@ PREVIEW_HEAD_CHARS = 100
 PREVIEW_TAIL_CHARS = 300
 
 
-def head_tail_preview(text: str) -> str:
-    """A long stdout/stderr cut to its head and tail, the middle replaced by an omitted-count marker.
+def head_tail_preview(text: str, head: int = PREVIEW_HEAD_CHARS, tail: int = PREVIEW_TAIL_CHARS) -> str:
+    """A long stdout/stderr cut to its ``head`` and ``tail`` chars, the middle replaced by an omitted-count marker.
 
     Tools write the cause last (a traceback's exception line, ``error:`` after progress
-    noise), so a text-channel preview keeps the tail as well as the head.
+    noise), so a preview keeps the tail as well as the head. The defaults are the text
+    channels' window; a JSON document passes its own, wider one.
     """
-    if len(text) <= PREVIEW_HEAD_CHARS + PREVIEW_TAIL_CHARS:
+    if len(text) <= head + tail:
         return text
-    omitted = len(text) - PREVIEW_HEAD_CHARS - PREVIEW_TAIL_CHARS
-    return f"{text[:PREVIEW_HEAD_CHARS]} … [{omitted:,} chars omitted] … {text[-PREVIEW_TAIL_CHARS:]}"
+    omitted = len(text) - head - tail
+    return f"{text[:head]} … [{omitted:,} chars omitted] … {text[len(text) - tail :]}"
 
 
 def _capped(value: object, limit: int = 300) -> str:
