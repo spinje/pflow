@@ -1163,21 +1163,10 @@ def test_an_only_run_without_its_name_tag_is_still_excluded_by_its_meta(tmp_path
 
 
 def _faulted_opens(monkeypatch: pytest.MonkeyPatch, path: Path, error: OSError, *, nth: int | None = None) -> None:
-    """Every open of ``path`` (or only its ``nth``) raises ``error``; ``builtins.open`` and ``io.open`` both."""
-    import builtins
-    import io
-    import itertools
+    """Every open of ``path`` (or only its ``nth``) raises ``error`` (``tests/shared/open_hooks``)."""
+    from tests.shared.open_hooks import fault_opens
 
-    real_open = builtins.open
-    seen = itertools.count(1)
-
-    def faulty(file: Any, *args: Any, **kwargs: Any) -> Any:
-        if str(file) == str(path) and (nth is None or next(seen) == nth):
-            raise error
-        return real_open(file, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "open", faulty)
-    monkeypatch.setattr(io, "open", faulty)
+    fault_opens(monkeypatch, path, error, nth=nth)
 
 
 def _two_successes(tmp_path: Path) -> tuple[str, Path, Path]:

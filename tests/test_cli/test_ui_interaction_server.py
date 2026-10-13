@@ -10,7 +10,6 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, patch
 from urllib.parse import urlencode
 
@@ -1240,8 +1239,7 @@ class TestGateEndpoint:
     def test_gate_by_id_opens_only_the_one_trace_among_many(self, tmp_path: Path, monkeypatch) -> None:
         """The "Loading gate…" guard (Task 185): the run id is in the filename, so `/api/gate` lists the
         directory once and opens ONLY the matching trace — never the other workflows' 500 traces."""
-        import builtins
-        import io
+        from tests.shared.open_hooks import record_opens
 
         debug = self._debug_dir(tmp_path, monkeypatch)
         for index in range(500):
@@ -1253,24 +1251,12 @@ class TestGateEndpoint:
                 started=f"20260102-{index // 60:02d}{index % 60:02d}00-000000",
             )
         target = _write_paused_trace(debug, "/wf.pflow.md", execution_id="target-run", gate_request=_APPROVAL_GATE)
-        opened: list[str] = []
-        real_open, real_io_open = builtins.open, io.open
-
-        def spy_open(file, *args, **kwargs):
-            opened.append(Path(file).name)
-            return real_open(file, *args, **kwargs)
-
-        def spy_io_open(file, *args, **kwargs):
-            opened.append(Path(file).name)
-            return real_io_open(file, *args, **kwargs)
-
         client = _client()  # app setup reads nothing in the trace dir, but keep it outside the spy anyway
         with monkeypatch.context() as patched:
-            patched.setattr(builtins, "open", spy_open)
-            patched.setattr(io, "open", spy_io_open)
+            opened = record_opens(patched)
             response = client.get("/api/gate", params={"run": "target-run"})
         assert response.status_code == 200
-        trace_reads = [name for name in opened if name.startswith("workflow-trace-")]
+        trace_reads = [Path(path).name for path in opened if Path(path).name.startswith("workflow-trace-")]
         assert trace_reads == [target.name]
 
     @pytest.mark.parametrize(
@@ -1286,22 +1272,14 @@ class TestGateEndpoint:
     ) -> None:
         """Found by id, then the load fails: a file that cannot be read is a 500 naming it (the run may still
         be paused), one removed since the listing (Retention) is the not-found 404 — never "not paused"."""
-        import builtins
-        import io
+        from tests.shared.open_hooks import fault_opens
 
         debug = self._debug_dir(tmp_path, monkeypatch)
         target = _write_paused_trace(debug, "/wf.pflow.md", execution_id="target-run", gate_request=_APPROVAL_GATE)
-        real_open = builtins.open
-
-        def faulty(file, *args, **kwargs):
-            if str(file) == str(target):
-                raise error(13 if error is PermissionError else 2, "injected", str(target))  # names the file
-            return real_open(file, *args, **kwargs)
-
         client = _client()
         with monkeypatch.context() as patched:
-            patched.setattr(builtins, "open", faulty)
-            patched.setattr(io, "open", faulty)
+            # The OSError names the file, as a real one does.
+            fault_opens(patched, target, lambda: error(13 if error is PermissionError else 2, "injected", str(target)))
             response = client.get("/api/gate", params={"run": "target-run"})
         assert response.status_code == status
         assert says in response.json()["error"]
@@ -1723,27 +1701,13 @@ class TestResumeEndpoint:
         popen.assert_not_called()
 
     @staticmethod
-    def _fault_reads_after_the_first(monkeypatch, path: Path, fault: Callable[[], Exception]) -> None:
+    def _fault_reads_after_the_first(monkeypatch, path: Path, fault: Callable[[], OSError]) -> None:
         """Let the FIRST open of ``path`` succeed (the attempt loads), then fault every later open — the raw
-        re-read the consumption check makes. Injected at the open itself (``builtins.open`` + ``io.open``:
-        ``Path.read_text`` uses the latter), never at a resume helper."""
-        import builtins
-        import io
+        re-read the consumption check makes. Injected at the open itself (``tests/shared/open_hooks``), never at
+        a resume helper."""
+        from tests.shared.open_hooks import fault_opens
 
-        opens = {"n": 0}
-
-        def guarded(real: Callable[..., Any]) -> Callable[..., Any]:
-            def wrapper(file: Any, *args: Any, **kwargs: Any) -> Any:
-                if isinstance(file, (str, Path)) and Path(file) == path:
-                    opens["n"] += 1
-                    if opens["n"] > 1:
-                        raise fault()
-                return real(file, *args, **kwargs)
-
-            return wrapper
-
-        monkeypatch.setattr(builtins, "open", guarded(builtins.open))
-        monkeypatch.setattr(io, "open", guarded(io.open))
+        fault_opens(monkeypatch, path, fault, after=1)
 
     def _denied_attempt(self, tmp_path: Path, monkeypatch) -> tuple[str, Path]:
         """A real pause answered `no` through the CLI: the denied attempt ran zero steps, so only its raw

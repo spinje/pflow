@@ -387,10 +387,9 @@ def test_report_autoselect_names_a_newer_trace_it_could_not_read(
     """A newer trace that cannot be read — at its tail read, or only at the full load after a clean tail — is
     named on stderr with its cause: "latest" never silently means an older run, and with nothing older the
     miss says the trace was unreadable, never "only in-flight or interrupted runs"."""
-    import builtins
     import errno
-    import io
-    import itertools
+
+    from tests.shared.open_hooks import fault_opens
 
     debug_dir = tmp_path / ".pflow" / "debug"
     debug_dir.mkdir(parents=True)
@@ -400,17 +399,8 @@ def test_report_autoselect_names_a_newer_trace_it_could_not_read(
         else None
     )
     newer = _write_jsonl_trace(debug_dir / _report_trace_name("run-a", datetime(2026, 1, 2)), _COMPLETE_TRACE_LINES)
-    real_open = builtins.open
-    opens = itertools.count(1)
-
-    def faulty(file: Any, *args: Any, **kwargs: Any) -> Any:
-        if str(file) == str(newer) and (nth is None or next(opens) == nth):
-            raise PermissionError(errno.EACCES, "Permission denied")
-        return real_open(file, *args, **kwargs)
-
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setattr(builtins, "open", faulty)
-    monkeypatch.setattr(io, "open", faulty)
+    fault_opens(monkeypatch, newer, PermissionError(errno.EACCES, "Permission denied"), nth=nth)
     result = click.testing.CliRunner(mix_stderr=False).invoke(main, ["report"])
 
     assert f"Skipped a newer trace — could not read trace {newer}: Permission denied" in result.stderr

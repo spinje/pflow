@@ -16,6 +16,7 @@ probe live in ``core/trace_dir`` (the directory listing is the index — ADR-001
 
 import json
 import logging
+import os
 import re
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
@@ -995,7 +996,7 @@ def load_resume_source(
     # Attempts, so a source still present had no consumer when it was checked; a vanished one refuses.
     try:
         with _refuse_unreadable(path, source_execution_id, "this run's trace"):
-            path.stat()  # never ``exists()``: on Python 3.14 it reads a permission fault as "removed"
+            os.stat(path)  # never ``exists()``: on Python 3.14 it reads a permission fault as "removed"
             entry_node_id, last_completed_node_id = _resolve_resume_entry(path, data, source_execution_id)
 
             events = list(data.get("nodes") or [])

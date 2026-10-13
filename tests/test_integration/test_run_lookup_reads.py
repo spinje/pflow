@@ -3,15 +3,13 @@
 Each lookup lists the trace directory ONCE and opens only the files that belong to its answer. These
 tests build one directory mixing the target workflow's runs (paused, attempts, failures, ``--only``, an
 unfinished one), other workflows' runs and pauses, and pre-185 names — then record every file each public
-lookup opens (``builtins.open`` AND ``io.open``: ``Path.read_text`` uses only the latter) and every
+lookup opens (every open spelling, ``tests/shared/open_hooks``) and every
 ``os.scandir`` call. A count on the lister alone would be a tautology (``find_trace`` is a filter); the
 set opened by the SURFACE is what the spec bounds.
 """
 
 from __future__ import annotations
 
-import builtins
-import io
 import json
 import os
 from collections.abc import Callable, Iterator
@@ -26,6 +24,7 @@ from click.testing import CliRunner
 from pflow.cli.main import main
 from pflow.runtime.resume_source import list_paused_runs, load_resume_source
 from pflow.runtime.workflow_trace import load_full_run_events
+from tests.shared.open_hooks import hook_opens
 from tests.shared.trace_jsonl import flatten_trace_to_lines, trace_path_for, write_trace_file
 
 _GATE = {"node_id": "deploy", "node_type": "ShellNode", "kind": "action_approval", "preview": {}}
@@ -122,15 +121,12 @@ def _recording(monkeypatch: pytest.MonkeyPatch, debug: Path) -> Iterator[tuple[l
     """Record ``(trace name, mode)`` for every open of a file in ``debug``, and every ``os.scandir`` of it."""
     opened: list[tuple[str, str]] = []
     scans: list[int] = []
-    real_open, real_io_open, real_scandir = builtins.open, io.open, os.scandir
+    real_scandir = os.scandir
 
-    def spy(real: Callable[..., Any]) -> Callable[..., Any]:
-        def wrapper(file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
-            if isinstance(file, (str, os.PathLike)) and Path(file).parent == debug:
-                opened.append((Path(file).name, mode))
-            return real(file, mode, *args, **kwargs)
-
-        return wrapper
+    def spy(real_open: Callable[..., Any], file: Any, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        if isinstance(file, (str, os.PathLike)) and Path(file).parent == debug:
+            opened.append((Path(file).name, mode))
+        return real_open(file, mode, *args, **kwargs)
 
     def scandir_spy(path: Any = ".") -> Any:
         if Path(path) == debug:
@@ -138,8 +134,7 @@ def _recording(monkeypatch: pytest.MonkeyPatch, debug: Path) -> Iterator[tuple[l
         return real_scandir(path)
 
     with monkeypatch.context() as patched:
-        patched.setattr(builtins, "open", spy(real_open))
-        patched.setattr(io, "open", spy(real_io_open))
+        hook_opens(patched, spy)
         patched.setattr(os, "scandir", scandir_spy)
         yield opened, scans
 

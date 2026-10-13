@@ -1,17 +1,15 @@
 """Retention (Task 185, ADR-0018): ``prune_traces`` removes aged traces and never a Protected one.
 
 Every fixture is a real JSONL trace under the producer's filename (``tests/shared/trace_jsonl``), the clock is
-passed in (``now=NOW``), and faults are injected at ``builtins.open``/``io.open``/``os.stat`` for ONE path —
+passed in (``now=NOW``), and faults are injected at the open (``tests/shared/open_hooks``) or ``os.stat`` for ONE path —
 never at a helper, which a sweep that fails open would pass. Each fault test has a control: an unrelated aged
 unprotected trace the SAME sweep removes, so "kept" never means "the sweep aborted".
 """
 
 from __future__ import annotations
 
-import builtins
 import errno
 import hashlib
-import io
 import itertools
 import json
 import logging
@@ -41,6 +39,7 @@ from pflow.core.trace_io import load_trace_file
 from pflow.runtime.resume_source import list_paused_runs, load_resume_source
 from pflow.runtime.trace_retention import SweepReport, prune_traces, retention_days, sweep_after_write
 from pflow.runtime.workflow_trace import TRACE_FORMAT_VERSION, load_full_run_events
+from tests.shared.open_hooks import fault_opens, record_opens
 from tests.shared.trace_jsonl import flatten_trace_to_lines, trace_path_for
 
 pytestmark = pytest.mark.trace_files
@@ -181,18 +180,9 @@ def held_lock(path: Path) -> Iterator[None]:
 
 @contextmanager
 def recording_opens(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
-    """Every file the code under test opens, in order (``builtins.open`` and ``io.open`` — pathlib's)."""
-    opened: list[str] = []
-    real_open = builtins.open
-
-    def recording(file: Any, *args: Any, **kwargs: Any) -> Any:
-        opened.append(str(file))
-        return real_open(file, *args, **kwargs)
-
+    """Every file the code under test opens, in order (``tests/shared/open_hooks``)."""
     with monkeypatch.context() as patched:
-        patched.setattr(builtins, "open", recording)
-        patched.setattr(io, "open", recording)
-        yield opened
+        yield record_opens(patched)
 
 
 @contextmanager
@@ -200,17 +190,8 @@ def faulted_opens(
     monkeypatch: pytest.MonkeyPatch, path: Path, error: Callable[[], OSError], *, nth: int | None = None
 ) -> Iterator[None]:
     """Every open of ``path`` (or only its ``nth``) raises ``error()``; every other file opens normally."""
-    real_open = builtins.open
-    seen = itertools.count(1)
-
-    def faulty(file: Any, *args: Any, **kwargs: Any) -> Any:
-        if str(file) == str(path) and (nth is None or next(seen) == nth):
-            raise error()
-        return real_open(file, *args, **kwargs)
-
     with monkeypatch.context() as patched:
-        patched.setattr(builtins, "open", faulty)
-        patched.setattr(io, "open", faulty)
+        fault_opens(patched, path, error, nth=nth)
         yield
 
 
@@ -1109,7 +1090,19 @@ def _retention_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
 
 @pytest.mark.parametrize(
     "name",
-    ["PFLOW_TRACE_RETENTION_DAY", "pflow_trace_retention_days", "PFLOW_RETENTION_DAYS", "PFLOW_TRACE_RETENTON_DAYS"],
+    [
+        "PFLOW_TRACE_RETENTION_DAY",
+        pytest.param(
+            "pflow_trace_retention_days",
+            marks=pytest.mark.skipif(
+                sys.platform == "win32",
+                reason="Windows environment names are case-insensitive: there this IS the override "
+                "(test_on_windows_the_lowercase_name_is_the_override)",
+            ),
+        ),
+        "PFLOW_RETENTION_DAYS",
+        "PFLOW_TRACE_RETENTON_DAYS",
+    ],
 )
 def test_a_misspelled_override_in_the_environment_prunes_nothing_with_one_warning(
     tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, name: str
@@ -1124,6 +1117,23 @@ def test_a_misspelled_override_in_the_environment_prunes_nothing_with_one_warnin
     assert aged.exists()
     [warning] = _retention_warnings(caplog)
     assert f"trace retention skipped: the environment sets {name}" in warning
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="POSIX environment names are case-sensitive")
+def test_on_windows_the_lowercase_name_is_the_override(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Windows ``os.environ`` ignores case, so ``pflow_trace_retention_days`` is the override itself, not a
+    misspelling: its value applies, with no warning (on POSIX it is a misspelling — the test above)."""
+    monkeypatch.delenv("PFLOW_TRACE_RETENTION_DAYS")
+    monkeypatch.setenv("pflow_trace_retention_days", "3")
+    aged = trace(debug, deleted(tmp_path, "w"), 5)
+
+    assert retention_days() == 3
+    with caplog.at_level(logging.WARNING):
+        sweep_after_write(debug)
+    assert not aged.exists()
+    assert _retention_warnings(caplog) == []
 
 
 def test_a_settings_env_typo_exported_at_startup_is_reported_once(
@@ -1727,8 +1737,7 @@ def test_a_recheck_fault_keeps_the_trace_and_is_reported(
             if fault_at == "marker-lstat":
                 patched.setattr(os, "lstat", lstat)
             else:
-                patched.setattr(builtins, "open", _refusing_open(unfinished))
-                patched.setattr(io, "open", _refusing_open(unfinished))
+                fault_opens(patched, unfinished, emfile)
             return real_remove(self, entry)
 
     monkeypatch.setenv("PFLOW_TRACE_RETENTION_DAYS", str(WINDOW))
@@ -1739,14 +1748,3 @@ def test_a_recheck_fault_keeps_the_trace_and_is_reported(
     assert unfinished.exists() and not control.exists()
     warnings = [record.getMessage() for record in caplog.records if record.name == "pflow.runtime.trace_retention"]
     assert len(warnings) == 1 and "kept 1 unreadable trace(s)" in warnings[0] and str(unfinished) in warnings[0]
-
-
-def _refusing_open(path: Path) -> Callable[..., Any]:
-    real_open = builtins.open
-
-    def refusing(file: Any, *args: Any, **kwargs: Any) -> Any:
-        if str(file) == str(path):
-            raise OSError(errno.EMFILE, "Too many open files")
-        return real_open(file, *args, **kwargs)
-
-    return refusing

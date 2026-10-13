@@ -306,10 +306,9 @@ def test_a_marked_trace_that_cannot_be_read_is_reported_never_dropped(home, monk
     """A pending pause whose trace cannot be read — at its head, or only at its trailer after a clean head —
     may still be answerable: `resume list` names it and the read error, and never answers "No paused runs."
     as if the list were complete."""
-    import builtins
     import errno
-    import io
-    import itertools
+
+    from tests.shared.open_hooks import fault_opens
 
     debug = home / ".pflow" / "debug"
     readable_id = "0b7e6a52-1c4d-4e8f-9a3b-5d6c7e8f9a01"
@@ -317,20 +316,12 @@ def test_a_marked_trace_that_cannot_be_read_is_reported_never_dropped(home, monk
     if with_readable:
         _write_paused_trace(debug, execution_id=readable_id, gate_request=_APPROVAL_GATE)
     locked = _write_paused_trace(debug, execution_id=unreadable_id, gate_request=_APPROVAL_GATE)
-    real_open = builtins.open
-    opens = {"count": itertools.count(1)}
-
-    def faulty(file: Any, *args: Any, **kwargs: Any) -> Any:
-        if str(file) == str(locked) and (fault_on is None or next(opens["count"]) == fault_on):
-            raise PermissionError(errno.EACCES, "Permission denied")
-        return real_open(file, *args, **kwargs)
 
     def invoke(*args: str) -> Any:
-        opens["count"] = itertools.count(1)  # each CLI invocation reads the trace afresh
-        return _runner().invoke(cli, ["resume", "list", *args])
+        with monkeypatch.context() as patched:  # a fresh fault count: each CLI invocation reads the trace afresh
+            fault_opens(patched, locked, PermissionError(errno.EACCES, "Permission denied"), nth=fault_on)
+            return _runner().invoke(cli, ["resume", "list", *args])
 
-    monkeypatch.setattr(builtins, "open", faulty)
-    monkeypatch.setattr(io, "open", faulty)
     expected = (
         f"1 paused run could not be read and may still be pending: could not read trace {locked}: "
         "Permission denied. Retry; if it keeps failing, check the trace file's permissions."

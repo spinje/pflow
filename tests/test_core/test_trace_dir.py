@@ -288,17 +288,10 @@ def test_strict_readers_let_a_vanished_file_propagate(tmp_path: Path) -> None:
 
 
 def test_strict_readers_turn_any_other_read_fault_into_unreadable(tmp_path: Path, monkeypatch) -> None:
-    import builtins
+    from tests.shared.open_hooks import fault_opens
 
     path = _lines(tmp_path / "t.json", _META, _TRAILER)
-    real_open = builtins.open
-
-    def failing_open(file, *args, **kwargs):
-        if Path(file) == path:
-            raise OSError(errno.EMFILE, "Too many open files")
-        return real_open(file, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "open", failing_open)
+    fault_opens(monkeypatch, path, OSError(errno.EMFILE, "Too many open files"))
     with pytest.raises(TraceUnreadableError):
         read_trace_meta_strict(path)
     with pytest.raises(TraceUnreadableError):
@@ -371,15 +364,8 @@ def test_lock_probe_on_a_filesystem_without_flock_is_unknown_not_locked(tmp_path
 
 @_unix_only
 def test_lock_probe_open_fault_is_unknown(tmp_path: Path, monkeypatch) -> None:
-    import builtins
+    from tests.shared.open_hooks import fault_opens
 
     path = _lines(tmp_path / "t.json", _META)
-    real_open = builtins.open
-
-    def failing_open(file, *args, **kwargs):
-        if Path(file) == path:
-            raise OSError(errno.EMFILE, "Too many open files")
-        return real_open(file, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "open", failing_open)
+    fault_opens(monkeypatch, path, OSError(errno.EMFILE, "Too many open files"))
     assert is_trace_locked(path) is None

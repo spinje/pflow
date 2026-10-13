@@ -7,6 +7,7 @@
 | Isolation, LLM mocking, trace opt-in, subprocess environments | `tests/conftest.py` |
 | Workflow files, typed diagnostics, mock node interfaces | `tests/shared/markdown_utils.py`, `tests/shared/diagnostic_helpers.py`, `tests/shared/mock_nodes.py` |
 | LLM responses/history | `tests/shared/llm_mock.py::MockLLMClient` |
+| Fault or record file opens (read-set pins, unreadable-file tests) | `tests/shared/open_hooks.py` — never patch `builtins.open`/`io.open` by hand: Python 3.10's `Path.open` bypasses both |
 | CLI capture and real process boundaries | `tests/test_cli/CLAUDE.md` |
 | Runner and cross-layer regressions | `tests/test_execution/`, `tests/test_integration/test_failed_node_invariant.py` |
 | Compiler, engine, batch, cache, tracing | `tests/test_runtime/`; template validation has its own `CLAUDE.md` |

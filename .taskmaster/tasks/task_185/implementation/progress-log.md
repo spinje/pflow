@@ -1382,3 +1382,39 @@ the sweep runs on both paths.
   `--no-trace` row (kept both: the `--report` precedence and #863's excerpt clause). On the merged tree: `make check`
   green, `make test-all-local` 12,145 passed, 2 skipped.
 - Next: push; wait for CI on the new head (tests-and-type-check, tests-windows, baseline-oracle); hand back.
+
+## [2026-10-13 14:10] task-phase-implementer (Opus, gate-runner) — PR #871 CI red (3.10 ×16, Windows ×1) fixed
+- **Python 3.10 — the open-interception class, CLOSED.**
+  - NEW `tests/shared/open_hooks.py`: `hook_opens` (the primitive: one opener on `builtins.open`, `io.open`
+    and, when present (3.10 only), `pathlib._NormalAccessor.open`), plus `record_opens` and
+    `fault_opens(path, error, *, nth=, after=)`. `Path.open` is never patched: on 3.11+ that would count one
+    read twice.
+  - Every hand-rolled open patch in `tests/` now goes through it — 10 files, including the 4 sites that only
+    patched `builtins.open` (no 3.10 failure, same class). A grep confirms no `setattr(builtins|io, "open")`
+    is left outside the helper.
+  - The one remaining direct patch is pre-existing (`test_run_node.py:281`, `Path.read_text`), which is
+    version-safe.
+  - `tests/CLAUDE.md` gained a row: never patch open by hand.
+  - Second member of the class: `test_a_source_that_cannot_be_checked_after…` patched `os.stat`, but 3.10's
+    `Path.stat` goes through `_NormalAccessor.stat`. So `resume_source` now calls `os.stat(path)`, with the same
+    semantics, matching `path_state`. That is a one-line production change.
+  - Verified (throwaway venvs, `UV_PROJECT_ENVIRONMENT` under the scratchpad):
+    - touched files on 3.10: before 16 failed / 676 passed, after 692 passed / 1 skipped;
+    - touched files on 3.13.4: 692 passed / 1 skipped;
+    - FULL non-e2e suite on 3.10: 12061 passed, 30 skipped.
+  - The retention cost test's open counts are identical on 3.10, 3.13 and 3.14 (2078 / 2003): no double
+    counting.
+  - Spot mutations still kill: report's OSError → silent skip gives 2 failed; `os.stat` → `exists()` gives
+    1 failed.
+- **Windows — FIXED as ruled; code unchanged.**
+  - The `pflow_trace_retention_days` param is `skipif(win32)` with its reason.
+  - NEW `test_on_windows_the_lowercase_name_is_the_override` (win32 only): the value 3 applies, a 5-day trace
+    is pruned, no warning.
+  - Other env-name-case dependencies in the file: none. The lowercase `settings.env` key param is a dict key,
+    not `os.environ` — injection is skipped under pytest.
+  - Noted, not built: in a real Windows process, injection would export that lowercase stored key, making it
+    the override for a run, while `settings show` (no injection) reports it as untrusted. Both outcomes keep
+    every trace, so the asymmetry is harmless.
+  - Assumed: the Windows test itself (no Windows host here; `tests-windows` CI).
+- Verified (project venv, 3.14.0): `make check` exit 0; `make test` 12081 passed, 1 skipped (the new
+  win32-only test). Not committed.

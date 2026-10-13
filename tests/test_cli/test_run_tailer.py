@@ -337,11 +337,10 @@ def test_scan_traces_never_caches_a_read_fault(tmp_path, monkeypatch, fault_on):
     """A fault reading a trace (a permission blip, EMFILE) is not a fact about the file: the run is skipped
     for that poll and found by the next one, although the file never changed — never hidden (or shown as
     unfinished) until it is next written."""
-    import builtins
     import errno
-    import io
 
     import pflow.ui.run_tailer as rt
+    from tests.shared.open_hooks import fault_opens
 
     rt._SCAN_CACHE.clear()
     rt._DIR_LIST_CACHE.clear()
@@ -350,19 +349,9 @@ def test_scan_traces_never_caches_a_read_fault(tmp_path, monkeypatch, fault_on):
     wf = "/wf.pflow.md"
     path = _tp(debug, wf, "20260101-000000-000001")
     _write_trace(path, wf, complete=True, final_status="success")
-    real_open = builtins.open
-    opens = {"n": 0}
-
-    def faulty(file, *args, **kwargs):
-        if str(file) == str(path):
-            opens["n"] += 1
-            if opens["n"] == fault_on:
-                raise OSError(errno.EMFILE, "Too many open files")
-        return real_open(file, *args, **kwargs)
 
     with monkeypatch.context() as patched:
-        patched.setattr(builtins, "open", faulty)
-        patched.setattr(io, "open", faulty)
+        fault_opens(patched, path, OSError(errno.EMFILE, "Too many open files"), nth=fault_on)
         assert rt.scan_traces(wf, debug_dir=debug) == []
 
     [candidate] = rt.scan_traces(wf, debug_dir=debug)

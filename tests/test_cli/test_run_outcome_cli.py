@@ -884,21 +884,18 @@ class TestTheTraceNameAndThePausedMarker:
     def test_a_marker_write_fault_leaves_a_non_durable_pause_everywhere(
         self, home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import builtins
-
         from pflow.core.trace_dir import parse_trace_filename
         from pflow.runtime.resume_source import list_paused_runs, load_resume_source
+        from tests.shared.open_hooks import hook_opens
 
-        real_open = builtins.open
-
-        def no_marker(file: Any, *args: Any, **kwargs: Any) -> Any:
+        def no_marker(real_open: Any, file: Any, *args: Any, **kwargs: Any) -> Any:
             if str(file).endswith(".paused"):
                 raise OSError(errno.ENOSPC, "No space left on device")
             return real_open(file, *args, **kwargs)
 
         workflow = _gate(tmp_path)
         with monkeypatch.context() as patched:
-            patched.setattr(builtins, "open", no_marker)
+            hook_opens(patched, no_marker)
             result, document = _json(workflow)
 
         # The CLI never hands out a token it cannot honour: the pause is reported failed, with no identity.

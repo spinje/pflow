@@ -1744,24 +1744,10 @@ def test_an_attempt_that_vanishes_mid_check_counts_as_consuming(tmp_path: Path, 
 
 def _fault_opens(monkeypatch, path: Path, *, after: int = 0) -> None:
     """Fault every open of ``path`` past the first ``after`` with ``PermissionError`` — injected at the open
-    itself (``builtins.open`` + ``io.open``; ``Path.read_text`` uses the latter), never at a resume helper."""
-    import builtins
-    import io
+    itself (``tests/shared/open_hooks``), never at a resume helper."""
+    from tests.shared.open_hooks import fault_opens
 
-    opens = {"n": 0}
-
-    def guarded(real: Any) -> Any:
-        def wrapper(file: Any, *args: Any, **kwargs: Any) -> Any:
-            if isinstance(file, (str, Path)) and Path(file) == path:
-                opens["n"] += 1
-                if opens["n"] > after:
-                    raise PermissionError(13, "Permission denied")
-            return real(file, *args, **kwargs)
-
-        return wrapper
-
-    monkeypatch.setattr(builtins, "open", guarded(builtins.open))
-    monkeypatch.setattr(io, "open", guarded(io.open))
+    fault_opens(monkeypatch, path, PermissionError(13, "Permission denied"), after=after)
 
 
 @pytest.mark.parametrize("after", [0, 1], ids=["on-load", "on-raw-re-read"])
@@ -1819,25 +1805,13 @@ def test_by_workflow_an_unreadable_newest_run_refuses_never_falls_back_to_an_old
     """`resume <workflow>` must not resume an OLDER run past a newest one it cannot read (the shared iterator
     skips unreadable files for `--only`/analyze-cache; resume asks it to raise). Control: a newest run that is
     genuinely GONE does fall through to the older run."""
-    import builtins
-    import io
-
     from pflow.core.exceptions import ResumeSourceUnreadableError
+    from tests.shared.open_hooks import fault_opens
 
     _write_trace(tmp_path, execution_id="older", timestamp="20260101-000000")
     newest = _write_trace(tmp_path, execution_id="newest", timestamp="20260102-000000")
     fault: list[OSError] = [PermissionError(13, "Permission denied")]
-
-    def guarded(real: Any) -> Any:
-        def wrapper(file: Any, *args: Any, **kwargs: Any) -> Any:
-            if isinstance(file, (str, Path)) and Path(file) == newest:
-                raise fault[0]
-            return real(file, *args, **kwargs)
-
-        return wrapper
-
-    monkeypatch.setattr(builtins, "open", guarded(builtins.open))
-    monkeypatch.setattr(io, "open", guarded(io.open))
+    fault_opens(monkeypatch, newest, lambda: fault[0])
     with pytest.raises(ResumeSourceUnreadableError, match="a run of this workflow") as refused:
         load_resume_source(workflow_path=WF, debug_dir=tmp_path)
     assert newest.name in str(refused.value)
