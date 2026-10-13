@@ -488,7 +488,7 @@ class _Sweep:
                         present[entry.execution_id[:8]] -= 1
                 elif outcome == "skipped":
                     skipped += 1
-                else:
+                elif entry.path not in self.unreadable:  # a re-check fault is reported as unreadable
                     kept += 1
         return removed, skipped, len(pending) + kept
 
@@ -532,13 +532,15 @@ class _Sweep:
             except FileNotFoundError:
                 pass
             except OSError:
-                return False  # cannot tell: keep
+                self.unreadable[entry.path] = None  # cannot tell: keep it, and say so
+                return False
         if entry.path in self._unfinished:
             try:
                 return read_trace_trailer_strict(entry.path) is None
             except FileNotFoundError:
                 return True  # already gone: the unlink is a no-op
             except TraceUnreadableError:
+                self.unreadable[entry.path] = None
                 return False
         return True
 

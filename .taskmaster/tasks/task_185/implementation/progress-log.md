@@ -789,3 +789,54 @@ the sweep runs on both paths.
   mutation-verified (counts above); the `open`-fault settings test is a regression guard (the pre-fix shape also
   handled that arm), labelled as such; the `os.stat`-fault test is the one that proves C2's fix.
 - Next: orchestrator — verify, commit; then the completion gate.
+
+## [2026-10-13 03:50] task-orchestrator (Opus) — P3/P4 committed; P3 review round 2 dispatched; real-dir BEFORE timings
+- Did: committed P3 `6966925a`, P4 `98a09afc`, P3 review fixes `7b4495ea`. P3 mid-task review round 1 (codex, concurrency-safety
+  + silent-failures, `reviews/midtask-p3.md`): 2 convergent Criticals + 3 Warnings, all verified and fixed by the implementer
+  (entry above). Round 2 dispatched on both lenses (both had verified Criticals) → `reviews/midtask-p3-r2.md`. The fan-out
+  runs with the MAIN checkout's pre-185 pflow (no sweep code) + `PFLOW_TRACE_RETENTION_DAYS=0` — no sweep can touch the real dir.
+- Rulings I made (importance 2, logged): retention-key detection widened to every settings section (one recursive walk) —
+  the ruling's intent is "a misplaced opt-out never leaves deletion on"; the identity read may be one young file (data
+  safety over the cost test's letter); the duplicate permissions warning deduped once per file per process (pre-existing
+  6×, the sweep made 7×).
+- BEFORE (pre-185 code = main checkout's `.venv/bin/pflow`, real `~/.pflow/debug`, 31,391 files, `/usr/bin/time -p`):
+  `resume list` 14.92 s (first) / 4.15 s (page cache warm); `report` 0.25 s (newest trace complete — early exit);
+  `resume 00000000-0000-4000-8000-000000000000 --dry-run` (by-id miss = full by-id scan) 7.29 s. The spec's 24.8 s was a
+  colder cache. Running `resume <real paused token> --dry-run` on the real dir was refused by the harness's auto-mode
+  classifier (irreversible-action guard) → P5 measures the by-id lookup through the miss path (same scan cost) instead.
+- Next: round-2 report → disposition; then P5 (bench + real-dir AFTER behind the backup gate) and the completion gate.
+
+## [2026-10-13 08:22] task-phase-implementer (Opus) — P3 mid-task review round 2 (`reviews/midtask-p3-r2.md`) dispositioned
+- Did: read the round-2 report in full; both convergent findings verified against `7b4495ea` and fixed, each with
+  a regression test that fails without its fix (mutation-verified, counted `N failed`).
+- **#1 — CONFIRMED, FIXED as a class ("unavailable read as absent").**
+  - **Settings:** in `_load_from_file`, `open()`'s `FileNotFoundError` / `NotADirectoryError` now means
+    defaults only when `os.lstat` also finds no directory entry at the path. A dangling symlink, or anything
+    else at the path that cannot be read, sets `load_error`: no pruning, one warning, and saves refused, so the
+    link is never overwritten.
+  - **Same class at the second decision point:** `trace_dir.workflow_file_state`. A workflow reached through a
+    link to an unavailable target (an unmounted volume) was "absent", so its pending pause, Snapshot and newest
+    run were removable. It is now `unknown`: the group is kept and the warning names it. `resume list` shows
+    such a row with its "(workflow file unreadable)" note instead of hiding it.
+  - Tests use real dangling symlinks: settings (control: a genuinely missing file → defaults → prunes, and saves
+    a regular file) and a workflow (control: a deleted workflow's pause is removed).
+  - Mutations: settings `_no_entry` bypassed → 1 failed; `workflow_file_state` link → absent → 1 failed.
+- **#2 — CONFIRMED, FIXED.** A fault in the pre-unlink re-check (the marker `lstat`, or the trailer read) still
+  keeps the trace. It is now recorded in `unreadable` with its path, so the one warning fires and names it,
+  and it is no longer counted as "protected".
+  - Test: parametrized on the two fault points, injected at `os.lstat` and at `builtins.open`/`io.open` only
+    during the re-check. Control: an aged unprotected trace is removed by the same sweep.
+  - Mutations: either record dropped → 1 failed.
+- ADR-0018: the settings sentence ("only no directory entry at the path means no file …") and the workflow-file
+  sentence (a link to an unavailable target counts as unknown, and is named).
+- Verified: `make check` exit 0; `make test` 11973 passed (11968 + 5, 0 failed); `pytest -m trace_files` 695
+  passed.
+- Deviations/surprises:
+  - Extended #1 to `workflow_file_state` (P1's module) — the same conflation at the deletion decision. The fix
+    is one `lstat` fallback.
+  - Consolidation candidate: `_no_entry` (no directory entry, not even a dangling link) now exists twice, in
+    `core/settings.py` and `core/trace_dir.py` (7 lines each). Neither module is a natural home for the
+    other's helper, and `core/` has no filesystem-utility module; it is not built.
+- Self-checks: fully happy? — yes. test-reflect: each new test fails under its mutation (above); both controls
+  are the presence half of their absence assertions.
+- Next: orchestrator — verify, commit; then P5 (synthetic benchmark), not started.

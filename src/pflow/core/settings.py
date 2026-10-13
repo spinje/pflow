@@ -150,6 +150,17 @@ class PflowSettings(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
 
 
+def _no_entry(path: Path) -> bool:
+    """Whether nothing at all is at ``path`` — not even a dangling symlink."""
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def _first_insecure_warning(settings_path: Path) -> bool:
     """Whether this process has not yet warned about ``settings_path``'s permissions (and now has)."""
     with _INSECURE_PERMISSIONS_LOCK:
@@ -203,15 +214,20 @@ class SettingsManager:
         return self.load()
 
     def _load_from_file(self) -> PflowSettings:
-        """Load settings from file or return defaults. Only a file that does not exist means defaults; any
-        other fault (unreadable, corrupt, invalid) sets ``load_error`` — never ``Path.exists()``, which reads a
-        permission fault as "absent" on Python 3.14."""
+        """Load settings from file or return defaults. Only NO directory entry at the path means defaults; a
+        file that is there but cannot be loaded (unreadable, corrupt, invalid, a symlink whose target is
+        unavailable) sets ``load_error`` — never ``Path.exists()``, which reads a permission fault as "absent"
+        on Python 3.14."""
         self.load_error = None
         try:
             with open(self.settings_path, encoding="utf-8") as f:
                 data = json.load(f)
             return PflowSettings(**data)
-        except (FileNotFoundError, NotADirectoryError):
+        except (FileNotFoundError, NotADirectoryError) as e:
+            if _no_entry(self.settings_path):
+                return PflowSettings()
+            self.load_error = f"{e} (the path exists but its target cannot be read)"
+            logger.warning(f"Failed to load settings from {self.settings_path} ({self.load_error}); using defaults")
             return PflowSettings()
         except Exception as e:
             self.load_error = str(e)

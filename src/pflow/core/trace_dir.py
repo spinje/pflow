@@ -419,11 +419,25 @@ def workflow_file_state(path: str) -> Literal["present", "absent", "unknown"]:
     """Whether a recorded workflow file exists — three outcomes, from one ``os.stat``.
 
     Not ``Path.is_file()``: it raises ``PermissionError`` on Python 3.10-3.13 and returns ``False`` on
-    3.14, so "cannot tell" would read as either a crash or "deleted"."""
+    3.14, so "cannot tell" would read as either a crash or "deleted". ``absent`` means no directory entry
+    at the path: a symlink whose target is unavailable (an unmounted volume) is ``unknown``, not deleted."""
     try:
         os.stat(path)
-    except (FileNotFoundError, NotADirectoryError, ValueError):
+    except ValueError:
         return "absent"
+    except (FileNotFoundError, NotADirectoryError):
+        return "absent" if _no_entry(path) else "unknown"
     except OSError:
         return "unknown"
     return "present"
+
+
+def _no_entry(path: str) -> bool:
+    """Whether nothing at all is at ``path`` — not even a dangling symlink."""
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return False
+    return False

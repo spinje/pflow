@@ -1387,3 +1387,106 @@ def test_a_settings_file_that_cannot_be_opened_prunes_nothing_and_is_never_overw
     assert settings.read_bytes() == original
     warnings = [record.getMessage() for record in caplog.records if record.name == "pflow.runtime.trace_retention"]
     assert len(warnings) == 1 and "could not be loaded" in warnings[0], warnings
+
+
+@pytest.mark.parametrize("link", [True, False], ids=["dangling-symlink", "no-file-control"])
+def test_a_settings_link_whose_target_is_unavailable_is_not_an_absent_file(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, link: bool
+) -> None:
+    """``settings.json`` linked to a file on a volume that is not mounted: that is settings unavailable, not
+    settings absent — no default 14 days, no save over the link. The control: genuinely no file → defaults."""
+    from pflow.core.settings import SettingsManager
+    from pflow.core.user_errors import UserFriendlyError
+
+    monkeypatch.delenv("PFLOW_TRACE_RETENTION_DAYS")
+    settings = tmp_path / ".pflow" / "settings.json"
+    if link:
+        settings.symlink_to(tmp_path / "unmounted-volume" / "settings.json")
+    aged = trace(debug, deleted(tmp_path, "w"), 400)
+
+    sweep_after_write(debug)
+    manager = SettingsManager()
+    manager.load()
+
+    if link:
+        assert aged.exists() and manager.load_error is not None
+        with pytest.raises(UserFriendlyError):
+            manager.set_env("NEW", "x")
+        assert settings.is_symlink()
+    else:
+        assert not aged.exists() and manager.load_error is None
+        manager.set_env("NEW", "x")
+        assert settings.is_file()
+
+
+def test_a_workflow_link_whose_target_is_unavailable_keeps_its_group(tmp_path: Path, debug: Path) -> None:
+    """A pending pause of a workflow reached through a link to an unmounted volume is not a deleted workflow:
+    its group is kept (and reported), not treated as absent. The control: a truly deleted workflow's pause goes."""
+    linked = tmp_path / "workflows" / "linked.pflow.md"
+    linked.parent.mkdir()
+    linked.symlink_to(tmp_path / "unmounted-volume" / "wf.pflow.md")
+    pause = trace(debug, str(linked), 40, status="paused")
+    gone_pause = trace(debug, deleted(tmp_path, "w"), 40, status="paused")
+
+    report = prune(debug)
+
+    assert pause.exists() and paused_marker(pause).exists()
+    assert not gone_pause.exists()
+    assert report.unchecked_workflows == (str(linked),)
+
+
+@pytest.mark.parametrize("fault_at", ["marker-lstat", "trailer-open"])
+def test_a_recheck_fault_keeps_the_trace_and_is_reported(
+    tmp_path: Path,
+    debug: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    fault_at: str,
+) -> None:
+    """The pre-unlink re-check cannot read the trace: kept, counted unreadable with its path, one warning."""
+    import pflow.runtime.trace_retention as retention
+
+    workflow = present(tmp_path, "w")
+    unfinished = trace(debug, workflow, 40, status="incomplete", finished=False)  # its tail read records it
+    trace(debug, workflow, 50)  # the Snapshot behind it, so the walk reads the unfinished trace first
+    trace(debug, workflow, 30, status="failed")
+    control = trace(debug, deleted(tmp_path, "other"), 30)
+    marker = paused_marker(unfinished)
+    real_lstat = os.lstat
+    real_remove = retention._Sweep._remove
+
+    def lstat(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        if str(path) == str(marker):
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return real_lstat(path, *args, **kwargs)
+
+    def remove(self: Any, entry: Any) -> str:
+        if entry.path != unfinished:
+            return real_remove(self, entry)
+        with monkeypatch.context() as patched:  # the fault exists only at the re-check
+            if fault_at == "marker-lstat":
+                patched.setattr(os, "lstat", lstat)
+            else:
+                patched.setattr(builtins, "open", _refusing_open(unfinished))
+                patched.setattr(io, "open", _refusing_open(unfinished))
+            return real_remove(self, entry)
+
+    monkeypatch.setenv("PFLOW_TRACE_RETENTION_DAYS", str(WINDOW))
+    monkeypatch.setattr(retention._Sweep, "_remove", remove)
+    with caplog.at_level(logging.WARNING):
+        sweep_after_write(debug)
+
+    assert unfinished.exists() and not control.exists()
+    warnings = [record.getMessage() for record in caplog.records if record.name == "pflow.runtime.trace_retention"]
+    assert len(warnings) == 1 and "kept 1 unreadable trace(s)" in warnings[0] and str(unfinished) in warnings[0]
+
+
+def _refusing_open(path: Path) -> Callable[..., Any]:
+    real_open = builtins.open
+
+    def refusing(file: Any, *args: Any, **kwargs: Any) -> Any:
+        if str(file) == str(path):
+            raise OSError(errno.EMFILE, "Too many open files")
+        return real_open(file, *args, **kwargs)
+
+    return refusing
