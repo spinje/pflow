@@ -6,6 +6,7 @@ used by both CLI and MCP server to ensure output parity.
 
 from typing import Any
 
+from pflow.core.text_format import labelled_lines
 from pflow.core.types import input_usage, usage_arguments
 
 from .history_formatter import format_execution_history
@@ -61,7 +62,7 @@ def format_workflow_interface(name: str, metadata: dict[str, Any]) -> str:
 
     # Basic info
     lines.append(f"Workflow: {name}")
-    lines.append(f"Description: {description}")
+    lines.extend(labelled_lines("Description: ", description))
 
     # Execution history (if available) — fields are top-level in flat metadata
     if execution_history := _format_execution_history_section(metadata):
@@ -119,9 +120,11 @@ def _format_inputs_section(ir: dict[str, Any]) -> str:
         usage = input_usage(config)
         stdin_marker = " [stdin]" if usage.stdin else ""
         status = "required" if usage.required else "optional"
-        lines.append(f"  - {input_name}{stdin_marker} ({usage.type}, {status}): {config.get('description', '')}")
+        lines.extend(
+            labelled_lines(f"  - {input_name}{stdin_marker} ({usage.type}, {status}): ", config.get("description", ""))
+        )
         if usage.default is not None:
-            lines.append(f"    Default: {usage.default}")
+            lines.extend(labelled_lines("    Default: ", f"{usage.default}"))
 
     return "\n".join(lines)
 
@@ -144,7 +147,7 @@ def _format_outputs_section(ir: dict[str, Any]) -> str:
         desc = config.get("description", "")
         stdout_marker = " [stdout]" if config.get("stdout") is True else ""
         declared_type = f" ({config['type']})" if isinstance(config.get("type"), str) else ""
-        lines.append(f"  - {output_name}{stdout_marker}{declared_type}: {desc}")
+        lines.extend(labelled_lines(f"  - {output_name}{stdout_marker}{declared_type}: ", desc))
 
     return "\n".join(lines)
 

@@ -46,12 +46,11 @@ def _resume_header_line(plan: Plan) -> str | None:
     """The resume honesty line (Task 164): a resumed plan starts AT K, so entries + cost cover the tail only."""
     if plan.resume is None:
         return None
-    count = len(plan.resume.restored_nodes)
-    noun = "step" if count == 1 else "steps"
     src = f" from {plan.resume.execution_id}" if plan.resume.execution_id else ""
     at = f" (iteration {plan.resume.entry_iteration})" if plan.resume.entry_iteration > 1 else ""
     return (
-        f"Resuming from '{plan.resume.entry_node}'{at}: {count} upstream {noun} restored{src} "
+        f"Resuming from '{plan.resume.entry_node}'{at}: "
+        f"{count_noun(len(plan.resume.restored_nodes), 'upstream step')} restored{src} "
         f"(plan + cost cover this step onward)."
     )
 
@@ -229,7 +228,8 @@ def _render_entry_line(entry: PlanEntry, indent: str) -> str:
             has_work = child.execute_count > 0 or (child.execute_including_nested or 0) > 0
         symbol = "▸" if has_work else click.style("↻", fg="blue", dim=True)
         parallel_tag = ", parallel" if entry.batch_parallel else ""
-        return f"{indent}{symbol} {entry.node_id}  [workflow '{ref}' \u00d7 {entry.batch_count} items{parallel_tag}]"
+        items = count_noun(entry.batch_count, "item")
+        return f"{indent}{symbol} {entry.node_id}  [workflow '{ref}' \u00d7 {items}{parallel_tag}]"
 
     if entry.batch_items_total is not None:
         cached = entry.batch_items_cached or 0

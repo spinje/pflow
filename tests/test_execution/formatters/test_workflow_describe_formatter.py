@@ -81,6 +81,26 @@ class TestFormatWorkflowInterface:
 
         assert "\nDescription: No description\n" in result
 
+    def test_multi_line_values_hang_under_their_label(self):
+        """#806: a description paragraph or a default spanning lines keeps its lines, hung under the value."""
+        metadata = {
+            "description": "Summarize commits\nper author.",
+            "ir": {
+                "inputs": {"repo": {"type": "string", "description": "The repo\nto read.", "default": "a\nb"}},
+                "outputs": {"total": {"type": "integer", "description": "Count\nof commits."}},
+            },
+        }
+
+        result = format_workflow_interface("wf", metadata)
+
+        assert "Description: Summarize commits\n             per author.\n" in result
+        assert (
+            "  - repo (string, optional): The repo\n" + " " * len("  - repo (string, optional): ") + "to read.\n"
+            in result
+        )
+        assert "    Default: a\n             b\n" in result
+        assert "  - total (integer): Count\n                     of commits.\n" in result
+
     def test_formats_workflow_with_special_characters_in_descriptions(self):
         """FORMAT: Descriptions with special characters are preserved."""
         metadata = {

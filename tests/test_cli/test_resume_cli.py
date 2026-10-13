@@ -998,6 +998,8 @@ def test_json_refusal_shape(home, shell_wf):
     assert doc["success"] is False
     assert doc["status"] == "failed"
     assert doc["errors"][0]["context"]["execution_id"] == exec_id
+    # #806: the refusal names the step's type without guessing an article ("a http step").
+    assert doc["errors"][0]["message"].startswith("Resuming re-runs the shell step '")
 
 
 def test_bare_resume_shows_group_help_with_answer_flags(home):
