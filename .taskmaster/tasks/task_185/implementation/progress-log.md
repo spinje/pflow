@@ -1358,3 +1358,19 @@ the sweep runs on both paths.
   Recipe (a): `cd /Users/andfal/projects/pflow-worktrees/feat-task-185-run-lookup && ls ~/.pflow/debug | wc -l && time uv run
   pflow scratchpads/task-185/real/p5ok.pflow.md && ls ~/.pflow/debug | wc -l && time uv run pflow
   scratchpads/task-185/real/p5ok.pflow.md --only one --dry-run`.
+
+## [2026-10-13 14:10] task-orchestrator (Opus) — P5 real directory: ruling + first real sweep verified
+- [RULING] the user authorised the real sweep (option a); the main orchestrator ran the recipe from the worktree @ `ab2998c2`.
+  Its measured output: before 31,396 files; the first run (`p5ok`, 0.026 s of work) took 2.993 s wall incl. the sweep
+  (0.37 user / 0.61 sys); after 23,182 files (8,214 removed); `p5ok --only one --dry-run` 0.310 s, planned
+  "0 cached · 1 would execute", no Snapshot error.
+- Verified (read-only, names only, `trace_dir.list_traces(include_legacy=True)` + the backup tar's name list):
+  every tar entry now missing (8,215 trace files) was older than 14 days by its name's timestamp — 0 young files
+  removed; 0 aged files remain (oldest remaining legacy 2026-09-29 17:01 vs cutoff 14:42); 0 orphan markers; the one
+  unrecognised name (`.DS_Store`) untouched. Current-grammar traces at sweep time were all young (2), so rules 1–5 had
+  nothing aged to judge on the real dir — their evidence is the synthetic bench + the falsifier's real-run fixture.
+  Pre-185 `resume list` (legacy-reading) before vs after: 26 → 25 pending pauses; the one removed is `561cf3d3…`
+  (`escalate-demo`, paused 92 days ago, an old-grammar trace) — removed by the ruled clean cutover (old-grammar traces
+  are never protected); restorable from the backup tar. Nothing protected by the five rules is missing.
+- Verified on HEAD (main `18036088` merged): `make check` green; `make test-all-local` 12,137 passed, 2 skipped; Task-159 `verify.sh` 88 passed, 0 drifted.
+- Next: commit, `create-pr`, #860 comment.

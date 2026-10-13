@@ -102,8 +102,7 @@ Built as the plan says, with these divergences (each is reasoned in the log):
 - Duplicate JSON keys fail the load (`object_pairs_hook`).
 - The permission and failed-load warnings print once per file per process (`_WARNED` + lock).
 
-**Not built: the first real-directory sweep (P5).** The harness's permission classifier refused it. Real-directory
-lookups were measured (below); the sweep's evidence is the 30k synthetic bench. See the progress log, 13:30.
+**P5 on the owner's real directory (user-authorised):** the first sweep took 2.99 s wall, 31,396 → 23,182 files. Every removed file was older than 14 days by its name (checked against the backup tar's name list). One old-grammar pending pause (92 days, `escalate-demo`) went with them, as the clean cutover rules. No current-grammar trace was old enough to exercise rules 1–5 on real data; their evidence is synthetic plus the falsifier.
 
 ## Patterns & Anti-Patterns
 - **Pattern — the listing is the index.** Answer with names first, then open only the answer, and pin it on the PUBLIC
@@ -195,6 +194,7 @@ lookups were measured (below); the sweep's evidence is the 30k synthetic bench. 
 | owner's real dir, 31,396 files: `resume list` | 16.8 s (spec baseline 24.8 s) | 0.28 s |
 | real dir: `resume <uuid>` (by-id miss) | 3.9–7.3 s | 0.26 s |
 | real dir: `report` | 0.38 s | 0.28 s (startup floor 0.20 s) |
+| real dir: first sweep (one real run) | — | 2.99 s wall, 31,396 → 23,182 files; `--only --dry-run` after: 0.31 s |
 | synthetic 30k (half old-grammar): every lookup incl. `--only`, `/api/gate` | — | 0.12–0.47 s |
 | first sweep on 30k | — | 2.1–3.6 s (30,000 → ~3.8k–4.5k files), 0 protected missing |
 | second sweep | — | 0.27 s; opens flat as history doubles |
