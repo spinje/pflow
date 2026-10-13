@@ -119,7 +119,8 @@ def build_run_outcome(
     if trace is not None and trace.trace_path is not None:
         document["execution_id"] = trace.execution_id
         document["trace_path"] = str(trace.trace_path)
-    outputs = _outputs(result, status, workflow_ir, output_key)
+    # Again after collection: an output is JSON-decoded there, which can restore a secret the store held encoded.
+    outputs = scrub_secret_values(_outputs(result, status, workflow_ir, output_key), secrets)
     if outputs is not None:
         document["result"] = outputs
     if printed_errors:

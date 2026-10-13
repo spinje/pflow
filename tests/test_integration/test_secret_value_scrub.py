@@ -18,6 +18,7 @@ from click.testing import CliRunner, Result
 from pflow.cli.main import main
 from pflow.core.markdown_parser import parse_markdown
 from pflow.core.settings import SettingsManager
+from pflow.core.trace_io import load_trace_file
 from pflow.execution.formatters.run_outcome import build_run_outcome
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
@@ -432,6 +433,46 @@ echo "sent $RAW"
 """
 
 
+JSON_ENCODED = """\
+# Encoded
+
+Print the password inside JSON, where its quote is escaped.
+
+## Inputs
+
+### api_password
+
+The password.
+
+- type: string
+
+## Steps
+
+### show
+
+Print it as JSON.
+
+- type: code
+- inputs: { pw: "${api_password}" }
+
+```python code
+import json
+
+pw: str
+
+result: str = json.dumps({"value": pw})
+```
+
+## Outputs
+
+### out
+
+The JSON.
+
+- source: ${show.result}
+"""
+
+
 class TestWhereTheSetIsBuiltAndApplied:
     def test_a_secret_cut_by_truncation_never_leaves_a_fragment(self, tmp_path: Path) -> None:
         """The step table caps a batch error at 200 chars — the secret straddles the cut. The data is
@@ -500,3 +541,18 @@ class TestWhereTheSetIsBuiltAndApplied:
         gate = json.loads(result.stdout)["gate"]
         assert gate["node_id"] == "gated-send"
         assert gate["preview"]["env"]["RAW"] == "prefix <REDACTED> suffix"
+
+    def test_an_output_decoded_from_json_is_scrubbed(self, tmp_path: Path) -> None:
+        """The store holds the password JSON-encoded (``pa\\"ss``), which an exact match misses; collecting
+        the output decodes it, so the collected outputs are scrubbed again."""
+        password = 'pa"ss-word-99'  # noqa: S105 - scrub sentinel
+
+        result = _cli("--output-format", "json", str(_write(tmp_path, JSON_ENCODED)), f"api_password={password}")
+
+        document = json.loads(result.stdout)
+        assert document["result"]["out"] == {"value": "<REDACTED>"}
+        # The trace keeps the step's raw value (resume restores from it): the same JSON text, unscrubbed.
+        step = next(
+            event for event in load_trace_file(Path(document["trace_path"]))["nodes"] if event["node_id"] == "show"
+        )
+        assert step["node_output"]["result"] == json.dumps({"value": password})
