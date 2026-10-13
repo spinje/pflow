@@ -18,10 +18,13 @@ from typing import Any
 import pytest
 
 from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.diagnostic_render import head_tail_preview
 from pflow.core.metrics import MetricsCollector
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.formatters.batch_errors import _truncate_error_message, format_batch_errors_section
 from pflow.execution.formatters.run_outcome import (
+    DOCUMENT_EXCERPT_HEAD_CHARS,
+    DOCUMENT_EXCERPT_TAIL_CHARS,
     EXIT_CODES,
     EXIT_REJECTED,
     RunOutcome,
@@ -627,6 +630,55 @@ class TestPrintedDiagnosticsAreRedacted:
         assert [error["message"] for error in document["errors"]] == ["Error 1", "Error 2", "Error 3"]
         assert [error["context"]["raw_response"]["secret"] for error in document["errors"]] == ["<REDACTED>"] * 3
         assert document["error"] == "Workflow execution failed (3 errors)"
+
+
+# --- The document's excerpt of raw captures (#843) ------------------------------------------------
+
+HEAD, TAIL = DOCUMENT_EXCERPT_HEAD_CHARS, DOCUMENT_EXCERPT_TAIL_CHARS
+
+
+class TestTheDocumentExcerptsLongStrings:
+    """A step's output, a response body, a tool error: the document carries its head and tail, never the
+    whole — and the text channels, which preview from the whole value, are unchanged."""
+
+    def test_a_long_context_value_is_cut_at_any_depth_and_the_diagnostic_keeps_it_whole(self) -> None:
+        stderr = "H" * HEAD + "m" * 5_000 + "T" * TAIL
+        body = "<html>" + "b" * 20_000
+        shell = _error("Command failed", node_id="build", shell_command="make", shell_stderr=stderr, shell_stdout="ok")
+        http = _error("HTTP 502", node_id="fetch", raw_response={"pages": [body]}, mcp_error=body)
+
+        outcome = _outcome(_failed(shell, http), {})
+
+        shell_context, http_context = (error["context"] for error in outcome.document["errors"])
+        assert shell_context["shell_stderr"] == f"{'H' * HEAD} … [5,000 chars omitted] … {'T' * TAIL}"
+        assert shell_context["shell_stdout"] == "ok"
+        assert http_context["raw_response"] == {"pages": [head_tail_preview(body, HEAD, TAIL)]}  # the shape stays
+        assert http_context["mcp_error"] == head_tail_preview(body, HEAD, TAIL)
+        assert outcome.document["diagnostics"] == outcome.document["errors"]
+        assert [error.context for error in outcome.errors] == [shell.context, http.context]
+        assert "Stderr: " + "H" * 100 + " … [9,600 chars omitted] … " in "\n".join(errors_block(outcome.errors, []))
+
+    def test_a_gate_request_is_never_cut(self) -> None:
+        """The approver consents to the whole value (#746): a refused gate's request prints whole."""
+        command = "echo " + "x" * 10_000
+        gate = _error("Gate needs a human", node_id="deploy", category="gate", gate={"preview": {"command": command}})
+
+        document = _outcome(_failed(gate), {}).document
+
+        assert document["errors"][0]["context"]["gate"] == {"preview": {"command": command}}
+
+    def test_a_step_stderr_is_cut_in_the_document_and_previewed_whole_in_text(self) -> None:
+        ir = {"nodes": [{"id": "noisy", "type": "shell", "params": {"command": "printf '%012000d' 0 >&2"}}]}
+
+        outcome = _outcome(_run(ir), ir)
+
+        assert outcome.document["execution"]["steps"][0]["stderr"] == (
+            f"{'0' * HEAD} … [7,000 chars omitted] … {'0' * TAIL}"
+        )
+        assert outcome.steps[0]["stderr"] == "0" * 12_000
+        cli = render_cli_stderr(outcome, text_mode=True, print_flag=False, verbose=False)
+        assert "[11,600 chars omitted]" in "\n".join(cli)
+        assert "[11,600 chars omitted]" in render_mcp_text(outcome)
 
 
 @pytest.mark.trace_files
