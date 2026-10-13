@@ -1004,15 +1004,95 @@ def test_denying_a_step_that_reads_an_unrestored_step_refuses_and_force_denies(h
     wf.write_text(text, encoding="utf-8")
     refused = _runner().invoke(cli, ["resume", token, "--approve", "no"])
     assert refused.exit_code == 2, refused.stdout + refused.stderr
-    assert "which did not run before the pause" in refused.stdout + refused.stderr
+    assert "which has no saved output before the pause" in refused.stdout + refused.stderr
     assert len(list((home / ".pflow" / "debug").glob("workflow-trace-*.json"))) == 1  # token kept
 
-    # The author's real escape: the reference is guarded, so the denial can land.
+    # A fallback to a literal cannot fail, but the check reads references as written: it still
+    # refuses, and --force is the named escape.
     wf.write_text(wf.read_text(encoding="utf-8").replace(".stdout}", '.stdout ?? ""}'), encoding="utf-8")
+    still = _runner().invoke(cli, ["resume", token, "--approve", "no"])
+    assert still.exit_code == 2, still.stdout + still.stderr
     denied = _runner().invoke(cli, ["resume", token, "--approve", "no", "--force"])
     assert denied.exit_code == 3, denied.stdout + denied.stderr
     assert "Denied at gate 'gated'" in denied.stderr
     assert not marker.exists()
+
+
+_LOOP_DENY_WF = """# Gated Loop
+
+A gated loop step; each approved iteration appends a line.
+
+## Steps
+
+### gated
+
+Append one line per iteration.
+
+- type: code
+- approval: required
+- inputs:
+    iteration: ${{__iteration__}}
+- loop:
+    while: ${{gated.result}}
+    max_iterations: 3
+
+```python code
+iteration: int
+with open({marker!r}, "a", encoding="utf-8") as handle:
+    handle.write(f"effect {{iteration}}\\n")
+result: bool = iteration < 3
+```
+"""
+
+_READS_ITSELF = ("    iteration: ${__iteration__}\n", "    iteration: ${__iteration__}\n    prev: ${gated.result}\n")
+
+
+@pytest.mark.parametrize(("approved_first", "refuses"), [(0, True), (1, False)], ids=["iteration-1", "iteration-2"])
+def test_denying_a_loop_step_that_reads_itself_refuses_only_before_its_first_output(
+    home, tmp_path, approved_first, refuses
+):
+    """A loop step's own output exists only past its first iteration: paused at iteration 1, an edit
+    reading `${gated.result}` would fail before the gate; at iteration 2 the seeded iteration 1
+    supplies it. Its `loop.while` self-reference runs after the step and never counts."""
+    marker = tmp_path / "effects.txt"
+    wf = tmp_path / "loop_deny.pflow.md"
+    wf.write_text(_LOOP_DENY_WF.format(marker=marker.as_posix()), encoding="utf-8")
+    result = _runner().invoke(cli, [str(wf)])
+    for _ in range(approved_first):
+        token = re.search(r"Resume token: (\S+)", result.stdout).group(1)  # type: ignore[union-attr]
+        result = _runner().invoke(cli, ["resume", token, "--approve", "yes"])
+    assert result.exit_code == 4, result.stdout + result.stderr
+    token = re.search(r"Resume token: (\S+)", result.stdout).group(1)  # type: ignore[union-attr]
+    effects = marker.read_text(encoding="utf-8") if marker.exists() else ""
+
+    text = (
+        wf
+        .read_text(encoding="utf-8")
+        .replace(*_READS_ITSELF)
+        .replace("iteration: int\n", "iteration: int\nprev: bool\n")
+    )
+    wf.write_text(text, encoding="utf-8")
+    denied = _runner().invoke(cli, ["resume", token, "--approve", "no"])
+    combined = denied.stdout + denied.stderr
+    if refuses:
+        assert denied.exit_code == 2, combined
+        assert "The paused step 'gated' now reads 'gated'" in combined
+    else:
+        assert denied.exit_code == 3, combined
+        assert "Denied at gate 'gated'" in combined
+    assert (marker.read_text(encoding="utf-8") if marker.exists() else "") == effects  # nothing ran
+
+
+def test_denying_an_unedited_loop_step_at_its_first_iteration_passes(home, tmp_path):
+    """The `loop.while: ${gated.result}` self-reference is evaluated after the step, so it never blocks a
+    denial at iteration 1."""
+    wf = tmp_path / "loop_deny.pflow.md"
+    wf.write_text(_LOOP_DENY_WF.format(marker=(tmp_path / "effects.txt").as_posix()), encoding="utf-8")
+    paused = _runner().invoke(cli, [str(wf)])
+    assert paused.exit_code == 4, paused.stderr
+    token = re.search(r"Resume token: (\S+)", paused.stdout).group(1)  # type: ignore[union-attr]
+    denied = _runner().invoke(cli, ["resume", token, "--approve", "no"])
+    assert denied.exit_code == 3, denied.stdout + denied.stderr
 
 
 def test_denying_a_cached_gated_step_never_continues_past_it(home, tmp_path):

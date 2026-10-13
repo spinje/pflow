@@ -203,47 +203,43 @@ def _check_denial_reaches_gate(resolved: ResolvedWorkflow, source: ResumeSource,
 
 
 def _check_denial_reads_restored(node: dict[str, Any], source: ResumeSource, step_ids: set[str]) -> None:
-    """Refuse when the paused step's templates read a step resume will not restore (unless --force)."""
-    from pflow.core.templates import parse
+    """Refuse when the paused step's templates read a step resume will not restore (unless --force).
+
+    Only what resolves before the gate counts: the step's params, and its carry on a carried
+    iteration — never its ``loop`` conditions, which run after it. The step itself has an output
+    only past its first iteration (the seed holds the previous one).
+    """
+    from pflow.core.workflow.template_surfaces import iter_node_surfaces
     from pflow.runtime.resume_source import restored_node_ids
 
     step = str(node.get("id"))
-    restored = set(restored_node_ids(source))
+    iteration = source.entry_iteration or 1
+    available = {*restored_node_ids(source), *([step] if iteration > 1 else [])}
     unrestored = sorted({
         ref.root
-        for text in _strings_in({key: value for key, value in node.items() if key != "purpose"})
-        if "${" in text
-        for ref in parse(text).references
-        if ref.root in step_ids and ref.root != step and ref.root not in restored
+        for surface in iter_node_surfaces(node)
+        if surface.kind == "param" or (surface.kind == "carry" and iteration > 1)
+        for _, template in surface.templates()
+        for ref in template.references
+        if ref.root in step_ids and ref.root not in available
     })
     if not unrestored:
         return
     names = ", ".join(f"'{name}'" for name in unrestored)
     raise ResumeNotResumableError(
-        f"The paused step '{step}' now reads {names}, which did not run before the pause, so resume has no "
-        f"saved output for it — '{step}' would fail resolving its templates before its approval gate could "
-        "record the denial.",
+        f"The paused step '{step}' now reads {names}, which has no saved output before the pause, so "
+        f"'{step}' would fail resolving its templates before its approval gate could record the denial.",
         execution_id=source.execution_id,
         trace_path=str(source.path),
         node_id=step,
         suggestions=[
             f"Point '{step}' back at steps that ran before the pause, deny, then make the edit.",
-            "If that reference cannot fail (a `${a ?? b}` fallback, or permissive template mode), pass --force "
-            "to deny anyway.",
+            "If the reference resolves without that output — a fallback to a literal, like "
+            '`${extra.stdout ?? ""}`, or permissive template mode — pass --force to deny anyway. '
+            "A fallback to another missing output still fails.",
             "Or leave the paused run unanswered — nothing runs until it is resumed.",
         ],
     )
-
-
-def _strings_in(value: Any) -> list[str]:
-    """Every string in ``value``, recursing into dict values and lists."""
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        return [text for item in value.values() for text in _strings_in(item)]
-    if isinstance(value, list):
-        return [text for item in value for text in _strings_in(item)]
-    return []
 
 
 def _check_workflow_identity(resolved: ResolvedWorkflow, source: ResumeSource, *, force: bool) -> None:

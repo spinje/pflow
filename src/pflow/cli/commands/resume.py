@@ -257,8 +257,8 @@ def resume() -> None:
     is_flag=True,
     help=(
         "Consent to re-running steps: bypass the side-effect confirmation and the edited-workflow check. "
-        "A denial is never edit-checked; --force only overrides its refusal of a reference to a step that "
-        "never ran (a `??` fallback cannot fail)."
+        "A denial is never edit-checked; --force only overrides its refusal of a reference to a step with no "
+        'saved output, for a reference that cannot fail (a fallback to a literal, like `${x.y ?? ""}`).'
     ),
 )
 @click.option(
