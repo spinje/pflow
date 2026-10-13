@@ -61,3 +61,18 @@ Home: `ORCHESTRATION.md` "Model routing", "Lanes"; `.claude/agents/task-planner.
 CLAUDE.md / agent def that owns the rule — never in a patterns / pitfalls / decisions store.
 
 Home: root `CLAUDE.md` "Code Quality" (the grep-before-restating rule)
+
+### 32 — Review rounds: astra by default, verified Criticals only, lean per-lens rounds, at most three
+
+User, verbatim: *"we shouldnt hold out on compute when something needs it, a sign we need more reviews is that we are still
+finding criticals"* · *"a critical reported by subagents is not the same as a verified critical, and in most cases it will be
+clear when diminishing returns are kicking in, very often by round 2 or at most round 3"* · *"we should prefer astra for
+reviews, unless there is a very good reason to do claude"* · *"the second family is astra since claude is building, so using
+claude should be avoided if the stakes are not unusually high and we for example has already ran 2 astra passes"*. So: review
+lenses run on astra; a Claude lens only when stakes are unusually high and astra has hit diminishing returns (reason logged).
+A round with a VERIFIED Critical is followed by another; later rounds rerun only lenses still finding verified Criticals or
+important warnings, or whose surface the fixes materially changed — clean lenses retire, an unrun lens joins when a fix opens
+its dimension. The falsifier counts as a round; new surface does not reset the count; a verified Critical at round 3 ⇒ hand back.
+
+Home: `ORCHESTRATION.md` "Review policy" + `lane-implementer.md` + `task-orchestrator.md` + the deep-review skill (fold PROPOSED
+at s16 close — until it lands, every packet states this row)

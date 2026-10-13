@@ -78,7 +78,8 @@ proof.
 - `tests-windows` wall-clock flakes — distinct timing failures each green on one re-run: `test_stdin_no_hang_integration`
   and `test_cache.py::test_concurrent_access` (s12), `tests-windows-mcp-smoke` 60 s request timeout on main `f0b39c5c` and
   PR #764 (s13; #685 family); recognition: the third distinct one has now happened → file one de-flake issue for timing
-  assertions on shared runners | s12, s13 | n=2 → PROPOSED (file the issue next session; not a rule)
+  assertions on shared runners | s12, s13, s16 | n=3 → PROPOSED (file the de-flake issue; s16: `test_cache.py::test_concurrent_access`
+  again on PR #863)
 - I tore down a worktree whose gitignored scratch held the only evidence a producer cited (181's `*.corrupt.json`
   before-images) — recognition: before `./scripts/worktree rm`, copy any scratch path a hand-back cites into the session
   scratchpad | s13 | n=1
@@ -91,11 +92,20 @@ proof.
 - the user waived the lane-B `runtime/engine/` exclusion for exactly one line per launch (#799 call site s14; #755 constant s15)
   — recognition: a standing rule "a one-line engine constant/call-site may be waived per launch by the user; logic never"
   | s14, s15 | n=2 → PROPOSED (a DECISIONS row; Home ORCHESTRATION "Lanes")
-- an isolated `HOME` does not isolate the environment: the dogfood agent's `pflow find` silently used the calling shell's exported
-  provider key (one paid call) — APPLIED at s15 close as a sentence in the deep-review dogfood section | s15 | n=1 → applied (ratify)
 - a lane's hand-back message never reached the orchestrator; only a later follow-up notification referencing "the three rulings" did
   (#811) — kin of s11's "notification before the message"; recognition: when a notification references questions not seen, ask the
   agent to restate them (done, worked) | s11, s15 | n=2 → PROPOSED (wait n=3 recommended — runner behaviour, cheap workaround)
 - agents' leftovers in places the orchestrator owns: an abandoned falsifier probe shell (hung `ugrep` on stdin) blocked
   `./scripts/worktree rm`; 15 probe `.pflow.md` files written at the MAIN checkout root — recognition: packets say "kill your probe
   processes; never write outside your worktree / scratch" (the first half went into s15's last packets) | s15 | n=1
+- `( … ) &` inside a `run_in_background` Bash: the child dies with the tool shell and nothing runs (three astra offloads, s16) —
+  recognition: each offload is its own background Bash with the work in the foreground | s16 | n=1
+- a pointer/mechanism stated to the user from a glance at one artifact, refuted by the verification it then commissioned ("the trace
+  filename already carries the run id") — kin of the promoted "mechanism is a hypothesis" rule, but in user-facing recommendations,
+  not issue bodies | s16 | n=1
+- a lane's local gate ran `make test` (no e2e) while CI runs e2e; a merged sibling's new e2e test turned the PR red (#801) —
+  recognition: packets and the lane def name `make test-all-local` | s16 | n=1 → applied in later s16 packets (fold proposed)
+- review rounds overran the ≤3 bound because the falsifier was not counted and a round on new surface was treated as round 1
+  (#858 ran R1–R5 + falsifier; #846 R1–R5) — DECISIONS #32 now states both | s16 | n=1
+- a subagent's action blocked by the permission classifier (a lane's PR merge; a real-directory sweep) was handed up for the parent
+  to perform — never performed by the parent without the user's word (laundering) | s16 | n=1
