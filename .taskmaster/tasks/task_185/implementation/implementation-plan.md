@@ -574,9 +574,7 @@ orchestrator starts at P1. No handback is owed for CP-1.
 - **From this phase on, every `pflow` invocation from this worktree — tests excepted — exports
   `PFLOW_TRACE_RETENTION_DAYS=0`** (the mid-task review fan-out and the completion gate run
   `uv run pflow workflows/review/…` with the REAL `HOME`; that run finalizes and would perform the first
-  real sweep before P5's backup gate). The backup gate (§P5) is checked at the START of P3, and the tar
-  is moved off `/private/tmp` (cleared on reboot) by the main orchestrator before P3 begins — the task
-  orchestrator asks for that in its first handback if it has not happened.
+  real sweep before P5's backup gate). The backup gate (§P5, durable tar path) is checked at the START of P3.
 - Files: NEW `runtime/trace_retention.py` (§1.5); `core/settings.py` (field; `load_error`; `save()`
   refusal); `runtime/workflow_trace.py::finalize` (the one call site); `tests/conftest.py` (env = 0 in
   both fixtures); NEW `tests/test_runtime/test_trace_retention.py`; `tests/test_core/test_settings.py`;
@@ -753,11 +751,10 @@ orchestrator starts at P1. No handback is owed for CP-1.
   here):** before the FIRST write against the real `~/.pflow/debug` without `PFLOW_TRACE_RETENTION_DAYS=0`
   (any `uv run pflow <workflow>` that finalizes a trace sweeps):
   ```
-  tar -tf /private/tmp/claude-501/-Users-andfal-projects-pflow/4d8094e3-742b-4ea4-893b-74df67a912e3/scratchpad/pflow-debug-backup-2026-10-12.tar | wc -l   # must be ≥ 29000
+  tar -tf /Users/andfal/projects/pflow/scratchpads/session-16/backup/pflow-debug-backup-2026-10-12.tar | wc -l   # must be ≥ 29000
   ```
   The file must exist and the count must be ≥ 29,000, else **HOLD** (hand back; do not run). Record the
-  count in the progress log. The tar lives under `/private/tmp`, which macOS clears on reboot — the main
-  orchestrator is asked to move it somewhere durable before P3 (handback item). Then: one real run (the first sweep, timed — it unlinks every legacy file
+  count in the progress log. Then: one real run (the first sweep, timed — it unlinks every legacy file
   older than 14 days on names alone), followed by `resume list`, `resume <id> --dry-run`, `report`,
   `<wf> --only <step> --dry-run`, each under `/usr/bin/time`. Expected on the owner's machine: `resume
   list` → "No paused runs." (pre-upgrade pauses are invisible by ruling), `report` → the run just made.

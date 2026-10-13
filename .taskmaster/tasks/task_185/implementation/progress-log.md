@@ -213,3 +213,23 @@ Entry format: ORCHESTRATION.md → "Progress-log entry format".
   ADR rather than engineered around for rule 4.
 - Stop: round 3 yielded verified Criticals only in the ADDED test-fidelity lens, all folded; per the
   user's rule no fourth round — handed back with that tally.
+
+## [2026-10-13 01:20] task-orchestrator (Opus) — bootstrap
+- Did: merged `origin/main` `c357671b` (#833 + #801) into the branch → `9ae17476` (clean, no conflicts); `make install`.
+  Read packet, spec, plan, `show-before-code.md` §9–§11, this log, ADR-0018, ORCHESTRATION.md, Task 173's review.
+- Changed: plan §P3/§P5 — the backup tar's path is the durable one; the "move it off /private/tmp" handback item is
+  satisfied and removed.
+- Verified: P5 backup gate (checked early; re-checked at P3 start and P5): `tar -tf /Users/andfal/projects/pflow/
+  scratchpads/session-16/backup/pflow-debug-backup-2026-10-12.tar | wc -l` = 30,182 ≥ 29,000 (2.7 GB). #801's
+  `workflow_trace.py` edit is inside `_aggregates` (trailer `warnings` scrub) — the plan's `finalize` calls `_aggregates()`
+  once and does not touch it; #833/#801's `core/settings.py` edits are the `list-env` mask only (`_mask_value`) — disjoint
+  from the plan's `trace_retention_days` / `load_error` / `save()` refusal. | Assumed: the remaining dependency reviews
+  (133/164/171/172/180/184) are folded in the plan's §0 — the implementer reads 171/173/184 at P1.
+- Rulings carried (main orchestrator, 2026-10-13): CP-1 Q1–Q6 as recorded; the four launch-time items ACCEPTED —
+  (1) timestamp last + name always written; (2) rules 1–3 only while the workflow file exists, `resume list` hides AND
+  counts such pauses (the count line is mandatory); (3) the cross-version double-answer is documented, not coded;
+  (4) the legacy count in miss messages stays. Escalate (never decide): any engine line, any trace-format change,
+  anything contradicting ADR-0018 or the rulings. #860 (`/api/gate` serves secrets raw) is NOT built here — leave the
+  gate handler so the scrub is one call; comment the exact site on #860 at PR time.
+- Deviations/surprises: none vs plan yet.
+- Next: launch one Opus `task-phase-implementer` (effort high) on P1+P2 bundled.
