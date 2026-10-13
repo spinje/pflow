@@ -237,7 +237,9 @@ def test_file_path_in_a_content_param_loads_the_file_as_in_a_workflow(
 ) -> None:
     """Probe runs the node the way `pflow run` does: a path in a file-resolvable param (`stdin`,
     `command`, `prompt`, …) is replaced by the file's content."""
-    result = runner.invoke(probe_cmd, ["shell", "command=cat", f"stdin={text_file}", "--output-format", "json"])
+    # A file reference is written with `/` (the workflow form), on Windows too.
+    stdin = f"stdin={text_file.as_posix()}"
+    result = runner.invoke(probe_cmd, ["shell", "command=cat", stdin, "--output-format", "json"])
 
     assert result.exit_code == 0, result.stdout
     assert json.loads(result.stdout)["outputs"]["stdout"] == "test content"
