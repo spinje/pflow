@@ -8,6 +8,7 @@ running: a sub-workflow, a batch of sub-workflows, a resume, and `--only`.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -131,6 +132,32 @@ The child's marker.
 - source: ${run-child.msg}
 """
 
+_UNUSED_INPUT = """# Unused
+
+Declares an input no step reads.
+
+## Inputs
+
+### topic
+
+The topic.
+
+- type: string
+- required: true
+
+## Steps
+
+### say
+
+Say hi.
+
+- type: shell
+
+```shell command
+echo hi
+```
+"""
+
 _RESUME_RE = re.compile(r"pflow resume (\S+)")
 
 
@@ -189,6 +216,20 @@ class TestACallerCannotSupplyAReservedName:
         assert get_parameter_validation_error(name) in result.stdout + result.stderr
         assert "Workflow is valid" not in result.stdout
         assert "Unknown input" not in result.stdout + result.stderr
+
+    def test_validate_only_json_reports_the_name_error_alone(self, project: Path) -> None:
+        """The name rule refuses first, as the run does: the workflow's own error (an input it never
+        uses) is not reported beside it, and the result is the validation document."""
+        workflow = project / "a" / "unused.pflow.md"
+        workflow.write_text(_UNUSED_INPUT, encoding="utf-8")
+
+        result = _invoke("--validate-only", "--output-format", "json", workflow, "_pflow_x=1")
+        document = json.loads(result.stdout)
+
+        assert result.exit_code == 2
+        assert document["success"] is False
+        assert document["validated_only"] is True
+        assert [error["message"] for error in document["errors"]] == [get_parameter_validation_error("_pflow_x")]
 
     def test_resume_refuses_a_reserved_override(self, project: Path) -> None:
         """Resume overrides reach the runner's name check like every other way in."""
