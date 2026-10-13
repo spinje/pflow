@@ -137,11 +137,13 @@ def _load_source_and_workflow(
     if _UUID_RE.match(target):
         try:
             source = load_resume_source(execution_id=target, gate_answer=gate_answer)
-        except ResumeSourceMissingError:
+        except ResumeSourceMissingError as miss:
             # No run with that id — maybe it's a workflow whose NAME is uuid-shaped.
             # Fall through to the workflow arm; if THAT also misses, re-raise a
             # combined missing error (never leak resolve_workflow's "did you mean"
             # suggestions, which point at the wrong namespace for a mistyped run id).
+            # The loader's first suggestion is its generic remedy (replaced here); the
+            # rest name why the lookup missed (aged out, pre-185 traces) and are kept.
             try:
                 resolved = resolve_workflow(target)
             except WorkflowNotFoundError:
@@ -150,7 +152,8 @@ def _load_source_and_workflow(
                     execution_id=target,
                     suggestions=[
                         "Check the execution id from the failed run's output, "
-                        "or pass the workflow name/path to resume its newest failed run."
+                        "or pass the workflow name/path to resume its newest failed run.",
+                        *miss.suggestions[1:],
                     ],
                 ) from None
             return load_resume_source(workflow_path=workflow_path_id(resolved), gate_answer=gate_answer), resolved

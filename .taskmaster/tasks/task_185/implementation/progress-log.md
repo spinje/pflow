@@ -233,3 +233,144 @@ Entry format: ORCHESTRATION.md → "Progress-log entry format".
   gate handler so the scrub is one call; comment the exact site on #860 at PR time.
 - Deviations/surprises: none vs plan yet.
 - Next: launch one Opus `task-phase-implementer` (effort high) on P1+P2 bundled.
+
+## [2026-10-13 01:30] task-orchestrator (Opus) — PARKED on the P1+P2 implementer
+- State: one Opus `task-phase-implementer` (effort high) launched on P1+P2 bundled at `72b0cc91`; it does not commit.
+- Resume point: on its handback — read its P1/P2 log entries; confirm `make check` + `make test` + `pytest -m trace_files`
+  green and `git diff --stat src/pflow/runtime/engine web/` empty; resume it with "fully happy?" then test-reflect
+  (directed — read-set/order pins are easy to cheat); commit P1+P2; commission the plan's P1+P2 mid-task review
+  (`review-silent-failures`, `review-feature-interactions`, `review-test-fidelity` via the codex fan-out, run by the
+  implementer, waited in-turn); then P3 (backup gate re-check first; `PFLOW_TRACE_RETENTION_DAYS=0` from P3 on).
+
+## [2026-10-13 02:10] task-phase-implementer (Opus) — P1 done (trace_dir module, writer, runtime readers)
+- Did: built `core/trace_dir.py` (grammar composer/parser, one `list_traces` scandir, `find_trace`, strict+lenient
+  meta/trailer readers, `is_trace_locked(strict=)`, `workflow_file_state`, `legacy_note`/`AGED_OUT_HINT`, `recency_key`);
+  writer names traces through it + validates forced ids + writes the `.paused` marker before the trailer; every runtime/
+  CLI reader moved onto one listing; legacy-count clause on every miss surface; Task-159 fixtures rebuilt.
+- Changed: NEW `src/pflow/core/trace_dir.py`; `runtime/workflow_trace.py` (`format_trace_filename`/`_trace_recency_key`
+  deleted; `_iter_workflow_traces(entries=)`; `load_full_run_events` tail shortlist; `load_snapshot_or_raise` miss causes;
+  `__init__` id validation; `_open_stream`; `finalize` marker; 2 stale MCP comments); `runtime/resume_source.py` (by-id via
+  `find_trace`; `_find_consuming_attempt(W, X, *, entries, count_live)` own iterator, 3-outcome reads; `load_resume_source`
+  one listing + post-check `exists()`; `is_pause_record`/`answerable_pause`/`PausedRunListing`; twins deleted);
+  `core/exceptions.py` (`ResumeSourceUnreadableError`; `OnlySnapshotMissingError(causes=)`); `execution/resume_preflight.py`
+  (re-raise keeps the loader's causes); `cli/commands/report.py`, `cli/commands/resume.py` (list: hidden/legacy lines,
+  "(workflow file unreadable)" cell); `core/prompt_cache_analysis/trace_loading.py` + `rendering/traces_list.py`;
+  `core/CLAUDE.md`, `runtime/CLAUDE.md` owner rows; `tests/test_import_hygiene.py` docstrings+message; Task-159
+  `03/06,07,08,09` command.sh (composed names; 06 real hash) + NEW twin `03/06-autoload-fires-without-the-flag`,
+  `15/03` UUID mask; regenerated expected for 07/08/09/15-03/06-twin.
+- Fixture helpers touched: NEW `tests/shared/trace_jsonl.py::{fixture_started, fixture_execution_id, trace_path_for,
+  write_trace_file}` (ids DESCEND with time; refuses a non-current-grammar name); `test_resume_source._write_trace`/
+  `_write_incomplete_trace` (+ marker on paused); `test_only_snapshot._write_trace`/`_write_interned_trace`;
+  `test_resume_cli._write_incomplete_trace_for`; `test_resume_list_cli._write_paused_trace` (now creates its workflow file
+  under HOME + marker); `test_cache_analysis_analyze._write_trace` (+2 inline sites); `test_cache_analysis_trace_listing.
+  _trace_name`; `test_cli` report fixtures; `test_workflow_trace` :376/:500 flipped (id in name, reversed deliberately);
+  `test_emit_time_trace` (`_collect_candidate_traces(list_traces(...))`).
+- New tests: `tests/test_core/test_trace_dir.py` (43), `tests/test_integration/test_run_lookup_reads.py` (6 read-set pins),
+  `tests/test_integration/test_pre_185_traces_are_not_searched.py` (presence over renamed copies + paired absence, 6 CLI
+  surfaces + JSON stderr), loader tests in `test_resume_source.py` (+8), `test_run_outcome_cli.py::TestTheTraceNameAndThe
+  PausedMarker` (4), forced-id test, untagged-`--only` snapshot test, report start-time-vs-mtime pin.
+- Read-set pins (17 current + 2 legacy names; every pin also asserts `os.scandir` == 1): resume by id opens 2 (target +
+  its dead attempt); resume by workflow 2; `resume list` 3 (2 marked + 1 attempt); `--only` snapshot 4 tail reads, ONE full
+  load; `report` 3 (2 unfinished tail-only + the chosen). Mutation-verified (each fails under its mutation): consumption
+  prefix filter dropped (3 pins fail), marker filter dropped, snapshot hash filter dropped, tail shortlist dropped,
+  report tail pre-check dropped, by-id scan, iterator hash filter dropped. Order pins: whole-filename sort fails
+  `test_only_snapshot:438`, `test_resume_source:128`, discover ×2, trace_dir listing, report pin; mtime sort fails the
+  report and discover start-time pins. Loader pins mutation-verified: prefix-collision confirm, vanished attempt,
+  unreadable attempt, `--only` meta guard by id, hidden count.
+- Verified: `make check` green; `make test` 11889 passed (baseline 11817 passed, 0 failed → +72, 0 failed);
+  `pytest -m trace_files` 624 passed (baseline 615); full Task-159 `verify.sh` 88/88 PASS (drift only in printed
+  filenames, regenerated: 07/08/09 disclosure notes, 15/03 trace lines); `git diff --stat src/pflow/runtime/engine web/
+  src/pflow/runtime/workflow_executor.py` empty; trace format/version untouched. Real CLI (isolated HOME): paused run →
+  name `workflow-trace-8b631bbb-gate-demo.<uuid>-<ts>.json` + `.paused`; with 6,000 extra traces (3,000 legacy) `resume
+  list` 0.61 s wall (≈ python startup), `report` 0.64 s; miss messages printed on all six surfaces (transcript reproduced by
+  `scratchpads/task-185/show_miss.py`). | Assumed: Windows (no lock → `None`) untested here — `tests-windows` at P5.
+- Deviations/surprises:
+  1. `Unreadable` is `TraceUnreadableError(PflowError)` (CLAUDE.md: never vanilla exceptions); `TraceEntry` subclasses
+     `ParsedTraceName` and carries `unknown_tags` + `other_sidecars` (P3's "unknown facts keep" needs both from the one
+     scandir — built now so P3 adds no second listing).
+  2. `_find_consuming_attempt` dropped its `debug_dir` parameter (unused once it iterates `entries`); it raises
+     `ResumeSourceUnreadableError` for ANY non-FileNotFound `OSError` regardless of `count_live` — the sweep (P3) catches
+     it and protects the source (one flag for liveness only).
+  3. Miss clauses go in the refusal's SUGGESTIONS (aged-out hint + legacy note), not its message; the preflight re-raise
+     keeps `miss.suggestions[1:]` (index 0 is the loader's generic remedy — pinned by the real-CLI cutover test).
+  4. `--only` miss: `OnlySnapshotMissingError` gained `causes=` (appended to the default remedy) instead of reading its
+     private `_DEFAULT_SUGGESTION` — **P4 must NOT add the aged-out sentence to `_DEFAULT_SUGGESTION` (it would print
+     twice); the docstring edit only.**
+  5. `resume list`'s legacy line prints only when there are no rows (plan); the hidden-pause line always when > 0. A
+     consumed pause of a deleted workflow is NOT counted as hidden (it is not pending). The "(workflow file unreadable)"
+     note is computed by the renderer (`workflow_file_state` per row) so `PausedRun` and the JSON layout stay unchanged.
+  6. "Unrecognised dotted name `….x.y.z-{ts}`" from the plan's test list actually PARSES as current (`x` id, unknown tags
+     `y`,`z` — the ruled forward-compat rule). Tests use names the current arm truly rejects (a digit-first tag, an empty
+     segment, a short hash, a hash-less name, a sidecar).
+  7. The post-consumption `path.exists()` re-check is behaviourally redundant today (`_apply_gate_resolutions` always
+     re-reads the file and its `FileNotFoundError` gets the same refusal) — kept so the guarantee does not rest on that
+     incidental read; its test pins the behaviour, and survives deleting either mechanism alone.
+  8. `ResumeSourceUnreadableError` → `/api/resume` refusal `source_unreadable`; `web/src/api/client.ts` has no literal
+     union (the refusal machine falls through to the generic arm) — no `web/` edit needed.
+  9. A by-id CLI resume needs a uuid-shaped id (`_UUID_RE`); fixtures for CLI by-id paths use uuids.
+- Consolidation candidates (logged, not built): `_iter_raw_trace_lines` ↔ `run_node._iter_trace_lines` (4th twin, plan
+  §0); `report._trace_is_complete` full-load could become "trailer + version check" once P3's agreement test exists.
+- Self-checks: fully happy? — raised and fixed: private `_DEFAULT_SUGGESTION` access (→ `causes=`); `monkeypatch.undo()`
+  in two new tests also undid the conftest HOME isolation (made one assertion vacuous) → `monkeypatch.context()`; a report
+  pin whose ids sorted WITH time (would pass a whole-name sort) → ids now sort against time; snapshot pin M3 survived the
+  first fixture (no newer other-workflow trace) → fixture gained one, now fails. test-reflect: not run yet — awaiting the
+  orchestrator's directed pass.
+- Next: P2 entry below; then orchestrator's self-checks + mid-task review.
+
+## [2026-10-13 02:15] task-phase-implementer (Opus) — P2 done (UI consumers)
+- Did: `ui/run_tailer.py` lists through `trace_dir` (cache keyed `(dir, wf_hash|None)`, value an immutable tuple, order =
+  start time; reader twins `_read_meta`/`read_run_trailer`/`_scan_tail_for_terminal`/`is_trace_locked` deleted —
+  imported from `trace_dir` into its namespace); NEW `find_workflow_trace(workflow_key, run_id)` (one scoping rule with
+  `scan_traces`: md5(key) hash + `_same_path` meta guard) used by `RunTailer._resolve_pinned` and `run_node._resolve_trace`;
+  `server.gate` = one `list_traces` + `find_trace` (404 body carries the legacy clause; directory fault → 500 JSON);
+  `_RESUME_REFUSALS` += `source_unreadable`.
+- Changed: `ui/run_tailer.py`, `ui/run_node.py`, `ui/server.py`, `ui/CLAUDE.md`; tests `test_run_tailer.py` (`_tp`
+  composes names with ids; prefer-live tests give the FINISHED run the newer start; new start-time-vs-mtime discover pin;
+  rescandir pin on `run_tailer.list_traces` + tuple assert; junk-name test split into a composer-made unreadable file +
+  "outside the grammar is never listed/opened"; `a_path.name in opened`; pinned exact+scoped test; the two
+  `read_run_trailer` tests and the oversized `read_run_status` test MOVED to `test_trace_dir.py` against the strict/
+  lenient readers), `test_ui.py` (`_write_trace(started, …)` composes names), `test_ui_interaction_server.py` (gate helper
+  composes + marker; legacy 404 beside current 200; "500 other traces → opens exactly one"; corrupt-trailer gates assert
+  "not paused"), `test_run_node.py`.
+- #860 site: `src/pflow/ui/server.py::gate`, line 1582 — `trace = load_trace_file(entry.path)`; the scrub is ONE call
+  there (`trace = scrub_secret_values(trace, secret_values(trace.get("inputs") or {}))`) before `gate_request` is read.
+- Verified: gate read-set pin ("500 other traces → opens exactly one") mutation-verified: re-introducing the unscoped `scan_traces()` lookup in `gate` fails it; real surface on an isolated HOME with
+  6,002 traces (3,000 legacy): `/api/gate?run=` 57–76 ms (200), miss 66 ms with "3000 traces written by an earlier pflow
+  version are not searched.", `/api/runs?workflow=` 65 ms, bare `/api/runs` 562 ms cold / 84 ms warm; screenshot of the
+  pinned paused run (`/tmp/pflow-shots/gate-demo-f4e6ebe0-…-deploy-185-….png`): gate callout rendered with its content
+  (shell · deploy, command, Deny/Approve), no "Loading gate…"; server log clean; server killed. `git diff --stat web/` empty.
+- Deviations/surprises: the scoped-cache prune still uses the name prefix (`workflow-trace-{hash}-`) rather than an entry
+  set — exact for parsed names (the hash is the first field) and cheaper on the 4 Hz poll. `TraceCandidate.mtime` kept
+  (shape unchanged) but no longer orders anything. `_check_stopped` now sees a vanished followed file as `False` (gone →
+  no writer) → broadcasts `run-stopped` (before: `None` → silent); per plan's `is_trace_locked` contract.
+- Tooling postmortem (screenshot-pflow-web-ui): worked — `screenshot.pflow.md` with `run=<token>&node=deploy` captured
+  the gate panel first try. Friction: the skill assumes the REAL HOME's MCP registration; running it under an isolated
+  HOME (to keep traces out of `~/.pflow/debug`) needed `pflow mcp add` + `mcp sync` into that HOME (~20 s) — idea (S):
+  document an isolated-HOME recipe in SKILL.md. Near-miss: none. Observation (not this task): the RUN panel overlaps the
+  GATE panel's left edge at default framing (run id truncated "f4…") — pre-existing layout.
+- Self-checks: fully happy? — dropped an `__all__` I had added to `run_tailer` (it listed 3 names as the module's
+  public API); no other loose ends known. test-reflect: awaiting directed pass.
+- Next: orchestrator — "fully happy?" + test-reflect, commit P1+P2, then the mid-task review.
+
+## [2026-10-13 02:40] task-phase-implementer (Opus) — P1+P2 directed test-reflect
+- Did: applied `.claude/commands/test-reflect.md` to every P1/P2 test added or rewritten; mutations run for real and judged by
+  the counted `N failed`; every mutation restored by writing the saved original back.
+- Deleted (duplicates, nothing they alone could catch): `test_trace_dir::test_legacy_note_wording` (both wordings are
+  asserted on the real surfaces — gate 404, loader suggestions, the six-surface cutover test);
+  `::test_meta_readers_read_the_first_line` (every meta consumer test reads through it);
+  `::test_recency_key_ranks_by_start_time_not_by_name` (reverting `trace_loading` to a name sort fails 4 analyze-cache
+  tests and 1 listing test — the descending fixture ids make them discriminate).
+- Deepened: `test_run_tailer::test_pinned_resolve_is_exact_and_scoped_to_its_workflow` now also spies the meta reads.
+  Before, dropping the hash scope survived, because the `_same_path` meta guard still returned `None`; with the spy it
+  fails. `test_pre_185_traces_are_not_searched` presence phase now also finds the same data through the loader, by id
+  (the failed run) and by workflow (the paused run), before the rename to pre-185 names.
+- Added: `test_trace_dir::test_fixture_ids_sort_against_start_time`, which guards the shared helper's DESCENDING ids;
+  making the ids ascend fails it, and ascending ids would let every recency pin pass for free.
+- Re-confirmed by real mutation: oversized-trailer full re-read dropped → 2 failed (strict-reader pin and the
+  `resume list` surface pin); flock non-blocking `OSError` → `True` → 1 failed.
+- Kept as is, after audit: the read-set pins (set-equality assertions plus scandir count, each mutation-verified in the
+  P1 entry); the loader pins (each mutation-verified); the gate pins (legacy 404 beside a current-name 200; the
+  "opens exactly one" pin mutation-verified); the marker and tag CLI tests (exact exit, status, on-disk and every-surface
+  assertions); and every absence assertion, each of which has a presence twin in the same medium.
+- Verified: `make check` exit 0; `make test` 11887 passed (11889 − 3 deleted + 1 added), 0 failed.
+- Self-checks: test-reflect (directed) — 3 deleted, 2 deepened, 1 added; RESOLVED.

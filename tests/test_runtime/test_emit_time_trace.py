@@ -738,6 +738,7 @@ def test_crash_truncated_streamed_trace_is_rejected_as_truth_by_consumers(tmp_pa
 
     debug_dir = tmp_path / ".pflow" / "debug"
     from pflow.core.prompt_cache_analysis.trace_loading import _collect_candidate_traces
+    from pflow.core.trace_dir import list_traces
     from pflow.runtime.workflow_trace import _iter_workflow_traces, load_full_run_events
 
     # The shared iterator MUST still yield it — moving a final_status filter in here would break the
@@ -746,7 +747,7 @@ def test_crash_truncated_streamed_trace_is_rejected_as_truth_by_consumers(tmp_pa
     # --only: the incomplete trace is the only one → NO usable snapshot (never seeded as truth).
     assert load_full_run_events(wf_path, debug_dir=debug_dir) is None, "crash trace must not be a --only snapshot"
     # analyze-cache: incomplete is bucketed NON-reusable (failed), never 'successful'.
-    successful, failed = _collect_candidate_traces(debug_dir, wf_path)
+    successful, failed = _collect_candidate_traces(list_traces(debug_dir), wf_path)
     assert not any(p == path for p, _ in successful), "crash trace must NOT be a 'successful' cache source"
     assert any(p == path for p, _ in failed), "crash trace is bucketed non-reusable"
 

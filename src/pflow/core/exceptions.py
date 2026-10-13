@@ -1354,9 +1354,11 @@ class OnlySnapshotMissingError(PflowError):
         "Snapshot reuse reads the most recent successful trace from ~/.pflow/debug/."
     )
 
-    def __init__(self, only_node: str, *, suggestion: str | None = None):
+    def __init__(self, only_node: str, *, suggestion: str | None = None, causes: tuple[str, ...] = ()):
+        """``causes``: why the lookup may have missed (an aged-out trace, traces it does not read) —
+        appended to the default remedy by the raiser, which holds the directory listing."""
         self.only_node = only_node
-        self.suggestion = suggestion if suggestion is not None else self._DEFAULT_SUGGESTION
+        self.suggestion = suggestion if suggestion is not None else " ".join((self._DEFAULT_SUGGESTION, *causes))
         super().__init__(
             f"--only '{only_node}' needs a prior full run to restore upstream from, "
             f"but no usable trace was found for this workflow."
@@ -1632,6 +1634,14 @@ class ResumeSourceMissingError(ResumeSourceError):
     """No trace was found to resume — the target names no known run (Task 164)."""
 
     _TITLE = "No run to resume"
+
+
+class ResumeSourceUnreadableError(ResumeSourceError):
+    """A newer attempt of this run exists but could not be read, so whether the run was already answered
+    is unknown (Task 185). Refused, never guessed: reading the attempt as "no consumer" would let a token
+    be answered twice. Usually transient — retry."""
+
+    _TITLE = "Could not check this run's attempts"
 
 
 class ResumeNothingToResumeError(ResumeSourceError):

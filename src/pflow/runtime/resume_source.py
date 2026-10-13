@@ -8,21 +8,19 @@ the attempt-chain consumption policy, the seed-scope guards, and the snapshot se
 (``seed_snapshot_into_shared``) — which shares the ONE ``_seedable_final_events`` derivation
 with the guards so seeding and guarding can never drift.
 
-The general trace helpers it builds on (``_iter_workflow_traces``, ``_trace_recency_key``,
-``final_events_by_node``, ``_unrecovered_failed_node_ids``) stay in ``workflow_trace`` — they
-are shared with the collector and cache-analysis autoload — and are imported back here. This
-module never imports ``ui/`` (the standing ``runtime/`` rule), which is why ``_is_trace_locked``
-is duplicated from ``ui.run_tailer`` rather than imported.
+The general trace helpers it builds on (``_iter_workflow_traces``, ``final_events_by_node``,
+``_unrecovered_failed_node_ids``) stay in ``workflow_trace`` — they are shared with the collector and
+cache-analysis autoload — and are imported back here. Finding a trace, its readers and the writer-lock
+probe live in ``core/trace_dir`` (the directory listing is the index — ADR-0018), shared with ``ui/``.
 """
 
 import json
 import logging
 import re
-import sys
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, Literal, NoReturn
 
 from pflow.core.exceptions import (
     ResumeAnswerRequiredError,
@@ -31,14 +29,29 @@ from pflow.core.exceptions import (
     ResumeNothingToResumeError,
     ResumeNotResumableError,
     ResumeSourceMissingError,
+    ResumeSourceUnreadableError,
     ResumeStillRunningError,
     ResumeSupersededError,
 )
 from pflow.core.gate import GATE_KIND_APPROVAL, GATE_KIND_ESCALATION, option_labels
+from pflow.core.trace_dir import (
+    AGED_OUT_HINT,
+    TraceEntry,
+    TraceListing,
+    find_trace,
+    is_trace_locked,
+    legacy_note,
+    list_traces,
+    read_trace_meta,
+    read_trace_trailer,
+    workflow_file_state,
+    workflow_hashes,
+)
+from pflow.core.trace_dir import debug_dir as default_debug_dir
 from pflow.core.trace_io import load_trace_file
+from pflow.core.trace_tree import normalize_workflow_path_key
 from pflow.runtime.workflow_trace import (
     _iter_workflow_traces,
-    _trace_recency_key,
     _unrecovered_failed_node_ids,
     final_events_by_node,
 )
@@ -106,33 +119,6 @@ class ResumeSource:
     step_identity: dict[str, Any] | None = None
 
 
-def _is_trace_locked(path: Path) -> bool | None:
-    """Best-effort advisory-lock liveness probe (local copy of ``ui.run_tailer.is_trace_locked``).
-
-    ``runtime/`` must not import ``ui/``, so this ~15-line probe is duplicated
-    (accepted until a third consumer earns a ``core/`` home — Task 164 plan §B).
-    Same semantics: a SHARED, non-blocking probe on a SEPARATE fd — ``True`` when a
-    live writer holds the producer's EXCLUSIVE lock, ``False`` when free, ``None``
-    when liveness can't be determined (no ``fcntl`` / unopenable).
-    """
-    if sys.platform == "win32":
-        return None
-    try:
-        import fcntl
-    except ImportError:
-        return None
-    try:
-        with open(path, encoding="utf-8") as handle:
-            try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
-            except OSError:
-                return True
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-            return False
-    except OSError:
-        return None
-
-
 def _iter_raw_trace_lines(path: Path) -> Iterator[dict[str, Any]]:
     """Yield each JSONL line of a trace as a dict, for the disk-only kinds ``load_trace_file`` hides.
 
@@ -151,26 +137,6 @@ def _iter_raw_trace_lines(path: Path) -> Iterator[dict[str, Any]]:
             raise
         if isinstance(line, dict):
             yield line
-
-
-def _read_trace_meta_line(path: Path) -> dict[str, Any] | None:
-    """Return the trace's first (``kind:"meta"``) line without parsing the whole file, else ``None``.
-
-    Used by the by-execution-id scan so matching one run doesn't parse every
-    file's full content. Any read/parse fault → ``None`` (skip this candidate).
-    """
-    try:
-        with open(path, encoding="utf-8") as handle:
-            first = handle.readline()
-    except OSError:
-        return None
-    try:
-        line = json.loads(first)
-    except ValueError:
-        return None
-    if isinstance(line, dict) and line.get("kind") == "meta":
-        return line
-    return None
 
 
 def _dangling_top_level_starts(path: Path) -> list[tuple[int, str]]:
@@ -234,6 +200,9 @@ def _attempt_consumed_work(path: Path, candidate: dict[str, Any]) -> bool:
     supersede its source (would let the source re-run a started step) nor be
     picked over an older resumable run (would wedge ``resume <workflow>``).
     ``resume list`` shares this predicate via ``_find_consuming_attempt``.
+
+    A ``FileNotFoundError`` from the raw re-read (the trace vanished since it was
+    loaded) propagates; each caller decides what a vanished trace means.
     """
     if any(not event.get("restored") for event in candidate.get("nodes") or []):
         return True
@@ -249,75 +218,132 @@ def _attempt_consumed_work(path: Path, candidate: dict[str, Any]) -> bool:
     )
 
 
-def _find_consuming_attempt(debug_dir: Path, workflow_path: str, execution_id: str) -> str | None:
+def _find_consuming_attempt(
+    workflow_path: str,
+    execution_id: str,
+    *,
+    entries: Sequence[TraceEntry],
+    count_live: bool = True,
+) -> str | None:
     """The execution id of a newer attempt that CONSUMED this run's chain, or ``None``.
 
-    THE one consumption policy, two callers — ``load_resume_source`` (raises
-    ``ResumeSupersededError``) and ``list_paused_runs`` (filters consumed tokens)
-    — so the loader and ``resume list`` can never disagree on whether a token is
-    still answerable. An attempt supersedes its source only when it consumed the
-    chain (``_attempt_consumed_work``) or is live right now (mid-first-step there
-    is no terminal event yet, but its writer lock is held). A DEAD zero-work
-    attempt — a refused ``--force`` resume, a crash before the entry — consumed
-    nothing; counting it would wedge the chain (the source reads superseded while
-    the empty attempt itself refuses with "no resumable failed step").
+    THE one consumption policy — ``load_resume_source`` (raises ``ResumeSupersededError``),
+    ``list_paused_runs`` (filters consumed tokens) and the retention sweep (``count_live=False``) — so the
+    loader, ``resume list`` and retention can never disagree on whether a token is still answerable. An
+    attempt supersedes its source only when it consumed the chain (``_attempt_consumed_work``) or, with
+    ``count_live``, is live right now (mid-first-step there is no terminal event yet, but its writer lock is
+    held). A DEAD zero-work attempt — a refused ``--force`` resume, a crash before the entry — consumed
+    nothing; counting it would wedge the chain (the source reads superseded while the empty attempt itself
+    refuses with "no resumable failed step"). The sweep passes ``count_live=False``: a live attempt that has
+    recorded no work is a reservation, and its source must survive if it dies.
+
+    Candidates are the listing's entries tagged ``.from-{execution_id[:8]}`` under the workflow's hashes;
+    each is loaded and confirmed (``resumed_from == execution_id``). Reads fail CLOSED, never toward "no
+    consumer" (which would let a token be answered twice): an attempt that vanished counts as consuming —
+    Retention removes an Attempt only after its source is gone — and one that cannot be read raises
+    ``ResumeSourceUnreadableError``. A corrupt attempt (``JSONDecodeError``) is skipped.
     """
-    for candidate_path, candidate in _iter_workflow_traces(debug_dir, workflow_path):
-        if candidate.get("resumed_from") != execution_id:
+    hashes = workflow_hashes(workflow_path)
+    normalized = normalize_workflow_path_key(workflow_path)
+    prefix = execution_id[:8]
+    for entry in entries:
+        if entry.workflow_hash not in hashes or entry.only or entry.resumed_from_prefix != prefix:
             continue
-        if _attempt_consumed_work(candidate_path, candidate) or _is_trace_locked(candidate_path) is True:
+        try:
+            candidate = load_trace_file(entry.path)
+        except FileNotFoundError:
+            return entry.execution_id or ""
+        except json.JSONDecodeError:
+            logger.debug("Skipping unparseable attempt trace %s", entry.path, exc_info=True)
+            continue
+        except OSError as exc:
+            raise ResumeSourceUnreadableError(
+                f"Could not read the newer attempt {entry.path} of this run, so whether it was already "
+                f"answered is unknown: {exc}",
+                execution_id=execution_id,
+                suggestions=["Retry. If it keeps failing, check the trace file's permissions."],
+            ) from exc
+        if not _is_attempt_of(candidate, normalized, execution_id):
+            continue
+        try:
+            consumed = _attempt_consumed_work(entry.path, candidate)
+        except FileNotFoundError:
+            consumed = True
+        if consumed or (count_live and is_trace_locked(entry.path) is True):
             return str(candidate.get("execution_id") or "")
     return None
 
 
-def _raise_resume_source_missing(debug_dir: Path, workflow_path: str | None, execution_id: str | None) -> NoReturn:
+def _is_attempt_of(candidate: Any, normalized_workflow_path: str, execution_id: str) -> bool:
+    """Whether a loaded trace is a full-run attempt resumed from ``execution_id`` of this workflow."""
+    if not isinstance(candidate, dict) or candidate.get("resumed_from") != execution_id:
+        return False
+    candidate_path = candidate.get("workflow_path")
+    return (
+        isinstance(candidate_path, str)
+        and normalize_workflow_path_key(candidate_path) == normalized_workflow_path
+        and str(candidate.get("format_version", "")).startswith("2.")
+        and candidate.get("only_node") is None
+    )
+
+
+def _raise_resume_source_missing(
+    debug_dir: Path, workflow_path: str | None, execution_id: str | None, *, legacy_count: int
+) -> NoReturn:
+    note = legacy_note(legacy_count)
+    legacy_suggestions = [f"{note} (read one with `pflow report <path>`)."] if note else []
     if execution_id is not None:
         raise ResumeSourceMissingError(
             f"No run with execution id '{execution_id}' was found in {debug_dir}.",
             execution_id=execution_id,
-            suggestions=["Check the execution id, or run the workflow so a trace exists to resume."],
+            suggestions=[
+                "Check the execution id, or run the workflow so a trace exists to resume.",
+                f"If the run is older, {AGED_OUT_HINT}.",
+                *legacy_suggestions,
+            ],
         )
     raise ResumeSourceMissingError(
         f"No resumable run was found for workflow '{workflow_path}' in {debug_dir}.",
-        suggestions=["Run the workflow once (without --no-trace) so a failure can be resumed."],
+        suggestions=[
+            "Run the workflow once (without --no-trace) so a failure can be resumed.",
+            *legacy_suggestions,
+        ],
     )
 
 
 def _select_resume_trace(
-    debug_dir: Path, workflow_path: str | None, execution_id: str | None
+    debug_dir: Path, workflow_path: str | None, execution_id: str | None, *, listing: TraceListing
 ) -> tuple[Path, dict[str, Any]]:
-    """Select the source trace: newest for a workflow, or the exact run by execution id."""
-    if not debug_dir.exists():
-        _raise_resume_source_missing(debug_dir, workflow_path, execution_id)
+    """Select the source trace from one listing: newest for a workflow, or the exact run by execution id."""
     if workflow_path is not None:
-        for trace_file, data in _iter_workflow_traces(debug_dir, workflow_path):
+        for trace_file, data in _iter_workflow_traces(debug_dir, workflow_path, entries=listing.traces):
             # Skip a DEAD zero-work attempt (a refused --force resume / crash before
             # the first step) so `resume <workflow>` falls through to the older
             # resumable run instead of wedging on it. A killed-mid-step trace is NOT
             # dead (it has a dangling start → still resumable) and a LIVE run is not
             # dead either (selected, then refused as still-running). By-exec-id below
             # never skips — naming an exact attempt gets a verdict about THAT attempt.
-            if not _attempt_consumed_work(trace_file, data) and _is_trace_locked(trace_file) is not True:
+            # A candidate that vanished since it was loaded falls through to the next.
+            try:
+                if not _attempt_consumed_work(trace_file, data) and is_trace_locked(trace_file) is not True:
+                    continue
+            except FileNotFoundError:
                 continue
             return trace_file, data  # first non-dead = newest resumable
-        _raise_resume_source_missing(debug_dir, workflow_path, execution_id)
-    for trace_file in sorted(debug_dir.glob("workflow-trace-*.json"), key=_trace_recency_key, reverse=True):
-        meta = _read_trace_meta_line(trace_file)
-        if meta is None or meta.get("execution_id") != execution_id:
-            continue
-        # Mirror _iter_workflow_traces's --only exclusion: an --only run records
-        # only its target, so resuming its exec id would seed an empty scope.
-        if meta.get("only_node") is not None:
-            continue
+        _raise_resume_source_missing(debug_dir, workflow_path, execution_id, legacy_count=listing.legacy_count)
+    hit = find_trace(listing.traces, execution_id) if execution_id is not None else None
+    # An --only run records only its target, so resuming its exec id would seed an empty scope (the meta
+    # check covers a hand-made name without the tag). A matched-but-corrupt trace degrades to the same
+    # clean "missing" refusal, never an uncaught JSONDecodeError traceback.
+    if hit is not None and not hit.only:
         try:
-            return trace_file, load_trace_file(trace_file)
+            data = load_trace_file(hit.path)
         except (json.JSONDecodeError, OSError):
-            # Same skip-corrupt posture as _iter_workflow_traces (the workflow_path
-            # arm gets this for free): a matched-but-corrupt trace degrades to a
-            # clean "missing" refusal, never an uncaught JSONDecodeError traceback.
-            logger.debug("Skipping unparseable resume-source trace %s", trace_file, exc_info=True)
-            continue
-    _raise_resume_source_missing(debug_dir, workflow_path, execution_id)
+            logger.debug("Skipping unparseable resume-source trace %s", hit.path, exc_info=True)
+        else:
+            if data.get("only_node") is None:
+                return hit.path, data
+    _raise_resume_source_missing(debug_dir, workflow_path, execution_id, legacy_count=listing.legacy_count)
 
 
 def _seedable_final_events(
@@ -903,9 +929,10 @@ def load_resume_source(
     """
     if (workflow_path is None) == (execution_id is None):
         raise ValueError("load_resume_source requires exactly one of workflow_path / execution_id")
-    debug_dir = debug_dir if debug_dir is not None else (Path.home() / ".pflow" / "debug")
+    debug_dir = debug_dir if debug_dir is not None else default_debug_dir()
+    listing = list_traces(debug_dir)  # the ONE directory enumeration: selection + consumption share it
 
-    path, data = _select_resume_trace(debug_dir, workflow_path, execution_id)
+    path, data = _select_resume_trace(debug_dir, workflow_path, execution_id, listing=listing)
     source_execution_id = str(data.get("execution_id") or "")
     source_workflow_path = data.get("workflow_path")
 
@@ -917,7 +944,7 @@ def load_resume_source(
             suggestions=["Save the workflow to a file and re-run it so future failures can be resumed."],
         )
 
-    if _is_trace_locked(path) is True:
+    if is_trace_locked(path) is True:
         raise ResumeStillRunningError(
             "This run is still in progress.",
             execution_id=source_execution_id,
@@ -926,7 +953,7 @@ def load_resume_source(
         )
 
     if source_execution_id and isinstance(source_workflow_path, str):
-        consuming = _find_consuming_attempt(debug_dir, source_workflow_path, source_execution_id)
+        consuming = _find_consuming_attempt(source_workflow_path, source_execution_id, entries=listing.traces)
         if consuming is not None:
             raise ResumeSupersededError(
                 consuming,
@@ -934,13 +961,25 @@ def load_resume_source(
                 trace_path=str(path),
             )
 
-    entry_node_id, last_completed_node_id = _resolve_resume_entry(path, data, source_execution_id)
+    # The source must still exist AFTER the consumption check: Retention removes a source before its
+    # Attempts, so a source still present had no consumer when it was checked; a vanished one refuses.
+    try:
+        if not path.exists():
+            raise FileNotFoundError(path)
+        entry_node_id, last_completed_node_id = _resolve_resume_entry(path, data, source_execution_id)
 
-    events = list(data.get("nodes") or [])
-    entry_iteration = resume_iteration(events, entry_node_id or last_completed_node_id)
-    _apply_gate_resolutions(path, events)
-    seedable = _seedable_final_events(events, entry_node_id, entry_iteration or 1)
-    paused_node_id, gate_request = _apply_paused_answer(path, data, seedable, gate_answer, source_execution_id)
+        events = list(data.get("nodes") or [])
+        entry_iteration = resume_iteration(events, entry_node_id or last_completed_node_id)
+        _apply_gate_resolutions(path, events)
+        seedable = _seedable_final_events(events, entry_node_id, entry_iteration or 1)
+        paused_node_id, gate_request = _apply_paused_answer(path, data, seedable, gate_answer, source_execution_id)
+    except FileNotFoundError:
+        raise ResumeSourceMissingError(
+            f"The trace of run '{source_execution_id}' was removed while it was being resumed.",
+            execution_id=source_execution_id,
+            trace_path=str(path),
+            suggestions=[f"Re-run the workflow — {AGED_OUT_HINT}."],
+        ) from None
     _guard_seed_scope(seedable.values(), source_execution_id, path, legacy_placeholders=_predates_lossy_marker(data))
 
     return ResumeSource(
@@ -1034,10 +1073,9 @@ def seed_snapshot_into_shared(
 
 # ── Resume list (Task 171) ──────────────────────────────────────────────────
 # `pflow resume list` is a STATUS QUERY over the debug dir, not a separate
-# registry: a paused trace IS the pending obligation. Cheap by construction —
-# a head read (meta line) + a tail read (trailer) per file; the only full
-# parses are `_find_consuming_attempt`'s over each candidate's chain (accepted
-# v1 inefficiency — "a status query", per spec).
+# registry: a paused trace IS the pending obligation. One listing finds the
+# marked traces (`.paused` sidecars, ADR-0018); only those are read (head +
+# tail), plus the 0-2 `.from-` attempts the consumption check loads per row.
 
 
 @dataclass(frozen=True)
@@ -1064,110 +1102,101 @@ class PausedRun:
     max_iterations: int | None = None
 
 
-def _scan_tail_for_trailer(tail: bytes) -> tuple[dict[str, Any] | None, bool]:
-    """Inspect the LAST non-empty line of a byte tail: ``(trailer_dict, parse_ok)``.
+@dataclass(frozen=True)
+class PausedRunListing:
+    """``list_paused_runs``' answer: the pending rows, newest first, and what the list could not show —
+    pending pauses hidden because their workflow file no longer exists, and pre-185 traces not searched."""
 
-    ``(dict, True)`` when it is the ``run.complete`` trailer; ``(None, True)``
-    when it parsed but is NOT the trailer (run not finished) or the tail is
-    empty; ``(None, False)`` when it FAILED to parse — the caller disambiguates
-    a genuine mid-flush from a window that cut a fully-flushed oversized trailer.
+    runs: list[PausedRun]
+    hidden_missing_file: int = 0
+    legacy_count: int = 0
+
+
+def is_pause_record(entry: TraceEntry, meta: dict[str, Any] | None, trailer: dict[str, Any] | None) -> bool:
+    """Whether a trace is a well-formed pending-pause record whose token a resume could accept.
+
+    Marker-bearing; not an ``--only`` run (never a resume source); not INLINE (``ir-hash:`` — the loader's
+    inline refusal precedes the paused arm); a ``paused`` trailer with the ``paused_node_id`` +
+    ``gate_request`` the loader requires. Consumption is a separate check (``_find_consuming_attempt``)."""
+    if not entry.paused or entry.only or meta is None or trailer is None:
+        return False
+    workflow_path = meta.get("workflow_path")
+    return (
+        meta.get("only_node") is None
+        and isinstance(workflow_path, str)
+        and not workflow_path.startswith("ir-hash:")
+        and trailer.get("final_status") == "paused"
+        and isinstance(trailer.get("paused_node_id"), str)
+        and isinstance(trailer.get("gate_request"), dict)
+    )
+
+
+def answerable_pause(
+    entry: TraceEntry,
+    meta: dict[str, Any] | None,
+    trailer: dict[str, Any] | None,
+    file_state: Literal["present", "absent", "unknown"],
+) -> Literal["yes", "no", "unknown"]:
+    """Can this trace's Resume token still be answered (consumption aside)? The ONE predicate ``resume
+    list`` and Retention's rule 1 share, so the list, the resume verdict and retention agree.
+
+    A well-formed pause record (``is_pause_record``) whose workflow file is ``present`` → ``yes``; its file
+    ``absent`` → ``no`` (a by-id resume re-resolves the file and refuses, so the token can never be
+    spent); ``unknown`` → ``unknown``. Pure: callers pass the reads (lenient for a display, strict for a
+    deleter) and ``trace_dir.workflow_file_state``."""
+    if not is_pause_record(entry, meta, trailer) or file_state == "absent":
+        return "no"
+    return "yes" if file_state == "present" else "unknown"
+
+
+def list_paused_runs(debug_dir: Path | None = None, *, listing: TraceListing | None = None) -> PausedRunListing:
+    """Pending paused runs (answerable ∧ not consumed), newest first — ``pflow resume list`` (Task 171).
+
+    Reads only the marked traces of one listing (``listing`` when the caller already has one). A row is
+    shown when ``answerable_pause`` says ``yes`` or ``unknown`` (the workflow file's existence could not be
+    determined — the renderer notes it) and ``_find_consuming_attempt`` — the ONE consumption policy shared
+    with the loader — finds no consumer, so the list and a resume verdict can never disagree. A valid,
+    unconsumed pause whose workflow file is gone is not listed but COUNTED (``hidden_missing_file``): a
+    hidden pause is never silent. A candidate that vanishes mid-check is skipped. No live-lock probe: a
+    paused trace is finalized, so its writer lock is never held.
     """
-    for raw in reversed(tail.split(b"\n")):
-        if not raw.strip():
-            continue
-        try:
-            line = json.loads(raw)
-        except ValueError:
-            return None, False
-        if isinstance(line, dict) and line.get("kind") == "run.complete":
-            return line, True
-        return None, True  # a complete-but-non-trailer last line → not finished
-    return None, True  # empty tail
-
-
-def _read_trailer_line(path: Path) -> dict[str, Any] | None:
-    """The parsed ``run.complete`` trailer dict of a finalized trace, or ``None`` — a cheap tail read.
-
-    ``resume list`` scans every trace in the debug dir; a full ``load_trace_file``
-    per file would make a status query O(total trace bytes). Mirrors
-    ``ui.run_tailer.read_run_status``'s mechanics — the SAME accepted
-    ``runtime/ ↛ ui/`` duplication as ``_is_trace_locked`` above (importing
-    ``ui`` here fails ``test_import_hygiene.py::test_runtime_does_not_import_ui``):
-    read a bounded 64 KB tail and inspect the LAST non-empty line. A trailer
-    LARGER than the window — a paused trailer carries the full ``gate_request``,
-    so many-small-fields previews can exceed it — gets cut mid-line and would
-    misread as missing, silently hiding a legitimate paused run from the list.
-    So when the last line fails to parse BUT the file exceeds the window AND
-    ends with a newline (its last line IS fully flushed), re-read the whole file
-    ONCE. A genuine mid-flush has no trailing newline and stays ``None``.
-    """
-    try:
-        with open(path, "rb") as handle:
-            handle.seek(0, 2)
-            size = handle.tell()
-            handle.seek(max(0, size - 65536))
-            tail = handle.read()
-            trailer, parse_ok = _scan_tail_for_trailer(tail)
-            if not parse_ok and size > 65536 and tail.endswith(b"\n"):
-                handle.seek(0)
-                trailer, _ = _scan_tail_for_trailer(handle.read())
-    except OSError:
-        return None
-    return trailer
-
-
-def list_paused_runs(debug_dir: Path | None = None) -> list[PausedRun]:
-    """Pending paused runs (paused ∧ not consumed), newest first — ``pflow resume list`` (Task 171).
-
-    Skips, in scan order: unreadable/meta-less files; ``--only`` runs (never
-    resume sources); INLINE runs (``ir-hash:`` — the loader's inline refusal
-    precedes the paused arm, so their token is unanswerable; listing a row whose
-    command always refuses would be a lie. The producer-side pause-promise gap
-    for inline gated runs awaits an owner decision — see the Task 171 progress
-    log); non-paused trailers; corrupt pause records (no ``paused_node_id`` /
-    ``gate_request`` — the loader refuses those too); and CONSUMED tokens via
-    ``_find_consuming_attempt`` — the ONE consumption policy shared with the
-    loader, so the list and a resume verdict can never disagree on whether a
-    token is still answerable. No live-lock probe: a paused trace is finalized,
-    so its writer lock is never held.
-    """
-    debug_dir = debug_dir if debug_dir is not None else (Path.home() / ".pflow" / "debug")
-    if not debug_dir.exists():
-        return []
+    listing = listing if listing is not None else list_traces(debug_dir)
     pending: list[PausedRun] = []
-    for trace_file in sorted(debug_dir.glob("workflow-trace-*.json"), key=_trace_recency_key, reverse=True):
-        meta = _read_trace_meta_line(trace_file)
-        if meta is None or meta.get("only_node") is not None:
+    hidden = 0
+    for entry in listing.traces:
+        if not entry.paused:
             continue
-        workflow_path = meta.get("workflow_path")
-        if not isinstance(workflow_path, str) or workflow_path.startswith("ir-hash:"):
+        meta = read_trace_meta(entry.path)
+        trailer = read_trace_trailer(entry.path)
+        if meta is None or trailer is None or not is_pause_record(entry, meta, trailer):
             continue
-        trailer = _read_trailer_line(trace_file)
-        if trailer is None or trailer.get("final_status") != "paused":
-            continue
-        paused_node_id = trailer.get("paused_node_id")
-        gate_request = trailer.get("gate_request")
-        if not isinstance(paused_node_id, str) or not isinstance(gate_request, dict):
-            continue
+        workflow_path = str(meta["workflow_path"])
+        verdict = answerable_pause(entry, meta, trailer, workflow_file_state(workflow_path))
         execution_id = str(meta.get("execution_id") or "")
-        if execution_id and _find_consuming_attempt(debug_dir, workflow_path, execution_id) is not None:
+        if execution_id and _find_consuming_attempt(workflow_path, execution_id, entries=listing.traces) is not None:
             continue
-        gate_kind = gate_request.get("kind")
-        iteration = gate_request.get("iteration")
-        max_iterations = gate_request.get("max_iterations")
-        paused_at = trailer.get("end_time")
-        workflow_name = meta.get("workflow_name")
-        pending.append(
-            PausedRun(
-                execution_id=execution_id,
-                workflow_name=workflow_name if isinstance(workflow_name, str) else None,
-                workflow_path=workflow_path,
-                paused_node_id=paused_node_id,
-                gate_kind=gate_kind if isinstance(gate_kind, str) else None,
-                paused_at=paused_at if isinstance(paused_at, str) else None,
-                path=trace_file,
-                iteration=iteration if isinstance(iteration, int) else None,
-                max_iterations=max_iterations if isinstance(max_iterations, int) else None,
-            )
-        )
-    return pending
+        if verdict == "no":
+            hidden += 1
+            continue
+        pending.append(_paused_run_row(entry.path, meta, trailer))
+    return PausedRunListing(runs=pending, hidden_missing_file=hidden, legacy_count=listing.legacy_count)
+
+
+def _paused_run_row(path: Path, meta: dict[str, Any], trailer: dict[str, Any]) -> PausedRun:
+    gate_request: dict[str, Any] = trailer["gate_request"]
+    gate_kind = gate_request.get("kind")
+    iteration = gate_request.get("iteration")
+    max_iterations = gate_request.get("max_iterations")
+    paused_at = trailer.get("end_time")
+    workflow_name = meta.get("workflow_name")
+    return PausedRun(
+        execution_id=str(meta.get("execution_id") or ""),
+        workflow_name=workflow_name if isinstance(workflow_name, str) else None,
+        workflow_path=str(meta["workflow_path"]),
+        paused_node_id=str(trailer["paused_node_id"]),
+        gate_kind=gate_kind if isinstance(gate_kind, str) else None,
+        paused_at=paused_at if isinstance(paused_at, str) else None,
+        path=path,
+        iteration=iteration if isinstance(iteration, int) else None,
+        max_iterations=max_iterations if isinstance(max_iterations, int) else None,
+    )

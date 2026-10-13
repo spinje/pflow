@@ -4,7 +4,7 @@ Executing workflow (2 nodes):
 ✓ Workflow completed in <DURATION>
   ⤷ Ran only 'first' (--only), 1 other node not executed
 
-Workflow trace saved: <BASELINE_CASE_DIR>/.run-home/.pflow/debug/workflow-trace-<HASH>-<TIMESTAMP>.json
+Workflow trace saved: <BASELINE_CASE_DIR>/.run-home/.pflow/debug/workflow-trace-<HASH>-workflow.<UUID>.only-<TIMESTAMP>.json
 
 cli: --only active — streaming auto-detected key 'stdout' from target 'first' to stdout.
 
@@ -25,5 +25,5 @@ Workflow output:
 |---|------|------|--------|------|--------|------|
 | 1 | first | shell | success | <DURATION> | — | — |
 
-*Full trace: <BASELINE_CASE_DIR>/.run-home/.pflow/debug/workflow-trace-<HASH>-<TIMESTAMP>.json*
+*Full trace: <BASELINE_CASE_DIR>/.run-home/.pflow/debug/workflow-trace-<HASH>-workflow.<UUID>.only-<TIMESTAMP>.json*
    → Target node: <BASELINE_CASE_DIR>/.run-home/.pflow/reports/workflow/01-first.md

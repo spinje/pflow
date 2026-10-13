@@ -23,9 +23,9 @@
 3. ``runtime/`` never imports ``ui/`` (any scope). ``ui/`` depends ON
    ``runtime`` and pulls Starlette + the web server, so a ``runtime → ui``
    edge inverts the layering AND drags the web stack into every execution
-   path (MCP, CLI, headless). The rule is absolute — ``_is_trace_locked``
-   is DUPLICATED in ``runtime/resume_source.py`` rather than imported from
-   ``ui.run_tailer`` for exactly this reason (Task 164/171). Nothing else
+   path (MCP, CLI, headless). The rule is absolute — logic both layers need
+   lives in ``core/`` and both import it (the trace readers and the writer-lock
+   probe are in ``core/trace_dir.py``, Task 185). Nothing else
    catches a violation: it imports fine under the test env's full deps and
    breaks only a minimal install, which no other test simulates.
 
@@ -117,9 +117,8 @@ def test_runtime_does_not_import_ui() -> None:
     lazy inside a function, or under ``TYPE_CHECKING``. ``ui/`` depends on
     ``runtime`` and imports Starlette; the reverse edge inverts the layering
     and drags the web stack into MCP/CLI/headless execution. When ``runtime``
-    needs a scrap of ``ui`` logic it is DUPLICATED (see
-    ``resume_source._is_trace_locked`` ← ``ui.run_tailer.is_trace_locked``),
-    never imported. Matches absolute ``pflow.ui`` imports — the repo's
+    needs a scrap of ``ui`` logic it moves to ``core/`` where both import it
+    (see ``core/trace_dir.is_trace_locked``), never imported from ``ui``. Matches absolute ``pflow.ui`` imports — the repo's
     enforced style (rule 1 bans ``src.``; nothing uses cross-package relative
     imports).
     """
@@ -155,8 +154,8 @@ def test_runtime_does_not_import_ui() -> None:
             "runtime and pulls Starlette + the web server, so the reverse "
             "edge drags the web stack into MCP/CLI/headless execution — and "
             "no other test catches it (ui deps are installed in the test "
-            "env). Duplicate the needed helper into runtime/ instead, as "
-            "resume_source._is_trace_locked duplicates ui.run_tailer.\n\n"
+            "env). Move the needed helper to core/ and import it from both, as "
+            "core/trace_dir.py does for the trace readers and the lock probe.\n\n"
             f"Offending sites:\n{violations_block}"
         )
 

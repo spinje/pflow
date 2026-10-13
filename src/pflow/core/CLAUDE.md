@@ -22,6 +22,7 @@ Shared parsing, diagnostics, configuration, and execution utilities.
 | Change stdin or terminal progress | `shell_integration.py`, `output_controller.py` |
 | Change usage aggregation or trace reports | `metrics.py`, `llm_usage.py`, `trace_tree.py`, `trace_report.py` |
 | Read persisted traces | `trace_io.py::load_trace_file` — shared JSONL reconstruction boundary |
+| Find a Run's trace, the trace filename grammar, the debug-dir listing | `trace_dir.py` — the directory listing is the index (ADR-0018): `list_traces` (one `os.scandir`), `find_trace`, the strict/lenient readers, `is_trace_locked`; shared by `runtime/` and `ui/` |
 | Change input coercion, name rules, or redaction | `param_coercion.py`, `validation_utils.py`, `security_utils.py` |
 | Show how a caller supplies a declared input (required/optional, placeholder, default) | `types.py::input_usage` / `usage_arguments` — every describing surface reads it; `tests/test_core/test_input_usage.py` pins each surface and the run's rule |
 | Change probe result storage or UI narration | `execution_cache.py`; `tts.py::synthesize` |

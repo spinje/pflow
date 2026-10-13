@@ -1234,8 +1234,7 @@ def _write_incomplete_trace_for(wf: Path, *, completed: list[dict], killed_node:
 
     from pflow.execution.runner import workflow_path_id
     from pflow.execution.workflow_resolver import resolve_workflow
-    from pflow.runtime.workflow_trace import format_trace_filename
-    from tests.shared.trace_jsonl import flatten_trace_to_lines
+    from tests.shared.trace_jsonl import flatten_trace_to_lines, trace_path_for
 
     wf_path = workflow_path_id(resolve_workflow(str(wf)))
     data = {
@@ -1261,7 +1260,7 @@ def _write_incomplete_trace_for(wf: Path, *, completed: list[dict], killed_node:
             "run_id": "inc-e2e",
         })
     debug = Path.home() / ".pflow" / "debug"
-    path = debug / format_trace_filename(wf_path, "wf", "20260101-000000")
+    path, _ = trace_path_for(debug, data, name="wf", started="20260101-000000")
     path.write_text("\n".join(_json.dumps(line) for line in lines) + "\n", encoding="utf-8")
 
 

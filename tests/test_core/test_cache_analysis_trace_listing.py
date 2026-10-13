@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -11,7 +10,8 @@ from pflow.core.prompt_cache_analysis.trace_loading import (
     _resolve_current_workflow_model_set,
     list_traces_for_workflow,
 )
-from tests.shared.trace_jsonl import write_trace_jsonl
+from pflow.core.trace_dir import trace_filename
+from tests.shared.trace_jsonl import fixture_execution_id, fixture_started, write_trace_jsonl
 
 
 def _write_workflow(tmp_path: Path, *, model: str = "anthropic/claude-sonnet-4-5") -> Path:
@@ -65,8 +65,10 @@ Summarize ${record.text}.
 
 
 def _trace_name(workflow_path: str, suffix: str) -> str:
-    wf_hash = hashlib.md5(workflow_path.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
-    return f"workflow-trace-{wf_hash}-wf-{suffix}.json"
+    """The producer's filename for a run started at ``suffix`` (the name never carries an ``.only`` tag here,
+    so an ``--only`` fixture is excluded by its meta alone)."""
+    started = fixture_started(suffix)
+    return trace_filename(workflow_path, "wf", started, fixture_execution_id(started))
 
 
 def _write_trace(

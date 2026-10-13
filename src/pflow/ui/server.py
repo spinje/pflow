@@ -60,12 +60,14 @@ from pflow.core.exceptions import (
     ResumeSideEffectConfirmationError,
     ResumeSourceError,
     ResumeSourceMissingError,
+    ResumeSourceUnreadableError,
     ResumeStaleWorkflowError,
     ResumeStillRunningError,
     ResumeSupersededError,
 )
 from pflow.core.gate import masked_gate_dict
 from pflow.core.node_type_display import node_type_tag
+from pflow.core.trace_dir import find_trace, legacy_note, list_traces
 from pflow.core.trace_io import load_trace_file
 from pflow.core.tts import wav_duration
 from pflow.core.workflow.graph import render_react_flow
@@ -1132,6 +1134,7 @@ def _spawn_detached_cli(cli_args: list[str], *, execution_id: str) -> None:
 # diagnostics. A non-Resume PflowError (e.g. a pre-flight CompilationError) carries no `refusal` key.
 _RESUME_REFUSALS: dict[type[PflowError], str] = {
     ResumeSourceMissingError: "missing",
+    ResumeSourceUnreadableError: "source_unreadable",
     ResumeSupersededError: "superseded",
     ResumeStillRunningError: "still_running",
     ResumeStaleWorkflowError: "stale_workflow",
@@ -1563,14 +1566,20 @@ def gate(request: Request) -> Response:
             {"errors": [{"message": "Missing required 'run' query parameter."}]},
             status_code=400,
         )
-    candidate = next((c for c in scan_traces() if c["meta"].get("execution_id") == run_id), None)
-    if candidate is None:
-        return _json({"error": f"No run {run_id!r} was found."}, status_code=404)
+    try:
+        listing = list_traces()
+    except OSError as exc:
+        return _json({"error": f"Could not read the trace directory: {exc}"}, status_code=500)
+    entry = find_trace(listing.traces, run_id)  # the run id is in the filename: one listing, no scan
+    if entry is None:
+        note = legacy_note(listing.legacy_count)
+        unsearched = f" {note}." if note else ""
+        return _json({"error": f"No run {run_id!r} was found.{unsearched}"}, status_code=404)
     # Read the pause record through the resume loader's own reader (not the scan-cache fact, never the
     # raw trailer line): the trace interns strings >= 1 KB as `$pflow_blob` refs whose bodies sit on
     # earlier lines, so only the full read gives the panel the text `pflow resume` will act on (#720).
     try:
-        trace: dict[str, Any] = load_trace_file(candidate["path"])
+        trace: dict[str, Any] = load_trace_file(entry.path)
     except (json.JSONDecodeError, OSError):
         trace = {}
     gate_request = trace.get("gate_request")

@@ -16,6 +16,7 @@ Compiles workflow IR into bare nodes plus `NodeConfig`, then executes it through
 | Persistent cache lookup/history | `cache.py::MemoizationCache` |
 | Missing trace event or persistence failure | `workflow_trace.py::WorkflowTraceCollector` |
 | Read a trace file | `core/trace_io.py::load_trace_file` |
+| Where traces live, their filename grammar, finding a run | `core/trace_dir.py` (one listing, then reads of only the files in the answer) |
 | Snapshot restoration or resume refusal | `resume_source.py`; snapshot selection in `workflow_trace.py` |
 | Declared output cannot resolve | `output_resolver.py::populate_declared_outputs` |
 | Dry-run differs from execution | `engine/plan_node.py::plan_node`, then `execution/CLAUDE.md` → Dry-Run Planner |

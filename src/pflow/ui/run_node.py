@@ -7,7 +7,7 @@ resolved and secrets redacted (by name, and by value: the run's ``secret_values`
 
 Distinct from ``run_tailer.py``: that POLLS the growing file and ships a deliberately-stripped wire (no
 payloads — they may be large/blobbed); this does a single request/response read of ONE event with the
-FULL blob-resolved payload, on demand. It REUSES ``run_tailer``'s discovery (``scan_traces`` /
+FULL blob-resolved payload, on demand. It REUSES ``run_tailer``'s discovery (``find_workflow_trace`` /
 ``discover_live_trace``) — never reaching into ``RunTailer`` internals — and ``trace_io.substitute_refs``
 for blob resolution. It does NOT use ``load_trace_file`` (which STRIPS ``ancestor_path``/``port``, the
 exact keys the panel joins on — the #1 tailer trap); it reads RAW lines and matches the structural ref
@@ -27,7 +27,7 @@ from pflow.core.node_type_display import node_type_tag
 from pflow.core.security_utils import redact_sensitive, scrub_secret_values, secret_values
 from pflow.core.trace_io import BLOB_SENTINEL, substitute_refs
 from pflow.core.trace_tree import event_cost
-from pflow.ui.run_tailer import discover_live_trace, scan_traces
+from pflow.ui.run_tailer import discover_live_trace, find_workflow_trace
 
 logger = logging.getLogger(__name__)
 
@@ -102,14 +102,12 @@ def read_run_inputs(workflow_key: str, run_id: str | None) -> dict[str, str] | N
 
 def _resolve_trace(workflow_key: str, run_id: str | None) -> Path | None:
     """The trace file for this ``(workflow, run)`` — reusing ``run_tailer``'s discovery (the ``--only`` /
-    prefer-live policy lives there, DR-3). Pinned: match ``meta.execution_id`` over ``scan_traces`` (the
-    same match ``RunTailer._resolve_pinned`` does). Unpinned: ``discover_live_trace`` (live-preferred,
-    otherwise newest eligible trace — what the unpinned overlay itself follows)."""
+    prefer-live policy lives there, DR-3). Pinned: ``find_workflow_trace`` (the same by-id resolver
+    ``RunTailer._resolve_pinned`` uses). Unpinned: ``discover_live_trace`` (live-preferred, otherwise newest
+    eligible trace — what the unpinned overlay itself follows)."""
     if run_id is not None:
-        for candidate in scan_traces(workflow_key):
-            if candidate["meta"].get("execution_id") == run_id:
-                return candidate["path"]
-        return None
+        found = find_workflow_trace(workflow_key, run_id)
+        return found[0] if found is not None else None
     return discover_live_trace(workflow_key)
 
 

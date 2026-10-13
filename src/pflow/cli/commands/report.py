@@ -21,6 +21,39 @@ def _trace_is_complete(path: Path) -> bool:
         return False
 
 
+def _latest_complete_trace(ctx: click.Context) -> Path:
+    """The newest COMPLETE trace by start time (the one recency rule, ``trace_dir.list_traces``), or exit 1.
+
+    Eager-``meta`` (Task 173) means an in-flight or crash-before-first-completion run leaves a ``meta``-only /
+    ``incomplete`` file from t=0; picking it would shadow the user's last good run with a hollow "incomplete,
+    0 nodes" report. So walk newest-first, lazily: a tail read rules out an unfinished trace, and only a
+    finished one is fully loaded to confirm it — never a read of every file."""
+    from pflow.core.trace_dir import legacy_note, list_traces, read_trace_trailer
+
+    listing = list_traces()
+    note = legacy_note(listing.legacy_count)
+    unsearched = f" ({note}; pass a path: `pflow report <path>`)" if note else ""
+    if not listing.traces:
+        click.echo(f"No trace files found in ~/.pflow/debug/{unsearched}", err=True)
+        ctx.exit(1)
+    chosen = next(
+        (
+            entry.path
+            for entry in listing.traces
+            if read_trace_trailer(entry.path) is not None and _trace_is_complete(entry.path)
+        ),
+        None,
+    )
+    if chosen is None:
+        click.echo(
+            "No completed trace found in ~/.pflow/debug/ (only in-flight or interrupted runs). "
+            f"Run the workflow to completion, or pass a specific trace path.{unsearched}",
+            err=True,
+        )
+        ctx.exit(1)
+    return chosen
+
+
 @click.command("report")
 @click.argument("trace_path", required=False, default=None)
 @click.option("--output", "-o", "output_path", default=None, help="Output directory")
@@ -41,7 +74,7 @@ def report_cmd(ctx: click.Context, trace_path: str | None, output_path: str | No
     \b
     Examples:
         pflow report
-        pflow report ~/.pflow/debug/workflow-trace-my-wf-20260412.json
+        pflow report ~/.pflow/debug/workflow-trace-3f2a1b9c-my-wf.0b7e6a52-1c4d-4e8f-9a3b-5d6c7e8f9a0b-20260412-093015-123456.json
         pflow report -o ./report/
     """
     from pflow.cli.error_output import output_error
@@ -49,27 +82,7 @@ def report_cmd(ctx: click.Context, trace_path: str | None, output_path: str | No
     from pflow.core.trace_report import generate_report
 
     if trace_path is None:
-        # Auto-detect latest trace
-        debug_dir = Path.home() / ".pflow" / "debug"
-        if not debug_dir.exists():
-            click.echo("No trace files found in ~/.pflow/debug/", err=True)
-            ctx.exit(1)
-        traces = sorted(debug_dir.glob("workflow-trace-*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if not traces:
-            click.echo("No trace files found in ~/.pflow/debug/", err=True)
-            ctx.exit(1)
-        # Prefer the newest COMPLETE trace. Eager-`meta` (Task 173) means an in-flight or
-        # crash-before-first-completion run now leaves a `meta`-only / `incomplete` file from t=0; picking
-        # it would shadow the user's last good run with a hollow "incomplete, 0 nodes" report. Skip
-        # incomplete (and unreadable/legacy) candidates, newest-first.
-        chosen = next((candidate for candidate in traces if _trace_is_complete(candidate)), None)
-        if chosen is None:
-            click.echo(
-                "No completed trace found in ~/.pflow/debug/ (only in-flight or interrupted runs). "
-                "Run the workflow to completion, or pass a specific trace path.",
-                err=True,
-            )
-            ctx.exit(1)
+        chosen = _latest_complete_trace(ctx)
         trace_path = str(chosen)
         click.echo(f"Using latest trace: {trace_path}", err=True)
 

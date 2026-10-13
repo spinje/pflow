@@ -7,7 +7,7 @@ import logging
 import math
 import os
 import sys
-import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +38,7 @@ from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.workflow_resolver import resolve_workflow
 from tests.shared.cache_analysis_fixtures import make_cache_projection, make_per_call_row
 from tests.shared.trace_fixture_builder import TraceFixtureBuilder
-from tests.shared.trace_jsonl import write_trace_jsonl
+from tests.shared.trace_jsonl import trace_path_for, write_trace_jsonl
 
 _STAGE_ATTR_MODULES: dict[str, tuple[str, ...]] = {
     "estimate_tokens": (
@@ -2967,8 +2967,8 @@ def _write_trace(
 ) -> Path:
     """Write a synthetic trace under the production filename schema.
 
-    Uses ``format_trace_filename`` so the test fixture matches the same hash
-    prefix the autoload reader globs by — without that, autoload skips the
+    Uses the producer's filename (``trace_path_for``) so the fixture carries the
+    workflow hash the autoload reader lists by — without that, autoload skips the
     file even when contents match.
 
     The trace body uses the production ``nodes`` key (events list); a
@@ -2980,13 +2980,7 @@ def _write_trace(
     (Bug 10) and the trace-header rendering. Defaults preserve backward-compat
     with pre-existing tests that omit these fields.
     """
-    from pflow.runtime.workflow_trace import format_trace_filename
-
     debug_dir.mkdir(parents=True, exist_ok=True)
-    if timestamp is None:
-        timestamp = f"20260430-{time.time_ns() % 1_000_000:06d}"
-    name = format_trace_filename(workflow_path, workflow_name, timestamp)
-    path = debug_dir / name
     payload: dict[str, Any] = {
         "format_version": format_version,
         "workflow_path": workflow_path,
@@ -2998,6 +2992,10 @@ def _write_trace(
         payload["failed_node_ids"] = failed_node_ids
     if start_time is not None:
         payload["start_time"] = start_time
+    # No timestamp: "now", so traces written later in a test are newer.
+    path, payload = trace_path_for(
+        debug_dir, payload, name=workflow_name, started=timestamp if timestamp is not None else datetime.now()
+    )
     return write_trace_jsonl(path, payload)
 
 
@@ -3673,11 +3671,9 @@ def test_autoload_skips_unparseable_files_silently(tmp_path: Path, monkeypatch: 
     debug_dir = fake_home / ".pflow" / "debug"
     # Write a syntactically broken file under the new schema's hash prefix
     # so the autoload glob actually surfaces it (then skips).
-    from pflow.runtime.workflow_trace import format_trace_filename
-
     debug_dir.mkdir(parents=True, exist_ok=True)
-    name = format_trace_filename("/abs/x.pflow.md", "broken", "20260430-000001")
-    (debug_dir / name).write_text("{invalid json", encoding="utf-8")
+    path, _ = trace_path_for(debug_dir, {"workflow_path": "/abs/x.pflow.md"}, name="broken", started="20260430-000001")
+    path.write_text("{invalid json", encoding="utf-8")
 
     workflow_ir = {"nodes": []}
     result = analyze(workflow_ir, workflow_path="/abs/x.pflow.md", auto_load_trace=True)
@@ -3692,14 +3688,12 @@ def test_autoload_skips_legacy_single_object_trace(tmp_path: Path, monkeypatch: 
     # proceeds greenfield (result.trace_path is None) — degrade, never crash, never silently consume it.
     import json
 
-    from pflow.runtime.workflow_trace import format_trace_filename
-
     fake_home = tmp_path / "home"
     monkeypatch.setattr(Path, "home", lambda: fake_home)
     debug_dir = fake_home / ".pflow" / "debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
-    name = format_trace_filename("/abs/x.pflow.md", "legacy", "20260430-000002")
-    (debug_dir / name).write_text(
+    path, _ = trace_path_for(debug_dir, {"workflow_path": "/abs/x.pflow.md"}, name="legacy", started="20260430-000002")
+    path.write_text(
         json.dumps({"format_version": "2.2.0", "workflow_path": "/abs/x.pflow.md", "nodes": []}),
         encoding="utf-8",
     )

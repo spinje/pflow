@@ -449,7 +449,9 @@ def resume_list(output_format: str) -> None:
     from pflow.execution.gate_prompt import format_resume_answer_command
     from pflow.runtime.resume_source import list_paused_runs
 
-    runs = list_paused_runs()
+    listing = list_paused_runs()
+    runs = listing.runs
+    unlisted = _unlisted_lines(listing.hidden_missing_file, listing.legacy_count if not runs else 0)
 
     if output_format.lower() == "json":
         document = [
@@ -468,17 +470,21 @@ def resume_list(output_format: str) -> None:
             for run in runs
         ]
         click.echo(json.dumps(document, indent=2))
+        for line in unlisted:
+            click.echo(line, err=True)  # stdout stays the bare JSON array
         return
 
     if not runs:
         click.echo("No paused runs.")
+        for line in unlisted:
+            click.echo(line)
         return
 
     headers = ("TOKEN", "WORKFLOW", "PAUSED AT", "GATE", "AGE")
     rows = [
         (
             run.execution_id,
-            run.workflow_name or "?",
+            _workflow_cell(run),
             run.paused_node_id,
             _gate_cell(run),
             _age_of(run.paused_at),
@@ -495,3 +501,31 @@ def resume_list(output_format: str) -> None:
     # pairing from the ONE home (format_resume_answer_command).
     for kind in dict.fromkeys(run.gate_kind for run in runs):
         click.echo(f"To answer: {format_resume_answer_command('<TOKEN>', {'kind': kind})}")
+    for line in unlisted:
+        click.echo(line)
+
+
+def _workflow_cell(run: PausedRun) -> str:
+    """The WORKFLOW column; flags a row whose workflow file's existence could not be determined (a
+    permission fault) — listed, because it may still be answerable, but a resume may refuse."""
+    from pflow.core.trace_dir import workflow_file_state
+
+    name = run.workflow_name or "?"
+    if run.workflow_path is not None and workflow_file_state(run.workflow_path) == "unknown":
+        return f"{name} (workflow file unreadable)"
+    return name
+
+
+def _unlisted_lines(hidden_missing_file: int, legacy_count: int) -> list[str]:
+    """What ``resume list`` could not show, said out loud: a hidden pending pause is never silent."""
+    from pflow.core.trace_dir import legacy_note
+
+    lines: list[str] = []
+    if hidden_missing_file:
+        subject = "1 paused run is" if hidden_missing_file == 1 else f"{hidden_missing_file} paused runs are"
+        owner = "its" if hidden_missing_file == 1 else "their"
+        lines.append(f"{subject} not listed: {owner} workflow file no longer exists.")
+    note = legacy_note(legacy_count)
+    if note is not None:
+        lines.append(f"{note} (read one with `pflow report <path>`).")
+    return lines

@@ -16,9 +16,11 @@ x`` is the round-trip oracle (``tests/test_core/test_trace_io.py::test_flatten_r
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from pflow.core.trace_dir import parse_trace_filename, paused_marker, trace_filename
 from pflow.core.trace_io import (
     META_KEYS,
     RESERVED_LINE_KEYS,
@@ -118,4 +120,57 @@ def write_trace_jsonl(path: Path, trace_data: dict[str, Any]) -> Path:
     path.write_text(
         "\n".join(json.dumps(line, default=str) for line in flatten_trace_to_lines(trace_data)) + "\n", encoding="utf-8"
     )
+    return path
+
+
+def fixture_started(started: str | datetime) -> datetime:
+    """A fixture's start time: a ``datetime``, or the short ``YYYYMMDD-HHMMSS[-ffffff]`` strings fixtures use."""
+    if isinstance(started, datetime):
+        return started
+    fmt = "%Y%m%d-%H%M%S-%f" if started.count("-") == 2 else "%Y%m%d-%H%M%S"
+    return datetime.strptime(started, fmt)
+
+
+def fixture_execution_id(started: datetime) -> str:
+    """A deterministic id that DESCENDS as the start time ascends — so a sort on the whole filename (where the
+    id precedes the timestamp) orders traces OPPOSITE to their start time, and every recency pin fails under
+    one. Never derive a fixture id that ascends with time (``f"id-{started}"``)."""
+    digits = int(started.strftime("%Y%m%d%H%M%S%f"))
+    return f"id{10**20 - 1 - digits:020d}"
+
+
+def trace_path_for(
+    debug_dir: Path, data: dict[str, Any], *, name: str = "wf", started: str | datetime
+) -> tuple[Path, dict[str, Any]]:
+    """Compose the trace path the producer would write for ``data`` (``core/trace_dir.trace_filename``) — the
+    NAME composer for fixtures that write their own content (crashed / trailer-less traces).
+
+    Returns ``(path, data)`` where ``data`` carries the ``execution_id`` the name was built from (a fixture
+    without one gets ``fixture_execution_id``). Refuses a name that would not parse as the current grammar:
+    a legacy-parsing fixture would make every presence test fail and every absence test pass for free."""
+    start = fixture_started(started)
+    data = {**data, "execution_id": data.get("execution_id") or fixture_execution_id(start)}
+    filename = trace_filename(
+        data.get("workflow_path"),
+        name,
+        start,
+        str(data["execution_id"]),
+        only=data.get("only_node") is not None,
+        resumed_from=data.get("resumed_from"),
+    )
+    parsed = parse_trace_filename(filename)
+    if parsed is None or parsed.execution_id != data["execution_id"]:
+        raise AssertionError(f"fixture trace name {filename!r} does not parse as the current grammar")
+    return debug_dir / filename, data
+
+
+def write_trace_file(debug_dir: Path, data: dict[str, Any], *, name: str = "wf", started: str | datetime) -> Path:
+    """Write a complete JSONL trace fixture under the producer's filename, plus its ``.paused`` marker when
+    ``final_status`` is ``paused`` (the producer writes the marker before the trailer). Always appends a
+    ``run.complete`` trailer — a crashed-run fixture uses ``trace_path_for`` and writes its own lines."""
+    path, data = trace_path_for(debug_dir, data, name=name, started=started)
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    write_trace_jsonl(path, data)
+    if data.get("final_status") == "paused":
+        paused_marker(path).touch()
     return path

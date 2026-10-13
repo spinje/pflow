@@ -370,11 +370,14 @@ class TestWorkflowTraceCollector:
         with patch("pathlib.Path.home", return_value=temp_home):
             filepath = streaming_collector.save_to_file()
 
-        # Filename includes an 8-char md5 hash of workflow_path (None here →
-        # md5("") = "d41d8cd9...") followed by sanitized workflow name and the
-        # start_time timestamp (%Y%m%d-%H%M%S-%f). See format_trace_filename.
+        # Filename: an 8-char md5 hash of workflow_path (None here → md5("") = "d41d8cd9..."), the
+        # sanitized workflow name, the run's execution id (the lookup key — ADR-0018), then the
+        # start_time timestamp (%Y%m%d-%H%M%S-%f) LAST. See core/trace_dir.trace_filename.
         expected_path = (
-            temp_home / ".pflow" / "debug" / "workflow-trace-d41d8cd9-test-workflow-20240115-143022-000000.json"
+            temp_home
+            / ".pflow"
+            / "debug"
+            / f"workflow-trace-d41d8cd9-test-workflow.{streaming_collector.execution_id}-20240115-143022-000000.json"
         )
         assert filepath == expected_path
         assert filepath.exists()
@@ -491,13 +494,28 @@ class TestWorkflowTraceCollector:
         except ValueError:
             pytest.fail("execution_id is not a valid UUID")
 
+    @pytest.mark.parametrize(
+        ("kwargs", "label"),
+        [
+            ({"execution_id": "a.b"}, "execution_id"),
+            ({"execution_id": "../x"}, "execution_id"),
+            ({"resumed_from": "s/rc"}, "resumed_from"),
+        ],
+    )
+    def test_a_forced_id_outside_the_filename_charset_is_refused(self, kwargs, label):
+        """The id is the trace filename's lookup key (ADR-0018): a forced ``PFLOW_EXECUTION_ID`` (or a
+        lineage id) that the grammar cannot carry is refused at construction, never written as a file no
+        lookup can find."""
+        with pytest.raises(ValueError, match=label):
+            WorkflowTraceCollector("wf", **kwargs)
+
     def test_execution_id_in_saved_file(self, streaming_collector, temp_home):
-        """Test that execution_id is stored inside the JSON, not in filename."""
+        """The execution_id is in the filename (a run is found by its name — ADR-0018; this reverses the
+        Task-32 "id inside the JSON only" design) AND inside the trace."""
         with patch("pathlib.Path.home", return_value=temp_home):
             filepath = streaming_collector.save_to_file()
 
-            # Verify execution_id is NOT in filename
-            assert streaming_collector.execution_id not in str(filepath)
+            assert f".{streaming_collector.execution_id}-" in filepath.name
 
             # Verify execution_id IS in the JSON content
             trace_data = load_trace_file(filepath)
