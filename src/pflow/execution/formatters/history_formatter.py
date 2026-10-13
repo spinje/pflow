@@ -23,7 +23,7 @@ Usage:
 from datetime import datetime, timezone
 from typing import Any
 
-from pflow.core.text_format import count_noun
+from pflow.core.text_format import count_noun, labelled_lines
 
 
 def format_execution_history(
@@ -161,7 +161,7 @@ def _format_detailed(
     # Parameters (if any)
     if last_params:
         params_str = _format_parameters(last_params)
-        lines.append(f"  Last Parameters: {params_str}")
+        lines.extend(labelled_lines("  Last Parameters: ", params_str))
 
     return "\n".join(lines)
 
