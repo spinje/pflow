@@ -140,8 +140,9 @@ class TestShellStderrDisplay:
             assert excerpt.endswith(f"{cause}-AT-TAIL")
         trace = load_trace_file(Path(document["trace_path"]))
         node_output = next(event for event in trace["nodes"] if event["node_id"] == "noisy")["node_output"]
-        assert "progress-noise-100" in node_output["stderr"]  # ... and the trace keeps it whole
-        assert "stdout-noise-100" in node_output["stdout"]
+        # ... and the trace keeps both whole
+        assert node_output["stderr"] == "".join(f"progress-noise-{i:03d} " for i in range(400)) + "CAUSE-AT-TAIL"
+        assert node_output["stdout"] == "".join(f"stdout-noise-{i:03d} " for i in range(400)) + "STDOUT-AT-TAIL"
 
     def test_a_secret_on_the_excerpt_cut_never_prints_in_part(self, tmp_path):
         """The run's secret values are scrubbed before the document cuts its excerpt (#801, #843).

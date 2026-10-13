@@ -658,6 +658,19 @@ class TestTheDocumentExcerptsLongStrings:
         assert [error.context for error in outcome.errors] == [shell.context, http.context]
         assert "Stderr: " + "H" * 100 + " … [9,600 chars omitted] … " in "\n".join(errors_block(outcome.errors, []))
 
+    def test_warnings_advisories_and_tuples_are_cut_too(self) -> None:
+        long = "w" * 6_000
+        cut = head_tail_preview(long, HEAD, TAIL)
+        warning = Diagnostic(severity=Severity.WARNING, message=long, source="runtime", context={"index": (long,)})
+        advisory = Diagnostic(severity=Severity.INFO, message="note", source="runtime", suggestions=[long])
+
+        document = _outcome(ExecutionResult(success=True, diagnostics=[warning, advisory]), {}).document
+
+        (printed_warning,) = document["warnings"]
+        assert (printed_warning["message"], printed_warning["context"]) == (cut, {"index": [cut]})
+        assert document["advisories"][0]["suggestions"] == [cut]
+        assert document["diagnostics"] == [*document["warnings"], *document["advisories"]]
+
     def test_a_gate_request_is_never_cut(self) -> None:
         """The approver consents to the whole value (#746): a refused gate's request prints whole."""
         command = "echo " + "x" * 10_000
@@ -666,6 +679,32 @@ class TestTheDocumentExcerptsLongStrings:
         document = _outcome(_failed(gate), {}).document
 
         assert document["errors"][0]["context"]["gate"] == {"preview": {"command": command}}
+
+    def test_a_batch_child_failure_is_cut_in_the_document_and_previewed_whole_in_text(self, tmp_path: Path) -> None:
+        child = tmp_path / "child.pflow.md"
+        child.write_text(
+            "# Child\n\nFails loudly.\n\n## Inputs\n\n### item\n\nThe item.\n\n- type: string\n\n"
+            "## Steps\n\n### inner\n\nNoise, then fail.\n\n- type: shell\n- env: {ITEM: ${item}}\n\n"
+            "```shell command\nprintf '%012000d' 0 >&2; echo \"$ITEM\"; exit 1\n```\n",
+            encoding="utf-8",
+        )
+        parent = tmp_path / "parent.pflow.md"
+        parent.write_text(
+            "# Parent\n\nFans the child out.\n\n## Steps\n\n### fan\n\nRun the child per item.\n\n"
+            f"- type: workflow\n- workflow: {child}\n- inputs:\n    item: ${{item}}\n"
+            '- batch:\n    items: ["a"]\n    error_handling: continue\n',
+            encoding="utf-8",
+        )
+
+        outcome = _outcome(_run(parent), resolve_workflow(str(parent)).ir)
+
+        (detail,) = outcome.document["execution"]["steps"][0]["batch_error_details"]
+        assert detail["child_failure"]["failures"]["inner"]["data"]["stderr"] == (
+            f"{'0' * HEAD} … [7,000 chars omitted] … {'0' * TAIL}"
+        )
+        block = "Stderr: " + "0" * 100 + " … [11,600 chars omitted] … "  # the child's Shell details, not its message
+        assert block in "\n".join(render_cli_stderr(outcome, text_mode=True, print_flag=False, verbose=False))
+        assert block in render_mcp_text(outcome)
 
     def test_a_step_stderr_is_cut_in_the_document_and_previewed_whole_in_text(self) -> None:
         ir = {"nodes": [{"id": "noisy", "type": "shell", "params": {"command": "printf '%012000d' 0 >&2"}}]}

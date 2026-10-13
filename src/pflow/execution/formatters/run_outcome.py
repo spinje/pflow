@@ -183,7 +183,7 @@ def _excerpted(value: Any) -> Any:
         return head_tail_preview(value, DOCUMENT_EXCERPT_HEAD_CHARS, DOCUMENT_EXCERPT_TAIL_CHARS)
     if isinstance(value, dict):
         return {key: item if key in _UNCUT_KEYS else _excerpted(item) for key, item in value.items()}
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):  # a tuple prints as a JSON array too
         return [_excerpted(item) for item in value]
     return value
 
