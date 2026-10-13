@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pflow.core.diagnostic_render import format_diagnostic
+from pflow.core.text_format import count_noun
 
 if TYPE_CHECKING:
     from pflow.core.diagnostic import Diagnostic
@@ -40,7 +41,7 @@ def format_validation_failure(errors: list[Diagnostic]) -> str:
         Multi-line text with numbered error list
     """
     error_count = len(errors)
-    lines = [f"✗ Validation failed ({error_count} error{'s' if error_count != 1 else ''}):", ""]
+    lines = [f"✗ Validation failed ({count_noun(error_count, 'error')}):", ""]
 
     for i, error in enumerate(errors[:5], 1):
         lines.append(format_diagnostic(error, error_number=i))
@@ -48,6 +49,6 @@ def format_validation_failure(errors: list[Diagnostic]) -> str:
 
     if error_count > 5:
         remaining = error_count - 5
-        lines.append(f"  ... and {remaining} more error{'s' if remaining != 1 else ''}")
+        lines.append(f"  ... and {count_noun(remaining, 'more error')}")
 
     return "\n".join(lines).rstrip()

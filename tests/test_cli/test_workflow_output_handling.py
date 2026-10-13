@@ -1870,7 +1870,7 @@ class TestOnlyBatchCompactSummary:
         }
         _handle_text_output(shared, output_key=None, workflow_ir=None, verbose=False)
         captured = capsys.readouterr()
-        assert captured.out.split("\n")[0] == "batch batch-llm: 1/1 items succeeded"
+        assert captured.out.split("\n")[0] == "batch batch-llm: 1/1 item succeeded"  # #806: not "1 items"
 
     def test_only_batch_node_empty_batch(self, capsys):
         from pflow.cli.workflow_output import _handle_text_output

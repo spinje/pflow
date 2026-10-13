@@ -347,7 +347,7 @@ class TestFailureByExceptionKeepsItsMetrics:
         _, document = _json(path)
 
         assert text.exit_code == 1
-        assert re.search(r"^❌ Workflow failed (\(1 warnings\) )?after \d+\.\d{3}s$", text.stderr, re.MULTILINE), (
+        assert re.search(r"^❌ Workflow failed (\(1 warning\) )?after \d+\.\d{3}s$", text.stderr, re.MULTILINE), (
             text.stderr
         )
         assert document["duration_ms"] > 0
@@ -537,7 +537,7 @@ class TestTiersUnderPrint:
         for stderr in (plain.stderr, quiet.stderr):
             assert "Error: Execution Failed" in stderr
             assert "To resume from the failed step: pflow resume " in stderr
-        for summary in ("⚠️ Warnings:", "Workflow trace saved:", "❌ Workflow failed (1 warnings) after"):
+        for summary in ("⚠️ Warnings:", "Workflow trace saved:", "❌ Workflow failed (1 warning) after"):
             assert summary in plain.stderr
             assert summary not in quiet.stderr
         # The cause sits last: warnings render before the error block.
@@ -746,6 +746,46 @@ Call the child.
 - workflow: {child}
 - inputs: {{ n: "${{make.stdout}}" }}
 """
+
+
+_ONE_STEP = """# One step
+
+One step.
+
+## Steps
+
+### only
+
+Say hi.
+
+- type: shell
+
+```shell command
+echo hi
+```
+"""
+
+
+class TestTheProgressHeaderMeansTheRunStarted:
+    """#850: "Executing workflow (N nodes):" prints when the engine starts — never above a refusal."""
+
+    def test_a_run_refused_before_its_engine_prints_no_header(self, home: Path, tmp_path: Path) -> None:
+        result = _invoke(_write(tmp_path, "needs", _REQUIRED_INPUT))
+
+        assert result.exit_code == 2, result.stderr
+        assert "Executing workflow" not in result.stderr
+        # No progress stream began, so the summary opens the stream — no blank line to separate it from one.
+        assert result.stderr.startswith("❌ Workflow failed after "), result.stderr
+
+    def test_a_started_run_announces_itself_once_with_its_count_in_agreement(self, home: Path, tmp_path: Path) -> None:
+        one = _invoke(_write(tmp_path, "one", _ONE_STEP))
+        two = _invoke(_write(tmp_path, "ok", _OK))
+        failed_in_engine = _invoke("--only", "two", _write(tmp_path, "never-ran", _OK))  # exit 1: engine started
+
+        assert one.stderr.startswith("Executing workflow (1 node):\n"), one.stderr  # #806: not "1 nodes"
+        assert two.stderr.count("Executing workflow (2 nodes):\n") == 1
+        assert failed_in_engine.exit_code == 1
+        assert failed_in_engine.stderr.startswith("Executing workflow (2 nodes):\n"), failed_in_engine.stderr
 
 
 class TestTheExitCodeSaysWhetherTheRunStarted:

@@ -458,7 +458,7 @@ def test_step_that_began_on_an_earlier_visit_still_needs_confirmation(home, tmp_
 
     result = _runner().invoke(cli, ["resume", exec_id])
     assert result.exit_code == 2
-    assert "Resuming re-runs step 'save' (a shell step)" in result.stdout + result.stderr
+    assert "Resuming re-runs the shell step 'save'," in result.stdout + result.stderr
     assert out.read_text(encoding="utf-8").splitlines() == ["fired x"]  # nothing re-fired
 
 
@@ -526,7 +526,7 @@ def test_entry_restored_by_a_resumed_attempt_still_needs_confirmation(home, tmp_
 
     result = _runner().invoke(cli, ["resume", attempt_id])
     assert result.exit_code == 2
-    assert "Resuming re-runs step 'k' (a shell step)" in result.stdout + result.stderr
+    assert "Resuming re-runs the shell step 'k'," in result.stdout + result.stderr
     assert out.read_text(encoding="utf-8").splitlines() == ["K fired a"]  # nothing re-fired
 
 
@@ -609,7 +609,7 @@ def test_batched_sub_workflow_host_still_needs_confirmation(home, tmp_path):
 
     result = _runner().invoke(cli, ["resume", exec_id])
     assert result.exit_code == 2
-    assert "Resuming re-runs step 'host' (a workflow step)" in result.stdout + result.stderr
+    assert "Resuming re-runs the workflow step 'host'," in result.stdout + result.stderr
     assert out.read_text(encoding="utf-8").splitlines() == ["fired a"]  # nothing re-fired
 
 
@@ -725,7 +725,7 @@ def test_run_killed_inside_a_batched_host_resumes_at_the_host(home, tmp_path):
     assert (source.entry_node_id, source.last_completed_node_id) == ("host", None)
     refused = _runner().invoke(cli, ["resume", exec_id])
     assert refused.exit_code == 2
-    assert "Resuming re-runs step 'host' (a workflow step)" in refused.stdout + refused.stderr
+    assert "Resuming re-runs the workflow step 'host'," in refused.stdout + refused.stderr
     assert out.read_text(encoding="utf-8").splitlines() == ["fired a", "fired b"]  # nothing re-fired
 
 
@@ -771,7 +771,7 @@ def test_stale_refusal_names_the_edited_restored_step(home, shell_wf):
     assert "'step1' was edited. Resume re-runs nothing before 'step2'" in combined
     # step2 (shell) started in the source run, and --force also waives its side-effect
     # confirmation — the stale refusal is the only place the agent can learn that (#690).
-    assert "--force also re-runs 'step2' (a shell step that already started" in combined
+    assert "--force also re-runs the shell step 'step2', which already started" in combined
 
 
 def test_an_edit_after_the_resume_point_passes_the_identity_gate(home, shell_wf):
@@ -780,7 +780,7 @@ def test_an_edit_after_the_resume_point_passes_the_identity_gate(home, shell_wf)
     shell_wf.write_text(shell_wf.read_text(encoding="utf-8").replace('echo "done', 'echo "finished'), "utf-8")
     result = _runner().invoke(cli, ["resume", exec_id, "mode=ok"])
     assert result.exit_code == 2
-    assert "Resuming re-runs step 'step2' (a shell step)" in result.stdout + result.stderr
+    assert "Resuming re-runs the shell step 'step2'," in result.stdout + result.stderr
     assert "Workflow changed" not in result.stdout + result.stderr
 
 
@@ -818,6 +818,136 @@ def test_stale_unverifiable_message_when_hash_absent(tmp_path):
     assert exc.value.hash_known is False
     # --force bypasses even the unverifiable case.
     _check_workflow_identity(resolved, source, force=True)
+
+
+# --- A denial must reach the paused gate (#858) -------------------------------
+
+# up -> gated (approval: required, touches a marker). A denial re-enters at `gated`, whose gate must
+# still be there to receive the "no" — whatever --force says.
+_DENY_WF = """# Deny Demo
+
+An upstream step, then a gated side effect.
+
+## Steps
+
+### up
+
+Upstream value.
+
+- type: shell
+- next: gated
+
+```shell command
+echo "up-value"
+```
+
+### gated
+
+Gated side effect.
+
+- type: shell
+- approval: required
+
+```shell command
+touch {marker}
+```
+"""
+
+
+def _pause_deny_wf(tmp_path: Path, *, cached: bool = False, tail: str = "") -> tuple[Path, Path, str]:
+    """Write the deny workflow (``cached``: the gated step memoizes; ``tail``: steps after it), run it to
+    its pause, and return ``(workflow, marker, token)``."""
+    marker = tmp_path / "gated-ran"
+    wf = tmp_path / "deny_wf.pflow.md"
+    text = _DENY_WF.format(marker=marker.as_posix()) + tail
+    if cached:
+        text = text.replace("- approval: required\n", "- approval: required\n- cache: true\n")
+    wf.write_text(text, encoding="utf-8")
+    paused = _runner().invoke(cli, [str(wf)])
+    assert paused.exit_code == 4, paused.stderr
+    match = re.search(r"Resume token: (\S+)", paused.stdout)
+    assert match, paused.stdout
+    return wf, marker, match.group(1)
+
+
+def test_denying_after_an_upstream_edit_still_needs_force(home, tmp_path):
+    """The edited-workflow check still applies to a denial (#858 keeps it until the engine delivers a "no"
+    before the gated step resolves its templates): without --force it refuses and keeps the token;
+    with --force the denial lands and the gated step never runs."""
+    wf, marker, token = _pause_deny_wf(tmp_path)
+    wf.write_text(wf.read_text(encoding="utf-8").replace('echo "up-value"', 'echo "up-value-2"'), encoding="utf-8")
+    refused = _runner().invoke(cli, ["resume", token, "--approve", "no"])
+    assert refused.exit_code == 2, refused.stdout + refused.stderr
+    assert "Workflow changed since the original run" in refused.stdout + refused.stderr
+    denied = _runner().invoke(cli, ["resume", token, "--approve", "no", "--force"])
+    assert denied.exit_code == 3, denied.stdout + denied.stderr
+    assert "Denied at gate 'gated'" in denied.stderr
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("force", [False, True], ids=["plain", "force"])
+def test_denying_a_step_whose_approval_was_removed_refuses_instead_of_running_it(home, tmp_path, force):
+    """A denial is only safe while the gate is there to receive it: with `approval: required` removed
+    from the paused step, resuming would RUN it on a "no". `--force` (consent to re-running) waives
+    nothing here."""
+    wf, marker, token = _pause_deny_wf(tmp_path)
+    wf.write_text(wf.read_text(encoding="utf-8").replace("- approval: required\n", ""), encoding="utf-8")
+    result = _runner().invoke(cli, ["resume", token, "--approve", "no", *(["--force"] if force else [])])
+    assert result.exit_code == 2, result.stdout + result.stderr
+    combined = result.stdout + result.stderr
+    assert (
+        "The paused step 'gated' no longer has `approval: required`, so resuming would run it instead of "
+        "recording the denial." in combined
+    )
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("edits", "problem"),
+    [
+        pytest.param(
+            (("### gated", "### gated2"), ("next: gated", "next: gated2")),
+            "is no longer in the workflow",
+            id="renamed",
+        ),
+        pytest.param(
+            (("next: gated", "next: end"),),
+            "is no longer reachable from the workflow's start step",
+            id="cut-off-from-the-start",
+        ),
+    ],
+)
+def test_denying_a_paused_step_the_walk_cannot_enter_refuses_before_any_attempt(home, tmp_path, edits, problem):
+    """A paused step renamed, or no longer reachable from the start, is one the resumed walk cannot enter
+    to deliver the denial. The refusal comes from the preflight, even with --force — never a failed
+    attempt from the engine claiming the step was removed."""
+    wf, marker, token = _pause_deny_wf(tmp_path)
+    text = wf.read_text(encoding="utf-8")
+    for before, after in edits:
+        text = text.replace(before, after)
+    wf.write_text(text, encoding="utf-8")
+    result = _runner().invoke(cli, ["resume", token, "--approve", "no", "--force"])
+    assert result.exit_code == 2, result.stdout + result.stderr
+    assert f"The paused step 'gated' {problem}" in result.stdout + result.stderr
+    assert len(list((home / ".pflow" / "debug").glob("workflow-trace-*.json"))) == 1  # the paused run only
+    assert not marker.exists()
+
+
+def test_denying_a_cached_gated_step_never_continues_past_it(home, tmp_path):
+    """A memo hit returns a step's saved result before its approval gate fires. After another run
+    approved and cached the gated step, a denial of the older pause must still meet the gate — never
+    take the cached result and run the steps after it."""
+    after = tmp_path / "after-ran"
+    tail = f"\n### after\n\nAfter the gate.\n\n- type: shell\n\n```shell command\ntouch {after.as_posix()}\n```\n"
+    wf, _marker, token = _pause_deny_wf(tmp_path, cached=True, tail=tail)
+    approved = _runner().invoke(cli, [str(wf), "--auto-approve", "gated"])  # caches `gated`
+    assert approved.exit_code == 0, approved.stderr
+    after.unlink()
+
+    denied = _runner().invoke(cli, ["resume", token, "--approve", "no"])
+    assert denied.exit_code == 3, denied.stdout + denied.stderr
+    assert "Denied at gate 'gated'" in denied.stderr
+    assert not after.exists()
 
 
 # --- Disambiguation (existence precedence, §E step 2) ------------------------
@@ -868,6 +998,8 @@ def test_json_refusal_shape(home, shell_wf):
     assert doc["success"] is False
     assert doc["status"] == "failed"
     assert doc["errors"][0]["context"]["execution_id"] == exec_id
+    # #806: the refusal names the step's type without guessing an article ("a http step").
+    assert doc["errors"][0]["message"].startswith("Resuming re-runs the shell step '")
 
 
 def test_bare_resume_shows_group_help_with_answer_flags(home):
@@ -1420,7 +1552,7 @@ def test_stale_refusal_names_a_between_iterations_loop_step_as_the_resume_point(
     combined = refused.stdout + refused.stderr
     assert "'seed' was edited. Resume re-runs nothing before 'rounds' (iteration 3)" in combined
     assert "Its iterations before 3 are restored too, so an edit to 'rounds' applies from iteration 3 on." in combined
-    assert "--force also re-runs 'rounds' (a workflow step that already started" in combined
+    assert "--force also re-runs the workflow step 'rounds', which already started" in combined
 
 
 def test_editing_the_loop_step_resumed_mid_loop_applies_from_that_iteration(home, tmp_path, monkeypatch):
@@ -1450,7 +1582,7 @@ def test_killed_between_loop_iterations_continues_with_the_engine_decision_e2e(h
     refused = _runner().invoke(cli, ["resume", exec_id])
     assert refused.exit_code == 2
     combined = refused.stdout + refused.stderr
-    assert "Resuming re-runs step 'rounds' (a workflow step)" in combined
+    assert "Resuming re-runs the workflow step 'rounds'," in combined
     assert [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] == rounds[:2]
 
     resumed = _runner().invoke(cli, ["resume", exec_id, "--force"])

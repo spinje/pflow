@@ -76,7 +76,7 @@ def _prompt_or_raise_side_effect(
         controller.prepare_for_prompt()
         try:
             confirmed = click.confirm(
-                f"Resuming re-runs step '{refusal.node_id}' (a {refusal.node_type} step) "
+                f"Resuming re-runs the {refusal.node_type} step '{refusal.node_id}', "
                 "and its side effects may fire again. Continue?",
                 default=False,
                 err=True,
@@ -229,7 +229,8 @@ def resume() -> None:
     Flags on the default form:
       --approve yes|no        answer a paused approval gate ("no" denies cleanly, exit 3)
       --choose "ANSWER"       answer a paused escalation (option number or free text)
-      --force                 bypass the side-effect confirm + edited-workflow check
+      --force                 consent to re-running: bypass the side-effect confirm +
+                              edited-workflow check
       --dry-run               preview the resumed tail without executing
       --auto-approve NODE_ID  pre-approve ONE downstream approval gate (repeatable)
       --output-format text|json / -p / --no-trace / --cache/--no-cache
@@ -253,7 +254,7 @@ def resume() -> None:
 @click.option(
     "--force",
     is_flag=True,
-    help="Bypass the side-effect confirmation and the edited-workflow check.",
+    help="Consent to re-running steps: bypass the side-effect confirmation and the edited-workflow check.",
 )
 @click.option(
     "--output-format",
@@ -359,7 +360,9 @@ def resume_run(
             output_format=output_format,
             print_flag=print_flag,
             no_trace=no_trace,
-            cache=cache,
+            # A memo hit returns the step's saved result before its approval gate fires, so a denial
+            # would be skipped and the walk would continue past the step — a denial reads no cache.
+            cache=cache and not (approval_answer is not None and not approval_answer[1]),
             auto_approve=auto_approve,
             approval_answer=approval_answer,
             dry_run=dry_run,

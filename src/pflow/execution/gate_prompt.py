@@ -41,6 +41,7 @@ from pflow.core.gate import (
     option_labels,
 )
 from pflow.core.output_controller import OutputController
+from pflow.core.text_format import labelled_lines
 
 GateResolver = Callable[..., GateResolution]
 
@@ -266,18 +267,17 @@ def format_gate_lines(gate_request: dict[str, Any]) -> list[str]:
 def _format_preview(preview: dict[str, Any], node_type: str | None) -> list[str]:
     """Aligned ``key: value`` lines, secret-masked and never truncated.
 
-    Values are flattened to one line each (newlines escaped) so the block stays
-    scannable. Values come from the shared display policy ``masked_preview``
+    A multi-line value (a code body, a shell command) keeps its lines, hung under the value column.
+    Values come from the shared display policy ``masked_preview``
     (secrets masked, a shell step's ``env:`` as bound text, nothing truncated).
     """
     if not preview:
         return ["(no parameters)"]
     width = max(len(key) for key in preview)
-    lines = []
+    lines: list[str] = []
     for key, value in masked_preview(preview, node_type).items():
         text = value if isinstance(value, str) else _compact_json(value)
-        text = text.replace("\n", "\\n")
-        lines.append(f"{key}:{' ' * (width - len(key) + 2)}{text}")
+        lines.extend(labelled_lines(f"{key}:{' ' * (width - len(key) + 2)}", text))
     return lines
 
 

@@ -52,7 +52,7 @@ is TTY-independent. The output header has a separate TTY policy in
 `--print` suppresses normal stderr chatter; `--output-format` chooses the result
 format. Neither is a substitute for the other.
 Node execution (`runner.run` in `commands/run.py:execute_json_workflow`, probe's
-`node.run`) happens inside `core/stdio_reservation.py:reserve_stdout`, in every
+`probe_node`) happens inside `core/stdio_reservation.py:reserve_stdout`, in every
 output format, so stray writes from user code reach stderr, not the result.
 Third-party compile-time warnings (a dependency's `SyntaxWarning`, printed on the
 first import in an environment with no cached bytecode) never reach pflow's stderr.

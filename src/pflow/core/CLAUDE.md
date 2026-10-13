@@ -20,6 +20,7 @@ Shared parsing, diagnostics, configuration, and execution utilities.
 | Change prompt-cache rendering/overlap/TTL | `prompt_cache.py`, `prompt_refs.py`, `cache_overlap.py`, `cache_ttl.py`; capabilities in `llm_capabilities.py` |
 | Change cache recommendations or analysis reports | `prompt_cache_analysis/CLAUDE.md` |
 | Change stdin or terminal progress | `shell_integration.py`, `output_controller.py` |
+| Print a count with its noun, or a multi-line value under a label | `text_format.py` (`count_noun`, `labelled_lines`) — `tests/test_core/test_text_format.py` ratchets the inline idioms out |
 | Change usage aggregation or trace reports | `metrics.py`, `llm_usage.py`, `trace_tree.py`, `trace_report.py` |
 | Read persisted traces | `trace_io.py::load_trace_file` — shared JSONL reconstruction boundary |
 | Find a Run's trace, the trace filename grammar, the debug-dir listing | `trace_dir.py` — the directory listing is the index (ADR-0018): `list_traces` (one `os.scandir`), `find_trace`, the strict/lenient readers, `is_trace_locked`; shared by `runtime/` and `ui/` |

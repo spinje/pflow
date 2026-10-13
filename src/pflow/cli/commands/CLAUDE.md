@@ -7,7 +7,7 @@ match their command; these are the less obvious ownership boundaries:
 |---|---|
 | Default workflow execution | Hidden `run.py`; delegates to `WorkflowRunner` |
 | Resume dispatch and paused-run listing | `resume.py:ResumeGroup`; refusal preflight in `execution/resume_preflight.py` |
-| Single-node probe | `probe.py` is Click-only; `_probe_impl.py:execute_single_node` executes |
+| Single-node probe | `probe.py` is Click-only; `_probe_impl.py:execute_single_node` renders `execution/probe.py::probe_node`, shared with MCP `registry_run` |
 | Revisit probe output without executing | `read_fields.py`, `core/execution_cache.py` |
 | Publish/list/remove skills | `skills.py` implements singular `pflow skill`; `core/workflow/skill_service.py` owns behavior |
 | MCP client configuration/tools | `mcp.py`; `mcp serve` instead exposes `mcp_server/` |

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from pflow.core.text_format import count_noun
 from pflow.core.validation_utils import VALIDATION_PLACEHOLDER
 
 
@@ -65,11 +66,10 @@ def format_unavailable_models_phrase(
             if count <= 0:
                 rendered.append(model)
             else:
-                rendered.append(f"{model} ({count} call{'s' if count != 1 else ''})")
+                rendered.append(f"{model} ({count_noun(count, 'call')})")
         parts.append(", ".join(rendered))
     if unnamed_count > 0:
-        noun = "call" if unnamed_count == 1 else "calls"
-        parts.append(f"{unnamed_count} {noun} without recorded model")
+        parts.append(f"{count_noun(unnamed_count, 'call')} without recorded model")
     return "; ".join(parts)
 
 
@@ -86,7 +86,7 @@ def format_subscription_phrase(subscription: Mapping[str, Any], *, paid_cost: fl
     model, the model may be omitted, or no usage telemetry arrived.
     """
     calls = int(subscription.get("calls", 0) or 0)
-    label = f"subscription ({calls} agent call{'s' if calls != 1 else ''})"
+    label = f"subscription ({count_noun(calls, 'agent call')})"
     estimate = subscription.get("api_equivalent_cost_usd")
     missing_phrase = format_unavailable_models_phrase(
         unavailable_models_to_counts(subscription.get("unavailable_models", [])),

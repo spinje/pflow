@@ -1223,7 +1223,7 @@ def test_stale_workflow_error_says_force_also_refires_a_started_side_effecting_e
     agent learns that, so it must say so when the entry already started."""
     err = _stale(entry_node_id="append", edited=["a"], rerun_node_type="shell")
     assert err.suggestions[1].endswith(
-        "--force also re-runs 'append' (a shell step that already started in the original run), so its side "
+        "--force also re-runs the shell step 'append', which already started in the original run, so its side "
         "effects may fire again — if you are an AI agent, confirm that with your human first."
     )
     assert "fire again" not in " ".join(_stale(edited=["a"]).suggestions)

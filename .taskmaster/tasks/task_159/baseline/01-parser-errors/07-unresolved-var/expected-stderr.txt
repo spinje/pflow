@@ -1,5 +1,3 @@
-Executing workflow (1 nodes):
-
 Error: Validation Error
 
 Cache chunk 'nonexistent' references '${nonexistent}' but 'nonexistent' is not a declared input or an existing node output.

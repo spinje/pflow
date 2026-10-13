@@ -788,7 +788,7 @@ class TestCompletionLine:
         warned = completion_line(_measured(*_completed("a"), diagnostics=[warning, advisory]))
         advised = completion_line(_measured(*_completed("a"), diagnostics=[advisory]))
 
-        assert warned[0].startswith("⚠️ Workflow completed with 1 warnings in ")
+        assert warned[0].startswith("⚠️ Workflow completed with 1 warning in ")
         assert advised[0].startswith("✓ Workflow completed in ")
 
     def test_failed_names_its_warnings(self) -> None:
@@ -798,7 +798,7 @@ class TestCompletionLine:
         warned = completion_line(_measured(*_completed("a"), status=WorkflowStatus.FAILED, diagnostics=[warning]))
 
         assert plain[0].startswith("❌ Workflow failed after ")
-        assert warned[0].startswith("❌ Workflow failed (1 warnings) after ")
+        assert warned[0].startswith("❌ Workflow failed (1 warning) after ")
 
     @pytest.mark.parametrize(
         ("node_ids", "cached", "suffix"),
@@ -859,7 +859,7 @@ def test_shell_stderr_upgrades_the_glyph_and_its_preview_keeps_the_cause(tmp_pat
     assert block[:2] == ["", "⚠️  Shell stderr (exit code 0):"]
     assert block[2].startswith("  • noisy: progress progress")
     assert "chars omitted]" in block[2]
-    assert block[2].endswith("error: the real cause")
+    assert block[-1] == " " * len("  • noisy: ") + "error: the real cause"
     assert completion_line(clean)[0].startswith("✓ Workflow completed in ")
     assert format_stderr_warnings(clean.document["execution"]["steps"]) == []
     # The MCP response composes the same sections: an agent there sees the glyph and the cause too.
@@ -867,7 +867,7 @@ def test_shell_stderr_upgrades_the_glyph_and_its_preview_keeps_the_cause(tmp_pat
     clean_text = render_mcp_text(clean)
     assert noisy_text.startswith("⚠️ Workflow completed in ")
     assert "\n⚠️  Shell stderr (exit code 0):\n" in noisy_text
-    assert f"\n{block[2]}\n" in noisy_text
+    assert "\n" + "\n".join(block[2:]) + "\n" in noisy_text
     assert clean_text.startswith("✓ Workflow completed in ")
     assert "Shell stderr" not in clean_text
 
@@ -889,7 +889,8 @@ class TestStderrWarnings:
     def test_multiline_stderr_is_indented(self) -> None:
         lines = format_stderr_warnings([{"node_id": "multi", "has_stderr": True, "stderr": "first line\nsecond line"}])
 
-        assert lines[2] == "  • multi: first line\n     second line"
+        # #806: further lines hang under the value column, each its own line.
+        assert lines[2:] == ["  • multi: first line", " " * len("  • multi: ") + "second line"]
 
 
 class TestModeLines:
@@ -1101,7 +1102,7 @@ class TestRenderCliStderr:
         assert advised[1].startswith("✓ Workflow completed in ")
         assert "\N{INFORMATION SOURCE}\N{VARIATION SELECTOR-16} Advisories:" in advised
         assert "⚠️ Warnings:" not in advised
-        assert warned[1].startswith("⚠️ Workflow completed with 1 warnings in ")
+        assert warned[1].startswith("⚠️ Workflow completed with 1 warning in ")
         assert "⚠️ Warnings:" in warned
 
     def test_a_failure_renders_warnings_then_its_error(self) -> None:

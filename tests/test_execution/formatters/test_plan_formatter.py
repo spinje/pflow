@@ -8,6 +8,8 @@ translation, nested-aware summary counts, and the recursive
 
 from __future__ import annotations
 
+import dataclasses
+
 from pflow.execution.formatters.plan_formatter import format_plan_json, format_plan_text
 from pflow.execution.result import Plan, PlanEntry, PlanSummary
 
@@ -41,6 +43,7 @@ def test_format_plan_text_header_uses_basename_not_full_path() -> None:
         f"header must lead with 'Dry-run for <basename>', got: {first_line!r}"
     )
     assert "/absolute/path/to/" not in first_line, "full path must not appear in the text header"
+    assert first_line == "Dry-run for my-workflow.pflow.md: 1 node"  # #806: not "1 nodes"
 
 
 def test_format_plan_text_summary_translates_class_names() -> None:
@@ -235,6 +238,8 @@ def test_format_plan_text_batch_parent_header_includes_items_and_parallel() -> N
     out = format_plan_text(plan)
 
     assert "[workflow './child.pflow.md' \u00d7 2 items, parallel]" in out
+    one_item = dataclasses.replace(plan, entries=[dataclasses.replace(plan.entries[0], batch_count=1)])
+    assert "[workflow './child.pflow.md' \u00d7 1 item, parallel]" in format_plan_text(one_item)  # #806
 
 
 def test_format_plan_text_batch_partial_child_shows_fraction_and_stats() -> None:

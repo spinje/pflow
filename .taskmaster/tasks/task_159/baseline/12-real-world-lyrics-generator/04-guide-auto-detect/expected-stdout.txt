@@ -1150,7 +1150,7 @@ Email the analysis report to the recipient.
 **Probe when** you need specific nested fields like `${node.result.data.items[0].id}`.
 **Skip probing when** you're passing `${node.result}` wholesale to the next step — you don't need to know the structure.
 
-See `pflow probe --help` for output format and usage.
+See `pflow probe --help` for output format and usage. A `${VAR}` in a probe param (never in a shell command or code body) is filled from the environment or `pflow settings set-env` first — an unset one refuses the probe; a probe exits 1 when the node fails and 2 when the call is refused, the error on stderr.
 
 **MCP Testing Protocol:**
 ```bash

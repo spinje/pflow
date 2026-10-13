@@ -1868,7 +1868,7 @@ class TestResumeEndpoint:
         body = response.json()
         assert body["refusal"] == "stale_workflow"
         (diagnostic,) = body["errors"]
-        assert "--force also re-runs 'boom' (a shell step that already started" in diagnostic["suggestions"][1]
+        assert "--force also re-runs the shell step 'boom', which already started" in diagnostic["suggestions"][1]
         popen.assert_not_called()
 
     def test_validator_only_error_in_an_edited_workflow_is_400_with_every_error(
