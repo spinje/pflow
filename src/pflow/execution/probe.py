@@ -7,13 +7,14 @@ engine's failure records), and the channel only renders the :class:`ProbeResult`
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field, replace
 from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity, exception_to_diagnostics
 from pflow.core.execution_cache import ExecutionCache
-from pflow.core.security_utils import scrub_secret_values, secret_values
+from pflow.core.security_utils import redact_sensitive, scrub_secret_values, secret_values
 from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
 from pflow.core.workflow.template_surfaces import param_mode
 from pflow.execution.formatters.run_outcome import scrub_diagnostic
@@ -75,7 +76,7 @@ def probe_node(node_type: str, params: dict[str, Any]) -> ProbeResult:
     execution_time_ms = int(result.metrics.workflow_nodes.get(resolved, 0)) if result.metrics else 0
     # A probe's params are its inputs: their sensitive-named values (and every `pflow settings` value)
     # never print, wherever they travelled — the rule `build_run_outcome` applies to a run.
-    secrets = secret_values(node_params)
+    secrets = _with_json_escaped_forms(secret_values(node_params))
     errors = [scrub_diagnostic(d, secrets) for d in result.errors]
     warnings = [scrub_diagnostic(d, secrets) for d in result.diagnostics if d.severity is not Severity.ERROR]
     # Wherever the run left them: a failure record, or the node's own key when the run failed after
@@ -99,9 +100,17 @@ def probe_node(node_type: str, params: dict[str, Any]) -> ProbeResult:
         ran=True,
         outputs=outputs,
         warnings=warnings,
-        execution_id=_cache_outputs(resolved, params, outputs),
+        execution_id=_cache_outputs(resolved, scrub_secret_values(redact_sensitive(params), secrets), outputs),
         execution_time_ms=execution_time_ms,
     )
+
+
+def _with_json_escaped_forms(secrets: frozenset[str]) -> frozenset[str]:
+    """``secrets`` plus each one as JSON text spells it (a quote or backslash escaped, non-ASCII as
+    ``\\u``): output that is JSON text holds that form, and the probe's renderer and ``read-fields``
+    decode it back to the secret."""
+    escaped = {json.dumps(secret, ensure_ascii=as_ascii)[1:-1] for secret in secrets for as_ascii in (True, False)}
+    return secrets | escaped
 
 
 def _refused(node_type: str, errors: list[Diagnostic]) -> ProbeResult:

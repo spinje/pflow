@@ -64,6 +64,30 @@ def _memo_entries() -> list[str]:
     return [key for (key,) in rows if not key.startswith("__pflow_history__:")]
 
 
+def test_a_secret_json_encoded_into_an_output_is_scrubbed_before_decoding() -> None:
+    """A secret with a quote, JSON-encoded by the node, is stored escaped — the probe's renderer and
+    `read-fields` decode it, so the escaped form must be scrubbed too."""
+    code = 'import json\napi_password: str\nresult: str = json.dumps({"value": api_password})'
+
+    probe = probe_node("code", {"inputs": {"api_password": 'pa"ss-word-99'}, "code": code})
+
+    assert probe.success, probe.errors
+    assert probe.outputs["result"] == '{"value": "<REDACTED>"}'
+    assert probe.execution_id is not None
+    cached = ExecutionCache().retrieve(probe.execution_id)
+    assert cached is not None
+    assert "ss-word-99" not in str(cached)
+
+
+def test_cached_params_hide_a_nested_secret() -> None:
+    probe = probe_node("shell", {"command": "true", "env": {"API_TOKEN": "s3cr3t-token-value"}})
+
+    assert probe.execution_id is not None
+    cached = ExecutionCache().retrieve(probe.execution_id)
+    assert cached is not None
+    assert cached["params"]["env"]["API_TOKEN"] == "<REDACTED>"  # noqa: S105
+
+
 def test_a_node_that_ran_and_failed_is_not_cached() -> None:
     probe = probe_node("shell", {"command": "exit 3"})
 
