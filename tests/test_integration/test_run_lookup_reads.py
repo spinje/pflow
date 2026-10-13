@@ -200,6 +200,22 @@ def test_only_snapshot_tail_reads_until_the_newest_success_and_fully_loads_only_
     assert len(scans) == 1
 
 
+def test_only_snapshot_miss_lists_once_and_names_what_it_did_not_search(
+    mixed: _Dir, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The miss path is a lookup too: one enumeration serves the search AND the "not searched" count."""
+    from pflow.core.exceptions import OnlySnapshotMissingError
+    from pflow.runtime.workflow_trace import load_snapshot_or_raise
+
+    x9 = str(Path(mixed.other_unfinished).parent.parent.parent / "flows" / "x9.pflow.md")
+    with _recording(monkeypatch, mixed.debug) as (opened, scans), pytest.raises(OnlySnapshotMissingError) as miss:
+        load_snapshot_or_raise(x9, "two")
+
+    assert "2 traces written by an earlier pflow version are not searched" in miss.value.suggestion
+    assert {name for name, _ in opened} == _names(mixed.other_unfinished)  # its one (unfinished) trace, tail only
+    assert len(scans) == 1
+
+
 def test_report_auto_select_reads_newest_first_until_the_newest_complete(
     mixed: _Dir, monkeypatch: pytest.MonkeyPatch
 ) -> None:

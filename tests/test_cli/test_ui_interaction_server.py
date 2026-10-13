@@ -10,6 +10,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 from urllib.parse import urlencode
 
@@ -1219,6 +1220,7 @@ class TestGateEndpoint:
         assert response.status_code == 404
         assert "no-such-run" in response.json()["error"]
         assert "earlier pflow version" not in response.json()["error"]  # no pre-185 traces → no clause
+        assert "aged out of `runtime.trace_retention_days`" in response.json()["error"]
 
     def test_gate_of_a_pre_185_named_trace_is_404_and_says_what_was_not_searched(
         self, tmp_path: Path, monkeypatch
@@ -1682,6 +1684,62 @@ class TestResumeEndpoint:
         assert body["refusal"] == "superseded"
         assert isinstance(body["newer_execution_id"], str) and body["newer_execution_id"]
         assert body["errors"]
+        popen.assert_not_called()
+
+    @staticmethod
+    def _fault_reads_after_the_first(monkeypatch, path: Path, fault: Callable[[], Exception]) -> None:
+        """Let the FIRST open of ``path`` succeed (the attempt loads), then fault every later open — the raw
+        re-read the consumption check makes. Injected at the open itself (``builtins.open`` + ``io.open``:
+        ``Path.read_text`` uses the latter), never at a resume helper."""
+        import builtins
+        import io
+
+        opens = {"n": 0}
+
+        def guarded(real: Callable[..., Any]) -> Callable[..., Any]:
+            def wrapper(file: Any, *args: Any, **kwargs: Any) -> Any:
+                if isinstance(file, (str, Path)) and Path(file) == path:
+                    opens["n"] += 1
+                    if opens["n"] > 1:
+                        raise fault()
+                return real(file, *args, **kwargs)
+
+            return wrapper
+
+        monkeypatch.setattr(builtins, "open", guarded(builtins.open))
+        monkeypatch.setattr(io, "open", guarded(io.open))
+
+    def _denied_attempt(self, tmp_path: Path, monkeypatch) -> tuple[str, Path]:
+        """A real pause answered `no` through the CLI: the denied attempt ran zero steps, so only its raw
+        re-read (the gate verdict line) can show it consumed the token."""
+        self._home(tmp_path, monkeypatch)
+        token = self._pause(self._paused_wf(tmp_path))
+        denied = CliRunner(mix_stderr=False).invoke(cli, ["resume", token, "--approve", "no"])
+        assert denied.exit_code == 3, denied.stderr
+        [attempt] = (tmp_path / ".pflow" / "debug").glob(f"*.from-{token[:8]}-*.json")
+        return token, attempt
+
+    def test_an_attempt_unreadable_on_its_re_read_is_a_retryable_409_not_a_500(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Task 185 mid-task review #1: the consumption check reads an attempt twice (load, then the raw lines
+        for its gate verdict). A read fault on the SECOND read must refuse typed and retryable — never a 500,
+        never read as "no consumer" (which would spawn a second answer)."""
+        token, attempt = self._denied_attempt(tmp_path, monkeypatch)
+        self._fault_reads_after_the_first(monkeypatch, attempt, lambda: PermissionError(13, "Permission denied"))
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": token, "approve": "yes"})
+        assert response.status_code == 409, response.text
+        assert response.json()["refusal"] == "source_unreadable"
+        popen.assert_not_called()
+
+    def test_an_attempt_that_vanishes_on_its_re_read_still_supersedes(self, tmp_path: Path, monkeypatch) -> None:
+        token, attempt = self._denied_attempt(tmp_path, monkeypatch)
+        self._fault_reads_after_the_first(monkeypatch, attempt, lambda: FileNotFoundError(2, "gone"))
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": token, "approve": "yes"})
+        assert response.status_code == 409, response.text
+        assert response.json()["refusal"] == "superseded"
         popen.assert_not_called()
 
     def test_a_lenient_era_recorded_input_is_400_naming_the_run_to_resume(self, tmp_path: Path, monkeypatch) -> None:

@@ -1637,11 +1637,11 @@ class ResumeSourceMissingError(ResumeSourceError):
 
 
 class ResumeSourceUnreadableError(ResumeSourceError):
-    """A newer attempt of this run exists but could not be read, so whether the run was already answered
-    is unknown (Task 185). Refused, never guessed: reading the attempt as "no consumer" would let a token
-    be answered twice. Usually transient — retry."""
+    """A trace this resume must read exists but could not be read — the run itself, or a newer attempt
+    whose verdict decides whether the run was already answered (Task 185). Refused, never guessed: reading
+    an attempt as "no consumer" would let a token be answered twice. Usually transient — retry."""
 
-    _TITLE = "Could not check this run's attempts"
+    _TITLE = "Could not read the run's trace"
 
 
 class ResumeNothingToResumeError(ResumeSourceError):

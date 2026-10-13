@@ -18,6 +18,7 @@ import json
 import logging
 import re
 from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NoReturn
@@ -51,6 +52,7 @@ from pflow.core.trace_dir import debug_dir as default_debug_dir
 from pflow.core.trace_io import load_trace_file
 from pflow.core.trace_tree import normalize_workflow_path_key
 from pflow.runtime.workflow_trace import (
+    _is_full_run_of,
     _iter_workflow_traces,
     _unrecovered_failed_node_ids,
     final_events_by_node,
@@ -241,7 +243,8 @@ def _find_consuming_attempt(
     each is loaded and confirmed (``resumed_from == execution_id``). Reads fail CLOSED, never toward "no
     consumer" (which would let a token be answered twice): an attempt that vanished counts as consuming —
     Retention removes an Attempt only after its source is gone — and one that cannot be read raises
-    ``ResumeSourceUnreadableError``. A corrupt attempt (``JSONDecodeError``) is skipped.
+    ``ResumeSourceUnreadableError`` (``_refuse_unreadable`` — over the load AND the raw re-read). A corrupt
+    attempt (``JSONDecodeError``) is skipped.
     """
     hashes = workflow_hashes(workflow_path)
     normalized = normalize_workflow_path_key(workflow_path)
@@ -250,25 +253,16 @@ def _find_consuming_attempt(
         if entry.workflow_hash not in hashes or entry.only or entry.resumed_from_prefix != prefix:
             continue
         try:
-            candidate = load_trace_file(entry.path)
+            with _refuse_unreadable(entry.path, execution_id, "a newer attempt of this run"):
+                candidate = load_trace_file(entry.path)
+                if not _is_attempt_of(candidate, normalized, execution_id):
+                    continue
+                consumed = _attempt_consumed_work(entry.path, candidate)
         except FileNotFoundError:
-            return entry.execution_id or ""
-        except json.JSONDecodeError:
+            return entry.execution_id or ""  # gone mid-check: only a gone source loses its attempts
+        except ValueError:  # JSONDecodeError / UnicodeDecodeError: a corrupt attempt is skipped
             logger.debug("Skipping unparseable attempt trace %s", entry.path, exc_info=True)
             continue
-        except OSError as exc:
-            raise ResumeSourceUnreadableError(
-                f"Could not read the newer attempt {entry.path} of this run, so whether it was already "
-                f"answered is unknown: {exc}",
-                execution_id=execution_id,
-                suggestions=["Retry. If it keeps failing, check the trace file's permissions."],
-            ) from exc
-        if not _is_attempt_of(candidate, normalized, execution_id):
-            continue
-        try:
-            consumed = _attempt_consumed_work(entry.path, candidate)
-        except FileNotFoundError:
-            consumed = True
         if consumed or (count_live and is_trace_locked(entry.path) is True):
             return str(candidate.get("execution_id") or "")
     return None
@@ -276,15 +270,34 @@ def _find_consuming_attempt(
 
 def _is_attempt_of(candidate: Any, normalized_workflow_path: str, execution_id: str) -> bool:
     """Whether a loaded trace is a full-run attempt resumed from ``execution_id`` of this workflow."""
-    if not isinstance(candidate, dict) or candidate.get("resumed_from") != execution_id:
-        return False
-    candidate_path = candidate.get("workflow_path")
     return (
-        isinstance(candidate_path, str)
-        and normalize_workflow_path_key(candidate_path) == normalized_workflow_path
-        and str(candidate.get("format_version", "")).startswith("2.")
-        and candidate.get("only_node") is None
+        isinstance(candidate, dict)
+        and candidate.get("resumed_from") == execution_id
+        and _is_full_run_of(candidate, normalized_workflow_path)
     )
+
+
+@contextmanager
+def _refuse_unreadable(path: Path | None, execution_id: str | None, what: str) -> Iterator[None]:
+    """Turn a read fault on a trace a resume must read into the typed, retryable refusal.
+
+    The ONE mapping for every resume read (selection, the consumption check, the source's raw re-reads):
+    ``FileNotFoundError`` passes through (each caller decides what "gone" means — consumed, skipped, or
+    missing); any other ``OSError`` becomes ``ResumeSourceUnreadableError`` — never a crash (a 500 on
+    ``/api/resume``), and never read as "no consumer" or "no such run". ``path=None``: the faulting file is
+    the one the ``OSError`` names (a read inside an iterator)."""
+    try:
+        yield
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        faulted = path if path is not None else exc.filename
+        raise ResumeSourceUnreadableError(
+            f"Could not read {what} ({faulted}), so this resume cannot be checked: {exc}",
+            execution_id=execution_id,
+            trace_path=str(faulted) if faulted is not None else None,
+            suggestions=["Retry. If it keeps failing, check the trace file's permissions."],
+        ) from exc
 
 
 def _raise_resume_source_missing(
@@ -316,29 +329,35 @@ def _select_resume_trace(
 ) -> tuple[Path, dict[str, Any]]:
     """Select the source trace from one listing: newest for a workflow, or the exact run by execution id."""
     if workflow_path is not None:
-        for trace_file, data in _iter_workflow_traces(debug_dir, workflow_path, entries=listing.traces):
-            # Skip a DEAD zero-work attempt (a refused --force resume / crash before
-            # the first step) so `resume <workflow>` falls through to the older
-            # resumable run instead of wedging on it. A killed-mid-step trace is NOT
-            # dead (it has a dangling start → still resumable) and a LIVE run is not
-            # dead either (selected, then refused as still-running). By-exec-id below
-            # never skips — naming an exact attempt gets a verdict about THAT attempt.
-            # A candidate that vanished since it was loaded falls through to the next.
-            try:
-                if not _attempt_consumed_work(trace_file, data) and is_trace_locked(trace_file) is not True:
+        # A candidate that cannot be read is never skipped past (that would resume an OLDER run): the
+        # iterator raises it and the one mapping refuses retryably. A vanished one falls through.
+        with _refuse_unreadable(None, None, "a run of this workflow"):
+            for trace_file, data in _iter_workflow_traces(
+                debug_dir, workflow_path, entries=listing.traces, unreadable="raise"
+            ):
+                # Skip a DEAD zero-work attempt (a refused --force resume / crash before
+                # the first step) so `resume <workflow>` falls through to the older
+                # resumable run instead of wedging on it. A killed-mid-step trace is NOT
+                # dead (it has a dangling start → still resumable) and a LIVE run is not
+                # dead either (selected, then refused as still-running). By-exec-id below
+                # never skips — naming an exact attempt gets a verdict about THAT attempt.
+                try:
+                    dead = not _attempt_consumed_work(trace_file, data) and is_trace_locked(trace_file) is not True
+                except FileNotFoundError:
                     continue
-            except FileNotFoundError:
-                continue
-            return trace_file, data  # first non-dead = newest resumable
+                if dead:
+                    continue
+                return trace_file, data  # first non-dead = newest resumable
         _raise_resume_source_missing(debug_dir, workflow_path, execution_id, legacy_count=listing.legacy_count)
     hit = find_trace(listing.traces, execution_id) if execution_id is not None else None
     # An --only run records only its target, so resuming its exec id would seed an empty scope (the meta
-    # check covers a hand-made name without the tag). A matched-but-corrupt trace degrades to the same
-    # clean "missing" refusal, never an uncaught JSONDecodeError traceback.
+    # check covers a hand-made name without the tag). A matched-but-corrupt (or vanished) trace degrades to
+    # the same clean "missing" refusal; one that exists but cannot be read refuses retryably.
     if hit is not None and not hit.only:
         try:
-            data = load_trace_file(hit.path)
-        except (json.JSONDecodeError, OSError):
+            with _refuse_unreadable(hit.path, execution_id, "this run's trace"):
+                data = load_trace_file(hit.path)
+        except (json.JSONDecodeError, FileNotFoundError):
             logger.debug("Skipping unparseable resume-source trace %s", hit.path, exc_info=True)
         else:
             if data.get("only_node") is None:
@@ -964,15 +983,16 @@ def load_resume_source(
     # The source must still exist AFTER the consumption check: Retention removes a source before its
     # Attempts, so a source still present had no consumer when it was checked; a vanished one refuses.
     try:
-        if not path.exists():
-            raise FileNotFoundError(path)
-        entry_node_id, last_completed_node_id = _resolve_resume_entry(path, data, source_execution_id)
+        with _refuse_unreadable(path, source_execution_id, "this run's trace"):
+            if not path.exists():
+                raise FileNotFoundError(path)
+            entry_node_id, last_completed_node_id = _resolve_resume_entry(path, data, source_execution_id)
 
-        events = list(data.get("nodes") or [])
-        entry_iteration = resume_iteration(events, entry_node_id or last_completed_node_id)
-        _apply_gate_resolutions(path, events)
-        seedable = _seedable_final_events(events, entry_node_id, entry_iteration or 1)
-        paused_node_id, gate_request = _apply_paused_answer(path, data, seedable, gate_answer, source_execution_id)
+            events = list(data.get("nodes") or [])
+            entry_iteration = resume_iteration(events, entry_node_id or last_completed_node_id)
+            _apply_gate_resolutions(path, events)
+            seedable = _seedable_final_events(events, entry_node_id, entry_iteration or 1)
+            paused_node_id, gate_request = _apply_paused_answer(path, data, seedable, gate_answer, source_execution_id)
     except FileNotFoundError:
         raise ResumeSourceMissingError(
             f"The trace of run '{source_execution_id}' was removed while it was being resumed.",

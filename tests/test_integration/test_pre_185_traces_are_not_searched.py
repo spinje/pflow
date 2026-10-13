@@ -142,6 +142,14 @@ def test_every_lookup_names_the_pre_185_traces_it_did_not_search(workflow: Path)
 
     for label, output in _surfaces(workflow, paused_id).items():
         assert _CLAUSE in output, f"{label} does not say what it did not search:\n{output}"
+    # Every by-id miss also names Retention as a cause — through the preflight re-raise, and for a trace
+    # path printed before the file went away.
+    by_id = _invoke("resume", paused_id)
+    assert "aged out of `runtime.trace_retention_days`" in by_id.stderr, by_id.stderr
+    by_path = _invoke("report", str(runs["paused"]))
+    assert by_path.exit_code == 1
+    assert "Trace file not found" in by_path.stderr
+    assert "aged out of `runtime.trace_retention_days`" in by_path.stderr
     assert paused_id not in _invoke("resume", "list").stdout
 
 

@@ -374,3 +374,57 @@ Entry format: ORCHESTRATION.md → "Progress-log entry format".
   assertions); and every absence assertion, each of which has a presence twin in the same medium.
 - Verified: `make check` exit 0; `make test` 11887 passed (11889 − 3 deleted + 1 added), 0 failed.
 - Self-checks: test-reflect (directed) — 3 deleted, 2 deepened, 1 added; RESOLVED.
+
+## [2026-10-13 03:20] task-phase-implementer (Opus) — P1+P2 mid-task review (`reviews/midtask-p1p2.md`) dispositioned
+- Did: read the merged report in full, verified each finding against the code at `580657a1`, fixed 3, skipped 1.
+- #1 (consumption re-read escapes as a 500) — CONFIRMED and FIXED as a class. `_attempt_consumed_work`'s raw re-read
+  caught only `FileNotFoundError`, so a `PermissionError` escaped. The same gap also existed at the by-workflow
+  dead-candidate check, at the by-id source load (where a non-FNF `OSError` was misreported as "no such run"), and at
+  the source's post-selection raw re-reads.
+  - The fix is ONE mapping, `resume_source._refuse_unreadable(path, execution_id, what)`: FNF passes through to each
+    caller's own "gone" rule; any other `OSError` becomes `ResumeSourceUnreadableError`. It is applied to all four reads.
+  - In `_find_consuming_attempt` it wraps the load and the re-read together: gone → consumed, `ValueError` → skip,
+    other → refuse. The exception's docstring/title are generalized to "the run's trace".
+  - Tests, with faults injected at `builtins.open`/`io.open` (never at a helper):
+    - `/api/resume` on a REAL denied attempt with its second open faulted → 409 `source_unreadable`, no spawn. Its pair:
+      vanished on the re-read → 409 `superseded`.
+    - The loader unreadable-attempt test is now parametrized on-load / on-raw-re-read (was patched at `load_trace_file`).
+    - Three new loader tests: source by-id load, source raw re-read, by-workflow dead-check.
+  - Mutation: disabling the mapping fails 5 loader tests + the 409 test; vanish→skip fails the superseded pair.
+- #2 (aged-out hint missing from the `/api/gate` 404 and `report <path>`) — CONFIRMED (plan §1.4 lists both) and FIXED.
+  - Both now carry `trace_dir.AGED_OUT_HINT`.
+  - Tests: the gate unknown-run test asserts the hint. The cutover test asserts it on `resume <id>` (through the
+    preflight re-raise) and on `report <the pre-rename path>` (exit 1, "Trace file not found").
+  - Mutation: dropping it from the gate, from report, or from the preflight carry each fails.
+- #3 (UI pinned / run-node / run-inputs misses drop the legacy count) — SKIPPED, the plan's recorded `web/` exception
+  stands. Verified in `web/src`:
+  - the `run-not-found` SSE handler takes no payload (`events.ts` → `runNotFound()`);
+  - `ThisRunSection` renders a fixed "Couldn't load run detail." whatever the body;
+  - the Run panel's `fetchRunInputs` failure is a silent catch.
+  So a server-side clause would land in bodies the browser discards — it buys nothing without a `web/` change. Its
+  agent-facing twin (`/api/gate`) carries both clauses. Follow-up candidate: the Viewer's run-not-found banner names
+  unsearched pre-185 traces (`web/` + the `run-not-found` payload).
+- #4 (`--only` miss enumerates twice) — FIXED, because threading was simpler than the double list.
+  - `load_snapshot_or_raise` lists once and passes `listing=` to `load_full_run_events` (new kwarg, mirrors
+    `list_paused_runs(listing=)`); the miss reads `listing.legacy_count`. `_snapshot_miss_causes` is deleted.
+  - Test: `test_only_snapshot_miss_lists_once_and_names_what_it_did_not_search` (scandir == 1, opens only that
+    workflow's trace, clause present). Restoring the second listing fails it.
+- Verified: `make check` exit 0; `make test` 11894 passed, 0 failed (11887 + 7); engine/`web/` diff empty.
+- Deviations/surprises:
+  - #1's class was wider than reported: the by-id source fault said "no run with execution id" for a run that exists.
+  - One residual stays as is: `_iter_workflow_traces` still SKIPS a by-workflow candidate whose LOAD faults (its shared
+    swallow is right for `--only`/analyze-cache). `resume <workflow>` can therefore pass an unreadable newest run to an
+    older one. Noted for the completion gate; fixing it needs a resume-only iterator arm.
+- Self-checks: fully happy? — yes for #1/#2/#4. #3 is a deliberate skip with a named follow-up. The residual above is
+  stated, not hidden.
+- Addendum [2026-10-13 03:45] — residual CLOSED (the 5th member of the unreadable-read class).
+  - Shape chosen: one keyword on the shared iterator, `_iter_workflow_traces(..., unreadable="skip"|"raise")`. Resume's
+    by-workflow selection passes "raise"; `--only` and analyze-cache keep "skip". In "raise" mode a faulting file's path
+    is set on the error. One `_refuse_unreadable` (now accepting `path=None`) wraps the whole selection loop.
+  - Rejected: a separate resume iterator, because it would duplicate the contents guards.
+  - Folded: those guards now live in `workflow_trace._is_full_run_of`, and `resume_source._is_attempt_of` reuses it (no
+    second copy).
+  - Test: `test_by_workflow_an_unreadable_newest_run_refuses_never_falls_back_to_an_older_one`. A `PermissionError` at
+    the open of the newest run gives `source_unreadable` naming that file. The control, a `FileNotFoundError`, selects
+    the older run. Dropping "raise" or the raise arm fails it.
+  - `make check` exit 0; `make test` 11895 passed.

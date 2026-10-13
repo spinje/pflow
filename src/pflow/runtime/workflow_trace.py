@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Literal, TextIO
 
 from pflow.core.diagnostic import Diagnostic, warning_degrades_status
 from pflow.core.exceptions import OnlySnapshotMissingError
@@ -21,6 +21,7 @@ from pflow.core.security_utils import scrub_secret_values, secret_values
 from pflow.core.trace_dir import (
     AGED_OUT_HINT,
     TraceEntry,
+    TraceListing,
     debug_dir,
     is_filename_safe_id,
     legacy_note,
@@ -97,7 +98,11 @@ def _lock_trace_handle(handle: TextIO) -> None:
 
 
 def _iter_workflow_traces(
-    debug_dir: Path | None, workflow_path: str, *, entries: Iterable[TraceEntry] | None = None
+    debug_dir: Path | None,
+    workflow_path: str,
+    *,
+    entries: Iterable[TraceEntry] | None = None,
+    unreadable: Literal["skip", "raise"] = "skip",
 ) -> Iterator[tuple[Path, dict[str, Any]]]:
     """Yield ``(path, trace_data)`` for this workflow's reusable traces, newest-first.
 
@@ -110,7 +115,8 @@ def _iter_workflow_traces(
       (``trace_dir.workflow_hashes``) and no ``.only`` tag — ``entries`` when the
       caller already listed (or shortlisted) the directory, else one
       ``trace_dir.list_traces(debug_dir)``; no file outside them is opened;
-    - parse, skipping unparseable / non-dict files;
+    - parse, skipping unparseable / non-dict / vanished files — and files that exist but cannot be read,
+      unless ``unreadable="raise"`` (resume: skipping one would select an OLDER run) re-raises the ``OSError``;
     - a contents-level ``workflow_path`` collision guard (the hash can collide;
       the stored path is the discriminator);
     - the ``format_version.startswith("2.")`` gate;
@@ -133,21 +139,30 @@ def _iter_workflow_traces(
         trace_file = entry.path
         try:
             data = load_trace_file(trace_file)
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, FileNotFoundError):
             logger.debug("Skipping unparseable trace %s", trace_file, exc_info=True)
             continue
-        if not isinstance(data, dict):
+        except OSError as exc:
+            if unreadable == "raise":
+                exc.filename = exc.filename or str(trace_file)  # a mid-read fault names no file
+                raise
+            logger.debug("Skipping unreadable trace %s", trace_file, exc_info=True)
             continue
-        data_workflow_path = data.get("workflow_path")
-        if not isinstance(data_workflow_path, str):
-            continue
-        if normalize_workflow_path_key(data_workflow_path) != normalized_workflow_path:
-            continue
-        if not str(data.get("format_version", "")).startswith("2."):
-            continue
-        if data.get("only_node") is not None:
-            continue
-        yield trace_file, data
+        if _is_full_run_of(data, normalized_workflow_path):
+            yield trace_file, data
+
+
+def _is_full_run_of(data: Any, normalized_workflow_path: str) -> bool:
+    """The contents guards: a 2.x full-run (not ``--only``) trace dict recording this exact workflow path."""
+    if not isinstance(data, dict):
+        return False
+    data_workflow_path = data.get("workflow_path")
+    return (
+        isinstance(data_workflow_path, str)
+        and normalize_workflow_path_key(data_workflow_path) == normalized_workflow_path
+        and str(data.get("format_version", "")).startswith("2.")
+        and data.get("only_node") is None
+    )
 
 
 def _trace_warnings_provably_benign(data: dict[str, Any]) -> bool:
@@ -252,10 +267,11 @@ def load_full_run_events(
     workflow_path: str | None,
     *,
     debug_dir: Path | None = None,
+    listing: TraceListing | None = None,
 ) -> tuple[list[dict[str, Any]], str] | None:
     """Return ``(nodes, status)`` from the most recent reusable full run.
 
-    Lists ``~/.pflow/debug`` (override via ``debug_dir``) once and walks this
+    Lists ``~/.pflow/debug`` (override via ``debug_dir``; or reads the caller's ``listing``) once and walks this
     workflow's full-run traces newest-first: a cheap tail read keeps only those
     whose trailer says ``"success"`` or ``"degraded"`` (absent → ``"success"`` for
     pre-2.4 and synthetic fixtures), and only those are fully loaded, through
@@ -279,9 +295,10 @@ def load_full_run_events(
     if not workflow_path:
         return None
     hashes = workflow_hashes(workflow_path)
+    listing = listing if listing is not None else list_traces(debug_dir)
     shortlist = (
         entry
-        for entry in list_traces(debug_dir).traces
+        for entry in listing.traces
         if entry.workflow_hash in hashes and not entry.only and _trailer_is_reusable(entry.path)
     )
     for _path, data in _iter_workflow_traces(debug_dir, workflow_path, entries=shortlist):
@@ -326,17 +343,13 @@ def load_snapshot_or_raise(
     """
     if snapshot_events:
         return snapshot_events, "success"
-    loaded = load_full_run_events(workflow_path, debug_dir=debug_dir)
+    listing = list_traces(debug_dir)  # one enumeration: the lookup AND its miss message
+    loaded = load_full_run_events(workflow_path, listing=listing)
     if not loaded:
-        raise OnlySnapshotMissingError(only_node, causes=_snapshot_miss_causes(debug_dir))
+        note = legacy_note(listing.legacy_count)
+        causes = (f"If the workflow ran before, {AGED_OUT_HINT}.", *((f"{note}.",) if note is not None else ()))
+        raise OnlySnapshotMissingError(only_node, causes=causes)
     return loaded
-
-
-def _snapshot_miss_causes(debug_dir: Path | None) -> tuple[str, ...]:
-    """Why an ``--only`` lookup can miss: Retention removed the run, or it was written under the pre-185
-    filename the lookup does not read. Lists the directory once more — an error path only."""
-    note = legacy_note(list_traces(debug_dir).legacy_count)
-    return (f"If the workflow ran before, {AGED_OUT_HINT}.", *((f"{note}.",) if note is not None else ()))
 
 
 @dataclass

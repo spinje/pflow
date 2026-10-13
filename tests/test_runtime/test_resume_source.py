@@ -1715,22 +1715,108 @@ def test_an_attempt_that_vanishes_mid_check_counts_as_consuming(tmp_path: Path, 
     assert excinfo.value.newer_execution_id == "att"
 
 
-def test_an_unreadable_attempt_refuses_retryably_never_reads_as_no_consumer(tmp_path: Path, monkeypatch) -> None:
-    import pflow.runtime.resume_source as resume_source
+def _fault_opens(monkeypatch, path: Path, *, after: int = 0) -> None:
+    """Fault every open of ``path`` past the first ``after`` with ``PermissionError`` — injected at the open
+    itself (``builtins.open`` + ``io.open``; ``Path.read_text`` uses the latter), never at a resume helper."""
+    import builtins
+    import io
+
+    opens = {"n": 0}
+
+    def guarded(real: Any) -> Any:
+        def wrapper(file: Any, *args: Any, **kwargs: Any) -> Any:
+            if isinstance(file, (str, Path)) and Path(file) == path:
+                opens["n"] += 1
+                if opens["n"] > after:
+                    raise PermissionError(13, "Permission denied")
+            return real(file, *args, **kwargs)
+
+        return wrapper
+
+    monkeypatch.setattr(builtins, "open", guarded(builtins.open))
+    monkeypatch.setattr(io, "open", guarded(io.open))
+
+
+@pytest.mark.parametrize("after", [0, 1], ids=["on-load", "on-raw-re-read"])
+def test_an_unreadable_attempt_refuses_retryably_never_reads_as_no_consumer(
+    tmp_path: Path, monkeypatch, after: int
+) -> None:
+    """Every read of an attempt is a consumption read: the load AND the raw re-read for a zero-work
+    attempt's dangling starts / gate verdicts. A fault on either refuses typed — never a crash, never
+    "no consumer" (a second answer)."""
     from pflow.core.exceptions import ResumeSourceUnreadableError
 
     _write_trace(tmp_path, execution_id="src", timestamp="20260101-000000")
-    attempt = _write_trace(tmp_path, execution_id="att", timestamp="20260102-000000", resumed_from="src")
-    real_load = resume_source.load_trace_file
-
-    def unreadable(path: Path) -> dict[str, Any]:
-        if path == attempt:
-            raise PermissionError(13, "Permission denied")
-        return real_load(path)
-
-    monkeypatch.setattr(resume_source, "load_trace_file", unreadable)
-    with pytest.raises(ResumeSourceUnreadableError, match="whether it was already answered is unknown"):
+    attempt = _write_trace(
+        tmp_path, execution_id="att", timestamp="20260102-000000", resumed_from="src", nodes=[], failed_node_ids=[]
+    )
+    _fault_opens(monkeypatch, attempt, after=after)
+    with pytest.raises(ResumeSourceUnreadableError, match="a newer attempt of this run"):
         load_resume_source(execution_id="src", debug_dir=tmp_path)
+
+
+def test_a_source_unreadable_by_id_refuses_retryably_not_as_missing(tmp_path: Path, monkeypatch) -> None:
+    """A run that exists but cannot be read is not "no such run": the refusal says so and is retryable."""
+    from pflow.core.exceptions import ResumeSourceUnreadableError
+
+    path = _write_trace(tmp_path, execution_id="src", timestamp="20260101-000000")
+    _fault_opens(monkeypatch, path)
+    with pytest.raises(ResumeSourceUnreadableError, match="this run's trace"):
+        load_resume_source(execution_id="src", debug_dir=tmp_path)
+
+
+def test_a_source_unreadable_on_its_raw_re_read_refuses_retryably(tmp_path: Path, monkeypatch) -> None:
+    from pflow.core.exceptions import ResumeSourceUnreadableError
+
+    path = _write_trace(tmp_path, execution_id="src", timestamp="20260101-000000")
+    _fault_opens(monkeypatch, path, after=1)  # the load succeeds; the gate-resolution re-read faults
+    with pytest.raises(ResumeSourceUnreadableError, match="this run's trace"):
+        load_resume_source(execution_id="src", debug_dir=tmp_path)
+
+
+def test_by_workflow_a_candidate_unreadable_on_its_dead_check_refuses_retryably(tmp_path: Path, monkeypatch) -> None:
+    """Selection asks whether the newest run is a dead zero-work attempt by re-reading its raw lines; a read
+    fault there cannot be guessed either way (skipping would resume an OLDER run past it)."""
+    from pflow.core.exceptions import ResumeSourceUnreadableError
+
+    _write_trace(tmp_path, execution_id="older", timestamp="20260101-000000")
+    newest = _write_trace(tmp_path, execution_id="newest", timestamp="20260102-000000", nodes=[], failed_node_ids=[])
+    _fault_opens(monkeypatch, newest, after=1)
+    with pytest.raises(ResumeSourceUnreadableError, match="a run of this workflow"):
+        load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+
+
+def test_by_workflow_an_unreadable_newest_run_refuses_never_falls_back_to_an_older_one(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`resume <workflow>` must not resume an OLDER run past a newest one it cannot read (the shared iterator
+    skips unreadable files for `--only`/analyze-cache; resume asks it to raise). Control: a newest run that is
+    genuinely GONE does fall through to the older run."""
+    import builtins
+    import io
+
+    from pflow.core.exceptions import ResumeSourceUnreadableError
+
+    _write_trace(tmp_path, execution_id="older", timestamp="20260101-000000")
+    newest = _write_trace(tmp_path, execution_id="newest", timestamp="20260102-000000")
+    fault: list[OSError] = [PermissionError(13, "Permission denied")]
+
+    def guarded(real: Any) -> Any:
+        def wrapper(file: Any, *args: Any, **kwargs: Any) -> Any:
+            if isinstance(file, (str, Path)) and Path(file) == newest:
+                raise fault[0]
+            return real(file, *args, **kwargs)
+
+        return wrapper
+
+    monkeypatch.setattr(builtins, "open", guarded(builtins.open))
+    monkeypatch.setattr(io, "open", guarded(io.open))
+    with pytest.raises(ResumeSourceUnreadableError, match="a run of this workflow") as refused:
+        load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert newest.name in str(refused.value)
+
+    fault[0] = FileNotFoundError(2, "No such file or directory")  # vanished after the listing
+    assert load_resume_source(workflow_path=WF, debug_dir=tmp_path).execution_id == "older"
 
 
 def test_list_paused_runs_hides_and_counts_a_pause_whose_workflow_file_is_gone(tmp_path: Path) -> None:

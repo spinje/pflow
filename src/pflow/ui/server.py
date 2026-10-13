@@ -67,7 +67,7 @@ from pflow.core.exceptions import (
 )
 from pflow.core.gate import masked_gate_dict
 from pflow.core.node_type_display import node_type_tag
-from pflow.core.trace_dir import find_trace, legacy_note, list_traces
+from pflow.core.trace_dir import AGED_OUT_HINT, find_trace, legacy_note, list_traces
 from pflow.core.trace_io import load_trace_file
 from pflow.core.tts import wav_duration
 from pflow.core.workflow.graph import render_react_flow
@@ -1574,7 +1574,10 @@ def gate(request: Request) -> Response:
     if entry is None:
         note = legacy_note(listing.legacy_count)
         unsearched = f" {note}." if note else ""
-        return _json({"error": f"No run {run_id!r} was found.{unsearched}"}, status_code=404)
+        return _json(
+            {"error": f"No run {run_id!r} was found — if it ran before, {AGED_OUT_HINT}.{unsearched}"},
+            status_code=404,
+        )
     # Read the pause record through the resume loader's own reader (not the scan-cache fact, never the
     # raw trailer line): the trace interns strings >= 1 KB as `$pflow_blob` refs whose bodies sit on
     # earlier lines, so only the full read gives the panel the text `pflow resume` will act on (#720).

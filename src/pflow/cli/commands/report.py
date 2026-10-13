@@ -88,7 +88,9 @@ def report_cmd(ctx: click.Context, trace_path: str | None, output_path: str | No
 
     trace_file = Path(trace_path)
     if not trace_file.exists():
-        click.echo(f"Trace file not found: {trace_path}", err=True)
+        from pflow.core.trace_dir import AGED_OUT_HINT
+
+        click.echo(f"Trace file not found: {trace_path} (if it was a run's trace, {AGED_OUT_HINT})", err=True)
         ctx.exit(1)
 
     try:
