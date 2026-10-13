@@ -428,3 +428,81 @@ Entry format: ORCHESTRATION.md → "Progress-log entry format".
     the open of the newest run gives `source_unreadable` naming that file. The control, a `FileNotFoundError`, selects
     the older run. Dropping "raise" or the raise arm fails it.
   - `make check` exit 0; `make test` 11895 passed.
+
+## [2026-10-13 04:00] task-phase-implementer (Opus) — P3 handoff (from the P1/P2 implementer)
+State at `ce784b91`. Read plan §1.5 + P3 first; below is only what the plan does NOT tell you (`file:line` at `ce784b91`).
+**Interfaces P3 consumes — all in `core/trace_dir.py` unless named:**
+- `TraceEntry` (:89) extends `ParsedTraceName` (:66). Fields: `workflow_hash`, `started` (str), `execution_id`
+  (`None` = legacy), `only`, `resumed_from_prefix`, `unknown_tags: tuple`, `path`, `paused`, `other_sidecars: tuple`
+  (suffixes of `{trace}.json.{x}` with x≠paused). `.legacy` and `.started_at` (handles both timestamp widths) are
+  properties. For "unknown facts keep", test `unknown_tags or other_sidecars`.
+- `list_traces(dir, *, include_legacy=True)` (:205) fills `TraceListing.legacy` (aged by `started_at`; never read) and
+  always fills `orphan_markers` (a `.paused` whose base name is absent from the same raw scandir). Plan: unlink only
+  after an `os.lstat` → `FileNotFoundError`. FileNotFoundError on the dir → empty listing; any other `OSError`
+  propagates, so the sweep must catch it and warn.
+- Strict readers: `read_trace_meta_strict` (:277) and `read_trace_trailer_strict` (:317). They raise
+  `TraceUnreadableError(PflowError)` (:58, the plan's "Unreadable") and let `FileNotFoundError` propagate. `None`
+  means readable but absent: a newline-less first line, or an unfinished trailer. Never use the lenient twins in the
+  sweep.
+- `is_trace_locked(path, strict=True)` (:359): True = held; False = free OR the file is gone; None = Windows / no flock;
+  `TraceUnreadableError` = the open failed. `workflow_file_state(path)` (:392) returns present / absent / unknown.
+- `resume_source.answerable_pause(entry, meta, trailer, file_state)` (:1154) returns yes / no / unknown;
+  `is_pause_record` (:1135) is its record half. Pass the STRICT meta/trailer.
+- `resume_source._find_consuming_attempt(workflow_path, execution_id, *, entries, count_live=True)` (:223).
+  - It has NO `debug_dir` parameter (dropped).
+  - Returns the consumer's id: a vanished attempt counts as consumed.
+  - Raises `ResumeSourceUnreadableError` for ANY non-FNF `OSError` on an attempt (load or raw re-read), whatever
+    `count_live`. The sweep passes `count_live=False`, and must catch that error and protect the source.
+- `_refuse_unreadable` (:281) is resume's mapping. The sweep has its own policy, so don't reuse it there.
+- The `--only` miss: `OnlySnapshotMissingError(causes=)` is already composed at `workflow_trace.load_snapshot_or_raise`
+  (the aged-out hint is in). P4 edits the docstring only.
+**`finalize` hook:** `_trace_dir` was NOT built. Capture it in `_open_stream` at `workflow_trace.py:1007`
+(`trace_dir = debug_dir()`), before `_disable_streaming` can null `_stream_path`. `finalize` is at :1158: the marker
+write and early return are at ~:1179–1188, and the `finally: self._close_stream()` is at :1191. Call the sweep after
+the `finally` and on the marker-fault early return too. That early `return None` is inside the `try` — restructure so
+the sweep runs on both paths.
+**Fixtures (`tests/shared/trace_jsonl.py`):**
+- `write_trace_file(debug, data, *, name, started)` (:167) composes the producer's name, writes the JSONL, and adds
+  `.paused` when `final_status == "paused"`. It ALWAYS writes a `run.complete` trailer.
+- For incomplete or 0-byte files, use `trace_path_for` (:142) and write the content yourself.
+- `started` accepts "YYYYMMDD-HHMMSS[-ffffff]" or a datetime; a malformed clock string raises in strptime.
+- Missing ids get `fixture_execution_id` (DESCENDING with time — keep it; `test_trace_dir` pins it).
+- Legacy names: write `workflow-trace-{hash8}-{name}-{ts}.json` by hand.
+- Paused fixtures that should be protected or listed need their `workflow_path` to EXIST (create it under HOME).
+**Traps that bit P1/P2:**
+- `monkeypatch.undo()` also undoes conftest's `Path.home`/HOME isolation, which silently makes later assertions
+  vacuous. Use `with monkeypatch.context() as m:`.
+- Inject faults at `builtins.open` + `io.open` (`Path.read_text` uses io.open) or at `os.stat`, never at a helper.
+- CLI `pflow resume <id>` only takes the by-id arm for uuid-shaped ids (`_UUID_RE`). Fixtures on that path need uuid ids.
+- A trace written outside `@pytest.mark.trace_files` is no-op'd at `_open_stream` (conftest). The finalize-hook tests
+  need the marker.
+- `_DIR_LIST_CACHE` (`ui/run_tailer.py`) is keyed on dir mtime. After a sweep unlinks files the mtime changes, so
+  that's fine; but clear it in UI tests that mutate the dir within one second.
+- A real mutation run's kill criterion is `N failed`. `scratchpads/task-185/mutate.py FILE OLD NEW -- pytest args`
+  restores the file itself.
+**Left for P3 deliberately:**
+- the `trace_retention.py` module, settings and `conftest` env=0;
+- the per-candidate strict head and lock probe on one handle (the plan's cost bound — `is_trace_locked` opens
+  separately today, so a shared-handle helper may be worth adding);
+- Windows `PermissionError` retry;
+- `tests/CLAUDE.md` retention lines.
+`count_live` is wired but no caller passes False yet.
+
+## [2026-10-13 04:05] task-orchestrator (Opus) — P1+P2 closed; P3 launched on a fresh implementer
+- Did: verified P1+P2 (`make check` green, `make test` 11,889 at my own run; implementer's later runs 11,895), committed
+  `580657a1` (P1+P2) and `ce784b91` (mid-task review fixes). Mid-task review: codex fan-out, 3 lenses, all produced
+  (`reviews/midtask-p1p2.md`); 0 standalone Criticals; 4 findings → 3 fixed + 1 skipped (dispositions in the 03:20 entry);
+  the implementer's own residual (by-workflow resume falling back past an unreadable newest run) closed at my direction
+  (03:45) — the "unreadable read as absent" class is now closed on all five resume reads.
+- Round 2 of the mid-task review: NOT run — no verified Critical; the fixes' surface (resume read handling) is re-covered
+  by the completion gate's silent-failures + test-fidelity lenses on the whole diff. Stated, not silent.
+- P3 gate (fail-closed, checked at P3 start): `tar -tf …/scratchpads/session-16/backup/pflow-debug-backup-2026-10-12.tar
+  | wc -l` = 30,182 ≥ 29,000 → PASS. From here every non-test `pflow` run from this worktree exports
+  `PFLOW_TRACE_RETENTION_DAYS=0` until P5.
+- Rotation: the P1/P2 implementer reached ~600k tokens (plan's rotation point ~400k) → P3 goes to a FRESH Opus implementer
+  (effort high) whose packet is the plan + this log incl. the 04:00 handoff note. Stated reason: degrading window.
+- Follow-up candidate (task-review): the Viewer's pinned `run-not-found` banner / "This run" panel / run-inputs prefill
+  discard any server-side miss explanation (`web/` takes no payload) — needs a `web/` change to carry the legacy/aged-out
+  clauses.
+- Next: P3 handback → verify, "fully happy?", directed test-reflect, commit, mid-task review (concurrency-safety +
+  silent-failures on P3's diff).
