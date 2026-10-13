@@ -21,16 +21,30 @@ the viewer opened is picked up; a switch to a newer file resets state and emits 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
-import sys
 import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypedDict
 
+from pflow.core.trace_dir import (
+    TraceEntry,
+    TraceUnreadableError,
+    find_trace,
+    is_trace_locked,
+    list_traces,
+    read_trace_meta,
+    read_trace_meta_strict,
+    read_trace_trailer,
+    read_trace_trailer_strict,
+    workflow_hash,
+)
+from pflow.core.trace_dir import debug_dir as default_debug_dir
 from pflow.core.trace_tree import event_cost
+
+# `is_trace_locked` and the trace readers live in `core/trace_dir` (shared with the resume loader); this
+# module calls them through its own namespace, so `monkeypatch.setattr(run_tailer, …)` reaches every call here.
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +55,6 @@ _POLL_S = 0.25  # poll cadence; node-paced events make this comfortably fast for
 # preparation, and streaming startup. Fifteen seconds covers observed cold
 # starts; a stale bookmark still resolves to run-not-found after the grace.
 _PINNED_RESOLVE_ATTEMPTS = 60
-
-
-def _debug_dir() -> Path:
-    return Path.home() / ".pflow" / "debug"
 
 
 def _same_path(a: str | None, b: str | None) -> bool:
@@ -59,75 +69,6 @@ def _same_path(a: str | None, b: str | None) -> bool:
         return False
 
 
-def _read_meta(path: Path) -> dict[str, Any] | None:
-    """Read just the first (``meta``) line of a trace — cheap identity probe, tolerant of a growing file."""
-    try:
-        with open(path, encoding="utf-8") as handle:
-            first = handle.readline()
-    except (OSError, UnicodeDecodeError):
-        return None  # unreadable, or corrupt / non-UTF-8 bytes (UnicodeDecodeError ⊄ OSError — PR #543) → skip
-    try:
-        line = json.loads(first)
-    except ValueError:
-        return None
-    if not (isinstance(line, dict) and line.get("kind") == "meta"):
-        return None
-    # Task 175: this meta is an IDENTITY probe (execution_id / workflow_path / final_status), cached in
-    # _SCAN_CACHE for the process lifetime per trace. Drop `inputs` — it's raw + potentially large (a
-    # multi-KB text input, retained for every run in ~/.pflow/debug), and NO cache consumer reads it:
-    # run_node's read_run_inputs / _io_detail re-read the file via _read_trace_lines. Keeps the cache small.
-    # `step_identity` (a hash per step, Task 180) is resume-only and likewise never read from the cache.
-    line.pop("inputs", None)
-    line.pop("step_identity", None)
-    return line
-
-
-def _scan_tail_for_terminal(tail: bytes) -> tuple[dict[str, Any] | None, bool]:
-    """Inspect the LAST non-empty line of a byte tail: ``(trailer_dict, parse_ok)``.
-
-    ``(dict, True)`` when it is the ``run.complete`` trailer; ``(None, True)`` when it parsed but is
-    NOT the trailer (run not finished) or the tail is empty; ``(None, False)`` when it FAILED to
-    parse — the caller disambiguates a genuine mid-flush from a window that cut a fully-flushed but
-    oversized trailer. Mirrors ``runtime/resume_source._scan_tail_for_trailer`` exactly (the accepted
-    ``runtime/ ↛ ui/`` twin — do not consolidate across that boundary)."""
-    for raw in reversed(tail.split(b"\n")):
-        if not raw.strip():
-            continue
-        try:
-            line = json.loads(raw)
-        except ValueError:
-            return None, False  # the last line didn't parse — caller disambiguates mid-flush vs truncation
-        if isinstance(line, dict) and line.get("kind") == "run.complete":
-            return line, True
-        return None, True  # a complete-but-non-trailer last line → not finished
-    return None, True  # empty tail
-
-
-def read_run_trailer(path: Path) -> dict[str, Any] | None:
-    """Parsed ``run.complete`` trailer dict of a finalized trace, or ``None`` (incomplete/unreadable).
-
-    Reads only a bounded 64 KB tail so a multi-MB trace isn't loaded to answer "is this run live?".
-    A truncated/partial final line (a run mid-flush) doesn't parse → ``None`` (live), the safe
-    direction. Oversized-safe: a PAUSED trailer carries the full ``gate_request`` and can exceed the
-    64 KB tail window (Task 171) — when the last line fails to parse BUT the file exceeds the window
-    AND ends with a newline (its last line IS fully flushed), re-read the whole file ONCE to read the
-    oversized trailer intact. A genuine mid-flush has no trailing newline, so it stays ``None`` with
-    no full re-read on the 4 Hz poll (PR #543 review)."""
-    try:
-        with open(path, "rb") as handle:
-            handle.seek(0, 2)
-            size = handle.tell()
-            handle.seek(max(0, size - 65536))
-            tail = handle.read()
-            trailer, parse_ok = _scan_tail_for_terminal(tail)
-            if not parse_ok and size > 65536 and tail.endswith(b"\n"):
-                handle.seek(0)
-                trailer, _ = _scan_tail_for_terminal(handle.read())
-    except OSError:
-        return None
-    return trailer
-
-
 def read_run_status(path: Path) -> tuple[bool, str | None]:
     """The cheap-tail terminal state of a streamed trace: ``(complete, final_status)`` (deep-review DR-2).
 
@@ -135,48 +76,12 @@ def read_run_status(path: Path) -> tuple[bool, str | None]:
     ``final_status`` is that trailer's ``final_status`` (``success``/``degraded``/``failed``/``denied``/
     ``paused`` — the producer's vocabulary; the last two via the gate_outcome channel, Tasks 125/171),
     or ``None`` when the run is not complete (still live, or crashed). Derived from
-    ``read_run_trailer`` (one tail read, oversized-safe); lets ``/api/runs`` report a finished run's
-    status WITHOUT a full ``load_trace_file`` parse."""
-    trailer = read_run_trailer(path)
+    ``read_trace_trailer`` (one tail read, oversized-safe)."""
+    trailer = read_trace_trailer(path)
     if trailer is None:
         return (False, None)
     status = trailer.get("final_status")
     return (True, status if isinstance(status, str) else None)
-
-
-def is_trace_locked(path: Path) -> bool | None:
-    """Is this trace file held by a LIVE writer? (Task 173 — exact liveness.)
-
-    The producer holds an advisory ``flock`` on its trace handle for the run's lifetime; the kernel releases
-    it on ANY process exit. So a HELD lock = the run's process is alive; a FREE lock + no ``run.complete`` =
-    it crashed/was killed. We probe with a SEPARATE fd, a SHARED lock, and ``LOCK_NB`` so we never block,
-    releasing immediately if we acquire — SHARED so two consumers probing the same free file (e.g. ``/api/runs``
-    in the Starlette pool overlapping the tailer's discover in ``asyncio.to_thread``) don't contend; only the
-    producer's EXCLUSIVE lock blocks us. Returns ``True`` (alive) / ``False`` (not held) / ``None`` when liveness can't
-    be determined — no ``fcntl`` (Windows) or the file can't be opened — so the caller falls back.
-
-    NOTE: detects DEATH, not HANG — a hung-but-alive process still holds the lock (reads ``True``). The
-    staleness backstop for that case is deferred to GH #538."""
-    if sys.platform == "win32":
-        return None  # Windows: no advisory-lock probe → caller falls back to a heuristic
-    try:
-        import fcntl
-    except ImportError:
-        return None  # Windows: no advisory-lock probe → caller falls back to a heuristic
-    try:
-        with open(path, encoding="utf-8") as handle:
-            try:
-                # SHARED, not EXCLUSIVE: the producer's LOCK_EX still conflicts (→ True when alive), but a
-                # SHARED probe is compatible with another consumer's concurrent SHARED probe, so two consumers
-                # probing the same FREE file don't EWOULDBLOCK each other and mis-read a crashed run as live —
-                # which would transiently re-open the C1 crashed-run shadowing. PR #543 review.
-                fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
-            except OSError:
-                return True  # an exclusive writer (the live producer) holds it → the run is alive
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)  # we acquired it → no writer; release + report free
-            return False
-    except OSError:
-        return None  # can't open (gone/unreadable) → unknown; let the caller decide
 
 
 class TraceCandidate(TypedDict):
@@ -184,7 +89,8 @@ class TraceCandidate(TypedDict):
     (live overlay) and ``/api/runs`` (history). ``meta`` is the head line; ``complete``/``final_status``/
     ``paused_node_id`` the cheap-tail terminal state (``paused_node_id`` from a PAUSED trailer, Task 176 —
     the small string only; the bulky ``gate_request`` is on-demand via ``/api/gate``, never a scan fact);
-    ``mtime`` for liveness/recency. NO policy applied — callers filter."""
+    ``mtime`` the file's last write (recency is the start time its name records). NO policy applied — callers
+    filter."""
 
     path: Path
     meta: dict[str, Any]
@@ -198,9 +104,10 @@ class TraceCandidate(TypedDict):
 # `discover_live_trace` and `/api/runs`). A trace's `meta` head is written once and a FINISHED trace's tail
 # never changes, so keying on (mtime, size) lets a scan skip the open+parse for every UNCHANGED file —
 # turning a poll over a large ~/.pflow/debug from O(N opens) into O(N stats) + a read of only the one growing
-# live file. The verdict is cached even when a file has NO valid meta head (None) — a pre-Task-172
-# single-object trace or junk — so the bulk of a long-lived debug dir (old-format files) is probed ONCE, not
-# re-opened every poll. Without it an idle viewer re-opens+parses every trace 4x/s (Task 173 perf finding).
+# live file. A readable file with NO meta head (None — junk, a write cut short) is cached too, so it is
+# probed ONCE, not re-opened every poll; a READ FAULT is never cached (it is not a fact about the file — the
+# next poll retries, so a transient fault never hides a run until the file changes). Without the cache an
+# idle viewer re-opens+parses every trace 4x/s (Task 173 perf finding).
 # (mtime, size) not mtime alone so an append is never missed on a coarse-mtime filesystem. Lock-guarded:
 # scan_traces runs in the Starlette threadpool (/api/runs) AND via asyncio.to_thread (the tailer).
 # Callers MUST treat a returned candidate's `meta` dict as READ-ONLY — it is shared by reference across
@@ -210,60 +117,59 @@ _SCAN_CACHE_LOCK = threading.Lock()
 
 # The DIRECTORY LISTING cache (distinct from the per-file content cache above): which trace files EXIST
 # changes only when one is created/deleted/renamed, which bumps the directory's mtime. So a scan stats the
-# dir ONCE and reuses the prior glob result while that mtime is unchanged — turning a 4 Hz tailer poll from
-# a full os.scandir of ~N entries (the profiled hotspot — Task 173) into a single stat. A finished run only
+# dir ONCE and reuses the prior listing while that mtime is unchanged — turning a 4 Hz tailer poll from a
+# full os.scandir of ~N entries (the profiled hotspot — Task 173) into a single stat. A finished run only
 # changes a file's CONTENT (caught by _SCAN_CACHE on (mtime,size)), never the listing, so freshness holds.
-_DIR_LIST_CACHE: dict[tuple[Path, str], tuple[float, list[Path]]] = {}
+# Keyed by (directory, workflow hash or None for every trace); the value is an IMMUTABLE tuple, already
+# newest-first by start time — it is read from the Starlette threadpool and the tailer's to_thread at once.
+_DIR_LIST_CACHE: dict[tuple[Path, str | None], tuple[float, tuple[TraceEntry, ...]]] = {}
 
 
-def _list_trace_files(directory: Path, pattern: str) -> list[Path]:
-    """The directory scandir, isolated so the (directory, pattern, mtime) gate below can skip it."""
-    return list(directory.glob(pattern))
-
-
-def _stat_sorted_listing(directory: Path, pattern: str) -> list[tuple[Path, float, int]] | None:
-    """The matching trace files with their (mtime, size), newest-first — reusing the cached scandir while the
-    directory mtime is unchanged (skips the os.scandir on a static dir). None if the dir is unreadable."""
+def _cached_listing(directory: Path, wf_hash: str | None) -> tuple[TraceEntry, ...] | None:
+    """The directory's traces (only ``wf_hash``'s when given), newest-first by start time — one
+    ``list_traces`` per directory change, the cached tuple otherwise. ``None`` if the dir is unreadable."""
     try:
-        dir_mtime = directory.stat().st_mtime
+        dir_mtime = directory.stat().st_mtime  # BEFORE listing: a create racing the listing re-lists next time
     except OSError:
         return None
-    list_key = (directory, pattern)
+    list_key = (directory, wf_hash)
     with _SCAN_CACHE_LOCK:
         listed = _DIR_LIST_CACHE.get(list_key)
     if listed is not None and listed[0] == dir_mtime:
-        entries = listed[1]
-    else:
-        try:
-            entries = _list_trace_files(directory, pattern)
-        except OSError:
-            return None
-        with _SCAN_CACHE_LOCK:
-            _DIR_LIST_CACHE[list_key] = (dir_mtime, entries)
-    stated: list[tuple[Path, float, int]] = []
-    for path in entries:
-        try:
-            st = path.stat()
-        except OSError:
-            continue  # vanished between listing and stat — skip
-        stated.append((path, st.st_mtime, st.st_size))
-    stated.sort(key=lambda t: t[1], reverse=True)  # newest-first by mtime
-    return stated
+        return listed[1]
+    try:
+        traces = list_traces(directory).traces
+    except OSError:
+        return None
+    entries = tuple(entry for entry in traces if wf_hash is None or entry.workflow_hash == wf_hash)
+    with _SCAN_CACHE_LOCK:
+        _DIR_LIST_CACHE[list_key] = (dir_mtime, entries)
+    return entries
 
 
 def _file_facts(path: Path, mtime: float, size: int) -> tuple[dict[str, Any] | None, bool, str | None, str | None]:
     """The (meta, complete, final_status, paused_node_id) for one trace, served from _SCAN_CACHE on an
-    unchanged (mtime, size) or read fresh — caching a None-meta NEGATIVE verdict too so an old-format file
-    isn't re-opened every poll. One ``read_run_trailer`` derives all three tail facts (never read the tail
-    twice). Only ``paused_node_id`` is cached off a paused trailer — NOT the bulky ``gate_request`` (kept
-    off the scan/cache/wire; ``/api/gate`` re-reads it on demand). Callers must treat the returned `meta`
-    as read-only (it's the cached object)."""
+    unchanged (mtime, size) or read fresh — caching a None-meta NEGATIVE verdict of a readable file too, so
+    it isn't re-opened every poll; a file that could not be read (or vanished) is skipped this poll and NOT
+    cached. One trailer read derives all three tail facts (never read the tail twice). Only
+    ``paused_node_id`` is cached off a paused trailer — NOT the bulky ``gate_request`` (kept off the
+    scan/cache/wire; ``/api/gate`` re-reads it on demand). Callers must treat the returned `meta` as
+    read-only (it's the cached object)."""
     with _SCAN_CACHE_LOCK:
         hit = _SCAN_CACHE.get(path)
     if hit is not None and hit[0] == mtime and hit[1] == size:
         return hit[2], hit[3], hit[4], hit[5]
-    meta = _read_meta(path)  # I/O OUTSIDE the lock
-    trailer = read_run_trailer(path) if meta is not None else None
+    try:  # I/O OUTSIDE the lock
+        meta = read_trace_meta_strict(path)
+        trailer = read_trace_trailer_strict(path) if meta is not None else None
+    except (OSError, TraceUnreadableError):
+        return None, False, None, None
+    if meta is not None:
+        # This meta is an IDENTITY probe (execution_id / workflow_path / start_time), cached for the process
+        # lifetime per trace. `inputs` is raw and potentially large (Task 175) and `step_identity` is
+        # resume-only (Task 180); no cache consumer reads either — run_node re-reads the file.
+        meta.pop("inputs", None)
+        meta.pop("step_identity", None)
     complete = trailer is not None
     raw_status = trailer.get("final_status") if trailer is not None else None
     final_status = raw_status if isinstance(raw_status, str) else None
@@ -275,40 +181,34 @@ def _file_facts(path: Path, mtime: float, size: int) -> tuple[dict[str, Any] | N
 
 
 def scan_traces(workflow_key: str | None = None, debug_dir: Path | None = None) -> list[TraceCandidate]:
-    """The ONE trace-dir scanner (deep-review DR-3): a RAW candidate per trace, newest-first by mtime, with
-    NO ``--only`` / ``final_status`` / coherence policy — each CALLER filters its own (mirroring
-    ``_iter_workflow_traces``'s "status policy in callers" invariant).
+    """The ONE trace-dir scanner (deep-review DR-3): a RAW candidate per trace, newest-first by the start
+    time its filename records (the one recency rule), with NO ``--only`` / ``final_status`` / coherence
+    policy — each CALLER filters its own (mirroring ``_iter_workflow_traces``'s "status policy in callers"
+    invariant).
 
-    Each candidate is ``{"path", "meta", "complete", "final_status", "mtime"}`` — ``meta`` the head line
-    (identity: ``workflow_path`` / ``execution_id`` / ``workflow_name`` / ``start_time`` / ``only_node``),
-    ``complete`` / ``final_status`` the cheap-tail terminal state. With ``workflow_key`` set, keeps only
-    traces whose ``meta.workflow_path`` matches it (``_same_path`` — robust to path normalization). Cheap:
-    one head-read + one tail-read per file, never a full parse — so the all-runs dashboard stays light.
-    ``discover_live_trace`` applies the ``--only``-exclude + prefer-live; ``/api/runs`` labels ``--only`` —
-    neither policy lives here. An unreadable trace is skipped (``meta is None``), never fatal (DR-6).
-    Per-file results are cached on ``(mtime, size)`` (``_SCAN_CACHE``) so repeated polls re-open only files
-    that grew — a finished trace is read once."""
-    directory = debug_dir or _debug_dir()
-    # Scope the glob to THIS workflow's hash prefix when we know it (the live overlay + per-workflow
-    # history) — the producer encodes md5(workflow_path)[:8] into every filename (format_trace_filename),
-    # so we never list/stat/open OTHER workflows' traces or unrelated history. A bare scan (the dashboard,
-    # workflow_key=None) lists all runs, as it must. The 8-char prefix can collide → the _same_path
-    # contents guard below is the discriminator (mirrors _iter_workflow_traces). The hash MUST match
-    # format_trace_filename's; the discovery tests name their fixtures via it, so a drift fails loudly.
-    if workflow_key is None:
-        pattern = "workflow-trace-*.json"
-    else:
-        wf_hash = hashlib.md5(workflow_key.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
-        pattern = f"workflow-trace-{wf_hash}-*.json"
-    stated = _stat_sorted_listing(directory, pattern)
-    if stated is None:
+    Each candidate is ``{"path", "meta", "complete", "final_status", "paused_node_id", "mtime"}`` — ``meta``
+    the head line (identity: ``workflow_path`` / ``execution_id`` / ``workflow_name`` / ``start_time`` /
+    ``only_node``), ``complete`` / ``final_status`` the cheap-tail terminal state. With ``workflow_key`` set,
+    only traces whose filename carries ``md5(workflow_key)[:8]`` are listed (another workflow's trace is
+    never opened), then kept when ``meta.workflow_path`` matches (``_same_path`` — the hash can collide).
+    A bare scan (the dashboard) lists every run. Cheap: one head-read + one tail-read per listed file, never
+    a full parse, and per-file results are cached on ``(mtime, size)`` (``_SCAN_CACHE``) so repeated polls
+    re-open only files that grew. An unreadable trace is skipped (``meta is None``), never fatal (DR-6)."""
+    directory = debug_dir if debug_dir is not None else default_debug_dir()
+    wf_hash = workflow_hash(workflow_key) if workflow_key is not None else None
+    entries = _cached_listing(directory, wf_hash)
+    if entries is None:
         return []
     out: list[TraceCandidate] = []
     seen: set[Path] = set()
-    for path, mtime, size in stated:
+    for entry in entries:
+        path = entry.path
+        try:
+            st = path.stat()
+        except OSError:
+            continue  # vanished between listing and stat — skip
         seen.add(path)
-        meta, complete, final_status, paused_node_id = _file_facts(path, mtime, size)
-        # meta is None for an unreadable / pre-172 single-object trace (its negative verdict is cached too).
+        meta, complete, final_status, paused_node_id = _file_facts(path, st.st_mtime, st.st_size)
         if meta is None or (workflow_key is not None and not _same_path(meta.get("workflow_path"), workflow_key)):
             continue
         out.append({
@@ -317,18 +217,34 @@ def scan_traces(workflow_key: str | None = None, debug_dir: Path | None = None) 
             "complete": complete,
             "final_status": final_status,
             "paused_node_id": paused_node_id,
-            "mtime": mtime,
+            "mtime": st.st_mtime,
         })
-    # Reclaim cache entries for files that vanished from disk — but ONLY among the files THIS scan actually
-    # globbed (`pattern`). A bare (dashboard) scan globs the whole dir so it prunes dir-wide; a workflow-SCOPED
-    # scan globs only this workflow's hash-prefixed files, so it prunes only THIS workflow's vanished traces
-    # and never another workflow's cache (PR #543: a dir-wide prune on the 4 Hz scoped poll wiped the
-    # dashboard's cache for every other workflow each tick). Same `pattern` both ways → one code path.
-    prefix = pattern[: -len("*.json")]  # "workflow-trace-" (bare) or "workflow-trace-<hash>-" (scoped)
+    # Reclaim cache entries for files that vanished from disk — but ONLY among the files THIS scan listed: a
+    # workflow-SCOPED scan prunes only THIS workflow's vanished traces and never another workflow's cache
+    # (PR #543: a dir-wide prune on the 4 Hz scoped poll wiped the dashboard's cache each tick). The hash is
+    # the filename's first field, so the scope is a name prefix.
+    prefix = f"workflow-trace-{wf_hash}-" if wf_hash is not None else "workflow-trace-"
     with _SCAN_CACHE_LOCK:
         for stale in [p for p in _SCAN_CACHE if p.parent == directory and p.name.startswith(prefix) and p not in seen]:
             _SCAN_CACHE.pop(stale, None)
     return out
+
+
+def find_workflow_trace(workflow_key: str, run_id: str) -> tuple[Path, dict[str, Any]] | None:
+    """The trace of run ``run_id`` of this workflow, with its meta line — or ``None``.
+
+    The ONE by-id resolver of the Viewer's pinned paths (the pinned tailer, the node-detail panel): an
+    exact name match (``trace_dir.find_trace``) over ``scan_traces``' own scoped, cached listing, then one
+    meta read to confirm the run belongs to this workflow (the hash can collide). An ``--only`` run is
+    found too — pinning one from history is an explicit choice."""
+    entries = _cached_listing(default_debug_dir(), workflow_hash(workflow_key))
+    hit = find_trace(entries or (), run_id)
+    if hit is None:
+        return None
+    meta = read_trace_meta(hit.path)
+    if meta is None or not _same_path(meta.get("workflow_path"), workflow_key):
+        return None
+    return hit.path, meta
 
 
 def discover_live_trace(workflow_key: str, debug_dir: Path | None = None) -> Path | None:
@@ -341,9 +257,9 @@ def discover_live_trace(workflow_key: str, debug_dir: Path | None = None) -> Pat
     incomplete but its lock is FREE, so without it a dead run would shadow a newer SUCCESSFUL rerun forever
     (PR #543, C1). On
     a no-``fcntl`` FS (``is_trace_locked`` → ``None``) it falls back to "incomplete = live" (``is not False``,
-    mirroring ``_run_is_live``/``_check_stopped``). Newest-by-mtime alone is WRONG: eager-``meta`` (Task 173
-    A1) makes every run discoverable from t=0, so a just-finished run can have a newer mtime than a
-    still-streaming concurrent run and would shadow it (deep-review R2).
+    mirroring ``_run_is_live``/``_check_stopped``). Newest alone is WRONG: eager-``meta`` (Task 173 A1)
+    makes every run discoverable from t=0, so a newer run that already finished would shadow an older,
+    still-streaming concurrent run (deep-review R2).
 
     EXCLUDES ``--only`` traces (``meta.only_node`` set): an ``--only`` run records ONLY its target node,
     so it is not a coherent full-run overlay — following it would leave every other node falsely
@@ -444,7 +360,12 @@ class RunTailer:
                     current = self._current  # pinned: the fixed file resolved above
                 if current is not None:
                     data = await asyncio.to_thread(self._read_bytes, current)  # off-loop I/O
-                    for message in self._consume(data):  # loop: parse + mutate state
+                    if data is None and self._run_id is not None and self._run is None:
+                        # The pinned trace is gone before its run was read in full (Retention removed it):
+                        # say so, never "stopped" or an endless empty poll.
+                        self._broadcast(self._key, {"type": "run-not-found", "run_id": self._run_id})
+                        return
+                    for message in self._consume(data or b""):  # loop: parse + mutate state
                         self._broadcast(self._key, message)
                     await self._check_stopped(current)
             except Exception:
@@ -503,18 +424,21 @@ class RunTailer:
 
     def _resolve_pinned(self) -> Path | None:
         """Resolve the pinned ``run_id`` to its trace file ONCE (deep-review DR-1) — BLOCKING I/O, run via
-        ``asyncio.to_thread``. Matches ``meta.execution_id`` over the shared scanner; does NOT apply the
+        ``asyncio.to_thread``. ``find_workflow_trace`` matches the id in the filename; it does NOT apply the
         ``--only`` exclude — a user pinning a labelled ``--only`` run from history made an explicit choice
         (the exclude is the live overlay's policy, not the pin's; deep-review DR-3).
 
         Side effect (Task 173): on a match, latches ``self._stale_version`` from the run's recorded
         ``content_hash`` vs the current file's digest. Safe to write here from the worker thread — it's read
         only after this ``to_thread`` call joins (the loop resumes), never concurrently."""
-        for candidate in scan_traces(self._key):
-            if candidate["meta"].get("execution_id") == self._run_id:
-                self._stale_version = self._is_stale(candidate["meta"].get("content_hash"))
-                return candidate["path"]
-        return None
+        if self._run_id is None:
+            return None
+        found = find_workflow_trace(self._key, self._run_id)
+        if found is None:
+            return None
+        path, meta = found
+        self._stale_version = self._is_stale(meta.get("content_hash"))
+        return path
 
     def _is_stale(self, run_hash: str | None) -> bool:
         """Was this run recorded against a DIFFERENT version of the workflow than the file on disk now?
@@ -561,16 +485,19 @@ class RunTailer:
         self._run = None
         self._stopped = False
 
-    def _read_bytes(self, path: Path) -> bytes:
+    def _read_bytes(self, path: Path) -> bytes | None:
         """Read newly-appended bytes from the current offset — BLOCKING I/O, run via ``asyncio.to_thread``.
-        Touches only ``self._offset`` (and only here, serialized by the poll loop's ``await``), so it never
-        races the loop-owned ``_state``/``_buf``."""
+        ``None`` when the file is gone; any other read fault reads as nothing new. Touches only ``self._offset``
+        (and only here, serialized by the poll loop's ``await``), so it never races the loop-owned
+        ``_state``/``_buf``."""
         try:
             with open(path, "rb") as handle:
                 handle.seek(self._offset)
                 data = handle.read()
                 self._offset += len(data)
             return data
+        except FileNotFoundError:
+            return None
         except OSError:
             return b""
 

@@ -131,8 +131,10 @@ connections; add `&node=<node-id>` to also center the camera, or `&direction=TD`
 
 To replay a **past run** on the canvas, append `&run=<run_id>`. The `run_id` is the
 `execution_id` on the first line of the run's trace in `~/.pflow/debug` — you already have the
-path for any run you launched (the `Workflow trace saved: …` line `pflow run` prints), and older
-or user-launched runs sit there too, named by workflow + timestamp. So
+path for any run you launched (the `Workflow trace saved: …` line `pflow run` prints), and it is
+the `{run id}` field of the trace's name (`workflow-trace-{hash}-{name}.{run id}-{start time}.json`) —
+older or user-launched runs within the retention window (`runtime.trace_retention_days`) sit there too.
+Runs recorded by an earlier pflow version are not listed. So
 `?workflow=<path>&run=<execution_id>` re-opens that exact run for the user; omit `&run=` to
 follow the newest.
 

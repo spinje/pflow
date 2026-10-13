@@ -30,11 +30,13 @@ from pflow.core.exceptions import (
     ResumeNotResumableError,
     ResumeSideEffectConfirmationError,
     ResumeSourceMissingError,
+    ResumeSourceUnreadableError,
     ResumeStaleWorkflowError,
     ResumeStillRunningError,
     ResumeSupersededError,
     StepIdentityChanges,
 )
+from pflow.core.trace_dir import parse_trace_filename, paused_marker
 from pflow.runtime.resume_source import (
     ResumeSource,
     _iter_raw_trace_lines,
@@ -43,8 +45,7 @@ from pflow.runtime.resume_source import (
     restored_node_ids,
     seed_snapshot_into_shared,
 )
-from pflow.runtime.workflow_trace import format_trace_filename
-from tests.shared.trace_jsonl import flatten_trace_to_lines, write_trace_jsonl
+from tests.shared.trace_jsonl import flatten_trace_to_lines, trace_path_for, write_trace_jsonl
 
 WF = "/work/project/wf.pflow.md"
 
@@ -111,7 +112,7 @@ def _write_trace(
         data["paused_node_id"] = paused_node_id
     if gate_request is not None:
         data["gate_request"] = gate_request
-    path = debug_dir / format_trace_filename(workflow_path, name, timestamp)
+    path, data = trace_path_for(debug_dir, data, name=name, started=timestamp)
     if gate_lines:
         lines = flatten_trace_to_lines(data)
         rc_idx = next(i for i, line in enumerate(lines) if line.get("kind") == "run.complete")
@@ -119,6 +120,8 @@ def _write_trace(
         path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
     else:
         write_trace_jsonl(path, data)
+    if final_status == "paused":
+        paused_marker(path).touch()  # the producer writes the marker before the trailer
     return path
 
 
@@ -140,11 +143,14 @@ def test_by_execution_id_selects_exact_attempt(tmp_path: Path) -> None:
     assert source.execution_id == "target"
 
 
-def test_by_execution_id_skips_only_node_run(tmp_path: Path) -> None:
-    """An --only run records only its target; resuming its exec id must not seed an empty scope."""
-    _write_trace(tmp_path, execution_id="only-run", timestamp="20260101-000000", only_node="k")
-    with pytest.raises(ResumeSourceMissingError):
+def test_by_execution_id_refuses_an_only_run_with_its_own_reason(tmp_path: Path) -> None:
+    """An --only run records only its target; resuming its exec id must not seed an empty scope — and the
+    refusal says why, never "no run was found … may have aged out" for a run that is right there."""
+    path = _write_trace(tmp_path, execution_id="only-run", timestamp="20260101-000000", only_node="k")
+    with pytest.raises(ResumeNotResumableError, match="was an --only run") as refused:
         load_resume_source(execution_id="only-run", debug_dir=tmp_path)
+    assert refused.value.trace_path == str(path)
+    assert "aged out" not in str(refused.value)
 
 
 def test_no_trace_for_workflow_raises_missing(tmp_path: Path) -> None:
@@ -338,7 +344,7 @@ def _write_incomplete_trace(
             "run_id": execution_id,
         })
     lines.extend(gate_lines or [])
-    path = debug_dir / format_trace_filename(workflow_path, name, timestamp)
+    path, _ = trace_path_for(debug_dir, data, name=name, started=timestamp)
     path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
     return path
 
@@ -1615,3 +1621,225 @@ def test_kill_after_a_recovered_failure_continues_past_the_failed_iteration(tmp_
     )
     source = load_resume_source(workflow_path=WF, debug_dir=tmp_path)
     assert (source.entry_node_id, source.entry_iteration) == ("k", 4)
+
+
+# ── Task 185: the listing is the index ──────────────────────────────────────
+
+
+def test_by_execution_id_is_exact_when_a_newer_id_shares_the_prefix(tmp_path: Path) -> None:
+    _write_trace(tmp_path, execution_id="abc", timestamp="20260101-000000")
+    _write_trace(tmp_path, execution_id="abc-2", timestamp="20260102-000000")  # newer; "abc" is its prefix
+    assert load_resume_source(execution_id="abc", debug_dir=tmp_path).execution_id == "abc"
+
+
+def test_by_execution_id_refuses_an_only_run_by_its_meta_when_the_name_has_no_tag(tmp_path: Path) -> None:
+    """The ``.only`` tag is the index; the meta's ``only_node`` stays the truth — a hand-made name without
+    the tag never makes an ``--only`` run a resume source."""
+    path = _write_trace(tmp_path, execution_id="only-run", timestamp="20260101-000000")
+    data = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    lines = path.read_text(encoding="utf-8").splitlines()
+    lines[0] = json.dumps({**data, "only_node": "k"})
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    parsed = parse_trace_filename(path.name)
+    assert parsed is not None and not parsed.only, "the name carries no .only tag"
+    with pytest.raises(ResumeNotResumableError, match="was an --only run"):
+        load_resume_source(execution_id="only-run", debug_dir=tmp_path)
+
+
+def test_a_pre_185_named_trace_is_not_found_by_id_but_the_same_trace_is_under_its_current_name(
+    tmp_path: Path,
+) -> None:
+    path = _write_trace(tmp_path, execution_id="run-1", timestamp="20260101-000000")
+    assert load_resume_source(execution_id="run-1", debug_dir=tmp_path).execution_id == "run-1"
+
+    path.rename(tmp_path / "workflow-trace-3a8ac2b2-wf-20260101-000000-000000.json")
+    with pytest.raises(ResumeSourceMissingError) as excinfo:
+        load_resume_source(execution_id="run-1", debug_dir=tmp_path)
+    assert any("1 trace written by an earlier pflow version" in hint for hint in excinfo.value.suggestions)
+    assert any("aged out of `runtime.trace_retention_days`" in hint for hint in excinfo.value.suggestions)
+
+
+def test_a_consumed_source_never_shadows_another_source_sharing_its_8_char_prefix(tmp_path: Path) -> None:
+    """The ``.from-`` tag holds 8 characters of the source id; ``resumed_from`` on the loaded attempt is the
+    truth. An attempt that consumed ``pause-aaaa1`` must not read as consuming ``pause-aaaa2``."""
+    _write_paused_approval(tmp_path, execution_id="pause-aaaa1")
+    _write_paused_approval(tmp_path, execution_id="pause-aaaa2")
+    attempt = _write_trace(
+        tmp_path,
+        execution_id="attempt-1",
+        timestamp="20260102-000000",
+        resumed_from="pause-aaaa1",
+        nodes=[_node("prep"), _node("gated")],
+    )
+    assert ".from-pause-aa-" in attempt.name  # both sources' attempts carry the same tag
+
+    with pytest.raises(ResumeSupersededError):
+        load_resume_source(execution_id="pause-aaaa1", debug_dir=tmp_path, gate_answer={"approve": True})
+    source = load_resume_source(execution_id="pause-aaaa2", debug_dir=tmp_path, gate_answer={"approve": True})
+    assert source.paused_node_id == "gated"
+
+
+def test_a_source_that_vanishes_after_the_consumption_check_refuses_as_missing(tmp_path: Path, monkeypatch) -> None:
+    """Retention removes a source before its attempts, so the loader re-checks the source still exists after
+    the consumption check; one that vanished in between refuses — never a resume from a deleted trace."""
+    import pflow.runtime.resume_source as resume_source
+
+    path = _write_trace(tmp_path, execution_id="src", timestamp="20260101-000000")
+    real_check = resume_source._find_consuming_attempt
+
+    def check_then_vanish(*args: Any, **kwargs: Any) -> str | None:
+        verdict = real_check(*args, **kwargs)
+        path.unlink()  # a concurrent sweep removes the source right after the check
+        return verdict
+
+    monkeypatch.setattr(resume_source, "_find_consuming_attempt", check_then_vanish)
+    with pytest.raises(ResumeSourceMissingError, match="removed while it was being resumed"):
+        load_resume_source(execution_id="src", debug_dir=tmp_path)
+
+
+def test_a_source_that_cannot_be_checked_after_the_consumption_check_refuses_as_unreadable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The post-check is a ``stat`` that keeps "gone" apart from "cannot tell": a permission fault there is
+    the retryable unreadable refusal, never "removed while it was being resumed" (``Path.exists()`` on
+    Python 3.14 reads it as absent)."""
+    import errno
+    import os
+
+    path = _write_trace(tmp_path, execution_id="src", timestamp="20260101-000000")
+    real_stat = os.stat
+
+    def stat(target: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        if str(target) == str(path):
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return real_stat(target, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", stat)
+    with pytest.raises(ResumeSourceUnreadableError) as refused:
+        load_resume_source(execution_id="src", debug_dir=tmp_path)
+    assert refused.value.trace_path == str(path)
+
+
+def test_an_attempt_that_vanishes_mid_check_counts_as_consuming(tmp_path: Path, monkeypatch) -> None:
+    """Fail closed: an attempt listed but gone when loaded is read as consumption (Retention removes an
+    attempt only after its source), so the token is refused rather than answered a second time."""
+    import pflow.runtime.resume_source as resume_source
+
+    _write_trace(tmp_path, execution_id="src", timestamp="20260101-000000")
+    attempt = _write_trace(
+        tmp_path, execution_id="att", timestamp="20260102-000000", resumed_from="src", nodes=[], failed_node_ids=[]
+    )
+    real_load = resume_source.load_trace_file
+
+    def load_after_vanish(path: Path) -> dict[str, Any]:
+        if path == attempt:
+            attempt.unlink()
+        return real_load(path)
+
+    monkeypatch.setattr(resume_source, "load_trace_file", load_after_vanish)
+    with pytest.raises(ResumeSupersededError) as excinfo:
+        load_resume_source(execution_id="src", debug_dir=tmp_path)
+    assert excinfo.value.newer_execution_id == "att"
+
+
+def _fault_opens(monkeypatch, path: Path, *, after: int = 0) -> None:
+    """Fault every open of ``path`` past the first ``after`` with ``PermissionError`` — injected at the open
+    itself (``tests/shared/open_hooks``), never at a resume helper."""
+    from tests.shared.open_hooks import fault_opens
+
+    fault_opens(monkeypatch, path, PermissionError(13, "Permission denied"), after=after)
+
+
+@pytest.mark.parametrize("after", [0, 1], ids=["on-load", "on-raw-re-read"])
+def test_an_unreadable_attempt_refuses_retryably_never_reads_as_no_consumer(
+    tmp_path: Path, monkeypatch, after: int
+) -> None:
+    """Every read of an attempt is a consumption read: the load AND the raw re-read for a zero-work
+    attempt's dangling starts / gate verdicts. A fault on either refuses typed — never a crash, never
+    "no consumer" (a second answer)."""
+    from pflow.core.exceptions import ResumeSourceUnreadableError
+
+    _write_trace(tmp_path, execution_id="src", timestamp="20260101-000000")
+    attempt = _write_trace(
+        tmp_path, execution_id="att", timestamp="20260102-000000", resumed_from="src", nodes=[], failed_node_ids=[]
+    )
+    _fault_opens(monkeypatch, attempt, after=after)
+    with pytest.raises(ResumeSourceUnreadableError, match="a newer attempt of this run"):
+        load_resume_source(execution_id="src", debug_dir=tmp_path)
+
+
+def test_a_source_unreadable_by_id_refuses_retryably_not_as_missing(tmp_path: Path, monkeypatch) -> None:
+    """A run that exists but cannot be read is not "no such run": the refusal says so and is retryable."""
+    from pflow.core.exceptions import ResumeSourceUnreadableError
+
+    path = _write_trace(tmp_path, execution_id="src", timestamp="20260101-000000")
+    _fault_opens(monkeypatch, path)
+    with pytest.raises(ResumeSourceUnreadableError, match="this run's trace"):
+        load_resume_source(execution_id="src", debug_dir=tmp_path)
+
+
+def test_a_source_unreadable_on_its_raw_re_read_refuses_retryably(tmp_path: Path, monkeypatch) -> None:
+    from pflow.core.exceptions import ResumeSourceUnreadableError
+
+    path = _write_trace(tmp_path, execution_id="src", timestamp="20260101-000000")
+    _fault_opens(monkeypatch, path, after=1)  # the load succeeds; the gate-resolution re-read faults
+    with pytest.raises(ResumeSourceUnreadableError, match="this run's trace"):
+        load_resume_source(execution_id="src", debug_dir=tmp_path)
+
+
+def test_by_workflow_a_candidate_unreadable_on_its_dead_check_refuses_retryably(tmp_path: Path, monkeypatch) -> None:
+    """Selection asks whether the newest run is a dead zero-work attempt by re-reading its raw lines; a read
+    fault there cannot be guessed either way (skipping would resume an OLDER run past it)."""
+    from pflow.core.exceptions import ResumeSourceUnreadableError
+
+    _write_trace(tmp_path, execution_id="older", timestamp="20260101-000000")
+    newest = _write_trace(tmp_path, execution_id="newest", timestamp="20260102-000000", nodes=[], failed_node_ids=[])
+    _fault_opens(monkeypatch, newest, after=1)
+    with pytest.raises(ResumeSourceUnreadableError, match="a run of this workflow"):
+        load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+
+
+def test_by_workflow_an_unreadable_newest_run_refuses_never_falls_back_to_an_older_one(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """`resume <workflow>` must not resume an OLDER run past a newest one it cannot read (the shared iterator
+    skips unreadable files for `--only`/analyze-cache; resume asks it to raise). Control: a newest run that is
+    genuinely GONE does fall through to the older run."""
+    from pflow.core.exceptions import ResumeSourceUnreadableError
+    from tests.shared.open_hooks import fault_opens
+
+    _write_trace(tmp_path, execution_id="older", timestamp="20260101-000000")
+    newest = _write_trace(tmp_path, execution_id="newest", timestamp="20260102-000000")
+    fault: list[OSError] = [PermissionError(13, "Permission denied")]
+    fault_opens(monkeypatch, newest, lambda: fault[0])
+    with pytest.raises(ResumeSourceUnreadableError, match="a run of this workflow") as refused:
+        load_resume_source(workflow_path=WF, debug_dir=tmp_path)
+    assert newest.name in str(refused.value)
+
+    fault[0] = FileNotFoundError(2, "No such file or directory")  # vanished after the listing
+    assert load_resume_source(workflow_path=WF, debug_dir=tmp_path).execution_id == "older"
+
+
+def test_list_paused_runs_hides_and_counts_a_pause_whose_workflow_file_is_gone(tmp_path: Path) -> None:
+    from pflow.runtime.resume_source import list_paused_runs
+
+    workflow_file = tmp_path / "wf.pflow.md"
+    workflow_file.write_text("# wf\n", encoding="utf-8")
+    debug = tmp_path / "debug"
+    _write_trace(
+        debug,
+        workflow_path=str(workflow_file),
+        execution_id="pending",
+        timestamp="20260101-000000",
+        final_status="paused",
+        nodes=[_node("prep")],
+        paused_node_id="gated",
+        gate_request=_APPROVAL_REQUEST,
+    )
+    listing = list_paused_runs(debug)
+    assert ([run.execution_id for run in listing.runs], listing.hidden_missing_file) == (["pending"], [])
+
+    workflow_file.unlink()
+    listing = list_paused_runs(debug)
+    assert listing.runs == []
+    assert [run.execution_id for run in listing.hidden_missing_file] == ["pending"]

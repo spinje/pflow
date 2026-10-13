@@ -27,10 +27,11 @@ from click.testing import CliRunner
 from starlette.testclient import TestClient
 
 from pflow.cli.commands.ui import ui_cmd
+from pflow.core.trace_dir import trace_filename
 from pflow.core.workflow.manager import WorkflowManager
-from pflow.runtime.workflow_trace import format_trace_filename
 from pflow.ui.server import _checkout_web_dir, _json, bundle_warning, create_app
 from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
+from tests.shared.trace_jsonl import fixture_started
 
 
 def _local(*args: object, **kwargs: object) -> TestClient:
@@ -1025,7 +1026,7 @@ class TestRunsEndpoint:
     @staticmethod
     def _write_trace(
         debug: Path,
-        name: str,
+        started: str,
         wf_path: str,
         *,
         complete: bool,
@@ -1034,7 +1035,9 @@ class TestRunsEndpoint:
         execution_id: str = "x",
         resumed_from: str | None = None,
         trailer_extra: dict | None = None,
-    ) -> None:
+    ) -> Path:
+        """Write a synthetic trace under the producer's filename (``trace_filename``: the workflow hash, the
+        run id, the ``.only`` / ``.from-`` tags, the start time) — returns its path."""
         # Synthetic, but the CONSUMED keys mirror the producer: meta ← workflow_trace.py `_meta_fields`,
         # run.complete.final_status ← `_aggregates`. If the producer renames those, this stays green while
         # /api/runs breaks — the node.start/event join keys are pinned against a real collector in
@@ -1070,7 +1073,16 @@ class TestRunsEndpoint:
                 "nodes_executed": 1,
                 **(trailer_extra or {}),
             })
+        name = trace_filename(
+            wf_path,
+            "wf",
+            fixture_started(started),
+            execution_id,
+            only=only_node is not None,
+            resumed_from=resumed_from,
+        )
         (debug / name).write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+        return debug / name
 
     @pytest.mark.skipif(sys.platform == "win32", reason="exact liveness needs fcntl (Unix)")
     def test_lists_runs_with_exact_liveness(self, tmp_path, monkeypatch) -> None:
@@ -1083,16 +1095,9 @@ class TestRunsEndpoint:
         debug = tmp_path / ".pflow" / "debug"
         debug.mkdir(parents=True)
         wf = str(tmp_path / "wf.pflow.md")
-        self._write_trace(
-            debug, "workflow-trace-aaa-wf-20260101-000000-000001.json", wf, complete=True, execution_id="done"
-        )
-        self._write_trace(
-            debug, "workflow-trace-aaa-wf-20260101-000000-000002.json", wf, complete=False, execution_id="crashed"
-        )
-        self._write_trace(
-            debug, "workflow-trace-aaa-wf-20260101-000000-000003.json", wf, complete=False, execution_id="live"
-        )
-        live_path = debug / "workflow-trace-aaa-wf-20260101-000000-000003.json"
+        self._write_trace(debug, "20260101-000000-000001", wf, complete=True, execution_id="done")
+        self._write_trace(debug, "20260101-000000-000002", wf, complete=False, execution_id="crashed")
+        live_path = self._write_trace(debug, "20260101-000000-000003", wf, complete=False, execution_id="live")
 
         with open(live_path, encoding="utf-8") as writer:
             fcntl.flock(writer.fileno(), fcntl.LOCK_EX)  # simulate the producer holding its trace open
@@ -1117,19 +1122,19 @@ class TestRunsEndpoint:
         wf_y = tmp_path / "y.pflow.md"
         wf_y.write_text("# Y", encoding="utf-8")
         # The server resolves ?workflow= to the resolved path AND scan_traces hash-scopes by it, so the
-        # trace filenames must embed md5(resolved path) — build them via the real format_trace_filename.
+        # trace filenames must embed md5(resolved path) — `_write_trace` composes them via trace_filename.
         wf_x_path = str(wf_x.resolve())
         wf_y_path = str(wf_y.resolve())
         self._write_trace(
             debug,
-            format_trace_filename(wf_x_path, "x", "20260101-000000-000001"),
+            "20260101-000000-000001",
             wf_x_path,
             complete=True,
             execution_id="x-full",
         )
         self._write_trace(
             debug,
-            format_trace_filename(wf_x_path, "x", "20260101-000000-000002"),
+            "20260101-000000-000002",
             wf_x_path,
             complete=True,
             only_node="b",
@@ -1137,7 +1142,7 @@ class TestRunsEndpoint:
         )
         self._write_trace(
             debug,
-            format_trace_filename(wf_y_path, "y", "20260101-000000-000001"),
+            "20260101-000000-000001",
             wf_y_path,
             complete=True,
             execution_id="y-run",
@@ -1170,7 +1175,7 @@ class TestRunsEndpoint:
         wf = str(tmp_path / "wf.pflow.md")
         self._write_trace(
             debug,
-            "workflow-trace-aaa-wf-20260101-000000-000001.json",
+            "20260101-000000-000001",
             wf,
             complete=True,
             final_status="paused",
@@ -1178,7 +1183,7 @@ class TestRunsEndpoint:
         )
         self._write_trace(
             debug,
-            "workflow-trace-aaa-wf-20260101-000000-000002.json",
+            "20260101-000000-000002",
             wf,
             complete=True,
             execution_id="attempt-2",
@@ -1199,7 +1204,7 @@ class TestRunsEndpoint:
         wf = str(tmp_path / "wf.pflow.md")
         self._write_trace(
             debug,
-            "workflow-trace-aaa-wf-20260101-000000-000001.json",
+            "20260101-000000-000001",
             wf,
             complete=True,
             final_status="paused",
@@ -1211,7 +1216,7 @@ class TestRunsEndpoint:
         )
         self._write_trace(
             debug,
-            "workflow-trace-aaa-wf-20260101-000000-000002.json",
+            "20260101-000000-000002",
             wf,
             complete=True,
             execution_id="plain-run",
@@ -1235,21 +1240,21 @@ class TestRunsEndpoint:
         loose_wf.parent.mkdir(parents=True)
         self._write_trace(
             debug,
-            "workflow-trace-aaa-wf-20260101-000000-000001.json",
+            "20260101-000000-000001",
             str(repo_wf),
             complete=True,
             execution_id="in-repo",
         )
         self._write_trace(
             debug,
-            "workflow-trace-bbb-wf-20260101-000000-000002.json",
+            "20260101-000000-000002",
             str(loose_wf),
             complete=True,
             execution_id="loose",
         )
         self._write_trace(
             debug,
-            "workflow-trace-ccc-wf-20260101-000000-000003.json",
+            "20260101-000000-000003",
             "ir-hash:deadbeef",
             complete=True,
             execution_id="inline",

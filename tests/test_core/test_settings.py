@@ -1,6 +1,8 @@
 """Tests for settings management."""
 
+import contextlib
 import json
+import logging
 import os
 import stat
 import sys
@@ -617,3 +619,112 @@ class TestConcurrentAccess:
 
         # All writes should succeed
         assert len(results["writes"]) == 20
+
+
+class TestRetentionSettingAndFailedLoads:
+    """Task 185: the retention window field, unknown keys kept through a save, and no save after a failed
+    load (defaults written back would wipe the user's file — API keys included)."""
+
+    def test_unknown_keys_survive_a_save(self, settings_manager: SettingsManager) -> None:
+        settings_manager.settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_manager.settings_path.write_text(
+            json.dumps({"from_a_newer_pflow": {"x": 1}, "runtime": {"future_key": "y"}, "env": {"K": "v"}}),
+            encoding="utf-8",
+        )
+
+        settings_manager.set_env("OTHER", "w")
+
+        saved = json.loads(settings_manager.settings_path.read_text(encoding="utf-8"))
+        assert saved["from_a_newer_pflow"] == {"x": 1}
+        assert saved["runtime"]["future_key"] == "y"
+        assert saved["runtime"]["trace_retention_days"] == 14
+        assert saved["env"] == {"K": "v", "OTHER": "w"}
+
+    @pytest.mark.parametrize(
+        "content",
+        ['{"runtime": {"template_resolution_mode": "bogus"}, "env": {"API_KEY": "sk-1"}}', "{not json"],
+        ids=["fails-validation", "not-json"],
+    )
+    def test_a_file_that_failed_to_load_is_never_overwritten(
+        self, settings_manager: SettingsManager, content: str
+    ) -> None:
+        from pflow.core.user_errors import UserFriendlyError
+
+        settings_manager.settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_manager.settings_path.write_text(content, encoding="utf-8")
+        original = settings_manager.settings_path.read_bytes()
+
+        assert settings_manager.load().env == {}  # defaults are in use...
+        assert settings_manager.load_error is not None
+        with pytest.raises(UserFriendlyError, match="could not be loaded"):
+            settings_manager.set_env("NEW", "x")  # ...so a write would erase the file
+        with pytest.raises(UserFriendlyError):
+            settings_manager.save()
+
+        assert settings_manager.settings_path.read_bytes() == original
+
+    def test_a_fixed_file_loads_and_saves_again(self, settings_manager: SettingsManager) -> None:
+        settings_manager.settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_manager.settings_path.write_text("{not json", encoding="utf-8")
+        settings_manager.load()
+        assert settings_manager.load_error is not None
+
+        settings_manager.settings_path.write_text('{"env": {"K": "v"}}', encoding="utf-8")
+        settings_manager.reload()
+        settings_manager.set_env("OTHER", "w")
+
+        assert settings_manager.load_error is None
+        assert json.loads(settings_manager.settings_path.read_text(encoding="utf-8"))["env"] == {"K": "v", "OTHER": "w"}
+
+    def test_the_cli_refuses_the_write_and_reset_still_recovers(self, tmp_path: Path) -> None:
+        """The real surface: a settings command after a failed load exits 1 naming the file; `reset`
+        (a fresh manager that never loaded) replaces it."""
+        from click.testing import CliRunner
+
+        from pflow.cli.main import cli
+
+        path = tmp_path / ".pflow" / "settings.json"  # conftest points the default manager here
+        path.write_text('{"runtime": {"trace_retention_days": -3}, "env": {"API_KEY": "sk-1"}}', encoding="utf-8")
+        original = path.read_bytes()
+
+        refused = CliRunner().invoke(cli, ["settings", "set-env", "NEW", "x"])
+        assert refused.exit_code == 1
+        assert "Settings file not saved" in refused.output and str(path) in refused.output
+        assert path.read_bytes() == original
+
+        reset = CliRunner().invoke(cli, ["settings", "reset"], input="y\n")
+        assert reset.exit_code == 0, reset.output
+        assert json.loads(path.read_text(encoding="utf-8"))["runtime"]["trace_retention_days"] == 14
+
+
+@skip_win32_posix_perms
+def test_two_managers_racing_warn_about_insecure_permissions_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Concurrent MCP requests build separate managers: their check-and-add on the shared warned-set must be
+    one step. Each thread's membership answer waits (bounded) for the other thread's check — two threads
+    answered before either adds both read "not yet warned"."""
+    import pflow.core.settings as settings_module
+
+    path = tmp_path / ".pflow" / "settings.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"env": {"K": "v"}}), encoding="utf-8")
+    path.chmod(0o644)
+    both_checking = threading.Barrier(2, timeout=0.5)
+
+    class RendezvousSet(set):  # type: ignore[type-arg]  # a plain set whose membership check meets the other thread
+        def __contains__(self, item: object) -> bool:
+            seen = super().__contains__(item)
+            with contextlib.suppress(threading.BrokenBarrierError):
+                both_checking.wait()  # the other thread checks before this one acts on its answer
+            return seen
+
+    monkeypatch.setattr(settings_module, "_WARNED", RendezvousSet())
+    with caplog.at_level(logging.WARNING, logger="pflow.core.settings"):
+        threads = [threading.Thread(target=SettingsManager(settings_path=path).load) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    assert sum("insecure permissions" in record.getMessage() for record in caplog.records) == 1

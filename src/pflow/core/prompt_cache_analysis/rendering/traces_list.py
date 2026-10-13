@@ -31,11 +31,11 @@ def render_traces_list_text(
     disclosure_note: str | None = None,
 ) -> str:
     if not entries:
-        return (
-            f"No traces found for {workflow_path}.\n"
-            "Looked in ~/.pflow/debug/ for workflow-trace-<hash>-*.json files.\n"
-            "Run the workflow once to record a trace."
-        )
+        lines = [f"No traces found for {workflow_path}.", "Looked in ~/.pflow/debug/ for this workflow's traces."]
+        if disclosure_note:
+            lines.append(disclosure_note)
+        lines.append("Run the workflow once to record a trace.")
+        return "\n".join(lines)
 
     lines = [f"{len(entries)} trace(s) found for {workflow_path}", ""]
     for entry in entries:

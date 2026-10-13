@@ -103,13 +103,19 @@ def _write_paused_trace(
     execution_id: str,
     gate_request: dict[str, Any],
     paused_node_id: str = "gated",
-    workflow_path: str = "/work/big/wf.pflow.md",
+    workflow_path: str | None = None,
     name: str = "synthetic",
 ) -> Path:
-    """Minimal synthetic paused trace (the builder routes non-META keys onto the trailer)."""
-    from pflow.runtime.workflow_trace import format_trace_filename
-    from tests.shared.trace_jsonl import write_trace_jsonl
+    """Minimal synthetic paused trace (the builder routes non-META keys onto the trailer) plus its
+    ``.paused`` marker. Its workflow file is created under the test's HOME (a pause is listed only while
+    its workflow file exists) unless the test names its own ``workflow_path``."""
+    from tests.shared.trace_jsonl import write_trace_file
 
+    if workflow_path is None:
+        workflow_file = debug_dir.parent.parent / "work" / "big" / "wf.pflow.md"
+        workflow_file.parent.mkdir(parents=True, exist_ok=True)
+        workflow_file.write_text("# wf\n", encoding="utf-8")
+        workflow_path = str(workflow_file)
     data: dict[str, Any] = {
         "format_version": "2.7.0",
         "execution_id": execution_id,
@@ -124,9 +130,7 @@ def _write_paused_trace(
         "paused_node_id": paused_node_id,
         "gate_request": gate_request,
     }
-    path = debug_dir / format_trace_filename(workflow_path, name, "20260101-000000")
-    write_trace_jsonl(path, data)
-    return path
+    return write_trace_file(debug_dir, data, name=name, started="20260101-000000")
 
 
 def test_paused_run_appears_with_kind_correct_footer(home, gate_wf):
@@ -190,9 +194,10 @@ def test_failed_run_is_not_listed(home, tmp_path):
 
 def test_oversized_trailer_is_still_listed(home):
     """★ A paused trailer larger than the 64 KB tail window (many sub-1KB preview
-    fields, so blob interning never shrinks it) must still be found — pins the
-    full re-read branch in ``_read_trailer_line``; without it ``resume list``
-    silently hides a legitimate pending gate."""
+    fields, so blob interning never shrinks it) must still be found — ``resume list``
+    reads trailers through the oversized-safe ``trace_dir.read_trace_trailer`` (its full
+    re-read branch is pinned in ``test_trace_dir.py``); a reader without it silently
+    hides a legitimate pending gate."""
     preview = {f"field_{i}": "v" * 900 for i in range(100)}  # ~90 KB of un-internable leaves
     gate_request = {
         "node_id": "gated",
@@ -230,3 +235,136 @@ def test_escalation_entry_renders_choose_footer(home):
     assert result.exit_code == 0, result.stderr
     assert "escalation" in result.stdout
     assert 'To answer: pflow resume <TOKEN> --choose "<answer or option number>"' in result.stdout
+
+
+_APPROVAL_GATE = {
+    "node_id": "gated",
+    "node_type": "ShellNode",
+    "kind": "action_approval",
+    "preview": {},
+    "question": None,
+    "options": [],
+    "recommendation": None,
+}
+
+
+def test_a_pause_whose_workflow_file_is_gone_is_hidden_counted_and_refused(home):
+    """Task 185: a pause is listed only while its workflow file exists — a by-id resume re-resolves the file
+    and refuses without it, so listing the row would offer a dead command. The hidden pause is COUNTED
+    (never silent), and the same trace is listed again once the file is back."""
+    run_id = "0b7e6a52-1c4d-4e8f-9a3b-5d6c7e8f9a0b"  # uuid-shaped: `pflow resume <id>` takes the by-id arm
+    workflow_file = home / "work" / "gone.pflow.md"
+    workflow_file.parent.mkdir(parents=True)
+    workflow_file.write_text("# gone\n", encoding="utf-8")
+    _write_paused_trace(
+        home / ".pflow" / "debug",
+        execution_id=run_id,
+        gate_request=_APPROVAL_GATE,
+        workflow_path=str(workflow_file),
+    )
+    assert run_id in _runner().invoke(cli, ["resume", "list"]).stdout
+
+    workflow_file.unlink()
+    hidden_line = (
+        f"1 paused run is not listed because its workflow file no longer exists: {run_id} ({workflow_file}). "
+        "Restore the workflow file at that path to answer it."
+    )
+    text = _runner().invoke(cli, ["resume", "list"])
+    assert text.stdout == f"No paused runs.\n{hidden_line}\n"
+    as_json = _runner().invoke(cli, ["resume", "list", "--output-format", "json"])
+    assert json.loads(as_json.stdout) == []
+    assert hidden_line in as_json.stderr
+    refused = _runner().invoke(cli, ["resume", run_id, "--approve", "yes"])
+    assert refused.exit_code == 2  # the resume refuses the same pause the list hid
+    assert "The workflow for this run no longer exists" in refused.stderr
+
+    workflow_file.write_text("# gone\n", encoding="utf-8")
+    assert run_id in _runner().invoke(cli, ["resume", "list"]).stdout
+
+
+def test_hidden_pauses_beyond_three_are_counted_not_dropped(home):
+    """Four pauses of deleted workflows: three are named, the fourth is still counted."""
+    ids = [f"0b7e6a52-1c4d-4e8f-9a3b-5d6c7e8f9a0{n}" for n in range(4)]
+    for run_id in ids:
+        _write_paused_trace(
+            home / ".pflow" / "debug",
+            execution_id=run_id,
+            gate_request=_APPROVAL_GATE,
+            workflow_path="/gone/wf.pflow.md",
+        )
+
+    text = _runner().invoke(cli, ["resume", "list"]).stdout
+
+    assert "4 paused runs are not listed because their workflow file no longer exists: " in text
+    assert sum(run_id in text for run_id in ids) == 3
+    assert "(/gone/wf.pflow.md); and 1 more. Restore the workflow file at its path to answer one." in text
+
+
+@pytest.mark.parametrize("fault_on", [None, 2], ids=["every-read", "the-trailer-read"])
+@pytest.mark.parametrize("with_readable", [True, False], ids=["beside-a-readable-row", "alone"])
+def test_a_marked_trace_that_cannot_be_read_is_reported_never_dropped(home, monkeypatch, fault_on, with_readable):
+    """A pending pause whose trace cannot be read — at its head, or only at its trailer after a clean head —
+    may still be answerable: `resume list` names it and the read error, and never answers "No paused runs."
+    as if the list were complete."""
+    import errno
+
+    from tests.shared.open_hooks import fault_opens
+
+    debug = home / ".pflow" / "debug"
+    readable_id = "0b7e6a52-1c4d-4e8f-9a3b-5d6c7e8f9a01"
+    unreadable_id = "0b7e6a52-1c4d-4e8f-9a3b-5d6c7e8f9a02"
+    if with_readable:
+        _write_paused_trace(debug, execution_id=readable_id, gate_request=_APPROVAL_GATE)
+    locked = _write_paused_trace(debug, execution_id=unreadable_id, gate_request=_APPROVAL_GATE)
+
+    def invoke(*args: str) -> Any:
+        with monkeypatch.context() as patched:  # a fresh fault count: each CLI invocation reads the trace afresh
+            fault_opens(patched, locked, PermissionError(errno.EACCES, "Permission denied"), nth=fault_on)
+            return _runner().invoke(cli, ["resume", "list", *args])
+
+    expected = (
+        f"1 paused run could not be read and may still be pending: could not read trace {locked}: "
+        "Permission denied. Retry; if it keeps failing, check the trace file's permissions."
+    )
+
+    text = invoke()
+    assert text.exit_code == 0, text.stderr
+    assert unreadable_id not in text.stdout.replace(str(locked), "")
+    assert text.stdout.rstrip("\n").endswith(expected)
+    if with_readable:
+        assert readable_id in text.stdout
+    else:
+        assert text.stdout.startswith("No readable paused runs; the list is incomplete.\n")
+    assert "No paused runs." not in text.stdout
+    as_json = invoke("--output-format", "json")
+    assert [row["execution_id"] for row in json.loads(as_json.stdout)] == ([readable_id] if with_readable else [])
+    assert expected in as_json.stderr
+
+
+def test_a_pause_whose_workflow_file_cannot_be_checked_is_listed_with_a_note(home, monkeypatch):
+    """A permission fault on the workflow file is "cannot tell", not "deleted": the row stays (the pause
+    may still be answerable) and says so."""
+    import os
+
+    workflow_file = home / "work" / "locked.pflow.md"
+    workflow_file.parent.mkdir(parents=True)
+    workflow_file.write_text("# locked\n", encoding="utf-8")
+    _write_paused_trace(
+        home / ".pflow" / "debug",
+        execution_id="unsure-pause",
+        gate_request=_APPROVAL_GATE,
+        workflow_path=str(workflow_file),
+        name="locked",
+    )
+    real_stat = os.stat
+
+    def denied_for_the_workflow(path, *args, **kwargs):
+        if str(path) == str(workflow_file):
+            raise PermissionError(13, "Permission denied")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", denied_for_the_workflow)
+    result = _runner().invoke(cli, ["resume", "list"])
+    assert "unsure-pause" in result.stdout
+    assert "locked (workflow file unreadable)" in result.stdout
+    assert "not listed" not in result.stdout

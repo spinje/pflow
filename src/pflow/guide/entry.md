@@ -25,7 +25,8 @@ If execution succeeds, present results concisely. Do not re-run.
 Run Options:
   --only <node>         Re-run one node against the last full run's snapshot (upstream reused, not re-run; needs a prior run)
   --no-cache            Bypass pflow memo-cache reads
-  --report              Generate per-node execution report
+  --report              Generate per-node execution report (writes a trace even with --no-trace)
+  --no-trace            Write no trace (the run can't be resumed, reported, or used by --only)
   -o, --output-key <key>  Extract specific output
   --validate-only       Validate without executing
   --dry-run             Preview cache/execute plan + cost/duration estimates (no execution)

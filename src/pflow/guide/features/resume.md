@@ -18,6 +18,8 @@ Workflow trace saved: ~/.pflow/debug/workflow-trace-….json
 
 With `--output-format json`, the document names the run (`execution_id`, `trace_path` — on every
 run that wrote a trace) and, when the failed step can be resumed, carries the literal `resume_command`.
+A failed `--only` run still names its `execution_id` and `trace_path` (read it with `pflow report <trace_path>`),
+but it has no `resume_command` and prints no resume hint: it recorded only its one step, so re-run that step with `--only`.
 
 Resume restores the already-completed upstream steps' outputs from the saved run (it does **not** re-run them) and continues execution from the failed step onward. The resumed attempt is a **new run with its own trace**, linked to the original run by `execution.resumed_from` (with `execution.nodes_restored`) in its JSON output and a `⤷ Resumed from <id> at '<step>'` line on stderr — whatever it ends in: success, failure, a pause or a denial. Its `execution.nodes_executed` counts only the steps it ran.
 
@@ -54,6 +56,7 @@ Behavior worth knowing:
 - **A token is consumed by its answer.** The resumed attempt supersedes the paused run; a second answer refuses and names the newer attempt. Each later gate in the same workflow pauses again as a **new** token.
 - **An answer covers one gate, once.** `--approve yes` approves the paused gate only — it is not a standing approval for that step. A paused **loop** step runs the paused iteration on the answer; its next iteration is a new action that pauses again with a new token (the pause output names it: `Loop iteration 2 of up to 3`). Pass `--auto-approve <step>` to approve every remaining iteration at once — the pause output prints that command, and the browser panel's Approve all remaining sends it.
 - **Resuming without an answer flag refuses** and shows the pending question with the exact command; `--approve`/`--choose` on a run that is not paused refuses too.
+- **Runs are kept for a window.** A failed or interrupted run can be resumed while its trace is within `runtime.trace_retention_days` (14 days by default). A pending pause is kept until it is answered, whatever its age, as long as its workflow file exists. Runs recorded by an earlier pflow version are not searched (a lookup that finds nothing says how many it skipped) — answer pending pauses before upgrading pflow, and answer each pause with the pflow version that issued it.
 - The **edited-workflow refusal** and `--force` (below) apply to paused resumes the same as failed ones, denials included (`--approve no` after an edit to a step before the gate needs `--force`), with one addition: editing the paused approval step after approving it refuses — the approval covered the version the human saw. Input overrides (`KEY=VALUE`) work the same way.
 - **A denial needs the paused gate.** If the paused step was renamed, removed, no longer reachable from the start, or lost its `approval: required`, `--approve no` refuses — there is no gate left to deny, and resuming could run the step — and `--force` does not override that.
 

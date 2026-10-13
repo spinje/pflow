@@ -20,6 +20,7 @@ from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from pflow.cli.main import cli
+from pflow.core.trace_dir import paused_marker, trace_filename
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.ui.server import (
     _ACTIVITY_MAX,
@@ -31,6 +32,7 @@ from pflow.ui.server import (
     events,
 )
 from tests.shared.markdown_utils import write_workflow_file
+from tests.shared.trace_jsonl import fixture_started
 
 
 def _client(app: Starlette | None = None) -> TestClient:
@@ -1006,16 +1008,19 @@ class TestRunEndpoint:
         assert popen.call_args.args[0][-1] == "count=3"
 
 
+_APPROVAL_GATE = {"node_id": "deploy", "node_type": "shell", "kind": "action_approval", "preview": {}}
+
+
 def _write_paused_trace(
     debug: Path,
-    name: str,
     wf_path: str,
     *,
     execution_id: str,
     final_status: str = "paused",
     gate_request: dict | None = None,
     paused_node_id: str | None = "deploy",
-) -> None:
+    started: str = "20260101-000000-000001",
+) -> Path:
     """A synthetic trace whose CONSUMED keys mirror the producer (meta ← `_meta_fields`,
     run.complete + flat pause keys ← `finalize`'s paused arm, Task 171). Projection-test-grade
     (mirrors tests/test_cli/test_ui.py `_write_trace`); the P2 answer-FLOW tests use real
@@ -1034,7 +1039,11 @@ def _write_paused_trace(
         if gate_request is not None:
             trailer["gate_request"] = gate_request
     lines = [meta, trailer]
-    (debug / name).write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+    path = debug / trace_filename(wf_path, "wf", fixture_started(started), execution_id)
+    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
+    if final_status == "paused":
+        paused_marker(path).touch()
+    return path
 
 
 def _escalation_wf(tmp_path: Path, question: str) -> Path:
@@ -1209,12 +1218,79 @@ class TestGateEndpoint:
         response = _client().get("/api/gate", params={"run": "no-such-run"})
         assert response.status_code == 404
         assert "no-such-run" in response.json()["error"]
+        assert "earlier pflow version" not in response.json()["error"]  # no pre-185 traces → no clause
+        assert "aged out of `runtime.trace_retention_days`" in response.json()["error"]
+
+    def test_gate_of_a_pre_185_named_trace_is_404_and_says_what_was_not_searched(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """The clean cutover (Task 185): a paused trace under the pre-185 filename (no run id in the name) is
+        not found by id — and the 404 says how many such traces were not searched. The SAME trace under
+        the current name is served, so the miss is the cutover and nothing else."""
+        debug = self._debug_dir(tmp_path, monkeypatch)
+        current = _write_paused_trace(debug, "/wf.pflow.md", execution_id="old-pause", gate_request=_APPROVAL_GATE)
+        assert _client().get("/api/gate", params={"run": "old-pause"}).status_code == 200
+
+        current.rename(debug / "workflow-trace-3a8ac2b2-wf-20260101-000000-000001.json")
+        response = _client().get("/api/gate", params={"run": "old-pause"})
+        assert response.status_code == 404
+        assert "1 trace written by an earlier pflow version is not searched" in response.json()["error"]
+
+    def test_gate_by_id_opens_only_the_one_trace_among_many(self, tmp_path: Path, monkeypatch) -> None:
+        """The "Loading gate…" guard (Task 185): the run id is in the filename, so `/api/gate` lists the
+        directory once and opens ONLY the matching trace — never the other workflows' 500 traces."""
+        from tests.shared.open_hooks import record_opens
+
+        debug = self._debug_dir(tmp_path, monkeypatch)
+        for index in range(500):
+            _write_paused_trace(
+                debug,
+                f"/other/wf-{index}.pflow.md",
+                execution_id=f"other-{index}",
+                gate_request=_APPROVAL_GATE,
+                started=f"20260102-{index // 60:02d}{index % 60:02d}00-000000",
+            )
+        target = _write_paused_trace(debug, "/wf.pflow.md", execution_id="target-run", gate_request=_APPROVAL_GATE)
+        client = _client()  # app setup reads nothing in the trace dir, but keep it outside the spy anyway
+        with monkeypatch.context() as patched:
+            opened = record_opens(patched)
+            response = client.get("/api/gate", params={"run": "target-run"})
+        assert response.status_code == 200
+        trace_reads = [Path(path).name for path in opened if Path(path).name.startswith("workflow-trace-")]
+        assert trace_reads == [target.name]
+
+    @pytest.mark.parametrize(
+        ("error", "status", "says"),
+        [
+            (PermissionError, 500, "Could not read the trace of run 'target-run' ("),
+            (FileNotFoundError, 404, "aged out of `runtime.trace_retention_days`"),
+        ],
+        ids=["unreadable", "removed-since-the-listing"],
+    )
+    def test_a_found_trace_that_cannot_be_loaded_is_never_called_not_paused(
+        self, tmp_path: Path, monkeypatch, error: type[OSError], status: int, says: str
+    ) -> None:
+        """Found by id, then the load fails: a file that cannot be read is a 500 naming it (the run may still
+        be paused), one removed since the listing (Retention) is the not-found 404 — never "not paused"."""
+        from tests.shared.open_hooks import fault_opens
+
+        debug = self._debug_dir(tmp_path, monkeypatch)
+        target = _write_paused_trace(debug, "/wf.pflow.md", execution_id="target-run", gate_request=_APPROVAL_GATE)
+        client = _client()
+        with monkeypatch.context() as patched:
+            # The OSError names the file, as a real one does.
+            fault_opens(patched, target, lambda: error(13 if error is PermissionError else 2, "injected", str(target)))
+            response = client.get("/api/gate", params={"run": "target-run"})
+        assert response.status_code == status
+        assert says in response.json()["error"]
+        assert "not paused" not in response.json()["error"]
+        # An unreadable trace is named exactly once (the OSError names it too); a removed one is not named.
+        assert response.json()["error"].count(str(target)) == (1 if status == 500 else 0)
 
     def test_non_paused_run_is_404(self, tmp_path: Path, monkeypatch) -> None:
         debug = self._debug_dir(tmp_path, monkeypatch)
         _write_paused_trace(
             debug,
-            "workflow-trace-aaa-wf-20260101-000000-000001.json",
             "/wf.pflow.md",
             execution_id="done-run",
             final_status="success",
@@ -1229,13 +1305,13 @@ class TestGateEndpoint:
         debug = self._debug_dir(tmp_path, monkeypatch)
         _write_paused_trace(
             debug,
-            "workflow-trace-aaa-wf-20260101-000000-000001.json",
             "/wf.pflow.md",
             execution_id="corrupt-run",
             gate_request=None,
         )
         response = _client().get("/api/gate", params={"run": "corrupt-run"})
         assert response.status_code == 404
+        assert "not paused" in response.json()["error"], "found by id, then refused for the corrupt record"
 
     def test_paused_trailer_without_gate_kind_is_404_not_a_null_kind_200(self, tmp_path: Path, monkeypatch) -> None:
         """`kind` is a required GateRequest field — a hand-corrupted trailer without it must land in
@@ -1245,28 +1321,26 @@ class TestGateEndpoint:
         debug = self._debug_dir(tmp_path, monkeypatch)
         _write_paused_trace(
             debug,
-            "workflow-trace-aaa-wf-20260101-000000-000001.json",
             "/wf.pflow.md",
             execution_id="kindless-run",
             gate_request={"node_id": "deploy", "node_type": "shell", "preview": {"command": "rm -rf"}},
         )
         response = _client().get("/api/gate", params={"run": "kindless-run"})
         assert response.status_code == 404
+        assert "not paused" in response.json()["error"], "found by id, then refused for the corrupt record"
 
     def test_unparseable_trace_is_404_not_500(self, tmp_path: Path, monkeypatch) -> None:
         """A paused trace the full reader cannot parse (a malformed line before the trailer) is the
         not-paused 404 — the same trace `pflow resume` refuses — never a 500."""
         debug = self._debug_dir(tmp_path, monkeypatch)
-        name = "workflow-trace-aaa-wf-20260101-000000-000001.json"
-        _write_paused_trace(
+        path = _write_paused_trace(
             debug,
-            name,
             "/wf.pflow.md",
             execution_id="garbled-run",
             gate_request={"node_id": "deploy", "node_type": "shell", "kind": "action_approval", "preview": {}},
         )
-        meta_line, trailer_line = (debug / name).read_text(encoding="utf-8").splitlines()
-        (debug / name).write_text(f"{meta_line}\n{{not json\n{trailer_line}\n", encoding="utf-8")
+        meta_line, trailer_line = path.read_text(encoding="utf-8").splitlines()
+        path.write_text(f"{meta_line}\n{{not json\n{trailer_line}\n", encoding="utf-8")
         response = _client().get("/api/gate", params={"run": "garbled-run"})
         assert response.status_code == 404
         assert "not paused" in response.json()["error"], "the run was discovered; the parse failed"
@@ -1283,7 +1357,6 @@ class TestGateEndpoint:
         big_value = "x" * 100_000
         _write_paused_trace(
             debug,
-            "workflow-trace-aaa-wf-20260101-000000-000001.json",
             "/wf.pflow.md",
             execution_id="big-paused",
             gate_request={
@@ -1625,6 +1698,48 @@ class TestResumeEndpoint:
         assert body["refusal"] == "superseded"
         assert isinstance(body["newer_execution_id"], str) and body["newer_execution_id"]
         assert body["errors"]
+        popen.assert_not_called()
+
+    @staticmethod
+    def _fault_reads_after_the_first(monkeypatch, path: Path, fault: Callable[[], OSError]) -> None:
+        """Let the FIRST open of ``path`` succeed (the attempt loads), then fault every later open — the raw
+        re-read the consumption check makes. Injected at the open itself (``tests/shared/open_hooks``), never at
+        a resume helper."""
+        from tests.shared.open_hooks import fault_opens
+
+        fault_opens(monkeypatch, path, fault, after=1)
+
+    def _denied_attempt(self, tmp_path: Path, monkeypatch) -> tuple[str, Path]:
+        """A real pause answered `no` through the CLI: the denied attempt ran zero steps, so only its raw
+        re-read (the gate verdict line) can show it consumed the token."""
+        self._home(tmp_path, monkeypatch)
+        token = self._pause(self._paused_wf(tmp_path))
+        denied = CliRunner(mix_stderr=False).invoke(cli, ["resume", token, "--approve", "no"])
+        assert denied.exit_code == 3, denied.stderr
+        [attempt] = (tmp_path / ".pflow" / "debug").glob(f"*.from-{token[:8]}-*.json")
+        return token, attempt
+
+    def test_an_attempt_unreadable_on_its_re_read_is_a_retryable_409_not_a_500(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Task 185 mid-task review #1: the consumption check reads an attempt twice (load, then the raw lines
+        for its gate verdict). A read fault on the SECOND read must refuse typed and retryable — never a 500,
+        never read as "no consumer" (which would spawn a second answer)."""
+        token, attempt = self._denied_attempt(tmp_path, monkeypatch)
+        self._fault_reads_after_the_first(monkeypatch, attempt, lambda: PermissionError(13, "Permission denied"))
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": token, "approve": "yes"})
+        assert response.status_code == 409, response.text
+        assert response.json()["refusal"] == "source_unreadable"
+        popen.assert_not_called()
+
+    def test_an_attempt_that_vanishes_on_its_re_read_still_supersedes(self, tmp_path: Path, monkeypatch) -> None:
+        token, attempt = self._denied_attempt(tmp_path, monkeypatch)
+        self._fault_reads_after_the_first(monkeypatch, attempt, lambda: FileNotFoundError(2, "gone"))
+        with patch("pflow.ui.server.subprocess.Popen") as popen:
+            response = _client().post("/api/resume", json={"run": token, "approve": "yes"})
+        assert response.status_code == 409, response.text
+        assert response.json()["refusal"] == "superseded"
         popen.assert_not_called()
 
     def test_a_lenient_era_recorded_input_is_400_naming_the_run_to_resume(self, tmp_path: Path, monkeypatch) -> None:

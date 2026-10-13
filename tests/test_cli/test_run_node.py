@@ -4,7 +4,7 @@ Hand-written JSONL traces whose CONSUMED keys mirror the producer (meta ← ``wo
 event join keys ``node_id``/``ancestor_path``/``port`` ← ``_emit_node_start``; blob lines ← ``intern_event_leaves``).
 The join keys are pinned against a REAL collector in ``tests/test_runtime/test_emit_time_trace.py`` — if the
 producer shape drifts there, these stay green while the panel breaks (tests/CLAUDE.md pitfall #19). Filenames
-are built via the REAL ``format_trace_filename`` so the hash-scoped ``scan_traces`` glob actually matches.
+are named via the REAL ``trace_filename`` so the hash-scoped, by-id listing actually matches.
 """
 
 from __future__ import annotations
@@ -16,10 +16,11 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from pflow.core.trace_dir import trace_filename
 from pflow.core.trace_io import INTERN_MIN_BYTES
-from pflow.runtime.workflow_trace import format_trace_filename
 from pflow.ui.run_node import read_run_inputs, run_node_detail
 from pflow.ui.server import create_app
+from tests.shared.trace_jsonl import fixture_started
 
 
 def _local(*args: object, **kwargs: object) -> TestClient:
@@ -51,17 +52,22 @@ def _event(node_id: str, *, ancestor_path: list | None = None, port=None, seq: i
 def _write_trace(
     debug: Path, wf: str, ts: str, lines: list[dict], *, execution_id: str = "run-1", complete: bool = True
 ) -> Path:
-    """Write a JSONL trace named EXACTLY as the producer would (real ``format_trace_filename`` → matching
-    hash prefix), with ``lines`` as the body between the ``meta`` head and the ``run.complete`` trailer."""
+    """Write a JSONL trace named EXACTLY as the producer would (real ``trace_filename`` → matching
+    workflow hash and run id), with ``lines`` as the body between the ``meta`` head and the ``run.complete`` trailer."""
     body: list[dict] = [
         {"kind": "meta", "pflow_trace": "jsonl/1", "workflow_path": wf, "execution_id": execution_id},
         *lines,
     ]
     if complete:
         body.append({"kind": "run.complete", "final_status": "success", "nodes_executed": len(lines)})
-    path = debug / format_trace_filename(wf, "wf", ts)
+    path = _trace_path(debug, wf, ts, execution_id)
     path.write_text("\n".join(json.dumps(x) for x in body) + "\n", encoding="utf-8")
     return path
+
+
+def _trace_path(debug: Path, wf: str, ts: str, execution_id: str) -> Path:
+    """The producer's filename for run ``execution_id`` of ``wf`` started at ``ts``."""
+    return debug / trace_filename(wf, "wf", fixture_started(ts), execution_id)
 
 
 def _debug(tmp_path: Path, monkeypatch) -> Path:
@@ -100,7 +106,7 @@ def test_returns_none_for_a_trace_corrupt_after_its_meta_line(tmp_path, monkeypa
     debug = _debug(tmp_path, monkeypatch)
     wf = str(tmp_path / "wf.pflow.md")
     meta = {"kind": "meta", "pflow_trace": "jsonl/1", "workflow_path": wf, "execution_id": "run-1"}
-    path = debug / format_trace_filename(wf, "wf", "20260101-000000-000001")
+    path = _trace_path(debug, wf, "20260101-000000-000001", "run-1")
     path.write_bytes((json.dumps(meta) + "\n").encode("utf-8") + b"\xff\xfe garbage \x80\n")
     assert run_node_detail(wf, "run-1", {"node_id": "a", "ancestor_path": [], "port": None}) is None
 
@@ -241,7 +247,7 @@ def test_truncated_final_line_is_tolerated(tmp_path, monkeypatch) -> None:
     meta = json.dumps({"kind": "meta", "pflow_trace": "jsonl/1", "workflow_path": wf, "execution_id": "run-1"})
     good = json.dumps(_event("greet", node_output={"stdout": "hi"}))
     truncated = '{"kind": "event", "node_id": "gr'  # half-written line, the file is mid-flush
-    path = debug / format_trace_filename(wf, "wf", "20260101-000000-000001")
+    path = _trace_path(debug, wf, "20260101-000000-000001", "run-1")
     path.write_text("\n".join([meta, good, truncated]) + "\n", encoding="utf-8")
     detail = run_node_detail(wf, "run-1", {"node_id": "greet", "ancestor_path": [], "port": None})
     assert detail is not None and detail["output"] == {"stdout": "hi"}
@@ -256,7 +262,7 @@ def test_malformed_earlier_line_raises_not_silently_swallowed(tmp_path, monkeypa
     meta = json.dumps({"kind": "meta", "pflow_trace": "jsonl/1", "workflow_path": wf, "execution_id": "run-1"})
     corrupt = '{"kind": "event" BROKEN}'  # invalid JSON, and NOT the last line
     good = json.dumps(_event("greet", node_output={"stdout": "hi"}))
-    path = debug / format_trace_filename(wf, "wf", "20260101-000000-000001")
+    path = _trace_path(debug, wf, "20260101-000000-000001", "run-1")
     path.write_text("\n".join([meta, corrupt, good]) + "\n", encoding="utf-8")
     with pytest.raises(json.JSONDecodeError):
         run_node_detail(wf, "run-1", {"node_id": "greet", "ancestor_path": [], "port": None})
@@ -434,7 +440,7 @@ def _write_io_trace(
     trailer: dict = {"kind": "run.complete", "final_status": "success", "nodes_executed": 0}
     if json_output is not None:
         trailer["json_output"] = json_output
-    path = debug / format_trace_filename(wf, "wf", ts)
+    path = _trace_path(debug, wf, ts, execution_id)
     path.write_text("\n".join(json.dumps(x) for x in (meta, trailer)) + "\n", encoding="utf-8")
     return path
 

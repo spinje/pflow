@@ -14,21 +14,21 @@ from pathlib import Path
 
 import pytest
 
+from pflow.core.trace_dir import parse_trace_filename, trace_filename
 from pflow.core.trace_tree import event_cost
 from pflow.core.workflow_id import workflow_content_hash
 from pflow.execution import WorkflowRunner
 from pflow.execution.result import RunnerConfig
 from pflow.execution.workflow_resolver import resolve_workflow
-from pflow.runtime.workflow_trace import format_trace_filename
 from pflow.ui.run_tailer import (
     RunTailer,
     _run_event,
     discover_live_trace,
     is_trace_locked,
     read_run_status,
-    read_run_trailer,
     scan_traces,
 )
+from tests.shared.trace_jsonl import fixture_execution_id, fixture_started
 
 # Exact-liveness (flock) tests are Unix-only — `fcntl` doesn't exist on Windows (the producer + probe
 # degrade to a heuristic there; that path isn't what these pin).
@@ -42,7 +42,6 @@ def _write_trace(
     complete: bool,
     only_node: str | None = None,
     final_status: str = "success",
-    execution_id: str = "x",
     content_hash: str | None = None,
     inputs: dict | None = None,
     trailer_extra: dict | None = None,
@@ -51,6 +50,9 @@ def _write_trace(
     # run.complete.final_status ← `_aggregates`, node.start/event join keys ← `_emit_node_start`). The join
     # keys are pinned against a real collector in tests/test_runtime/test_emit_time_trace.py — if the
     # producer shape drifts there, this stays green while the tailer breaks (tests/CLAUDE.md pitfall #19).
+    # The meta's execution_id is the one the producer's filename carries (`_tp`); a bare path gets "x".
+    parsed = parse_trace_filename(path.name)
+    execution_id = parsed.execution_id if parsed is not None and parsed.execution_id else "x"
     meta: dict = {
         "kind": "meta",
         "pflow_trace": "jsonl/1",
@@ -94,29 +96,34 @@ def _write_trace(
     path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
 
 
-def _tp(debug: Path, workflow_path: str, ts: str, *, name: str = "wf") -> Path:
-    """A trace path named EXACTLY as the producer would (via the real format_trace_filename) — so the
-    discovery tests exercise the true workflow-hash prefix that the hash-scoped scan_traces globs on, and
-    fail loudly if the producer/consumer hash ever drifts. ``ts`` orders files when a test sets mtime."""
-    return debug / format_trace_filename(workflow_path, name, ts)
+def _tp(
+    debug: Path, workflow_path: str, ts: str, *, name: str = "wf", execution_id: str | None = None, only: bool = False
+) -> Path:
+    """A trace path named EXACTLY as the producer would (the real ``trace_filename``) — so the discovery
+    tests exercise the true workflow hash the scoped scan lists by, and fail loudly if the producer/consumer
+    hash ever drifts. ``ts`` is the run's start time — the one recency key; ``execution_id`` defaults to a
+    fixture id that DESCENDS with time, so a whole-filename sort would order these the wrong way round."""
+    started = fixture_started(ts)
+    return debug / trace_filename(
+        workflow_path, name, started, execution_id or fixture_execution_id(started), only=only
+    )
 
 
 @_unix_only
 def test_discover_prefers_live_over_finished(tmp_path):
-    """R2 + PR #543: a just-finished run (newer mtime) must NOT shadow a still-STREAMING one. "Live" is now
-    EXACT — incomplete AND the writer holds the flock — so the live fixture holds a real advisory lock for the
-    duration of the call (an unlocked incomplete file is a CRASHED run, covered by the next test)."""
+    """R2 + PR #543: a NEWER run that already finished must NOT shadow an older, still-STREAMING one. "Live"
+    is EXACT — incomplete AND the writer holds the flock — so the live fixture holds a real advisory lock for
+    the duration of the call (an unlocked incomplete file is a CRASHED run, covered by the next test). The
+    finished run STARTED later, so the prefer-live rule is the only reason the live one wins."""
     import fcntl
 
     wf = str(tmp_path / "wf.pflow.md")
     debug = tmp_path / "debug"
     debug.mkdir()
-    finished = _tp(debug, wf, "20260101-000000-000001")
-    live = _tp(debug, wf, "20260101-000000-000002")
+    live = _tp(debug, wf, "20260101-000000-000001")
+    finished = _tp(debug, wf, "20260101-000000-000002")
     _write_trace(finished, wf, complete=True)
     _write_trace(live, wf, complete=False)
-    os.utime(live, (1000, 1000))  # live is OLDER by mtime…
-    os.utime(finished, (2000, 2000))  # …finished is newer — newest-by-mtime would wrongly pick it
     with open(
         live, encoding="utf-8"
     ) as streaming:  # the producer holds the flock for the run's life; simulate that here
@@ -137,8 +144,6 @@ def test_discover_skips_a_crashed_unlocked_incomplete_for_a_newer_finished_run(t
     finished = _tp(debug, wf, "20260101-000000-000002")
     _write_trace(crashed, wf, complete=False)  # incomplete + nobody holds the lock = crashed/killed
     _write_trace(finished, wf, complete=True)
-    os.utime(crashed, (1000, 1000))
-    os.utime(finished, (2000, 2000))
     assert discover_live_trace(wf, debug_dir=debug) == finished
 
 
@@ -150,12 +155,10 @@ def test_discover_prefers_incomplete_when_lock_state_is_unknown(tmp_path, monkey
     wf = str(tmp_path / "wf.pflow.md")
     debug = tmp_path / "debug"
     debug.mkdir()
-    finished = _tp(debug, wf, "20260101-000000-000001")
-    incomplete = _tp(debug, wf, "20260101-000000-000002")
+    incomplete = _tp(debug, wf, "20260101-000000-000001")
+    finished = _tp(debug, wf, "20260101-000000-000002")  # STARTED later: only the fallback picks `incomplete`
     _write_trace(finished, wf, complete=True)
     _write_trace(incomplete, wf, complete=False)
-    os.utime(incomplete, (1000, 1000))
-    os.utime(finished, (2000, 2000))
     monkeypatch.setattr(run_tailer, "is_trace_locked", lambda _p: None)  # simulate a no-fcntl filesystem
     assert discover_live_trace(wf, debug_dir=debug) == incomplete
 
@@ -169,25 +172,37 @@ def test_discover_falls_back_to_newest_finished_when_none_live(tmp_path):
     newer = _tp(debug, wf, "20260101-000000-000002")
     _write_trace(older, wf, complete=True)
     _write_trace(newer, wf, complete=True)
-    os.utime(older, (1000, 1000))
-    os.utime(newer, (2000, 2000))
     assert discover_live_trace(wf, debug_dir=debug) == newer
+
+
+def test_discover_ranks_by_start_time_not_mtime(tmp_path):
+    """ "Newest" is the start time the filename records (the one recency rule, Task 185) — never the file's
+    mtime. The later-STARTED run carries the OLDER mtime here, so an mtime sort would pick the other."""
+    wf = str(tmp_path / "wf.pflow.md")
+    debug = tmp_path / "debug"
+    debug.mkdir()
+    earlier = _tp(debug, wf, "20260101-000000-000001")
+    later = _tp(debug, wf, "20260101-000000-000002")
+    _write_trace(earlier, wf, complete=True)
+    _write_trace(later, wf, complete=True)
+    os.utime(later, (1000, 1000))
+    os.utime(earlier, (2000, 2000))
+    assert discover_live_trace(wf, debug_dir=debug) == later
+    assert [c["path"] for c in scan_traces(wf, debug_dir=debug)] == [later, earlier]
 
 
 def test_discover_excludes_only_node_traces(tmp_path):
     """An ``--only`` run records ONLY its target, so it must NOT shadow the last full run in the overlay
     (consistent with ``_iter_workflow_traces``). Discovery returns the FULL run even though the ``--only``
-    trace is newer by mtime — else the user iterating with ``--only`` sees a partial, mostly-pending canvas
+    trace started later — else the user iterating with ``--only`` sees a partial, mostly-pending canvas
     instead of their last full run."""
     wf = str(tmp_path / "wf.pflow.md")
     debug = tmp_path / "debug"
     debug.mkdir()
     full = _tp(debug, wf, "20260101-000000-000001")
-    only = _tp(debug, wf, "20260101-000000-000002")
+    only = _tp(debug, wf, "20260101-000000-000002", only=True)  # NEWER — would win without the exclusion
     _write_trace(full, wf, complete=True)
     _write_trace(only, wf, complete=True, only_node="b")
-    os.utime(full, (1000, 1000))
-    os.utime(only, (2000, 2000))  # the --only trace is NEWER — would win without the only_node exclusion
     assert discover_live_trace(wf, debug_dir=debug) == full
 
 
@@ -214,7 +229,7 @@ def test_scan_traces_yields_raw_candidates_keeping_only_policy_in_callers(tmp_pa
     debug = tmp_path / "debug"
     debug.mkdir()
     full = _tp(debug, wf, "20260101-000000-000001")
-    only = _tp(debug, wf, "20260101-000000-000002")
+    only = _tp(debug, wf, "20260101-000000-000002", only=True)
     _write_trace(full, wf, complete=True, final_status="success")
     _write_trace(only, wf, complete=True, final_status="success", only_node="b")
     cands = scan_traces(wf, debug_dir=debug)
@@ -227,19 +242,19 @@ def test_scan_traces_yields_raw_candidates_keeping_only_policy_in_callers(tmp_pa
 
 def test_scan_traces_drops_meta_inputs_from_the_cache(tmp_path):
     """Task 175 (deep-review): meta.inputs can be large (a multi-KB text input, per run, across the debug
-    dir) and NO _SCAN_CACHE consumer reads it — run_node re-reads the file via _read_trace_lines. So _read_meta
-    drops `inputs` to keep the process-lifetime cache small; the identity keys (execution_id) stay."""
+    dir) and NO _SCAN_CACHE consumer reads it — run_node re-reads the file via _read_trace_lines. So the
+    scan drops `inputs` to keep the process-lifetime cache small; the identity keys (execution_id) stay."""
     import pflow.ui.run_tailer as rt
 
     rt._SCAN_CACHE.clear()
     wf = str(tmp_path / "wf.pflow.md")
     debug = tmp_path / "debug"
     debug.mkdir()
-    path = _tp(debug, wf, "20260101-000000-000001")
+    path = _tp(debug, wf, "20260101-000000-000001", execution_id="run-1")
     _write_trace(path, wf, complete=True, inputs={"topic": "a" * 5000})
     meta = next(c["meta"] for c in scan_traces(wf, debug_dir=debug))
     assert "inputs" not in meta  # dropped — not retained in the scan cache
-    assert meta["execution_id"] == "x"  # identity keys stay
+    assert meta["execution_id"] == "run-1"  # identity keys stay
 
 
 def test_scan_traces_caches_unchanged_files(tmp_path, monkeypatch):
@@ -254,13 +269,13 @@ def test_scan_traces_caches_unchanged_files(tmp_path, monkeypatch):
     _write_trace(_tp(debug, wf, "20260101-000000-000001"), wf, complete=True)
 
     calls = {"n": 0}
-    real_read_meta = rt._read_meta
+    real_read_meta = rt.read_trace_meta_strict
 
     def counting_read_meta(path):
         calls["n"] += 1
         return real_read_meta(path)
 
-    monkeypatch.setattr(rt, "_read_meta", counting_read_meta)
+    monkeypatch.setattr(rt, "read_trace_meta_strict", counting_read_meta)
     assert len(rt.scan_traces(wf, debug_dir=debug)) == 1
     assert calls["n"] == 1, "the finished trace is opened once to populate the cache"
     assert len(rt.scan_traces(wf, debug_dir=debug)) == 1
@@ -289,31 +304,89 @@ def test_scan_traces_rereads_a_grown_file(tmp_path):
 
 
 def test_scan_traces_caches_unreadable_files(tmp_path, monkeypatch):
-    """A file with no valid meta head (a pre-Task-172 single-object trace / junk) is the BULK of a long-lived
-    ~/.pflow/debug. Its NEGATIVE verdict is cached on (mtime,size) too, so it's opened once — not re-probed
-    every poll. (The real-dir gap the valid-trace fixtures missed; surfaced by cold/warm scan timing.)"""
+    """A trace-named file with no valid meta head (junk, a write cut short) has its NEGATIVE verdict cached on
+    (mtime,size) too, so it's opened once — not re-probed every poll. (The real-dir gap the valid-trace
+    fixtures missed; surfaced by cold/warm scan timing.)"""
     import pflow.ui.run_tailer as rt
 
     rt._SCAN_CACHE.clear()
+    rt._DIR_LIST_CACHE.clear()
     debug = tmp_path / "debug"
     debug.mkdir()
-    # Glob-matching but NOT a jsonl meta head → _read_meta returns None (an old single-object trace).
-    (debug / "workflow-trace-old-20250101-000000-000001.json").write_text(
-        '{"old": "single-object trace"}', encoding="utf-8"
+    # A current-grammar name, but NOT a jsonl meta head → read_trace_meta returns None.
+    _tp(debug, "/wf.pflow.md", "20250101-000000-000001").write_text(
+        '{"old": "single-object trace"}\n', encoding="utf-8"
     )
 
     calls = {"n": 0}
-    real = rt._read_meta
+    real = rt.read_trace_meta_strict
 
     def counting(path):
         calls["n"] += 1
         return real(path)
 
-    monkeypatch.setattr(rt, "_read_meta", counting)
+    monkeypatch.setattr(rt, "read_trace_meta_strict", counting)
     assert rt.scan_traces(debug_dir=debug) == []
     assert calls["n"] == 1, "the unreadable file is opened once to cache the negative verdict"
     assert rt.scan_traces(debug_dir=debug) == []
     assert calls["n"] == 1, "the negative verdict is served from cache — not re-opened on the next poll"
+
+
+@pytest.mark.parametrize("fault_on", [1, 2], ids=["meta-read", "trailer-read"])
+def test_scan_traces_never_caches_a_read_fault(tmp_path, monkeypatch, fault_on):
+    """A fault reading a trace (a permission blip, EMFILE) is not a fact about the file: the run is skipped
+    for that poll and found by the next one, although the file never changed — never hidden (or shown as
+    unfinished) until it is next written."""
+    import errno
+
+    import pflow.ui.run_tailer as rt
+    from tests.shared.open_hooks import fault_opens
+
+    rt._SCAN_CACHE.clear()
+    rt._DIR_LIST_CACHE.clear()
+    debug = tmp_path / "debug"
+    debug.mkdir()
+    wf = "/wf.pflow.md"
+    path = _tp(debug, wf, "20260101-000000-000001")
+    _write_trace(path, wf, complete=True, final_status="success")
+
+    with monkeypatch.context() as patched:
+        fault_opens(patched, path, OSError(errno.EMFILE, "Too many open files"), nth=fault_on)
+        assert rt.scan_traces(wf, debug_dir=debug) == []
+
+    [candidate] = rt.scan_traces(wf, debug_dir=debug)
+    assert (candidate["path"], candidate["complete"], candidate["final_status"]) == (path, True, "success")
+
+
+def test_scan_traces_never_lists_or_opens_a_name_outside_the_grammar(tmp_path, monkeypatch):
+    """A file whose name is not a trace name (a junk hash, a pre-185 name, a ``.paused`` sidecar) is never
+    a candidate and never opened — the listing is the index, so only parsed names are read."""
+    import pflow.ui.run_tailer as rt
+
+    rt._SCAN_CACHE.clear()
+    rt._DIR_LIST_CACHE.clear()
+    debug = tmp_path / "debug"
+    debug.mkdir()
+    wf = "/wf.pflow.md"
+    good = _tp(debug, wf, "20260101-000000-000001")
+    _write_trace(good, wf, complete=True)
+    for name in (
+        "workflow-trace-old-20250101-000000-000001.json",  # junk hash
+        "workflow-trace-3a8ac2b2-wf-20250101-000000-000001.json",  # pre-185 grammar
+        good.name + ".paused",
+    ):
+        _write_trace(debug / name, wf, complete=True)
+
+    opened: list[str] = []
+    real = rt.read_trace_meta_strict
+
+    def spy(path):
+        opened.append(path.name)
+        return real(path)
+
+    monkeypatch.setattr(rt, "read_trace_meta_strict", spy)
+    assert [c["path"] for c in rt.scan_traces(debug_dir=debug)] == [good]
+    assert opened == [good.name]
 
 
 def test_discover_returns_none_for_unmatched_workflow(tmp_path):
@@ -341,21 +414,23 @@ def test_scan_traces_is_hash_scoped_to_a_workflow(tmp_path, monkeypatch):
     debug.mkdir()
     wf_a = str(tmp_path / "a.pflow.md")
     wf_b = str(tmp_path / "b.pflow.md")
-    _write_trace(_tp(debug, wf_a, "20260101-000000-000001", name="a"), wf_a, complete=True)
+    a_path = _tp(debug, wf_a, "20260101-000000-000001", name="a")
+    _write_trace(a_path, wf_a, complete=True)
     b_path = _tp(debug, wf_b, "20260101-000000-000002", name="b")
     _write_trace(b_path, wf_b, complete=True)
 
     opened: list[str] = []
-    real = rt._read_meta
+    real = rt.read_trace_meta_strict
 
     def spy(path):
         opened.append(path.name)
         return real(path)
 
-    monkeypatch.setattr(rt, "_read_meta", spy)
+    monkeypatch.setattr(rt, "read_trace_meta_strict", spy)
     cands = rt.scan_traces(wf_a, debug_dir=debug)
     assert [c["meta"]["workflow_path"] for c in cands] == [wf_a], "scoped scan returns only this workflow"
-    assert b_path.name not in opened, "B's trace was never opened — the hash-scoped glob excluded it"
+    assert a_path.name in opened, "A's trace was read (the spy is on the path the scan takes)"
+    assert b_path.name not in opened, "B's trace was never opened — the hash-scoped listing excluded it"
 
     # A bare scan (the dashboard) still sees BOTH workflows' runs.
     rt._SCAN_CACHE.clear()
@@ -376,16 +451,18 @@ def test_scan_traces_skips_rescandir_when_dir_unchanged(tmp_path, monkeypatch):
     _write_trace(_tp(debug, wf, "20260101-000000-000001"), wf, complete=True)
 
     globs = {"n": 0}
-    real = rt._list_trace_files
+    real = rt.list_traces
 
-    def counting(directory, pattern):
+    def counting(directory=None, **kwargs):
         globs["n"] += 1
-        return real(directory, pattern)
+        return real(directory, **kwargs)
 
-    monkeypatch.setattr(rt, "_list_trace_files", counting)
+    monkeypatch.setattr(rt, "list_traces", counting)
     rt.scan_traces(wf, debug_dir=debug)
     rt.scan_traces(wf, debug_dir=debug)
     assert globs["n"] == 1, "an unchanged directory is scandir'd once, then served from the listing cache"
+    cached = next(iter(rt._DIR_LIST_CACHE.values()))[1]
+    assert isinstance(cached, tuple), "the cached listing is immutable — read from two threads at once"
     os.utime(debug, (9_999, 9_999))  # a created/removed trace would bump the dir mtime
     rt.scan_traces(wf, debug_dir=debug)
     assert globs["n"] == 2, "a changed dir mtime re-scandirs (a run appeared/vanished)"
@@ -495,70 +572,6 @@ def test_scan_traces_skips_a_non_utf8_trace(tmp_path):
     assert good in paths and junk not in paths
 
 
-def test_read_run_status_handles_a_trailer_larger_than_the_tail_window(tmp_path):
-    """PR #543: a run.complete trailer of many small fields can exceed the 64 KB cheap-tail window. When the
-    window holds no newline (it starts mid-trailer), read_run_status must re-read the whole file rather than
-    misreport a FINISHED run as live."""
-    path = tmp_path / "trace.json"
-    lines = [
-        {"kind": "meta", "pflow_trace": "jsonl/1", "workflow_path": "/w.pflow.md", "execution_id": "x"},
-        {"kind": "run.complete", "final_status": "degraded", "nodes_executed": 1, "big": list(range(20000))},
-    ]
-    path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
-    assert path.stat().st_size > 65536  # the trailer line alone exceeds the tail window
-    assert read_run_status(path) == (True, "degraded")
-
-
-def test_read_run_trailer_returns_full_trailer_dict(tmp_path):
-    """Task 176: `read_run_trailer` is the dict-returning reader the gate endpoint builds on — it must
-    surface the FULL trailer (paused_node_id + gate_request included), not just the status projection.
-    A live (no run.complete) trace and an unreadable path both return None."""
-    wf = "/wf.pflow.md"
-    paused = tmp_path / "workflow-trace-aaa-wf-20260101-000000-000001.json"
-    live = tmp_path / "workflow-trace-aaa-wf-20260101-000000-000002.json"
-    gate_request = {"node_id": "deploy", "node_type": "shell", "kind": "action_approval", "preview": {"cmd": "x"}}
-    _write_trace(
-        paused,
-        wf,
-        complete=True,
-        final_status="paused",
-        trailer_extra={"paused_node_id": "deploy", "gate_request": gate_request},
-    )
-    _write_trace(live, wf, complete=False)
-    trailer = read_run_trailer(paused)
-    assert trailer is not None
-    assert trailer["final_status"] == "paused"
-    assert trailer["paused_node_id"] == "deploy"
-    assert trailer["gate_request"] == gate_request
-    assert read_run_trailer(live) is None
-    assert read_run_trailer(tmp_path / "missing.json") is None
-
-
-def test_read_run_trailer_oversized_paused_trailer_is_read_fully(tmp_path):
-    """Task 176: a PAUSED trailer carries the full gate_request and can exceed the 64 KB tail window
-    (Task 171's recorded gotcha). The one-shot full re-read must survive every reader change — deleting
-    that branch fails this test AND the read_run_status oversized pin above."""
-    path = tmp_path / "workflow-trace-aaa-wf-20260101-000000-000001.json"
-    gate_request = {
-        "node_id": "deploy",
-        "node_type": "shell",
-        "kind": "action_approval",
-        "preview": {"payload": "x" * 100_000},  # the preview alone exceeds the tail window
-    }
-    _write_trace(
-        path,
-        "/wf.pflow.md",
-        complete=True,
-        final_status="paused",
-        trailer_extra={"paused_node_id": "deploy", "gate_request": gate_request},
-    )
-    assert path.stat().st_size > 65536
-    trailer = read_run_trailer(path)
-    assert trailer is not None
-    assert trailer["paused_node_id"] == "deploy"
-    assert trailer["gate_request"]["preview"]["payload"] == "x" * 100_000
-
-
 def test_scan_traces_carries_paused_node_id(tmp_path):
     """Task 176: the scanner surfaces `paused_node_id` (a small string) as a candidate fact so the light
     wires (`/api/runs` + the run-complete banner) can carry it; a non-paused run reads None."""
@@ -569,20 +582,19 @@ def test_scan_traces_carries_paused_node_id(tmp_path):
     wf = str(tmp_path / "wf.pflow.md")
     debug = tmp_path / "debug"
     debug.mkdir()
-    paused = _tp(debug, wf, "20260101-000000-000001")
-    finished = _tp(debug, wf, "20260101-000000-000002")
+    paused = _tp(debug, wf, "20260101-000000-000001", execution_id="paused-run")
+    finished = _tp(debug, wf, "20260101-000000-000002", execution_id="finished-run")
     _write_trace(
         paused,
         wf,
         complete=True,
         final_status="paused",
-        execution_id="paused-run",
         trailer_extra={
             "paused_node_id": "deploy",
             "gate_request": {"node_id": "deploy", "node_type": "shell", "kind": "action_approval", "preview": {}},
         },
     )
-    _write_trace(finished, wf, complete=True, execution_id="finished-run")
+    _write_trace(finished, wf, complete=True)
     by_id = {c["meta"]["execution_id"]: c for c in scan_traces(wf, debug_dir=debug)}
     assert by_id["paused-run"]["paused_node_id"] == "deploy"
     assert by_id["paused-run"]["final_status"] == "paused"
@@ -680,13 +692,43 @@ def test_pinned_resolve_matches_execution_id(tmp_path, monkeypatch):
     debug = tmp_path / ".pflow" / "debug"
     debug.mkdir(parents=True)
     wf = str(tmp_path / "wf.pflow.md")
-    full = _tp(debug, wf, "20260101-000000-000001")
-    only = _tp(debug, wf, "20260101-000000-000002")
-    _write_trace(full, wf, complete=True, execution_id="run-full")
-    _write_trace(only, wf, complete=True, only_node="b", execution_id="run-only")
+    full = _tp(debug, wf, "20260101-000000-000001", execution_id="run-full")
+    only = _tp(debug, wf, "20260101-000000-000002", execution_id="run-only", only=True)
+    _write_trace(full, wf, complete=True)
+    _write_trace(only, wf, complete=True, only_node="b")
     assert RunTailer(wf, lambda _k, _m: None, run_id="run-full")._resolve_pinned() == full
     assert RunTailer(wf, lambda _k, _m: None, run_id="run-only")._resolve_pinned() == only  # --only resolvable
     assert RunTailer(wf, lambda _k, _m: None, run_id="ghost")._resolve_pinned() is None
+
+
+def test_pinned_resolve_is_exact_and_scoped_to_its_workflow(tmp_path, monkeypatch):
+    """The pin resolves the EXACT run id in the filename, among THIS workflow's traces only: another
+    workflow's run with the pinned id, or this workflow's run whose id merely starts with it, is not it."""
+    import pflow.ui.run_tailer as rt
+
+    rt._DIR_LIST_CACHE.clear()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    debug = tmp_path / ".pflow" / "debug"
+    debug.mkdir(parents=True)
+    wf_a = str(tmp_path / "a.pflow.md")
+    wf_b = str(tmp_path / "b.pflow.md")
+    other = _tp(debug, wf_b, "20260101-000000-000001", execution_id="run-1")
+    _write_trace(other, wf_b, complete=True)
+    _write_trace(_tp(debug, wf_a, "20260101-000000-000002", execution_id="run-12"), wf_a, complete=True)
+    opened: list[str] = []
+    real = rt.read_trace_meta
+
+    def spy(path):
+        opened.append(path.name)
+        return real(path)
+
+    monkeypatch.setattr(rt, "read_trace_meta", spy)
+    assert RunTailer(wf_a, lambda _k, _m: None, run_id="run-1")._resolve_pinned() is None
+    assert opened == [], "neither the other workflow's run-1 nor this workflow's run-12 is ever opened"
+    exact = _tp(debug, wf_a, "20260101-000000-000003", execution_id="run-1")
+    _write_trace(exact, wf_a, complete=True)
+    rt._DIR_LIST_CACHE.clear()  # a coarse-mtime filesystem may not see the create within the same second
+    assert RunTailer(wf_a, lambda _k, _m: None, run_id="run-1")._resolve_pinned() == exact
 
 
 def test_pinned_run_not_found_broadcasts_and_stops(tmp_path, monkeypatch):
@@ -702,6 +744,30 @@ def test_pinned_run_not_found_broadcasts_and_stops(tmp_path, monkeypatch):
     tailer = RunTailer("wf", lambda _k, message: messages.append(message), run_id="ghost")
     asyncio.run(tailer.run())  # terminates on the run-not-found path (does not loop)
     assert messages == [{"type": "run-not-found", "run_id": "ghost"}]
+
+
+def test_a_pinned_trace_removed_before_it_was_read_reports_run_not_found(tmp_path, monkeypatch):
+    """Retention can remove an old trace between the pin's resolve and its first read. The viewer must hear
+    "not found" — never "stopped" (a free lock + no trailer on a file that is simply gone) or an endless empty
+    poll (no lock probe on Windows)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    debug = tmp_path / ".pflow" / "debug"
+    debug.mkdir(parents=True)
+    wf = str(tmp_path / "wf.pflow.md")
+    path = _tp(debug, wf, "20260101-000000-000001", execution_id="run-old")
+    _write_trace(path, wf, complete=False)
+    real_resolve = RunTailer._resolve_pinned
+
+    def resolve_then_swept(self):
+        resolved = real_resolve(self)
+        resolved.unlink()  # the sweep runs here
+        return resolved
+
+    monkeypatch.setattr(RunTailer, "_resolve_pinned", resolve_then_swept)
+    messages: list[dict] = []
+    tailer = RunTailer(wf, lambda _k, message: messages.append(message), run_id="run-old")
+    asyncio.run(asyncio.wait_for(tailer.run(), timeout=5))  # returns on the not-found path
+    assert messages == [{"type": "run-not-found", "run_id": "run-old"}]
 
 
 @_unix_only
@@ -902,17 +968,16 @@ def test_resolve_pinned_latches_stale_version(tmp_path, monkeypatch):
     wf = _write_wf(tmp_path / "wf.pflow.md")
     digest = workflow_content_hash(resolve_workflow(str(wf)).ir)
     _write_trace(
-        _tp(debug, str(wf), "20260101-000000-000001"), str(wf), complete=True, execution_id="match", content_hash=digest
+        _tp(debug, str(wf), "20260101-000000-000001", execution_id="match"), str(wf), complete=True, content_hash=digest
     )
     _write_trace(
-        _tp(debug, str(wf), "20260101-000000-000002"),
+        _tp(debug, str(wf), "20260101-000000-000002", execution_id="stale"),
         str(wf),
         complete=True,
-        execution_id="stale",
         content_hash="deadbeef",
     )
     _write_trace(
-        _tp(debug, str(wf), "20260101-000000-000003"), str(wf), complete=True, execution_id="old"
+        _tp(debug, str(wf), "20260101-000000-000003", execution_id="old"), str(wf), complete=True
     )  # no content_hash
 
     def _latched(run_id: str) -> bool:
@@ -943,14 +1008,13 @@ def test_start_pinned_broadcasts_run_stale_only_when_the_version_differs(tmp_pat
     wf = _write_wf(tmp_path / "wf.pflow.md")
     digest = workflow_content_hash(resolve_workflow(str(wf)).ir)
     _write_trace(
-        _tp(debug, str(wf), "20260101-000000-000001"),
+        _tp(debug, str(wf), "20260101-000000-000001", execution_id="stale"),
         str(wf),
         complete=True,
-        execution_id="stale",
         content_hash="deadbeef",
     )
     _write_trace(
-        _tp(debug, str(wf), "20260101-000000-000002"), str(wf), complete=True, execution_id="fresh", content_hash=digest
+        _tp(debug, str(wf), "20260101-000000-000002", execution_id="fresh"), str(wf), complete=True, content_hash=digest
     )
 
     def _messages(run_id: str) -> list[dict]:

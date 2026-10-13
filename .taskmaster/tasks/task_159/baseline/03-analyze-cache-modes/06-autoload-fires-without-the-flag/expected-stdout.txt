@@ -1,0 +1,26 @@
+# Cache Analysis: smoke-with-cache.pflow.md
+  File: .taskmaster/tasks/task_159/baseline/_shared/workflows/smoke-with-cache.pflow.md
+
+  Workflow: 2 LLM nodes using anthropic/claude-sonnet-4-5
+  Evidence: complete trace (2 LLM nodes executed)
+  Trace: workflow-trace-<HASH>-smoke-with-cache.seeded-run-<TIMESTAMP>.json (success, recorded 2026-05-01 14:46)
+  IR/settings declares: gemini/gemini-2.5-flash (overridden by trace evidence)
+
+## Summary
+
+  Actually paid:               ~$0.0087 (from trace)  (saves 26% vs cost without caching)
+  Cost without caching:        ~$0.01
+  Cost on rerun (within TTL), modeled rerun vs warm-cache trace:  ~$0.0031  (saves 73% vs cost without caching)
+
+## Per-call cache report
+  How to read each row:
+    · cached_now: tokens served from cache during this run (requires trace).
+    · ready: tokens already active or unlockable by a direct cache edit in the current prompt shape.
+    · upside: unrealized cache opportunity after the notes column's required edit.
+  Showing 0 of 2 LLM nodes; low-signal rows hidden (--all-rows shows everything).
+
+  Hidden: 2 low-signal nodes (no warnings or actionable cache projection; rerun with --all-rows).
+
+## Notes
+
+  · Cache fidelity check skipped: this is a first run (no prior runs to compare cached vs uncached against). On later runs, specific cache misfires (TTL expired, chunks skipped) will appear here.

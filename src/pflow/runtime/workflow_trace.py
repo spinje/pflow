@@ -1,24 +1,37 @@
 """Detailed trace collection for workflow debugging."""
 
 import contextlib
-import hashlib
 import json
 import logging
 import re
 import sys
 import threading
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Literal, TextIO
 
 from pflow.core.diagnostic import Diagnostic, warning_degrades_status
-from pflow.core.exceptions import OnlySnapshotMissingError
+from pflow.core.exceptions import OnlySnapshotMissingError, OnlySnapshotUnreadableError
 from pflow.core.metrics import MetricsCollector
 from pflow.core.node_type_display import is_model_node_type
 from pflow.core.security_utils import scrub_secret_values, secret_values
+from pflow.core.trace_dir import (
+    AGED_OUT_HINT,
+    TraceEntry,
+    TraceListing,
+    TraceUnreadableError,
+    debug_dir,
+    is_filename_safe_id,
+    legacy_note,
+    list_traces,
+    paused_marker,
+    read_trace_trailer_strict,
+    trace_filename,
+    workflow_hashes,
+)
 from pflow.core.trace_io import (
     RESERVED_LINE_KEYS,
     TRACE_JSONL_MARKER,
@@ -64,41 +77,6 @@ _ENGINE_OUTPUT_KEYS = frozenset({
 _BATCH_ERROR_EXCEPTION = re.compile(r"errors\[\d+\]\.exception")
 
 
-def format_trace_filename(workflow_path: str | None, workflow_name: str, timestamp: str) -> str:
-    """Compose a trace filename whose hash prefix encodes ``workflow_path``.
-
-    Filename schema: ``workflow-trace-{wf_hash}-{safe_name}-{timestamp}.json``
-    where ``wf_hash`` is the first 8 hex chars of ``md5(workflow_path or "")``.
-    The production caller (``save_to_file``) passes a microsecond-granular
-    ``timestamp`` (``%Y%m%d-%H%M%S-%f``) so two writes in the same wall-clock
-    second don't collide — load-bearing for ``--only`` snapshots (issue #443),
-    where a same-second ``--only`` trace would otherwise overwrite the full-run
-    snapshot it depends on. The glob keys on the hash prefix, so the timestamp
-    format is free to vary; callers passing their own timestamp are unaffected.
-
-    The hash makes ``analyze-cache`` autoload O(matching-traces) instead of
-    O(directory-size): the reader globs by the same hash prefix to narrow
-    candidates before reading any file's contents. Filename collisions across
-    distinct workflows are guarded by a contents-level ``workflow_path``
-    re-check at read time.
-
-    Collision class for ``workflow_path=None``/empty: ``wf_hash`` is
-    ``d41d8cd9`` (md5 of empty string), so all None-path traces share that
-    prefix. Production paths always pass a real value (file path or
-    ``ir-hash:<md5>`` for inline runs); test fixtures and report-generation
-    tools doing prefix-based discovery should expect this collision class
-    and use the contents-level re-check as the discriminator.
-    """
-    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", workflow_name)[:30]
-    safe_name = re.sub(r"-+", "-", safe_name).strip("-")
-
-    wf_hash = hashlib.md5((workflow_path or "").encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
-
-    if safe_name and safe_name != "workflow":
-        return f"workflow-trace-{wf_hash}-{safe_name}-{timestamp}.json"
-    return f"workflow-trace-{wf_hash}-{timestamp}.json"
-
-
 def _lock_trace_handle(handle: TextIO) -> None:
     """Task 173: take a best-effort advisory lock on the open trace handle, held for the run's lifetime.
 
@@ -120,24 +98,12 @@ def _lock_trace_handle(handle: TextIO) -> None:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
-def _trace_recency_key(path: Path) -> tuple[str, str]:
-    """Sort key ranking trace files newest-first (under ``reverse=True``).
-
-    The filename is ``workflow-trace-{wf_hash}-{safe_name}-{timestamp}.json`` —
-    the ``{safe_name}`` segment sits BEFORE the timestamp, so sorting the whole
-    filename ranks the name prefix first. The SAME ``workflow_path`` can produce
-    different ``safe_name``s (a saved-library run vs the same file run directly,
-    or after a rename — see ``format_trace_filename``), so a whole-filename sort
-    could rank an older run above a newer one and let ``--only`` restore STALE
-    upstream. Sort on the trailing ``YYYYMMDD-HHMMSS[-ffffff]`` timestamp instead
-    (filename as a deterministic tiebreak for same-microsecond writes). Files
-    without a parseable timestamp sort last (oldest). PR #459 review (CODEX-1).
-    """
-    match = re.search(r"(\d{8}-\d{6}(?:-\d+)?)\.json$", path.name)
-    return (match.group(1) if match else "", path.name)
-
-
-def _iter_workflow_traces(debug_dir: Path, workflow_path: str) -> Iterator[tuple[Path, dict[str, Any]]]:
+def _iter_workflow_traces(
+    entries: Iterable[TraceEntry],
+    workflow_path: str,
+    *,
+    unreadable: Literal["skip", "raise"] = "skip",
+) -> Iterator[tuple[Path, dict[str, Any]]]:
     """Yield ``(path, trace_data)`` for this workflow's reusable traces, newest-first.
 
     The single candidate iterator shared by every trace-snapshot consumer (the
@@ -145,15 +111,18 @@ def _iter_workflow_traces(debug_dir: Path, workflow_path: str) -> Iterator[tuple
     ``prompt_cache_analysis.trace_loading._collect_candidate_traces``) so their
     selection scaffolding cannot drift. Applies, in order:
 
-    - glob by the same 8-char md5 hash prefix ``format_trace_filename`` embeds
-      (O(matching-traces), not O(directory-size));
-    - parse, skipping unparseable / non-dict files;
-    - a contents-level ``workflow_path`` collision guard (the hash prefix can
-      collide; the stored path is the discriminator);
+    - the caller's listing (or shortlist) entries whose filename carries one of the workflow's hashes
+      (``trace_dir.workflow_hashes``) and no ``.only`` tag; no file outside them is opened;
+    - parse, skipping unparseable / non-dict / vanished files — and files that exist but cannot be read,
+      unless ``unreadable="raise"`` (resume and the Snapshot: skipping one would select an OLDER run)
+      re-raises the ``OSError``;
+    - a contents-level ``workflow_path`` collision guard (the hash can collide;
+      the stored path is the discriminator);
     - the ``format_version.startswith("2.")`` gate;
-    - exclusion of ``--only`` traces (``only_node is not None``) — an ``--only``
-      run records ONLY its target, so it must never masquerade as a full-run
-      snapshot source nor poison ``analyze-cache`` autoload.
+    - exclusion of ``--only`` traces by their meta too (``only_node is not None``;
+      a hand-made name may lack the tag) — an ``--only`` run records ONLY its
+      target, so it must never masquerade as a full-run snapshot source nor
+      poison ``analyze-cache`` autoload.
 
     INVARIANT (load-bearing): this iterator MUST NOT filter on ``final_status``.
     Each consumer owns its own status policy — the cache-analysis loader relies
@@ -161,34 +130,37 @@ def _iter_workflow_traces(debug_dir: Path, workflow_path: str) -> Iterator[tuple
     moves in here. Keep status decisions in the callers.
     """
     normalized_workflow_path = normalize_workflow_path_key(workflow_path)
-    workflow_path_variants = dict.fromkeys((
-        workflow_path,
-        normalized_workflow_path,
-        normalized_workflow_path.replace("/", "\\"),
-    ))
-    patterns = [
-        f"workflow-trace-{hashlib.md5(path.encode('utf-8'), usedforsecurity=False).hexdigest()[:8]}-*.json"
-        for path in workflow_path_variants
-    ]
-    trace_files = {trace_file for pattern in patterns for trace_file in debug_dir.glob(pattern)}
-    for trace_file in sorted(trace_files, key=_trace_recency_key, reverse=True):
+    hashes = workflow_hashes(workflow_path)
+    for entry in entries:
+        if entry.workflow_hash not in hashes or entry.only:
+            continue
+        trace_file = entry.path
         try:
             data = load_trace_file(trace_file)
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, FileNotFoundError):
             logger.debug("Skipping unparseable trace %s", trace_file, exc_info=True)
             continue
-        if not isinstance(data, dict):
+        except OSError as exc:
+            if unreadable == "raise":
+                exc.filename = exc.filename or str(trace_file)  # a mid-read fault names no file
+                raise
+            logger.debug("Skipping unreadable trace %s", trace_file, exc_info=True)
             continue
-        data_workflow_path = data.get("workflow_path")
-        if not isinstance(data_workflow_path, str):
-            continue
-        if normalize_workflow_path_key(data_workflow_path) != normalized_workflow_path:
-            continue
-        if not str(data.get("format_version", "")).startswith("2."):
-            continue
-        if data.get("only_node") is not None:
-            continue
-        yield trace_file, data
+        if _is_full_run_of(data, normalized_workflow_path):
+            yield trace_file, data
+
+
+def _is_full_run_of(data: Any, normalized_workflow_path: str) -> bool:
+    """The contents guards: a 2.x full-run (not ``--only``) trace dict recording this exact workflow path."""
+    if not isinstance(data, dict):
+        return False
+    data_workflow_path = data.get("workflow_path")
+    return (
+        isinstance(data_workflow_path, str)
+        and normalize_workflow_path_key(data_workflow_path) == normalized_workflow_path
+        and str(data.get("format_version", "")).startswith("2.")
+        and data.get("only_node") is None
+    )
 
 
 def _trace_warnings_provably_benign(data: dict[str, Any]) -> bool:
@@ -293,13 +265,16 @@ def load_full_run_events(
     workflow_path: str | None,
     *,
     debug_dir: Path | None = None,
+    listing: TraceListing | None = None,
 ) -> tuple[list[dict[str, Any]], str] | None:
     """Return ``(nodes, status)`` from the most recent reusable full run.
 
-    Scans ``~/.pflow/debug`` (override via ``debug_dir``) newest-first through
-    ``_iter_workflow_traces`` and returns the first trace whose ``final_status``
-    is ``"success"`` or ``"degraded"`` (absent → ``"success"`` for pre-2.4 and
-    synthetic fixtures); ``"failed"`` runs are skipped.
+    Lists ``~/.pflow/debug`` (override via ``debug_dir``; or reads the caller's ``listing``) once and walks this
+    workflow's full-run traces newest-first: a cheap tail read keeps only those
+    whose trailer says ``"success"`` or ``"degraded"`` (absent → ``"success"`` for
+    pre-2.4 and synthetic fixtures), and only those are fully loaded, through
+    ``_iter_workflow_traces`` and its guards — so newer failed or unfinished runs
+    cost one tail read each, never a full load.
 
     The returned ``status`` is ``"degraded"`` when the trace's ``final_status``
     is ``"degraded"`` UNLESS its warnings prove the degradation was benign — see
@@ -314,13 +289,20 @@ def load_full_run_events(
     or no usable trace exists. An empty ``nodes`` list is treated as NO match
     (a zero-event success trace can't seed a usable snapshot), so callers can
     distinguish "no usable snapshot" from "empty snapshot".
+
+    A candidate that exists but cannot be read is never walked past (the next one is an OLDER run, whose
+    upstream would be restored as if it were the latest): its ``OSError`` propagates, naming the file.
     """
     if not workflow_path:
         return None
-    debug_dir = debug_dir if debug_dir is not None else (Path.home() / ".pflow" / "debug")
-    if not debug_dir.exists():
-        return None
-    for _path, data in _iter_workflow_traces(debug_dir, workflow_path):
+    hashes = workflow_hashes(workflow_path)
+    listing = listing if listing is not None else list_traces(debug_dir)
+    shortlist = (
+        entry
+        for entry in listing.traces
+        if entry.workflow_hash in hashes and not entry.only and _may_be_reusable(entry.path)
+    )
+    for _path, data in _iter_workflow_traces(shortlist, workflow_path, unreadable="raise"):
         final_status = str(data.get("final_status") or "success")
         if final_status not in ("success", "degraded"):
             continue
@@ -330,6 +312,18 @@ def load_full_run_events(
         status = "success" if (final_status != "degraded" or _trace_warnings_provably_benign(data)) else "degraded"
         return nodes, status
     return None
+
+
+def _may_be_reusable(path: Path) -> bool:
+    """The Snapshot shortlist, from one tail read: a trailer naming a reusable full-run status. A tail that
+    cannot be read or parsed is not ruled out — the full load decides (and refuses a file it cannot read)."""
+    try:
+        trailer = read_trace_trailer_strict(path)
+    except FileNotFoundError:
+        return False
+    except TraceUnreadableError:
+        return True
+    return trailer is not None and str(trailer.get("final_status") or "success") in ("success", "degraded")
 
 
 def load_snapshot_or_raise(
@@ -356,9 +350,15 @@ def load_snapshot_or_raise(
     """
     if snapshot_events:
         return snapshot_events, "success"
-    loaded = load_full_run_events(workflow_path, debug_dir=debug_dir)
+    listing = list_traces(debug_dir)  # one enumeration: the lookup AND its miss message
+    try:
+        loaded = load_full_run_events(workflow_path, listing=listing)
+    except OSError as exc:
+        raise OnlySnapshotUnreadableError(only_node, str(exc.filename), exc.strerror or str(exc)) from exc
     if not loaded:
-        raise OnlySnapshotMissingError(only_node)
+        note = legacy_note(listing.legacy_count)
+        causes = (f"If the workflow ran before, {AGED_OUT_HINT}.", *((f"{note}.",) if note is not None else ()))
+        raise OnlySnapshotMissingError(only_node, causes=causes)
     return loaded
 
 
@@ -571,9 +571,8 @@ class WorkflowTraceCollector:
                 tree-shaped.
             stream_to_disk: Whether the run-scoped collector flushes one JSONL line
                 per node AS the run executes (Task 172 step 3 — so a live overlay can
-                tail it). The runner sets this from ``RunnerConfig.trace_enabled``: the
-                CLI persists traces (``True``); the MCP path reads cost from the
-                in-memory collector and never persists (``False``); ``--no-trace`` is
+                tail it). The runner sets this from ``RunnerConfig.trace_enabled``:
+                CLI and MCP runs persist traces (``True``); ``--no-trace`` is the only
                 ``False``. Only meaningful when ``is_run_scoped`` (buffer collectors
                 never stream). Default ``False`` so bare-constructed collectors don't
                 write files. A second, test-only gate lives in ``tests/conftest.py``
@@ -596,7 +595,9 @@ class WorkflowTraceCollector:
                 can PIN the overlay to the exact run it just spawned — otherwise the
                 detached child mints its own id and the form can only follow-newest
                 (which reverts to an older still-live run when the new one finishes).
-                Defaults to ``None`` → mint a UUID (every other run path).
+                Defaults to ``None`` → mint a UUID (every other run path). The id is the
+                trace filename's identity field, so a forced id (and ``resumed_from``)
+                must fit ``[A-Za-z0-9_-]+`` — ``ValueError`` otherwise.
             resumed_from: Task 164 attempt-chain lineage — the SOURCE run's
                 ``execution_id`` when this run is a resume of a prior failed
                 attempt; ``None`` for every normal run. Pure lineage, never a
@@ -612,6 +613,9 @@ class WorkflowTraceCollector:
         self.resumed_from = resumed_from
         self.is_run_scoped = is_run_scoped
         self.execution_id = execution_id or str(uuid.uuid4())
+        for label, value in (("execution_id", self.execution_id), ("resumed_from", resumed_from)):
+            if value is not None and not is_filename_safe_id(value):
+                raise ValueError(f"{label} must be filename-safe ([A-Za-z0-9_-]+): {value!r}")
         self.start_time = datetime.now()
         self.events: list[dict[str, Any]] = []
         # Task 172 step 3: per-event streaming state (run-scoped + stream_to_disk only). The stream opens
@@ -621,6 +625,9 @@ class WorkflowTraceCollector:
         self._stream_to_disk = stream_to_disk and is_run_scoped
         self._stream: TextIO | None = None
         self._stream_path: Path | None = None
+        # The directory the stream was opened in — kept past ``_disable_streaming`` (which drops the path) so
+        # ``finalize`` still sweeps it after a mid-run fault; ``None`` when the stream never opened.
+        self._trace_dir: Path | None = None
         self._declared_blobs: set[str] = set()
         self._finalized = False
         # First disk I/O fault disables streaming for the rest of the run: the streamed file is a
@@ -1001,23 +1008,29 @@ class WorkflowTraceCollector:
         The SINGLE entry point the pytest gate patches to a no-op
         (``tests/conftest.py::disable_trace_file_writes_by_default``): when patched, ``self._stream``
         stays ``None``, so per-event flush and finalize both short-circuit → zero disk writes for
-        non-``trace_files`` tests. Returns early when streaming is disabled (``stream_to_disk=False`` — the
-        MCP path / ``--no-trace``), already open, already finalized (never re-open a closed stream), or
+        non-``trace_files`` tests. Returns early when streaming is disabled (``stream_to_disk=False`` —
+        ``--no-trace``), already open, already finalized (never re-open a closed stream), or
         disabled after an I/O fault (``_stream_failed``). An ``open``/``mkdir`` fault disables streaming
         rather than propagating, so a bad ``~/.pflow/debug`` can't fail the run.
-        Uses ``self.start_time`` (microsecond-granular) for the filename so the name is stable from the
-        first flush and the #443 ``--only``-collision entropy is preserved (separate processes start at
-        distinct microseconds)."""
+        The filename (``trace_dir.trace_filename``) carries the run's id, its ``--only`` and lineage tags,
+        and ``self.start_time`` (microsecond-granular, so separate processes never collide — #443)."""
         if self._stream is not None or not self._stream_to_disk or self._finalized or self._stream_failed:
             return
         try:
-            trace_dir = Path.home() / ".pflow" / "debug"
+            trace_dir = debug_dir()
+            self._trace_dir = trace_dir
             trace_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = self.start_time.strftime("%Y%m%d-%H%M%S-%f")
-            self._stream_path = trace_dir / format_trace_filename(self.workflow_path, self.workflow_name, timestamp)
+            self._stream_path = trace_dir / trace_filename(
+                self.workflow_path,
+                self.workflow_name,
+                self.start_time,
+                self.execution_id,
+                only=self.only_node is not None,
+                resumed_from=self.resumed_from,
+            )
             self._stream = open(self._stream_path, "w", encoding="utf-8")  # noqa: SIM115 — closed in finalize()
             _lock_trace_handle(self._stream)  # Task 173: hold the lock for the run's lifetime (overlay liveness)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             self._disable_streaming(exc)
             return
         # Meta is written WITHOUT interning: its ``pflow_trace`` marker must be the file's first line, and
@@ -1165,15 +1178,42 @@ class WorkflowTraceCollector:
         block (``_save_trace_file`` is the guard, this is belt-and-suspenders). Always leaves the stream
         CLOSED: the ``finally`` runs even if computing or writing the trailer raises, so a finalize fault
         can never leak the handle. Returns the trace path, or ``None`` when streaming is off / gated / was
-        disabled mid-run by an I/O fault (so the CLI renders no trace line, exactly as before)."""
+        disabled mid-run by an I/O fault (so the CLI renders no trace line, exactly as before).
+
+        A paused run gets its ``.paused`` marker (``trace_dir.paused_marker``) BEFORE the trailer that makes
+        the pause durable, so a durable pause always has one (ADR-0018). A marker that cannot be written
+        disables streaming before any trailer exists: the run is then non-durable on every surface at once.
+
+        Then Retention sweeps the directory (``trace_retention.sweep_after_write`` — never raises) whenever the
+        stream was opened, even if it faulted mid-run: a full disk is when pruning helps most."""
         if self._finalized:
             return self._stream_path
         self._open_stream()  # BEFORE _finalized: _open_stream guards on it, so the meta line writes first
         self._finalized = True
-        if self._stream is None:  # gated off, or disabled mid-run by an I/O fault
+        path = self._write_trailer()
+        if self._trace_dir is not None:
+            # Lazy: trace_retention imports resume_source, which imports this module.
+            from pflow.runtime.trace_retention import sweep_after_write
+
+            sweep_after_write(self._trace_dir)
+        return path
+
+    def _write_trailer(self) -> Path | None:
+        """The marker (paused runs) and the ``run.complete`` trailer; always leaves the stream closed."""
+        if self._stream is None or self._stream_path is None:  # gated off, or disabled mid-run by an I/O fault
             return None
         try:
-            self._flush_line({**self._aggregates(), "kind": "run.complete"})
+            aggregates = self._aggregates()
+            if aggregates["final_status"] == "paused":
+                try:
+                    with open(paused_marker(self._stream_path), "x", encoding="utf-8"):
+                        pass
+                except FileExistsError:
+                    pass
+                except OSError as exc:
+                    self._disable_streaming(exc)
+                    return None
+            self._flush_line({**aggregates, "kind": "run.complete"})
         finally:
             self._close_stream()
         return self._stream_path
@@ -1600,6 +1640,8 @@ class WorkflowTraceCollector:
         refusal, not a dead crash. Computed in memory so it holds on the JSON path,
         which runs BEFORE the trace is finalized.
         """
+        if self.only_node is not None:
+            return False  # an --only run is never a resume source (the loader refuses it by id)
         final_events = final_events_by_node(self._top_level_events())
         if self._determine_trace_status(final_events) != "failed":
             return False

@@ -1,5 +1,6 @@
 """Tests for the pflow CLI."""
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +8,7 @@ import click.testing
 import pytest
 
 from pflow.cli.main import main
+from pflow.core.trace_dir import trace_filename
 from tests.shared.trace_jsonl import write_trace_jsonl
 
 
@@ -317,25 +319,28 @@ _INCOMPLETE_TRACE_LINES: list[dict[str, Any]] = [
 ]
 
 
+def _report_trace_name(execution_id: str, started: datetime) -> str:
+    """The producer's filename for the report fixtures (``wf.pflow.md`` matches their meta lines)."""
+    return trace_filename("wf.pflow.md", "wf", started, execution_id)
+
+
 def test_report_autoselect_prefers_newest_complete_over_newer_incomplete(tmp_path: Path, monkeypatch):
     """No-arg `pflow report` skips a NEWER in-flight/incomplete trace for the newest COMPLETE one.
 
-    Task 173 eager-`meta` leaves a `meta`-only `incomplete` file from t=0; the old "newest by mtime"
-    auto-select would let it shadow the user's last good run with a hollow 0-node report.
+    Task 173 eager-`meta` leaves a `meta`-only `incomplete` file from t=0; picking the newest trace
+    regardless would let it shadow the user's last good run with a hollow 0-node report.
     """
-    import os
-
     from pflow.core.trace_io import load_trace_file
 
     debug_dir = tmp_path / ".pflow" / "debug"
     debug_dir.mkdir(parents=True)
 
-    complete = _write_jsonl_trace(debug_dir / "workflow-trace-complete.json", _COMPLETE_TRACE_LINES)
-    incomplete = _write_jsonl_trace(debug_dir / "workflow-trace-incomplete.json", _INCOMPLETE_TRACE_LINES)
-
-    # Make the INCOMPLETE file strictly newer so a naive mtime sort would pick it.
-    os.utime(complete, (1_000_000, 1_000_000))
-    os.utime(incomplete, (2_000_000, 2_000_000))
+    complete = _write_jsonl_trace(
+        debug_dir / _report_trace_name("complete-run", datetime(2026, 1, 1)), _COMPLETE_TRACE_LINES
+    )
+    incomplete = _write_jsonl_trace(
+        debug_dir / _report_trace_name("in-flight-run", datetime(2026, 1, 2)), _INCOMPLETE_TRACE_LINES
+    )
 
     # Guard against fixture theater: confirm the files actually load as the statuses the test relies on.
     assert load_trace_file(complete).get("final_status") == "success"
@@ -352,6 +357,62 @@ def test_report_autoselect_prefers_newest_complete_over_newer_incomplete(tmp_pat
     assert str(incomplete) not in result.stderr
 
 
+def test_report_autoselect_ranks_by_start_time_not_mtime(tmp_path: Path, monkeypatch):
+    """ "Newest" is the start time the filename records (the one recency rule, Task 185), never the file's
+    mtime: the run that STARTED later wins although its file was written longer ago."""
+    import os
+
+    debug_dir = tmp_path / ".pflow" / "debug"
+    debug_dir.mkdir(parents=True)
+    # The ids sort OPPOSITE to start time, so a whole-filename sort would pick `earlier` too.
+    earlier = _write_jsonl_trace(debug_dir / _report_trace_name("run-b", datetime(2026, 1, 1)), _COMPLETE_TRACE_LINES)
+    later = _write_jsonl_trace(debug_dir / _report_trace_name("run-a", datetime(2026, 1, 2)), _COMPLETE_TRACE_LINES)
+    # Inverted on purpose: the later-STARTED trace carries the OLDER mtime, so an mtime sort picks `earlier`.
+    os.utime(later, (1_000_000, 1_000_000))
+    os.utime(earlier, (2_000_000, 2_000_000))
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = click.testing.CliRunner(mix_stderr=False).invoke(main, ["report"])
+
+    assert result.exit_code == 0, result.stderr
+    assert f"Using latest trace: {later}" in result.stderr
+    assert "Skipped a newer trace" not in result.stderr  # every trace read fine (the disclosure's absence)
+
+
+@pytest.mark.parametrize("nth", [None, 2], ids=["the-trailer-read", "the-full-load"])
+@pytest.mark.parametrize("with_older", [True, False], ids=["older-control", "nothing-older"])
+def test_report_autoselect_names_a_newer_trace_it_could_not_read(
+    tmp_path: Path, monkeypatch, nth: int | None, with_older: bool
+):
+    """A newer trace that cannot be read — at its tail read, or only at the full load after a clean tail — is
+    named on stderr with its cause: "latest" never silently means an older run, and with nothing older the
+    miss says the trace was unreadable, never "only in-flight or interrupted runs"."""
+    import errno
+
+    from tests.shared.open_hooks import fault_opens
+
+    debug_dir = tmp_path / ".pflow" / "debug"
+    debug_dir.mkdir(parents=True)
+    older = (
+        _write_jsonl_trace(debug_dir / _report_trace_name("run-b", datetime(2026, 1, 1)), _COMPLETE_TRACE_LINES)
+        if with_older
+        else None
+    )
+    newer = _write_jsonl_trace(debug_dir / _report_trace_name("run-a", datetime(2026, 1, 2)), _COMPLETE_TRACE_LINES)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    fault_opens(monkeypatch, newer, PermissionError(errno.EACCES, "Permission denied"), nth=nth)
+    result = click.testing.CliRunner(mix_stderr=False).invoke(main, ["report"])
+
+    assert f"Skipped a newer trace — could not read trace {newer}: Permission denied" in result.stderr
+    if with_older:
+        assert result.exit_code == 0, result.stderr
+        assert f"Using latest trace: {older}" in result.stderr
+    else:
+        assert result.exit_code == 1
+        assert "No readable completed trace found in ~/.pflow/debug/ (1 could not be read" in result.stderr
+        assert "in-flight or interrupted" not in result.stderr
+
+
 def test_report_autoselect_only_incomplete_errors_clearly(tmp_path: Path, monkeypatch):
     """With only in-flight/incomplete traces, no-arg `pflow report` errors and exits 1 — not a hollow report."""
     from pflow.core.trace_io import load_trace_file
@@ -359,7 +420,9 @@ def test_report_autoselect_only_incomplete_errors_clearly(tmp_path: Path, monkey
     debug_dir = tmp_path / ".pflow" / "debug"
     debug_dir.mkdir(parents=True)
 
-    incomplete = _write_jsonl_trace(debug_dir / "workflow-trace-incomplete.json", _INCOMPLETE_TRACE_LINES)
+    incomplete = _write_jsonl_trace(
+        debug_dir / _report_trace_name("in-flight-run", datetime(2026, 1, 2)), _INCOMPLETE_TRACE_LINES
+    )
     assert load_trace_file(incomplete).get("final_status") == "incomplete"
 
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -370,6 +433,7 @@ def test_report_autoselect_only_incomplete_errors_clearly(tmp_path: Path, monkey
     assert "No completed trace" in result.stderr
     # It must NOT fall through to generating a report from the incomplete trace.
     assert "Using latest trace:" not in result.stderr
+    assert "earlier pflow version" not in result.stderr  # no pre-185 traces → no unsearched clause
 
 
 @pytest.mark.trace_files

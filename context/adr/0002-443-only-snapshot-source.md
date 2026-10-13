@@ -92,3 +92,6 @@ The snapshot needs the last full run's output for **every** upstream node, as a 
   `--only` trace (excluded as a snapshot source) overwrote the full-run snapshot. Fixed by giving
   `save_to_file`'s filename microsecond granularity (`%Y%m%d-%H%M%S-%f`) — the autoload glob keys on
   the hash prefix, so the timestamp format is free to change and ordering still sorts correctly.
+  **Amended (Task 185):** the timestamp format is now part of the trace filename grammar (ADR-0018)
+  and no longer free to change; the Snapshot is selected from the directory listing by the `.only`
+  tag and the start time, and Retention keeps it.

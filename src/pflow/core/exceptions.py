@@ -1343,8 +1343,9 @@ class OnlySnapshotMissingError(PflowError):
     recent full successful run (read from ``~/.pflow/debug/``) instead of
     re-walking the graph — so side-effecting upstream nodes (``gh pr create``)
     don't re-fire on every iteration. When no usable trace exists (the workflow
-    was never run fully, was run only with ``--no-trace``, or only ``--only``
-    traces exist), there is nothing to restore from. This is a HARD error rather
+    was never run fully, was run only with ``--no-trace``, only ``--only``
+    traces exist, or its trace aged out of ``runtime.trace_retention_days``),
+    there is nothing to restore from. This is a HARD error rather
     than a silent re-walk: re-walking would re-fire upstream side effects, which
     is precisely what #443 set out to stop.
     """
@@ -1354,9 +1355,11 @@ class OnlySnapshotMissingError(PflowError):
         "Snapshot reuse reads the most recent successful trace from ~/.pflow/debug/."
     )
 
-    def __init__(self, only_node: str, *, suggestion: str | None = None):
+    def __init__(self, only_node: str, *, suggestion: str | None = None, causes: tuple[str, ...] = ()):
+        """``causes``: why the lookup may have missed (an aged-out trace, traces it does not read) —
+        appended to the default remedy by the raiser, which holds the directory listing."""
         self.only_node = only_node
-        self.suggestion = suggestion if suggestion is not None else self._DEFAULT_SUGGESTION
+        self.suggestion = suggestion if suggestion is not None else " ".join((self._DEFAULT_SUGGESTION, *causes))
         super().__init__(
             f"--only '{only_node}' needs a prior full run to restore upstream from, "
             f"but no usable trace was found for this workflow."
@@ -1371,6 +1374,37 @@ class OnlySnapshotMissingError(PflowError):
                 source="runtime",
                 suggestions=[self.suggestion] if self.suggestion else None,
                 context={"category": "execution_failure"},
+            )
+        ]
+
+
+class OnlySnapshotUnreadableError(PflowError):
+    """Raised when ``--only`` meets a trace of this workflow that exists but cannot be read.
+
+    Walking past it would restore upstream from an OLDER run as if it were the latest (stale data, and
+    nothing would say so), so the run refuses — the Snapshot twin of ``ResumeSourceUnreadableError``.
+    """
+
+    def __init__(self, only_node: str, trace_path: str, reason: str):
+        self.only_node = only_node
+        self.trace_path = trace_path
+        super().__init__(
+            f"--only '{only_node}' could not read a newer run's trace ({trace_path}: {reason}), so it will not "
+            f"restore upstream from an older one."
+        )
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="Snapshot trace unreadable",
+                source="runtime",
+                suggestions=[
+                    "Retry. If it keeps failing, restore read permission on that file. Don't move or delete it: "
+                    "a trace can be the record that a paused run was already answered."
+                ],
+                context={"category": "execution_failure", "trace_path": self.trace_path},
             )
         ]
 
@@ -1632,6 +1666,14 @@ class ResumeSourceMissingError(ResumeSourceError):
     """No trace was found to resume — the target names no known run (Task 164)."""
 
     _TITLE = "No run to resume"
+
+
+class ResumeSourceUnreadableError(ResumeSourceError):
+    """A trace this resume must read exists but could not be read — the run itself, or a newer attempt
+    whose verdict decides whether the run was already answered (Task 185). Refused, never guessed: reading
+    an attempt as "no consumer" would let a token be answered twice. Usually transient — retry."""
+
+    _TITLE = "Could not read the run's trace"
 
 
 class ResumeNothingToResumeError(ResumeSourceError):

@@ -29,12 +29,11 @@ from pflow.runtime.engine.engine import WorkflowEngine
 from pflow.runtime.engine.types import CompiledWorkflow, LoopConfig, NodeConfig, TemplateConfig
 from pflow.runtime.resume_source import seed_snapshot_into_shared
 from pflow.runtime.workflow_trace import (
-    format_trace_filename,
     load_full_run_events,
     load_snapshot_or_raise,
 )
 from tests.shared.markdown_utils import write_workflow_file
-from tests.shared.trace_jsonl import write_trace_jsonl
+from tests.shared.trace_jsonl import trace_path_for, write_trace_jsonl
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -82,7 +81,6 @@ def _write_trace(
 ) -> Path:
     """Write a synthetic trace JSON the loader can discover, returning its path."""
     debug_dir.mkdir(parents=True, exist_ok=True)
-    fname = format_trace_filename(workflow_path, name, timestamp)
     data: dict[str, Any] = {
         "format_version": format_version,
         "workflow_path": workflow_path,
@@ -93,7 +91,8 @@ def _write_trace(
         data["only_node"] = only_node
     if warnings is not None:
         data["warnings"] = warnings
-    return write_trace_jsonl(debug_dir / fname, data)
+    path, data = trace_path_for(debug_dir, data, name=name, started=timestamp)
+    return write_trace_jsonl(path, data)
 
 
 def _write_interned_trace(
@@ -106,7 +105,6 @@ def _write_interned_trace(
 ) -> Path:
     """Write a synthetic interned full-run trace the loader can discover."""
     debug_dir.mkdir(parents=True, exist_ok=True)
-    fname = format_trace_filename(workflow_path, name, timestamp)
     data: dict[str, Any] = {
         "format_version": "2.5.0",
         "workflow_path": workflow_path,
@@ -116,7 +114,8 @@ def _write_interned_trace(
     }
     # write_trace_jsonl interns large leaves inline (the streaming writer's blob shape), so this
     # exercises the same on-disk interning a real run produces, in the JSONL transport.
-    return write_trace_jsonl(debug_dir / fname, data)
+    path, data = trace_path_for(debug_dir, data, name=name, started=timestamp)
+    return write_trace_jsonl(path, data)
 
 
 # ---------------------------------------------------------------------------
@@ -1135,3 +1134,85 @@ def test_only_loop_target_against_a_resumed_attempt_never_seeds_its_own_output(t
     only = _only_k(wf)
     assert only.shared_after["k"]["result"]["acc"] == "1:seed"
     assert only.shared_after["__execution__"]["restored_nodes"] == ["prep"]
+
+
+def test_an_only_run_without_its_name_tag_is_still_excluded_by_its_meta(tmp_path: Path) -> None:
+    """The ``.only`` tag is the index; the meta's ``only_node`` stays the truth — a current-grammar name written
+    without the tag (by hand, or by a future writer that forgot it) never becomes a Snapshot."""
+    wf = "ir-hash:untagged-only"
+    _write_trace(
+        tmp_path, wf, timestamp="20260101-000000", nodes=[{"node_id": "fetch", "node_output": {"stdout": "FULL"}}]
+    )
+    data = {
+        "format_version": "2.4.0",
+        "workflow_path": wf,
+        "final_status": "success",
+        "nodes": [{"node_id": "fetch", "node_output": {"stdout": "ONLY"}}],
+    }
+    path, data = trace_path_for(tmp_path, data, started="20260102-000000")  # named as a FULL run (no tag)
+    write_trace_jsonl(path, {**data, "only_node": "fetch"})  # …but its meta records an --only run
+
+    loaded = load_full_run_events(wf, debug_dir=tmp_path)
+    assert loaded is not None
+    assert loaded[0][0]["node_output"]["stdout"] == "FULL"
+
+
+# ---------------------------------------------------------------------------
+# A newer trace that cannot be read is never walked past (stale upstream)
+# ---------------------------------------------------------------------------
+
+
+def _faulted_opens(monkeypatch: pytest.MonkeyPatch, path: Path, error: OSError, *, nth: int | None = None) -> None:
+    """Every open of ``path`` (or only its ``nth``) raises ``error`` (``tests/shared/open_hooks``)."""
+    from tests.shared.open_hooks import fault_opens
+
+    fault_opens(monkeypatch, path, error, nth=nth)
+
+
+def _two_successes(tmp_path: Path) -> tuple[str, Path, Path]:
+    wf = "ir-hash:two-successes"
+    older = _write_trace(
+        tmp_path, wf, timestamp="20260101-000000", nodes=[{"node_id": "fetch", "node_output": {"stdout": "OLD"}}]
+    )
+    newer = _write_trace(
+        tmp_path, wf, timestamp="20260601-000000", nodes=[{"node_id": "fetch", "node_output": {"stdout": "NEW"}}]
+    )
+    return wf, older, newer
+
+
+@pytest.mark.parametrize("nth", [None, 2], ids=["every-read", "the-full-load"])
+def test_an_unreadable_newer_snapshot_refuses_never_restores_an_older_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nth: int | None
+) -> None:
+    """The newer success cannot be read (at the tail read, or only at the full load after a clean tail): the
+    lookup refuses, naming that file — the older run's upstream is never restored as if it were the latest."""
+    import errno
+
+    from pflow.core.exceptions import OnlySnapshotUnreadableError
+
+    wf, _older, newer = _two_successes(tmp_path)
+    _faulted_opens(monkeypatch, newer, PermissionError(errno.EACCES, "Permission denied"), nth=nth)
+
+    with pytest.raises(OnlySnapshotUnreadableError) as raised:
+        load_snapshot_or_raise(wf, "next", debug_dir=tmp_path)
+
+    assert raised.value.trace_path == str(newer)
+    assert "Permission denied" in str(raised.value)
+    # The remedy restores readability; moving or deleting a trace can erase the record that a pause was answered.
+    [advice] = raised.value.to_diagnostics()[0].suggestions or []
+    assert "restore read permission on that file" in advice
+    assert "Don't move or delete it" in advice and "out of ~/.pflow/debug" not in advice
+
+
+def test_a_newer_snapshot_that_vanished_falls_through_to_the_older_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The control: gone (Retention, or a race) is not unreadable — the next run is the newest that exists."""
+    import errno
+
+    wf, _older, newer = _two_successes(tmp_path)
+    _faulted_opens(monkeypatch, newer, FileNotFoundError(errno.ENOENT, "No such file"))
+
+    events, _status = load_snapshot_or_raise(wf, "next", debug_dir=tmp_path)
+
+    assert events[0]["node_output"]["stdout"] == "OLD"

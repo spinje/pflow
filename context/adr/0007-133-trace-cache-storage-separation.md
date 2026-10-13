@@ -24,6 +24,10 @@ the **trace** is a sequential, run-scoped, append-and-read log in per-run JSON u
 (`hash(config+inputs)`) in one SQLite DB `~/.pflow/cache/cache.db` storing zlib BLOBs (current-state;
 TTL-evicted). A log cannot answer an O(1) point lookup; an index cannot serve a tailable stream.
 
+**Amended (Task 185): a trace is no longer deleted freely.** Resume, the `--only` Snapshot and pending
+pauses read old traces, so traces are removed only by Retention, which keeps the ones those features
+need (ADR-0018). The run-scoped lifecycle above is unchanged: a trace's blobs still go with it.
+
 **Do not read the cache's `output_hash` column as a merge mandate.** It is the cache's *own* content
 hash; its `cache.py` comment ("reserved for future trace unification (Task 133)") predates this
 decision and is now misleading — the planned follow-up is to correct that comment, not to act on it.

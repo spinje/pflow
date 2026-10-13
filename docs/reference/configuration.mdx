@@ -27,7 +27,8 @@ pflow settings show
     "output_mode": "smart"
   },
   "runtime": {
-    "template_resolution_mode": "strict"
+    "template_resolution_mode": "strict",
+    "trace_retention_days": 14
   },
   "llm": {
     "default_model": null,
@@ -46,6 +47,7 @@ pflow settings show
 | `registry.nodes.deny` | `[]` | Patterns for nodes to exclude |
 | `registry.output_mode` | `"smart"` | Output display mode for `registry run`: `"smart"`, `"structure"`, or `"full"` |
 | `runtime.template_resolution_mode` | `"strict"` | `"strict"` or `"permissive"` |
+| `runtime.trace_retention_days` | `14` | Days a trace is kept in `~/.pflow/debug/`; `0` keeps every trace. See [trace retention](/guides/debugging#trace-retention) |
 | `llm.default_model` | `null` | Default model for all pflow LLM usage |
 | `llm.discovery_model` | `null` | Model for discovery commands (overrides default) |
 | `llm.filtering_model` | `null` | Model for smart filtering (overrides default) |
@@ -126,18 +128,11 @@ API keys stored via `pflow settings set-env` are used automatically for workflow
 |----------|---------|-------------|
 | `PFLOW_TEMPLATE_RESOLUTION_MODE` | `strict` | `strict` or `permissive` |
 | `PFLOW_SHELL_STRICT` | `false` | Block dangerous shell commands |
+| `PFLOW_TRACE_RETENTION_DAYS` | unset | Overrides `runtime.trace_retention_days` for one process (`0` keeps every trace); never saved to the settings file |
 
 ### Trace configuration
 
-Control trace file verbosity:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PFLOW_TRACE_PROMPT_MAX` | `50000` | Max prompt length in traces |
-| `PFLOW_TRACE_RESPONSE_MAX` | `20000` | Max response length in traces |
-| `PFLOW_TRACE_STORE_MAX` | `10000` | Max shared store value length |
-| `PFLOW_TRACE_DICT_MAX` | `50000` | Max dict size in traces |
-| `PFLOW_TRACE_LLM_CALLS_MAX` | `100` | Max LLM calls to track |
+Every run writes a trace to `~/.pflow/debug/` unless you pass `--no-trace` (`--report` and `--report-dir` turn tracing back on). pflow removes traces older than `runtime.trace_retention_days` when it finishes writing a trace, and keeps the traces its features still need — pending pauses, each workflow's newest run and newest successful run, and runs still being written. See [trace retention](/guides/debugging#trace-retention).
 
 ## Node filtering
 
@@ -221,7 +216,7 @@ pflow stores all data in `~/.pflow/`:
 | Path | Safe to Delete | Notes |
 |------|----------------|-------|
 | `registry.json` | Yes | Regenerates automatically on next pflow startup |
-| `debug/` | Yes | Debug traces only, can grow large |
+| `debug/` | Caution | Deleting a trace breaks `--only`, `pflow resume`, a pending pause's answer and `pflow report` for that run — pflow prunes traces itself on `runtime.trace_retention_days` |
 | `cache/` | Yes | Execution cache, regenerates |
 | `settings.json` | Caution | Contains API keys, reverts to defaults |
 | `mcp-servers.json` | Caution | Removes MCP server configurations |

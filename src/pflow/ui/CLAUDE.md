@@ -28,9 +28,10 @@ resolution/validation/building lives in `execution/graph_service.py`.
 - Static delivery/cache policy → `server.py:_BundleFiles`.
 - Launch/preflight/detachment → `server.py:run`, `resume`, `_preflight`, `_spawn_detached_cli`.
 - Trace history/discovery/liveness → `run_tailer.py:scan_traces`, `discover_live_trace`,
-  `is_trace_locked`; streaming/replay → `RunTailer`.
+  `find_workflow_trace` (the pinned by-id resolver); the listing, readers and `is_trace_locked` are
+  `core/trace_dir.py`'s, shared with resume; streaming/replay → `RunTailer`.
 - Recorded values/input prefill → `run_node.py:run_node_detail`, `read_run_inputs`;
-  gate masking → `server.py:gate`.
+  gate lookup (by the run id in the filename, never a scan) and masking → `server.py:gate`.
 - Point address resolution → `targets.py:resolve_target`.
 - Interaction delivery/replay → `server.py:_Hub`, `events`, `command` and
   `web/src/api/events.ts:subscribe`. `sent_to` counts connection queues accepting the primary
@@ -73,8 +74,9 @@ Keep these non-obvious contracts:
 - Register API routes before the static fallback. The bundle uses query-parameter navigation;
   `StaticFiles(html=True)` does not provide a general SPA deep-route fallback.
 
-`discover_live_trace` excludes `--only` traces and prefers live runs, otherwise falling back to
-the newest matching trace (which can be incomplete); `RunTailer`
+Runs are ordered newest-first by the start time their filename records (one recency rule with
+resume, `--only` and `report` — never file mtime). `discover_live_trace` excludes `--only` traces
+and prefers live runs, otherwise falling back to the newest matching trace (which can be incomplete); `RunTailer`
 resolves a pinned run to a fixed file after allowing for the launch window before its meta line.
 `is_trace_locked` detects writer death, not hangs. When advisory-lock probing is unavailable
 (including Windows), it returns `None` and callers use the incomplete-trace heuristic, not exact

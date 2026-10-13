@@ -6,7 +6,8 @@ normalize_case_output() {
   sed -E \
     -e 's/[0-9]+ms/<DURATION>/g' \
     -e 's/[0-9]+\.[0-9]+s/<DURATION>/g' \
-    -e 's/workflow-trace-[a-f0-9]{8}-/workflow-trace-<HASH>-/g'
+    -e 's/workflow-trace-[a-f0-9]{8}-/workflow-trace-<HASH>-/g' \
+    -e 's/\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}([.-])/.<UUID>\1/g'
 }
 
 # Seed a full report first so the later --only run has a stale downstream

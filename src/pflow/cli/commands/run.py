@@ -1024,7 +1024,7 @@ def _handle_invalid_workflow_input(workflow: tuple[str, ...]) -> None:
 @click.option(
     "--no-trace",
     is_flag=True,
-    help="Disable workflow execution trace saving (enabled by default)",
+    help="Disable workflow execution trace saving (enabled by default; --report/--report-dir re-enable it)",
 )
 @click.option(
     "--report",

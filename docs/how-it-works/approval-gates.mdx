@@ -51,7 +51,7 @@ A run with no terminal (piped, launched from the web UI, or via the MCP server) 
 Paused at 'notify-slack'. Resume token: 7a9e4afb-2095-447e-8043-0660438104f9 (exit 4)
 ```
 
-Nothing re-runs when you answer: the completed steps are kept, and the decision can come hours or days later, through either surface:
+Nothing re-runs when you answer: the completed steps are kept, and the decision can come hours or days later — a pending pause is kept until it is answered, whatever the [retention window](/guides/debugging#trace-retention), as long as its workflow file exists — through either surface:
 
 - **In the browser**: `pflow ui <workflow> --run <token>` opens the paused run on the visual canvas. The paused step carries a ⏸ badge with an answer panel showing the step's resolved values — click **Approve** or **Deny** (for an escalation: pick an option or type an answer) and watch the run continue in place. On a loop step the panel shows where the loop is (`iteration 2 of up to 3`); Approve answers that one iteration, and **Approve all remaining** finishes the loop in one click — it approves every later approval of that step name in the run, including inside sub-workflows.
 - **From the terminal**: `pflow resume <token> --approve yes|no` (escalations: `--choose "<answer>"`). `pflow resume list` shows every pending pause.

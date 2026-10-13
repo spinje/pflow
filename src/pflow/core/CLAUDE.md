@@ -23,6 +23,8 @@ Shared parsing, diagnostics, configuration, and execution utilities.
 | Print a count with its noun, or a multi-line value under a label | `text_format.py` (`count_noun`, `labelled_lines`) — `tests/test_core/test_text_format.py` ratchets the inline idioms out |
 | Change usage aggregation or trace reports | `metrics.py`, `llm_usage.py`, `trace_tree.py`, `trace_report.py` |
 | Read persisted traces | `trace_io.py::load_trace_file` — shared JSONL reconstruction boundary |
+| Find a Run's trace, the trace filename grammar, the debug-dir listing | `trace_dir.py` — the directory listing is the index (ADR-0018): `list_traces` (one `os.scandir`), `find_trace`, the strict/lenient readers, `is_trace_locked`; shared by `runtime/` and `ui/` |
+| Decide on "this path is gone" (delete, hide, fall back to defaults) | `path_state.py::path_state` — present/absent/unknown; never `Path.exists()`/`is_file()` (Python 3.14 reads a permission fault as absent) |
 | Change input coercion, name rules, or redaction | `param_coercion.py`, `validation_utils.py`, `security_utils.py` |
 | Show how a caller supplies a declared input (required/optional, placeholder, default) | `types.py::input_usage` / `usage_arguments` — every describing surface reads it; `tests/test_core/test_input_usage.py` pins each surface and the run's rule |
 | Change probe result storage or UI narration | `execution_cache.py`; `tts.py::synthesize` |
@@ -179,7 +181,13 @@ resets process state for tests or changed keys.
 Keep presence checks and request keys on this resolver. Settings injection records
 provenance so genuinely exported environment aliases still take precedence.
 
-Settings saves are atomic and permission-restricted. Node filtering happens at
+Settings saves are atomic and permission-restricted. `save()` refuses while
+`load_error` is set (the file failed to load; writing defaults back would wipe it).
+Every settings model keeps unknown keys (`extra="allow"`) so a typo survives a save;
+`unknown_settings_keys` walks them at every level (Retention's misplaced-key check,
+`settings show`'s omission); `runtime.trace_retention_days` is read only by
+`runtime/trace_retention.py::retention_days` (the `PFLOW_TRACE_RETENTION_DAYS` override first — the
+process environment, then `settings.env` — never written back). Node filtering happens at
 registry **load**, not storage; MCP matching includes tool/server aliases.
 Workflow input precedence is separately owned by
 `runtime/compilation/ir_preparation.py::prepare_inputs`, not the provider resolver.

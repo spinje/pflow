@@ -13,6 +13,7 @@ from pflow.core.diagnostic import Diagnostic
 from pflow.core.llm_config import get_default_workflow_model
 from pflow.core.llm_providers import normalize_model_name
 from pflow.core.templates import TemplateResolver
+from pflow.core.trace_dir import TraceListing, legacy_note, list_traces, recency_key
 from pflow.core.trace_io import load_trace_file
 from pflow.core.trace_tree import normalize_workflow_path_key
 
@@ -198,17 +199,17 @@ def _format_rejection_note(
 
 
 def _collect_candidate_traces(
-    debug_dir: Path,
+    listing: TraceListing,
     workflow_path: str,
 ) -> tuple[list[tuple[Path, dict[str, Any]]], list[tuple[Path, dict[str, Any]]]]:
-    """Walk ``debug_dir`` for reusable 2.x traces matching ``workflow_path``; bucket by run outcome.
+    """Walk one directory listing for reusable 2.x traces matching ``workflow_path``; bucket by run outcome.
 
-    Returned tuple is ``(successful, failed)``, each newest-first by filename
-    (which embeds the recording timestamp). Absent ``final_status`` routes to
+    Returned tuple is ``(successful, failed)``, each newest-first by the start
+    time the filename records. Absent ``final_status`` routes to
     the successful bucket — matches the back-compat fallback at
     ``_trace_coverage_for_rows`` and preserves selection for pre-2.1.0 traces.
 
-    Candidate gathering (glob-by-hash, parse, ``workflow_path`` collision guard,
+    Candidate gathering (the listing's entries for the workflow's hashes, parse, ``workflow_path`` collision guard,
     2.x gate, and ``--only`` exclusion) is delegated to the shared
     ``runtime.workflow_trace._iter_workflow_traces`` so this loader and the
     ``--only`` snapshot loader cannot drift. The shared iterator deliberately
@@ -223,7 +224,7 @@ def _collect_candidate_traces(
 
     successful: list[tuple[Path, dict[str, Any]]] = []
     failed: list[tuple[Path, dict[str, Any]]] = []
-    for trace_file, data in _iter_workflow_traces(debug_dir, workflow_path):
+    for trace_file, data in _iter_workflow_traces(listing.traces, workflow_path):
         # Absent final_status → "success" (back-compat: pre-2.1 / synthetic fixtures). Only
         # success/degraded are reusable; "failed" and "incomplete" (a crash-tail trace with no
         # run.complete trailer, Task 133) route to the non-reusable failed bucket.
@@ -261,7 +262,7 @@ def _autoload_selection_with_disclosure(
     """Return autoload choice plus the disclosure note for non-obvious choices."""
     if successful:
         chosen = successful[0][0]
-        if failed and failed[0][0].name > chosen.name:
+        if failed and recency_key(failed[0][0].name) > recency_key(chosen.name):
             return chosen, (
                 f"Skipped newer trace `{failed[0][0].name}` "
                 f"({_non_reusable_outcome_label(failed[0][1])}) in "
@@ -285,11 +286,13 @@ def list_traces_for_workflow(
     *,
     debug_dir: Path | None = None,
 ) -> tuple[list[TraceListEntry], str | None]:
-    """Enumerate stored traces for a workflow and mark the autoload choice."""
-    debug_dir = debug_dir or (Path.home() / ".pflow" / "debug")
-    if not debug_dir.exists():
-        return [], None
-    successful, failed = _collect_candidate_traces(debug_dir, workflow_path)
+    """Enumerate stored traces for a workflow and mark the autoload choice.
+
+    With no traces to list, the note says how many pre-185 traces were not searched (if any)."""
+    listing = list_traces(debug_dir)
+    successful, failed = _collect_candidate_traces(listing, workflow_path)
+    if not successful and not failed:
+        return [], _unsearched_legacy_note(listing.legacy_count)
     chosen_path, disclosure_note = _autoload_selection_with_disclosure(successful, failed)
     current_models, has_heterogeneous_nodes = _resolve_current_workflow_model_set_for_path(workflow_path)
     entries = [
@@ -302,17 +305,16 @@ def list_traces_for_workflow(
         )
         for trace_path, data in [*successful, *failed]
     ]
-    entries.sort(key=lambda entry: entry.path.name, reverse=True)
+    entries.sort(key=lambda entry: recency_key(entry.path.name), reverse=True)
     return entries, disclosure_note
 
 
 def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[str, Any] | None, str | None]:
     """Find the best matching 2.x trace for ``workflow_path``.
 
-    O(matching-traces) lookup, not O(directory-size): trace filenames encode
-    an 8-char md5 hash of ``workflow_path`` at write time (see
-    ``runtime/workflow_trace.format_trace_filename``). The reader globs by the
-    same hash prefix so we only read files that could match.
+    One directory listing, then reads of only this workflow's traces: trace
+    filenames carry an 8-char md5 hash of ``workflow_path``
+    (``core/trace_dir.trace_filename``), so no other workflow's file is opened.
 
     Per DD#34, auto-load is a convenience; explicit loading
     (``--from-trace <path>``) is the contract.
@@ -335,11 +337,8 @@ def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[s
     """
     if workflow_path is None:
         return None, None
-    debug_dir = Path.home() / ".pflow" / "debug"
-    if not debug_dir.exists():
-        return None, None
-
-    successful, failed = _collect_candidate_traces(debug_dir, workflow_path)
+    listing = list_traces()
+    successful, failed = _collect_candidate_traces(listing, workflow_path)
 
     chosen_path, disclosure_note = _autoload_selection_with_disclosure(successful, failed)
     if chosen_path is not None:
@@ -352,14 +351,23 @@ def _autoload_trace(workflow_path: str | None, notes: list[str]) -> tuple[dict[s
     # No hash-scoped match. If the debug dir holds unrelated traces, surface
     # that so the agent doesn't read greenfield output as "no evidence
     # exists" when in fact a rename has hidden it from auto-load.
-    if next(iter(debug_dir.glob("workflow-trace-*.json")), None) is not None:
+    if listing.traces:
         notes.append(
             "Found other traces in ~/.pflow/debug/ but none matched this "
             "workflow's path (the workflow file may have been renamed or "
             "moved). Pass `--from-trace <path>` to use a specific trace, or "
             "re-run the workflow to record a new one."
         )
+    legacy = _unsearched_legacy_note(listing.legacy_count)
+    if legacy is not None:
+        notes.append(legacy)
     return None, None
+
+
+def _unsearched_legacy_note(legacy_count: int) -> str | None:
+    """The no-match note for pre-185 traces in the directory — autoload never reads them."""
+    note = legacy_note(legacy_count)
+    return f"{note} — pass `--from-trace <path>` to use one." if note is not None else None
 
 
 def _resolve_trace_data(

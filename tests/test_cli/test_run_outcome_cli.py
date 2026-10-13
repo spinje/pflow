@@ -838,3 +838,118 @@ class TestTheExitCodeSaysWhetherTheRunStarted:
 
         assert result.exit_code == 1
         assert "needs a prior full run" in result.stderr
+
+
+class TestAFailedOnlyRunOffersNoResume:
+    """An --only run records only its target step, so it is never a resume source: its failure prints no
+    resume hint, and `pflow resume <its id>` refuses with that reason — not "no run was found"."""
+
+    def test_no_hint_and_a_true_refusal(self, home: Path, tmp_path: Path) -> None:
+        workflow = _write(tmp_path, "flaky", _OK)
+        assert _invoke(workflow).exit_code == 0  # the Snapshot
+        workflow.write_text(_FAIL_BY_ACTION, encoding="utf-8")  # step `two` now fails
+
+        full_failure = _invoke(workflow)  # presence control: a failed FULL run offers the resume
+        assert "To resume from the failed step: pflow resume " in full_failure.stdout + full_failure.stderr
+
+        failed, document = _json(workflow, "--only", "two")
+        assert failed.exit_code == 1, failed.stderr
+        assert document["status"] == "failed" and "resume_command" not in document
+        text = _invoke(workflow, "--only", "two")
+        assert "To resume from the failed step" not in text.stdout + text.stderr
+
+        refused = _invoke("resume", document["execution_id"])
+        assert refused.exit_code != 0
+        assert "was an --only run" in refused.stderr
+        assert "aged out" not in refused.stderr and "No run with execution id" not in refused.stderr
+
+
+class TestTheTraceNameAndThePausedMarker:
+    """Task 185: the filename carries the run's id, its ``--only`` and lineage tags; a durable pause has a
+    ``.paused`` marker beside its trace, written BEFORE the trailer — so a marker that cannot be written
+    leaves no durable pause on any surface, and a trailer fault after it leaves nothing listed."""
+
+    @staticmethod
+    def _traces(home: Path) -> list[Path]:
+        return sorted((home / ".pflow" / "debug").glob("workflow-trace-*.json"))
+
+    def test_a_durable_pause_has_its_marker_and_its_id_in_the_name(self, home: Path, tmp_path: Path) -> None:
+        from pflow.core.trace_dir import paused_marker
+
+        token = _pause(_gate(tmp_path))
+        [trace] = self._traces(home)
+        assert f".{token}-" in trace.name
+        assert paused_marker(trace).exists()
+
+    def test_a_marker_write_fault_leaves_a_non_durable_pause_everywhere(
+        self, home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pflow.core.trace_dir import parse_trace_filename
+        from pflow.runtime.resume_source import list_paused_runs, load_resume_source
+        from tests.shared.open_hooks import hook_opens
+
+        def no_marker(real_open: Any, file: Any, *args: Any, **kwargs: Any) -> Any:
+            if str(file).endswith(".paused"):
+                raise OSError(errno.ENOSPC, "No space left on device")
+            return real_open(file, *args, **kwargs)
+
+        workflow = _gate(tmp_path)
+        with monkeypatch.context() as patched:
+            hook_opens(patched, no_marker)
+            result, document = _json(workflow)
+
+        # The CLI never hands out a token it cannot honour: the pause is reported failed, with no identity.
+        assert result.exit_code == 1
+        assert document["status"] == "failed"
+        assert not (IDENTITY_KEYS & document.keys())
+        # On disk: a trace with no trailer (it reads `incomplete`) and no marker.
+        [trace] = self._traces(home)
+        assert not any('"run.complete"' in line for line in trace.read_text(encoding="utf-8").splitlines())
+        assert not trace.with_name(trace.name + ".paused").exists()
+        # Every surface agrees it is not a pause: resume takes the interrupted (incomplete) arm — the
+        # steps before the gate restored, never the gate's answer path — and `resume list` is empty.
+        parsed = parse_trace_filename(trace.name)
+        assert parsed is not None and parsed.execution_id
+        source = load_resume_source(execution_id=parsed.execution_id)
+        assert source.paused_node_id is None and source.gate_request is None
+        assert (source.entry_node_id, source.last_completed_node_id) == (None, "two")
+        listing = list_paused_runs()
+        assert (listing.runs, listing.hidden_missing_file) == ([], [])
+        from starlette.testclient import TestClient
+
+        from pflow.ui.server import create_app
+
+        gate = TestClient(create_app(), base_url="http://127.0.0.1").get(
+            "/api/gate", params={"run": parsed.execution_id}
+        )
+        assert gate.status_code == 404 and "not paused" in gate.json()["error"]
+
+    def test_a_trailer_fault_after_the_marker_leaves_nothing_listed(
+        self, home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from pflow.core.trace_dir import paused_marker
+
+        workflow = _gate(tmp_path)
+        with monkeypatch.context() as patched:
+            TestATrailerWriteFaultLeavesNoIdentity._fault_the_trailer(patched)
+            result = _invoke(workflow)
+
+        assert result.exit_code == 1, "a pause whose trailer never landed is not durable"
+        [trace] = self._traces(home)
+        assert paused_marker(trace).exists(), "the marker was written before the trailer"
+        listed = _invoke("resume", "list")
+        assert listed.stdout == "No paused runs.\n", "every marker consumer reads the trailer and ignores this one"
+
+    def test_only_and_attempt_runs_carry_their_tags(self, home: Path, tmp_path: Path) -> None:
+        workflow = _gate(tmp_path)
+        token = _pause(workflow)
+        answered = _invoke("resume", token, "--approve", "yes")
+        assert answered.exit_code == 0, answered.stderr
+        only = _invoke(workflow, "--only", "two")
+        assert only.exit_code == 0, only.stderr
+
+        names = [trace.name for trace in self._traces(home)]
+        [attempt] = [name for name in names if f".from-{token[:8]}" in name]
+        [only_run] = [name for name in names if ".only" in name]
+        assert ".only" not in attempt and ".from-" not in only_run
+        assert sum(1 for name in names if ".only" not in name and ".from-" not in name) == 1  # the source

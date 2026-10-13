@@ -16,7 +16,9 @@ Compiles workflow IR into bare nodes plus `NodeConfig`, then executes it through
 | Persistent cache lookup/history | `cache.py::MemoizationCache` |
 | Missing trace event or persistence failure | `workflow_trace.py::WorkflowTraceCollector` |
 | Read a trace file | `core/trace_io.py::load_trace_file` |
+| Where traces live, their filename grammar, finding a run | `core/trace_dir.py` (one listing, then reads of only the files in the answer) |
 | Snapshot restoration or resume refusal | `resume_source.py`; snapshot selection in `workflow_trace.py` |
+| Which old traces are removed, which are kept | `trace_retention.py` (swept from `WorkflowTraceCollector.finalize`, never by a read) |
 | Declared output cannot resolve | `output_resolver.py::populate_declared_outputs` |
 | Dry-run differs from execution | `engine/plan_node.py::plan_node`, then `execution/CLAUDE.md` → Dry-Run Planner |
 
@@ -118,6 +120,12 @@ version 2 (`startswith("2.")`), not an exact minor version. Automatic discovery
 can skip unreadable candidates; explicit `analyze-cache --from-trace` input
 raises a load error instead. Do not invent a universal catch-and-skip policy.
 
+A trace is found by its filename, never by opening files (ADR-0018): the grammar and
+the one listing live in `core/trace_dir.py`; paused-ness is a `.paused` sidecar that
+`finalize` writes before the trailer. Retention runs at the end of `finalize` and
+reads only through `trace_dir`'s strict readers — a lenient reader's `None` would
+read "unreadable" as "removable".
+
 Loop position (2.8.0): a loop node's events carry `iteration` (stamped from
 `__iteration__` in `engine/instrumentation.py::record_trace`; absent on every other
 event, including a looping host's child events), and so do its `gate` lines and the
@@ -163,7 +171,8 @@ node. Synthetic warmup cost/count treatment is canonical in `engine/CLAUDE.md`
 → Synthetic Cache Warmup Item.
 
 `load_snapshot_or_raise` selects a reusable full run for `--only` and fails loudly
-when none exists. A degraded snapshot carries a warning advisory; do not restore
+when none exists — or when a newer candidate trace cannot be read (never walk past it to
+an older run, like resume's by-workflow selection). A degraded snapshot carries a warning advisory; do not restore
 potentially partial upstream data silently. `resume_source.load_resume_source` owns resume selection,
 gate-resolution folding, and refusal checks. The resume entry is a *(step,
 iteration)* pair: `resume_iteration` is the one reader of the events' `iteration`
