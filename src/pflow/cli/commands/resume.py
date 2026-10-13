@@ -228,7 +228,7 @@ def resume() -> None:
     \b
     Flags on the default form:
       --approve yes|no        answer a paused approval gate ("no" denies cleanly, exit 3;
-                              a denial never needs --force)
+                              the edited-workflow check never applies to a denial)
       --choose "ANSWER"       answer a paused escalation (option number or free text)
       --force                 consent to re-running: bypass the side-effect confirm +
                               edited-workflow check
@@ -257,7 +257,8 @@ def resume() -> None:
     is_flag=True,
     help=(
         "Consent to re-running steps: bypass the side-effect confirmation and the edited-workflow check. "
-        "A denial (--approve no) never needs it."
+        "A denial is never edit-checked; --force only overrides its refusal of a reference to a step that "
+        "never ran (a `??` fallback cannot fail)."
     ),
 )
 @click.option(
@@ -301,7 +302,7 @@ def resume() -> None:
     default=None,
     help=(
         'Answer a paused APPROVAL gate once: "yes" runs the gated step, "no" denies it cleanly (exit 3) '
-        "— even after an edit, without --force."
+        "— the edited-workflow check never applies to a denial."
     ),
 )
 @click.option(

@@ -86,7 +86,7 @@ def preflight_resume(
     # resume would do), but the side-effect confirmation does NOT: a dry-run
     # never runs K, so nothing can fire.
     if gate_answer is not None and gate_answer.get("approve") is False:
-        _check_denial_reaches_gate(resolved, source)
+        _check_denial_reaches_gate(resolved, source, force=force)
     else:
         _check_workflow_identity(resolved, source, force=force)
     # A between-nodes source — a killed-between-nodes incomplete run (Decision 7)
@@ -162,27 +162,33 @@ def _load_source_and_workflow(
     return load_resume_source(workflow_path=workflow_path_id(resolved), gate_answer=gate_answer), resolved
 
 
-def _check_denial_reaches_gate(resolved: ResolvedWorkflow, source: ResumeSource) -> None:
-    """Refuse a denial the resumed walk would not deliver — ``--force`` waives nothing here.
+def _check_denial_reaches_gate(resolved: ResolvedWorkflow, source: ResumeSource, *, force: bool) -> None:
+    """Refuse a denial the resumed walk would not deliver to the paused step's gate.
 
-    A denial re-enters the walk at the paused step, whose approval gate fires before anything runs
-    and records the "no"; edits elsewhere cannot make that wrong, so none are checked. What it needs
-    is the gate itself: a step renamed or removed since the pause has none to deny, one nothing leads
-    to from the start step is one the engine cannot enter, and a step whose ``approval: required``
-    was removed would RUN on the "no". ``--force`` is consent to re-running steps, which a denial
-    never gives. (The CLI also turns the cache off for a denial: a memo hit skips the gate.)
+    A denial re-enters the walk at the paused step, whose approval gate records the "no" before the
+    step runs, so the edited-workflow check does not apply. What it needs is the walk to meet that
+    gate: a step renamed or removed since the pause has none, one nothing leads to from the start
+    step cannot be entered, and a step whose ``approval: required`` was removed would RUN on the "no"
+    — ``--force``, consent to re-running steps, waives none of these. The step's templates also
+    resolve BEFORE its gate fires, so a reference to a step resume does not restore would fail the
+    attempt (consuming the token) instead of recording the denial; that check reads references
+    statically (a ``${a ?? b}`` fallback or permissive mode cannot fail), so ``--force`` waives it.
+    (The CLI also turns the cache off for a denial: a memo hit skips the gate.)
     """
     from pflow.core.workflow_id import step_identity
 
     step = str(source.paused_node_id)
     current = step_identity(resolved.ir)
-    if step not in current["steps"]:
+    node = _ir_node(resolved.ir, step)
+    if node is None:
         problem = "is no longer in the workflow — it was renamed or removed since the run paused"
     elif step not in _reachable(current["steps"], [current["start"]] if current["start"] else []):
         problem = "is no longer reachable from the workflow's start step, so resume cannot enter it"
-    elif (_ir_node(resolved.ir, step) or {}).get("approval") is None:
+    elif node.get("approval") is None:
         problem = "no longer has `approval: required`, so resuming would run it instead of recording the denial"
     else:
+        if not force:
+            _check_denial_reads_restored(node, source, set(current["steps"]))
         return
     raise ResumeNotResumableError(
         f"The paused step '{step}' {problem}.",
@@ -194,6 +200,50 @@ def _check_denial_reaches_gate(resolved: ResolvedWorkflow, source: ResumeSource)
             "Or leave the paused run unanswered — nothing runs until it is resumed.",
         ],
     )
+
+
+def _check_denial_reads_restored(node: dict[str, Any], source: ResumeSource, step_ids: set[str]) -> None:
+    """Refuse when the paused step's templates read a step resume will not restore (unless --force)."""
+    from pflow.core.templates import parse
+    from pflow.runtime.resume_source import restored_node_ids
+
+    step = str(node.get("id"))
+    restored = set(restored_node_ids(source))
+    unrestored = sorted({
+        ref.root
+        for text in _strings_in({key: value for key, value in node.items() if key != "purpose"})
+        if "${" in text
+        for ref in parse(text).references
+        if ref.root in step_ids and ref.root != step and ref.root not in restored
+    })
+    if not unrestored:
+        return
+    names = ", ".join(f"'{name}'" for name in unrestored)
+    raise ResumeNotResumableError(
+        f"The paused step '{step}' now reads {names}, which did not run before the pause, so resume has no "
+        f"saved output for it — '{step}' would fail resolving its templates before its approval gate could "
+        "record the denial.",
+        execution_id=source.execution_id,
+        trace_path=str(source.path),
+        node_id=step,
+        suggestions=[
+            f"Point '{step}' back at steps that ran before the pause, deny, then make the edit.",
+            "If that reference cannot fail (a `${a ?? b}` fallback, or permissive template mode), pass --force "
+            "to deny anyway.",
+            "Or leave the paused run unanswered — nothing runs until it is resumed.",
+        ],
+    )
+
+
+def _strings_in(value: Any) -> list[str]:
+    """Every string in ``value``, recursing into dict values and lists."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for item in value.values() for text in _strings_in(item)]
+    if isinstance(value, list):
+        return [text for item in value for text in _strings_in(item)]
+    return []
 
 
 def _check_workflow_identity(resolved: ResolvedWorkflow, source: ResumeSource, *, force: bool) -> None:

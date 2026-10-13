@@ -55,7 +55,7 @@ Behavior worth knowing:
 - **An answer covers one gate, once.** `--approve yes` approves the paused gate only — it is not a standing approval for that step. A paused **loop** step runs the paused iteration on the answer; its next iteration is a new action that pauses again with a new token (the pause output names it: `Loop iteration 2 of up to 3`). Pass `--auto-approve <step>` to approve every remaining iteration at once — the pause output prints that command, and the browser panel's Approve all remaining sends it.
 - **Resuming without an answer flag refuses** and shows the pending question with the exact command; `--approve`/`--choose` on a run that is not paused refuses too.
 - The **edited-workflow refusal** and `--force` (below) apply to paused resumes the same as failed ones, with one addition: editing the paused approval step after approving it refuses — the approval covered the version the human saw. Input overrides (`KEY=VALUE`) work the same way.
-- **A denial needs neither.** `--approve no` runs nothing, so the edited-workflow check never refuses it and it never needs `--force` (the workflow must still be valid, as for any run). What it does need is the paused gate: if that step was renamed, removed, no longer reachable from the start, or lost its `approval: required`, the denial refuses — there is no gate left to deny, and resuming could run the step — and `--force` does not override that.
+- **The edited-workflow check never applies to a denial.** `--approve no` runs nothing, so edits elsewhere never refuse it (the workflow must still be valid, as for any run). What it does need is the paused gate: if that step was renamed, removed, no longer reachable from the start, or lost its `approval: required`, the denial refuses — there is no gate left to deny, and resuming could run the step — and `--force` does not override that. The step's `${...}` references also resolve before its gate fires, so a denial refuses when the paused step now reads a step that did not run before the pause (resume has no saved output for it, and the attempt would fail instead of recording the "no"). That check reads references as written: if yours cannot fail — a `${a ?? b}` fallback, permissive template mode — pass `--force` to deny anyway.
 
 ## Overriding inputs
 
@@ -77,7 +77,7 @@ The failed step runs **again** from the start (for a loop step: the failed itera
   - **For AI agents** (no terminal): resume **refuses with a clear error** rather than silently repeating the side effect. Confirm with your human that re-running the step is safe, then re-run with `--force`.
 - A failed step that **never started** — it failed resolving its `${...}` templates (a typo, a missing field) before it ran — resumes without confirmation: nothing fired. A batch step whose item failed that way had already started (earlier items ran), so it still asks.
 
-`--force` is consent to re-running steps: it bypasses this confirmation **and** the edited-workflow check below. A denial never needs it.
+`--force` is consent to re-running steps: it bypasses this confirmation **and** the edited-workflow check below. A denial is never edit-checked (see above).
 
 ## Other behavior worth knowing
 

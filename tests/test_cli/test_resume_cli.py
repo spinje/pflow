@@ -967,6 +967,54 @@ def test_denying_a_paused_step_the_walk_cannot_enter_refuses_before_any_attempt(
     assert not marker.exists()
 
 
+@pytest.mark.parametrize(
+    "edits",
+    [
+        pytest.param(
+            (
+                (
+                    "### gated",
+                    "### extra\n\nInserted.\n\n- type: shell\n- next: gated\n\n```shell command\necho x\n```\n\n### gated",
+                ),
+                (
+                    '- next: gated\n\n```shell command\necho "up-value"',
+                    '- next: extra\n\n```shell command\necho "up-value"',
+                ),
+                ("- approval: required\n", "- approval: required\n- env:\n    V: ${extra.stdout}\n"),
+            ),
+            id="reads-an-inserted-step",
+        ),
+        pytest.param(
+            (
+                ("### up", "### source"),
+                ("- approval: required\n", "- approval: required\n- env:\n    V: ${source.stdout}\n"),
+            ),
+            id="reads-a-renamed-upstream",
+        ),
+    ],
+)
+def test_denying_a_step_that_reads_an_unrestored_step_refuses_and_force_denies(home, tmp_path, edits):
+    """The paused step's templates resolve BEFORE its gate fires: reading a step that did not run before
+    the pause would fail the attempt — consuming the token — instead of recording the "no". The preflight
+    refuses, keeping the token; the check is static (a `??` fallback cannot fail), so --force waives it."""
+    wf, marker, token = _pause_deny_wf(tmp_path)
+    text = wf.read_text(encoding="utf-8")
+    for before, after in edits:
+        text = text.replace(before, after)
+    wf.write_text(text, encoding="utf-8")
+    refused = _runner().invoke(cli, ["resume", token, "--approve", "no"])
+    assert refused.exit_code == 2, refused.stdout + refused.stderr
+    assert "which did not run before the pause" in refused.stdout + refused.stderr
+    assert len(list((home / ".pflow" / "debug").glob("workflow-trace-*.json"))) == 1  # token kept
+
+    # The author's real escape: the reference is guarded, so the denial can land.
+    wf.write_text(wf.read_text(encoding="utf-8").replace(".stdout}", '.stdout ?? ""}'), encoding="utf-8")
+    denied = _runner().invoke(cli, ["resume", token, "--approve", "no", "--force"])
+    assert denied.exit_code == 3, denied.stdout + denied.stderr
+    assert "Denied at gate 'gated'" in denied.stderr
+    assert not marker.exists()
+
+
 def test_denying_a_cached_gated_step_never_continues_past_it(home, tmp_path):
     """A memo hit returns a step's saved result before its approval gate fires. After another run
     approved and cached the gated step, a denial of the older pause must still meet the gate — never
