@@ -720,6 +720,30 @@ def test_pinned_run_not_found_broadcasts_and_stops(tmp_path, monkeypatch):
     assert messages == [{"type": "run-not-found", "run_id": "ghost"}]
 
 
+def test_a_pinned_trace_removed_before_it_was_read_reports_run_not_found(tmp_path, monkeypatch):
+    """Retention can remove an old trace between the pin's resolve and its first read. The viewer must hear
+    "not found" — never "stopped" (a free lock + no trailer on a file that is simply gone) or an endless empty
+    poll (no lock probe on Windows)."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    debug = tmp_path / ".pflow" / "debug"
+    debug.mkdir(parents=True)
+    wf = str(tmp_path / "wf.pflow.md")
+    path = _tp(debug, wf, "20260101-000000-000001", execution_id="run-old")
+    _write_trace(path, wf, complete=False)
+    real_resolve = RunTailer._resolve_pinned
+
+    def resolve_then_swept(self):
+        resolved = real_resolve(self)
+        resolved.unlink()  # the sweep runs here
+        return resolved
+
+    monkeypatch.setattr(RunTailer, "_resolve_pinned", resolve_then_swept)
+    messages: list[dict] = []
+    tailer = RunTailer(wf, lambda _k, message: messages.append(message), run_id="run-old")
+    asyncio.run(asyncio.wait_for(tailer.run(), timeout=5))  # returns on the not-found path
+    assert messages == [{"type": "run-not-found", "run_id": "run-old"}]
+
+
 @_unix_only
 def test_is_trace_locked_reflects_a_held_advisory_lock(tmp_path):
     """The exact-liveness primitive: `is_trace_locked` is True while a writer holds the flock, False once

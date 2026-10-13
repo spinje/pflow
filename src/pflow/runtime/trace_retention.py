@@ -60,13 +60,15 @@ _WINDOWS_UNLINK_RETRY_DELAY = 0.05
 @dataclass(frozen=True)
 class SweepReport:
     """What one sweep did. ``protected`` counts aged traces kept by a rule; ``skipped`` the removals that
-    failed; ``unreadable`` the aged traces kept because they could not be read (``unreadable_paths``)."""
+    failed; ``unreadable`` the aged traces kept because they could not be read (``unreadable_paths``);
+    ``unchecked_workflows`` the workflow files whose existence could not be determined (their traces kept)."""
 
     removed: int = 0
     protected: int = 0
     skipped: int = 0
     unreadable: int = 0
     unreadable_paths: tuple[Path, ...] = ()
+    unchecked_workflows: tuple[str, ...] = ()
 
 
 def retention_days() -> int | None:
@@ -124,16 +126,29 @@ def sweep_after_write(directory: Path) -> None:
         if not days:
             return
         report = prune_traces(directory, keep_days=days)
-        if report.skipped or report.unreadable:
-            shown = ", ".join(str(path) for path in report.unreadable_paths[:3])
-            logger.warning(
-                "trace retention kept %d unreadable trace(s)%s and could not remove %d trace(s); the next run retries",
-                report.unreadable,
-                f" ({shown})" if shown else "",
-                report.skipped,
-            )
+        if report.skipped or report.unreadable or report.unchecked_workflows:
+            logger.warning("trace retention %s; the next run retries", _problems(report))
     except Exception as exc:
         logger.warning("trace retention failed, no further traces removed: %s", exc)
+
+
+def _problems(report: SweepReport) -> str:
+    """The one warning's body: what this sweep could not judge or remove, naming the first three of each."""
+
+    def first_three(items: tuple[Any, ...]) -> str:
+        return f" ({', '.join(str(item) for item in items[:3])})" if items else ""
+
+    parts = []
+    if report.unreadable:
+        parts.append(f"kept {report.unreadable} unreadable trace(s){first_three(report.unreadable_paths)}")
+    if report.unchecked_workflows:
+        parts.append(
+            f"kept the traces of {len(report.unchecked_workflows)} workflow(s) whose file could not be checked"
+            f"{first_three(report.unchecked_workflows)}"
+        )
+    if report.skipped:
+        parts.append(f"could not remove {report.skipped} trace(s)")
+    return "; ".join(parts)
 
 
 def prune_traces(directory: Path, *, keep_days: int, now: datetime | None = None) -> SweepReport:
@@ -194,6 +209,9 @@ class _Sweep:
         self.unreadable: dict[Path, None] = {}  # insertion-ordered set
         self._heads: dict[Path, tuple[dict[str, Any] | None, bool | None]] = {}
         self._states: dict[str, Literal["present", "absent", "unknown"]] = {}
+        # Traces a classification read found unfinished (no trailer): their writer may finalize before the
+        # unlink, so the removal re-reads them (``_still_removable``).
+        self._unfinished: set[Path] = set()
         self._rules_applied: set[str] = set()  # workflows whose rules 2-3 ran (normalized paths)
 
     def run(self) -> SweepReport:
@@ -226,6 +244,7 @@ class _Sweep:
             skipped=skipped,
             unreadable=len(self.unreadable),
             unreadable_paths=tuple(self.unreadable),
+            unchecked_workflows=tuple(path for path, state in self._states.items() if state == "unknown"),
         )
 
     # --- reads (cached; FileNotFoundError and TraceUnreadableError propagate) ---
@@ -235,6 +254,13 @@ class _Sweep:
         if entry.path not in self._heads:
             self._heads[entry.path] = read_trace_meta_and_lock_strict(entry.path)
         return self._heads[entry.path]
+
+    def _trailer(self, entry: TraceEntry) -> dict[str, Any] | None:
+        """``read_trace_trailer_strict``, remembering a trace read while unfinished."""
+        trailer = read_trace_trailer_strict(entry.path)
+        if trailer is None:
+            self._unfinished.add(entry.path)
+        return trailer
 
     def _file_state(self, workflow_path: str) -> Literal["present", "absent", "unknown"]:
         """Rules 1-3 apply only while this is ``present`` (one stat per path per sweep); an inline
@@ -326,7 +352,7 @@ class _Sweep:
             if entry.only:
                 continue
             try:
-                if not _is_snapshot_trailer(read_trace_trailer_strict(entry.path)):
+                if not _is_snapshot_trailer(self._trailer(entry)):
                     continue
                 path = _workflow_path(self._head(entry)[0])
             except FileNotFoundError:
@@ -351,7 +377,7 @@ class _Sweep:
                 continue
             try:
                 meta = self._head(entry)[0]
-                trailer = read_trace_trailer_strict(entry.path)
+                trailer = self._trailer(entry)
             except FileNotFoundError:
                 continue
             except TraceUnreadableError:  # a marked trace could be a pending pause: keep the group
@@ -446,7 +472,7 @@ class _Sweep:
         previous wave removed. A source that could not be removed keeps its Attempts. Returns ``(removed,
         skipped, attempts kept)``."""
         present = Counter(entry.execution_id[:8] for entry in self.listing.traces if entry.execution_id)
-        removed = skipped = 0
+        removed = skipped = kept = 0
         pending = candidates
         while pending:
             wave = [entry for entry in pending if not _source_present(entry, present)]
@@ -455,13 +481,66 @@ class _Sweep:
             in_wave = {entry.path for entry in wave}
             pending = [entry for entry in pending if entry.path not in in_wave]
             for entry in wave:
-                if _remove_trace(entry):
+                outcome = self._remove(entry)
+                if outcome == "removed":
                     removed += 1
                     if entry.execution_id:
                         present[entry.execution_id[:8]] -= 1
-                else:
+                elif outcome == "skipped":
                     skipped += 1
-        return removed, skipped, len(pending)
+                else:
+                    kept += 1
+        return removed, skipped, len(pending) + kept
+
+    def _remove(self, entry: TraceEntry) -> Literal["removed", "kept", "skipped"]:
+        """Unlink a trace, then its marker (never the marker first: a pause must not lose its index entry while
+        its trace stays) — re-checking before each attempt that the trace did not finalize since it was judged.
+        ``skipped``: it could not be removed (kept, retried next sweep)."""
+        for attempt in (1, 2):
+            if not self._still_removable(entry):
+                return "kept"
+            try:
+                entry.path.unlink(missing_ok=True)
+                break
+            except PermissionError as exc:
+                transient = getattr(exc, "winerror", None) in _WINDOWS_TRANSIENT_UNLINK_ERRORS
+                if attempt == 2 or not transient:
+                    logger.debug("Could not remove trace %s", entry.path, exc_info=True)
+                    return "skipped"
+                time.sleep(_WINDOWS_UNLINK_RETRY_DELAY)  # Windows: another process holds it open
+            except OSError:
+                logger.debug("Could not remove trace %s", entry.path, exc_info=True)
+                return "skipped"
+        if entry.paused:
+            try:
+                paused_marker(entry.path).unlink(missing_ok=True)
+            except OSError:  # an orphan marker; the next sweep removes it
+                logger.debug("Could not remove marker of %s", entry.path, exc_info=True)
+        return "removed"
+
+    def _still_removable(self, entry: TraceEntry) -> bool:
+        """The facts a judgment rested on still hold. A writer finishing between the listing and the unlink
+        (it held its lock while the sweep listed and classified) can add the ``.paused`` marker or the trailer
+        that would have protected the trace — so after its lock was seen free, a marker that appeared or a
+        trailer that landed on a trace judged unfinished keeps it this sweep. Legacy names are never written."""
+        if entry.legacy:
+            return True
+        if not entry.paused:
+            try:
+                os.lstat(paused_marker(entry.path))
+                return False  # finalized Paused since the listing
+            except FileNotFoundError:
+                pass
+            except OSError:
+                return False  # cannot tell: keep
+        if entry.path in self._unfinished:
+            try:
+                return read_trace_trailer_strict(entry.path) is None
+            except FileNotFoundError:
+                return True  # already gone: the unlink is a no-op
+            except TraceUnreadableError:
+                return False
+        return True
 
     def _remove_orphan_markers(self) -> None:
         """A ``.paused`` marker whose trace is gone — removed only after a stat proves the trace absent (a
@@ -489,29 +568,3 @@ def _source_present(entry: TraceEntry, present: Counter[str]) -> bool:
         return False
     own = 1 if entry.execution_id is not None and entry.execution_id[:8] == prefix else 0
     return present[prefix] - own > 0
-
-
-def _remove_trace(entry: TraceEntry) -> bool:
-    """Unlink a trace, then its marker (never the marker first: a pause must not lose its index entry while
-    its trace stays). ``False`` when the trace could not be removed — it is kept and retried next sweep."""
-    try:
-        _unlink(entry.path)
-    except OSError:
-        logger.debug("Could not remove trace %s", entry.path, exc_info=True)
-        return False
-    if entry.paused:
-        try:
-            paused_marker(entry.path).unlink(missing_ok=True)
-        except OSError:  # an orphan marker; the next sweep removes it
-            logger.debug("Could not remove marker of %s", entry.path, exc_info=True)
-    return True
-
-
-def _unlink(path: Path) -> None:
-    try:
-        path.unlink(missing_ok=True)
-    except PermissionError as exc:
-        if getattr(exc, "winerror", None) not in _WINDOWS_TRANSIENT_UNLINK_ERRORS:
-            raise
-        time.sleep(_WINDOWS_UNLINK_RETRY_DELAY)
-        path.unlink(missing_ok=True)

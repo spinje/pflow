@@ -1,6 +1,8 @@
 """Tests for settings management."""
 
+import contextlib
 import json
+import logging
 import os
 import stat
 import sys
@@ -701,3 +703,36 @@ class TestRetentionSettingAndFailedLoads:
         reset = CliRunner().invoke(cli, ["settings", "reset"], input="y\n")
         assert reset.exit_code == 0, reset.output
         assert json.loads(path.read_text(encoding="utf-8"))["runtime"]["trace_retention_days"] == 14
+
+
+@skip_win32_posix_perms
+def test_two_managers_racing_warn_about_insecure_permissions_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Concurrent MCP requests build separate managers: their check-and-add on the shared warned-set must be
+    one step. Each thread's membership answer waits (bounded) for the other thread's check — two threads
+    answered before either adds both read "not yet warned"."""
+    import pflow.core.settings as settings_module
+
+    path = tmp_path / ".pflow" / "settings.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"env": {"K": "v"}}), encoding="utf-8")
+    path.chmod(0o644)
+    both_checking = threading.Barrier(2, timeout=0.5)
+
+    class RendezvousSet(set):  # type: ignore[type-arg]  # a plain set whose membership check meets the other thread
+        def __contains__(self, item: object) -> bool:
+            seen = super().__contains__(item)
+            with contextlib.suppress(threading.BrokenBarrierError):
+                both_checking.wait()  # the other thread checks before this one acts on its answer
+            return seen
+
+    monkeypatch.setattr(settings_module, "_INSECURE_PERMISSIONS_WARNED", RendezvousSet())
+    with caplog.at_level(logging.WARNING, logger="pflow.core.settings"):
+        threads = [threading.Thread(target=SettingsManager(settings_path=path).load) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    assert sum("insecure permissions" in record.getMessage() for record in caplog.records) == 1

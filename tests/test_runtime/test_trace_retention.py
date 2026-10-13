@@ -629,7 +629,7 @@ def test_an_unreadable_attempt_or_a_trace_newer_than_the_snapshot_keeps_its_grou
 
 
 def test_a_workflow_file_that_cannot_be_checked_keeps_its_group(
-    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     workflow = present(tmp_path, "w")
     group = [trace(debug, workflow, days, status="failed") for days in (50, 40, 30)]
@@ -641,12 +641,17 @@ def test_a_workflow_file_that_cannot_be_checked_keeps_its_group(
             raise PermissionError(errno.EACCES, "Operation not permitted", workflow)
         return real_stat(path, *args, **kwargs)
 
-    with monkeypatch.context() as patched:
+    monkeypatch.setenv("PFLOW_TRACE_RETENTION_DAYS", str(WINDOW))
+    with monkeypatch.context() as patched, caplog.at_level(logging.WARNING):
         patched.setattr(os, "stat", stat)
-        prune(debug)
+        sweep_after_write(debug)
 
     assert all(path.exists() for path in group)
     assert not control.exists()
+    # Never silent: the one warning names the workflow whose file could not be checked.
+    warnings = [record.getMessage() for record in caplog.records if record.name == "pflow.runtime.trace_retention"]
+    assert len(warnings) == 1 and "1 workflow(s) whose file could not be checked" in warnings[0], warnings
+    assert workflow in warnings[0]
 
 
 def test_a_trace_that_vanishes_mid_sweep_is_not_counted_and_exposes_nothing(
@@ -1168,3 +1173,217 @@ def test_a_run_that_sweeps_warns_about_insecure_settings_exactly_once(
     assert not aged.exists(), "the sweep ran and read the settings file"
     insecure = [record for record in caplog.records if "insecure permissions" in record.getMessage()]
     assert len(insecure) == 1, [record.getMessage() for record in insecure]
+
+
+# ── A writer finishing between the listing and the unlink ────────────────────────────────────────────
+
+
+def _finalize(path: Path, *, status: str) -> None:
+    """What the collector's ``finalize`` does to a trace: the marker first (a pause), then the trailer."""
+    if status == "paused":
+        paused_marker(path).touch()
+    trailer: dict[str, Any] = {"kind": "run.complete", "final_status": status, "nodes_executed": 1}
+    if status == "paused":
+        trailer.update(paused_node_id="gated", gate_request=_APPROVAL)
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(trailer) + "\n")
+
+
+@contextmanager
+def finished_before_the_probe(
+    monkeypatch: pytest.MonkeyPatch, running: Path, finish: Callable[[], None] | None
+) -> Iterator[None]:
+    """The writer of ``running`` holds its lock (POSIX) through the listing and the classification, then —
+    just before the sweep's removal probe opens it — ``finish`` runs and the lock is released: the
+    deterministic version of a run that finalizes mid-sweep. ``finish=None``: the writer dies unfinished."""
+    import pflow.runtime.trace_retention as retention
+
+    real_probe = retention.read_trace_meta_and_lock_strict
+    with ExitStack() as stack:
+        release = stack.enter_context(ExitStack())
+        if POSIX:
+            release.enter_context(held_lock(running))
+
+        def probe(path: Path) -> tuple[dict[str, Any] | None, bool | None]:
+            if path == running:
+                if finish is not None:
+                    finish()
+                release.close()  # the writer closed its handle
+            return real_probe(path)
+
+        monkeypatch.setattr(retention, "read_trace_meta_and_lock_strict", probe)
+        yield
+
+
+@pytest.mark.parametrize("finishes", [True, False], ids=["finalizes-paused", "dies-unfinished"])
+def test_a_trace_that_finalizes_paused_after_the_listing_is_kept(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, finishes: bool
+) -> None:
+    """Listed with no marker; becomes an answerable pause before the unlink. The newer run is the workflow's
+    newest run and Snapshot, so only the pause could keep it."""
+    workflow = present(tmp_path, "w")
+    running = trace(debug, workflow, 40, status="incomplete", events=[_event("prep")], finished=False)
+    trace(debug, workflow, 30)
+
+    with finished_before_the_probe(
+        monkeypatch, running, (lambda: _finalize(running, status="paused")) if finishes else None
+    ):
+        prune(debug)
+
+    if finishes:
+        assert running.exists() and paused_marker(running).exists()
+        assert [run.path for run in list_paused_runs(debug).runs] == [running]
+    else:
+        assert not running.exists(), "the control: an unfinished trace whose writer died IS removed"
+
+
+@pytest.mark.parametrize("finishes", [True, False], ids=["finalizes-success", "dies-unfinished"])
+def test_a_trace_that_finalizes_as_the_newest_snapshot_after_its_tail_read_is_kept(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, finishes: bool
+) -> None:
+    """The Snapshot walk read this trace's tail while it ran (no trailer) and picked an older success; it then
+    finishes successful — the workflow's real Snapshot — before the unlink."""
+    workflow = present(tmp_path, "w")
+    older_snapshot = trace(debug, workflow, 50)
+    running = trace(debug, workflow, 40, status="incomplete", finished=False)
+    trace(debug, workflow, 30, status="failed")
+
+    with finished_before_the_probe(
+        monkeypatch, running, (lambda: _finalize(running, status="success")) if finishes else None
+    ):
+        prune(debug)
+
+    assert older_snapshot.exists()
+    assert running.exists() is finishes
+    if finishes:
+        loaded = load_full_run_events(workflow, debug_dir=debug)
+        assert loaded is not None and loaded[0] == load_trace_file(running)["nodes"]
+
+
+@pytest.mark.parametrize("finishes", [True, False], ids=["finalizes-between-attempts", "stays-unfinished"])
+def test_a_windows_retry_rechecks_a_trace_that_finalized_meanwhile(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, finishes: bool
+) -> None:
+    """Windows has no lock probe; the writer's open handle fails the first unlink. If it finalizes Paused
+    before the retry, the retry must not delete it."""
+    workflow = present(tmp_path, "w")
+    running = trace(debug, workflow, 40, status="incomplete", events=[_event("prep")], finished=False)
+    trace(debug, workflow, 30)
+    real_unlink = Path.unlink
+    attempts: list[Path] = []
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        if self == running and not attempts:
+            attempts.append(self)
+            if finishes:
+                _finalize(running, status="paused")
+            error = PermissionError(errno.EACCES, "The process cannot access the file", str(self))
+            error.winerror = 32  # type: ignore[attr-defined]  # set by Windows only; the sweep reads it
+            raise error
+        real_unlink(self, missing_ok=missing_ok)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, "unlink", unlink)
+        patched.setattr("pflow.runtime.trace_retention._WINDOWS_UNLINK_RETRY_DELAY", 0)
+        prune(debug)
+
+    assert attempts == [running]
+    assert running.exists() is finishes
+
+
+def test_a_pause_listed_between_its_marker_and_its_trailer_is_kept(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The writer is inside ``finalize``: the marker is written, the trailer not yet, so the pause rule reads
+    "not a pause". With no lock to probe (Windows) the writer's open handle fails the first unlink; the
+    trailer lands before the retry — an answerable pause, kept. (On POSIX the held lock keeps it: rule 5.)"""
+    import pflow.runtime.trace_retention as retention
+
+    workflow = present(tmp_path, "w")
+    running = trace(debug, workflow, 40, status="incomplete", events=[_event("prep")], finished=False)
+    paused_marker(running).touch()
+    trace(debug, workflow, 30)
+    real_probe = retention.read_trace_meta_and_lock_strict
+    real_unlink = Path.unlink
+
+    def no_lock_probe(path: Path) -> tuple[dict[str, Any] | None, bool | None]:
+        return real_probe(path)[0], None  # what Windows reports
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        if self == running and running.read_text(encoding="utf-8").count("run.complete") == 0:
+            with open(running, "a", encoding="utf-8") as handle:  # the writer's trailer, then its close
+                handle.write(
+                    json.dumps({
+                        "kind": "run.complete",
+                        "final_status": "paused",
+                        "nodes_executed": 1,
+                        "paused_node_id": "gated",
+                        "gate_request": _APPROVAL,
+                    })
+                    + "\n"
+                )
+            error = PermissionError(errno.EACCES, "The process cannot access the file", str(self))
+            error.winerror = 32  # type: ignore[attr-defined]  # set by Windows only; the sweep reads it
+            raise error
+        real_unlink(self, missing_ok=missing_ok)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(retention, "read_trace_meta_and_lock_strict", no_lock_probe)
+        patched.setattr(Path, "unlink", unlink)
+        patched.setattr(retention, "_WINDOWS_UNLINK_RETRY_DELAY", 0)
+        prune(debug)
+
+    assert running.exists() and paused_marker(running).exists()
+    assert [run.path for run in list_paused_runs(debug).runs] == [running]
+
+
+# ── A settings file that cannot be read never reads as "absent" ──────────────────────────────────────
+
+
+def test_a_stat_fault_on_the_settings_file_still_honours_its_opt_out(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``Path.exists()`` reads a stat fault as "no file" on Python 3.14 — which meant defaults, i.e. 14 days,
+    over a file that says 0. The load opens the file instead; only a missing file means defaults."""
+    monkeypatch.delenv("PFLOW_TRACE_RETENTION_DAYS")
+    settings = _settings_file(tmp_path, {"runtime": {"trace_retention_days": 0}})
+    aged = trace(debug, deleted(tmp_path, "w"), 400)
+    real_stat = os.stat
+
+    def stat(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        if str(path) == str(settings):
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return real_stat(path, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(os, "stat", stat)
+        assert retention_days() == 0
+        sweep_after_write(debug)
+
+    assert aged.exists()
+
+
+def test_a_settings_file_that_cannot_be_opened_prunes_nothing_and_is_never_overwritten(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from pflow.core.settings import SettingsManager
+    from pflow.core.user_errors import UserFriendlyError
+
+    monkeypatch.delenv("PFLOW_TRACE_RETENTION_DAYS")
+    settings = _settings_file(tmp_path, {"runtime": {"trace_retention_days": 0}, "env": {"K": "v"}})
+    original = settings.read_bytes()
+    aged = trace(debug, deleted(tmp_path, "w"), 400)
+
+    with faulted_opens(monkeypatch, settings, lambda: PermissionError(errno.EACCES, "Permission denied")):
+        with caplog.at_level(logging.WARNING):
+            sweep_after_write(debug)
+        manager = SettingsManager()
+        manager.load()
+        assert manager.load_error is not None and "Permission denied" in manager.load_error
+        with pytest.raises(UserFriendlyError):
+            manager.set_env("NEW", "x")
+
+    assert aged.exists()
+    assert settings.read_bytes() == original
+    warnings = [record.getMessage() for record in caplog.records if record.name == "pflow.runtime.trace_retention"]
+    assert len(warnings) == 1 and "could not be loaded" in warnings[0], warnings

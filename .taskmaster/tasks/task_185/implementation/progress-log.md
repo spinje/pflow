@@ -718,3 +718,74 @@ the sweep runs on both paths.
   tests.
 - Next: orchestrator — verify, commit P4; the P3 mid-task review findings come to me afterwards (the review
   artifacts `reviews/midtask-p3.*` are untouched).
+
+## [2026-10-13 03:31] task-phase-implementer (Opus) — P3 mid-task review (`reviews/midtask-p3.md`) dispositioned
+- Did: read the merged report in full (2 convergent Criticals, 3 Warnings); verified each against the code at
+  `98a09afc`; fixed all five, each with a regression test that fails without its fix.
+- Changed: `runtime/trace_retention.py`, `core/settings.py`, `ui/run_tailer.py`, `context/adr/0018-…md`; tests in
+  `test_trace_retention.py` (+10), `test_settings.py` (+1), `test_run_tailer.py` (+1).
+- Dispositions:
+  - **C1 — CONFIRMED, FIXED as a class.** Reachable when a run lasts longer than the window: an aged trace whose
+    writer is still live. The sweep judged it from facts taken while it ran — the listing's marker flag, or a
+    tail read with no trailer. The writer then finalized (marker, trailer, close), the probe saw the lock free,
+    and the trace was unlinked: a pending pause, or the workflow's real newest Snapshot.
+    - Fix: `_Sweep._remove` runs `_still_removable` before EVERY unlink attempt, i.e. after the lock was seen
+      free, and on the Windows retry too. A `.paused` marker that appeared since the listing (`os.lstat`,
+      three outcomes) keeps the trace this sweep. So does a trailer that landed on a trace a classification read
+      as unfinished (`_Sweep._trailer` records those). A stale marker flag can therefore no longer orphan a
+      marker either.
+    - Tests: finalizes-Paused after the listing; finalizes-success after its tail read; a Windows retry after
+      the writer finalized; a pause listed between its marker and its trailer (the Windows shape — on POSIX the
+      held lock already keeps it, rule 5). Each has a control in which the unchanged unfinished trace IS removed.
+      The interleaving is deterministic: a monkeypatched probe or unlink finalizes the trace and releases a real
+      `flock`; no sleeps.
+    - Mutations, each killed: marker re-check dropped, trailer re-check dropped, `_unfinished` not recorded,
+      the pause rule's read not recorded, re-check on the first attempt only.
+    - Residual, stated: on Windows (no lock), a writer that closes in the microseconds between the re-check and
+      a SUCCESSFUL first unlink can still lose its trace. It needs a run longer than the window that finalizes
+      in that instant; there is no atomic check-and-delete short of opening the file exclusively.
+  - **C2 — CONFIRMED** (reproduced: Python 3.14, a directory chmod 000 → `Path.exists()` False, `open`
+    PermissionError). **FIXED as a class.**
+    - `_load_from_file` opens the file directly. `FileNotFoundError` / `NotADirectoryError` → defaults; any
+      other fault → `load_error`, so pruning stops and saves are refused. The redundant `exists()` in
+      `_validate_permissions` is gone too.
+    - Swept for the class: `trace_retention`, `trace_dir` and `settings` have no other `exists()` / `is_file()`
+      on a decision path. `settings init` / `reset`'s `exists()` only chooses whether to prompt; they are
+      outside this diff and were left as is.
+    - Tests: an `os.stat` fault on `settings.json` still honours its `0` (this fails on the old `exists()`
+      shape); an `open` fault → nothing pruned, one warning, `set_env` refused, the file byte-identical.
+    - Real check (isolated HOME, settings symlinked into a chmod-000 directory): `retention_days()` → `None`,
+      with "trace retention skipped … could not be loaded (Permission denied)".
+  - **W1 — FIXED.** `_first_insecure_warning` does the check-and-add under one module lock; the warning is
+    emitted outside it. Test: two managers in two threads, rendezvousing after the membership answer, give
+    exactly one warning. The unlocked version fails it (mutation). The test's first draft rendezvoused BEFORE
+    the check and passed unlocked; it was rewritten.
+  - **W2 — FIXED.** `SweepReport.unchecked_workflows` lists the paths whose `workflow_file_state` was `unknown`.
+    The one warning (`_problems`) now names them: "kept the traces of N workflow(s) whose file could not be
+    checked (…)". The existing unknown-state test asserts it through `sweep_after_write`; dropping the warning
+    condition fails it.
+  - **W3 — CONFIRMED** (narrow: the pin resolves, then a sweep removes the trace before its first read).
+    **FIXED backend-only.** `_read_bytes` returns `None` for a vanished file. A pinned tailer whose run was not
+    fully read then broadcasts the existing `run-not-found` and stops. `web/`'s handler already clears the
+    canvas and shows the missing-run banner, so `web/` is untouched. Test: resolve then remove → exactly
+    `[run-not-found]`. Without the fix it broadcasts run-stopped and keeps polling (the test times out and
+    fails).
+- ADR-0018: one sentence for the re-check after a free lock and before each unlink attempt; a settings file
+  that exists but cannot be read is a failed load.
+- Verified:
+  - `make check` exit 0; `make test` 11968 passed (11957 + 11, 0 failed); `pytest -m trace_files` 690 passed.
+  - The full P3 mutation batch was re-run: 44 applied, 44 killed. Two anchors were re-shaped and re-run by hand
+    (`load_error` not cleared: 1 failed; dedupe dropped: 2 failed); one anchor is gone (`collider-from-walk`,
+    deleted code).
+  - `git diff` against the engine / `web/` / `workflow_executor.py`: empty.
+- Deviations/surprises:
+  - C1's real window is "a run longer than the retention window", so it is rare; it is fixed because a deleted
+    pending pause is irreversible.
+  - W1's first test draft was theater: it passed without the lock (the rendezvous came before the check). It was
+    caught by mutation and rewritten.
+  - The W3 fix does not cover the UNPINNED overlay; there, a vanished newest trace is simply re-discovered on the
+    next poll.
+- Self-checks: fully happy? — yes, with the Windows residual stated. test-reflect: each new test was
+  mutation-verified (counts above); the `open`-fault settings test is a regression guard (the pre-fix shape also
+  handled that arm), labelled as such; the `os.stat`-fault test is the one that proves C2's fix.
+- Next: orchestrator — verify, commit; then the completion gate.

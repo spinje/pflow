@@ -353,7 +353,12 @@ class RunTailer:
                     current = self._current  # pinned: the fixed file resolved above
                 if current is not None:
                     data = await asyncio.to_thread(self._read_bytes, current)  # off-loop I/O
-                    for message in self._consume(data):  # loop: parse + mutate state
+                    if data is None and self._run_id is not None and self._run is None:
+                        # The pinned trace is gone before its run was read in full (Retention removed it):
+                        # say so, never "stopped" or an endless empty poll.
+                        self._broadcast(self._key, {"type": "run-not-found", "run_id": self._run_id})
+                        return
+                    for message in self._consume(data or b""):  # loop: parse + mutate state
                         self._broadcast(self._key, message)
                     await self._check_stopped(current)
             except Exception:
@@ -473,16 +478,19 @@ class RunTailer:
         self._run = None
         self._stopped = False
 
-    def _read_bytes(self, path: Path) -> bytes:
+    def _read_bytes(self, path: Path) -> bytes | None:
         """Read newly-appended bytes from the current offset — BLOCKING I/O, run via ``asyncio.to_thread``.
-        Touches only ``self._offset`` (and only here, serialized by the poll loop's ``await``), so it never
-        races the loop-owned ``_state``/``_buf``."""
+        ``None`` when the file is gone; any other read fault reads as nothing new. Touches only ``self._offset``
+        (and only here, serialized by the poll loop's ``await``), so it never races the loop-owned
+        ``_state``/``_buf``."""
         try:
             with open(path, "rb") as handle:
                 handle.seek(self._offset)
                 data = handle.read()
                 self._offset += len(data)
             return data
+        except FileNotFoundError:
+            return None
         except OSError:
             return b""
 

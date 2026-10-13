@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Settings files already warned about insecure permissions in this process: one run loads settings from
 # several places (and Retention once more at finalize), and the warning is per file, not per load.
 _INSECURE_PERMISSIONS_WARNED: set[Path] = set()
+_INSECURE_PERMISSIONS_LOCK = threading.Lock()  # concurrent MCP requests build separate managers
 
 # Valid output modes for probe output (used by settings validator and CLI)
 OUTPUT_MODES: list[str] = ["smart", "structure", "full"]
@@ -149,6 +150,15 @@ class PflowSettings(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
 
 
+def _first_insecure_warning(settings_path: Path) -> bool:
+    """Whether this process has not yet warned about ``settings_path``'s permissions (and now has)."""
+    with _INSECURE_PERMISSIONS_LOCK:
+        if settings_path in _INSECURE_PERMISSIONS_WARNED:
+            return False
+        _INSECURE_PERMISSIONS_WARNED.add(settings_path)
+        return True
+
+
 def unknown_settings_keys(model: BaseModel, path: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], Any]]:
     """Every key no settings model declares, at every level, as ``(path, value)`` — e.g.
     ``(("llm", "trace_retention_day"), 0)``."""
@@ -193,19 +203,20 @@ class SettingsManager:
         return self.load()
 
     def _load_from_file(self) -> PflowSettings:
-        """Load settings from file or return defaults; a file that fails to load sets ``load_error``."""
+        """Load settings from file or return defaults. Only a file that does not exist means defaults; any
+        other fault (unreadable, corrupt, invalid) sets ``load_error`` — never ``Path.exists()``, which reads a
+        permission fault as "absent" on Python 3.14."""
         self.load_error = None
-        if self.settings_path.exists():
-            try:
-                with open(self.settings_path, encoding="utf-8") as f:
-                    data = json.load(f)
-                return PflowSettings(**data)
-            except Exception as e:
-                # If file is corrupted, use defaults
-                self.load_error = str(e)
-                logger.warning(f"Failed to load settings from {self.settings_path} ({e}); using defaults")
-                return PflowSettings()
-        return PflowSettings()
+        try:
+            with open(self.settings_path, encoding="utf-8") as f:
+                data = json.load(f)
+            return PflowSettings(**data)
+        except (FileNotFoundError, NotADirectoryError):
+            return PflowSettings()
+        except Exception as e:
+            self.load_error = str(e)
+            logger.warning(f"Failed to load settings from {self.settings_path} ({e}); using defaults")
+            return PflowSettings()
 
     def _apply_env_overrides(self, settings: PflowSettings) -> None:
         """Apply environment variable overrides."""
@@ -454,9 +465,6 @@ class SettingsManager:
         if sys.platform == "win32":
             return
 
-        if not self.settings_path.exists():
-            return
-
         try:
             # Check current permissions
             file_stat = os.stat(self.settings_path)
@@ -469,8 +477,7 @@ class SettingsManager:
                     # Use provided settings or load (avoid recursion)
                     if settings is None:
                         settings = self.load()
-                    if settings.env and self.settings_path not in _INSECURE_PERMISSIONS_WARNED:
-                        _INSECURE_PERMISSIONS_WARNED.add(self.settings_path)
+                    if settings.env and _first_insecure_warning(self.settings_path):
                         logger.warning(
                             f"Settings file {self.settings_path} contains secrets "
                             f"but has insecure permissions {oct(mode)}. "
