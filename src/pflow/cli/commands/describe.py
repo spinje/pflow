@@ -21,7 +21,7 @@ def describe_cmd(name: str) -> None:
       pflow describe my-workflow
       pflow describe ./drafts/fetch-github-prs.pflow.md
     """
-    from pflow.cli.workflow_interface import format_workflow_interface_for_cli
+    from pflow.cli.workflow_interface import format_workflow_interface_for_cli, resolved_interface_metadata
     from pflow.core.exceptions import WorkflowNotFoundError
     from pflow.core.user_errors import UserFriendlyError
     from pflow.execution.workflow_resolver import resolve_workflow
@@ -46,7 +46,7 @@ def describe_cmd(name: str) -> None:
             ) from e
         if resolved.source != "file":
             _handle_workflow_not_found(name, workflow_manager)
-        metadata = {"ir": resolved.ir, "description": resolved.description or "No description"}
+        metadata = resolved_interface_metadata(resolved)
         example_name = shlex.quote(name)
 
     formatted = format_workflow_interface_for_cli(name, metadata, example_name=example_name)

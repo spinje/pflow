@@ -509,7 +509,7 @@ def test_batched_host_on_an_older_trace_still_needs_confirmation(home, tmp_path)
     _age_trace(home, exec_id, drop_lines=_is_host_start)
     result = _invoke("resume", exec_id)
     assert result.exit_code == 2
-    assert "Resuming re-runs step 'host' (a workflow step)" in _out(result)
+    assert "Resuming re-runs the workflow step 'host'," in _out(result)
     assert ledger.read_text(encoding="utf-8").splitlines() == ["fired a"]  # nothing re-fired
 
 

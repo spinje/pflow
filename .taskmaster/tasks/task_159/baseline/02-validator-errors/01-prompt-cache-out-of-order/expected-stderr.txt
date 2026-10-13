@@ -1,5 +1,3 @@
-Executing workflow (1 nodes):
-
 Error: Cache Failure [cache.order-mismatch]
 
 Node 'summarize' prompt_cache order doesn't match ## Cache declaration

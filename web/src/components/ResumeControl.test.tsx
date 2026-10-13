@@ -27,7 +27,7 @@ const STALE_DIAGNOSTIC = {
   suggestions: [
     "Re-run the workflow from the start so the edit takes effect.",
     "Pass --force to resume anyway: steps before 'append' keep their saved outputs and are not re-run. --force " +
-      "also re-runs 'append' (a shell step that already started in the original run), so its side effects may " +
+      "also re-runs the shell step 'append', which already started in the original run, so its side effects may " +
       "fire again — if you are an AI agent, confirm that with your human first.",
   ],
   source: "runtime",
@@ -47,7 +47,7 @@ const SIDE_EFFECT_DIAGNOSTIC = {
   severity: "error",
   title: "Resume needs confirmation",
   message:
-    "Resuming re-runs step 'boom' (a shell step), and its side effects may fire again. This run is " +
+    "Resuming re-runs the shell step 'boom', and its side effects may fire again. This run is " +
     "non-interactive (agent/MCP/pipe — no terminal to confirm on), so resume refuses rather than repeat them silently.",
   suggestions: [SIDE_EFFECT_ASK, SIDE_EFFECT_FORCE],
   node_id: "boom",
@@ -112,7 +112,7 @@ describe("ResumeControl", () => {
 
     // Presence: the edited restored step, what --force would accept, and what it would re-fire.
     expect(await screen.findByText(STALE_DIAGNOSTIC.message)).toBeTruthy();
-    expect(screen.getByText(/--force also re-runs 'append' \(a shell step that already started/)).toBeTruthy();
+    expect(screen.getByText(/--force also re-runs the shell step 'append', which already started/)).toBeTruthy();
     expect(screen.getByText("Re-run the workflow from the start so the edit takes effect.")).toBeTruthy();
     expect(screen.getByText(STALE_DIAGNOSTIC.title)).toBeTruthy(); // the CLI's "Error: <title>" headline
     // Absence: no UI-side paraphrase beside it — one source of the text.
@@ -120,7 +120,7 @@ describe("ResumeControl", () => {
     // The ack follows ALL of the text in document order — never pinned above it — so reaching
     // "Resume anyway" in the scrolling callout passes the re-fire line first.
     const anyway = screen.getByRole("button", { name: "Resume anyway" });
-    const refire = screen.getByText(/--force also re-runs 'append'/);
+    const refire = screen.getByText(/--force also re-runs the shell step 'append'/);
     expect(refire.compareDocumentPosition(anyway) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(anyway.closest(".gate-foot")).toBeNull();
 

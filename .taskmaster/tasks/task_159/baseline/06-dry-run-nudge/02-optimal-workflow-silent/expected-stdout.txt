@@ -1,4 +1,4 @@
-Dry-run for workflow.pflow.md: 1 nodes
+Dry-run for workflow.pflow.md: 1 node
 
   ─── nothing cached — full run ───
   ▸ scoring  [llm]   ≈ $? (no history)

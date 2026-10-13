@@ -35,7 +35,8 @@ but does not create execution resources or invoke nodes.
 
 `run` hands off between `_compile_for_run` (everything before the engine, ending with the
 `--only` target check) and `_execute` (the engine run); a failure before the hand-off carries
-`engine_started=False`, which the CLI exits 2 for (see `cli/CLAUDE.md`).
+`engine_started=False`, which the CLI exits 2 for (see `cli/CLAUDE.md`). `on_engine_start` fires at
+the hand-off — the CLI prints its `Executing workflow (N nodes):` header there, never above a refusal.
 
 `_execute` annotates exceptions with the shared store, and
 `_exception_to_result` transfers it to `ExecutionResult.shared_after`. Losing this
