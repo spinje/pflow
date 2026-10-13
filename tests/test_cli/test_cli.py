@@ -379,20 +379,32 @@ def test_report_autoselect_ranks_by_start_time_not_mtime(tmp_path: Path, monkeyp
     assert "Skipped a newer trace" not in result.stderr  # every trace read fine (the disclosure's absence)
 
 
-def test_report_autoselect_names_a_newer_trace_it_could_not_read(tmp_path: Path, monkeypatch):
-    """A newer trace that cannot be read is named on stderr: "latest" never silently means an older run."""
+@pytest.mark.parametrize("nth", [None, 2], ids=["the-trailer-read", "the-full-load"])
+@pytest.mark.parametrize("with_older", [True, False], ids=["older-control", "nothing-older"])
+def test_report_autoselect_names_a_newer_trace_it_could_not_read(
+    tmp_path: Path, monkeypatch, nth: int | None, with_older: bool
+):
+    """A newer trace that cannot be read — at its tail read, or only at the full load after a clean tail — is
+    named on stderr with its cause: "latest" never silently means an older run, and with nothing older the
+    miss says the trace was unreadable, never "only in-flight or interrupted runs"."""
     import builtins
     import errno
     import io
+    import itertools
 
     debug_dir = tmp_path / ".pflow" / "debug"
     debug_dir.mkdir(parents=True)
-    older = _write_jsonl_trace(debug_dir / _report_trace_name("run-b", datetime(2026, 1, 1)), _COMPLETE_TRACE_LINES)
+    older = (
+        _write_jsonl_trace(debug_dir / _report_trace_name("run-b", datetime(2026, 1, 1)), _COMPLETE_TRACE_LINES)
+        if with_older
+        else None
+    )
     newer = _write_jsonl_trace(debug_dir / _report_trace_name("run-a", datetime(2026, 1, 2)), _COMPLETE_TRACE_LINES)
     real_open = builtins.open
+    opens = itertools.count(1)
 
     def faulty(file: Any, *args: Any, **kwargs: Any) -> Any:
-        if str(file) == str(newer):
+        if str(file) == str(newer) and (nth is None or next(opens) == nth):
             raise PermissionError(errno.EACCES, "Permission denied")
         return real_open(file, *args, **kwargs)
 
@@ -401,9 +413,14 @@ def test_report_autoselect_names_a_newer_trace_it_could_not_read(tmp_path: Path,
     monkeypatch.setattr(io, "open", faulty)
     result = click.testing.CliRunner(mix_stderr=False).invoke(main, ["report"])
 
-    assert result.exit_code == 0, result.stderr
-    assert f"Using latest trace: {older}" in result.stderr
     assert f"Skipped a newer trace — could not read trace {newer}: Permission denied" in result.stderr
+    if with_older:
+        assert result.exit_code == 0, result.stderr
+        assert f"Using latest trace: {older}" in result.stderr
+    else:
+        assert result.exit_code == 1
+        assert "No readable completed trace found in ~/.pflow/debug/ (1 could not be read" in result.stderr
+        assert "in-flight or interrupted" not in result.stderr
 
 
 def test_report_autoselect_only_incomplete_errors_clearly(tmp_path: Path, monkeypatch):

@@ -129,6 +129,12 @@ close it but contradicts the ruled cutover — flagged at handback as the user's
 
 ### 1.2 Module `src/pflow/core/trace_dir.py` (new; mechanism, no policy)
 
+> **As built — supersedes the lines below** (completion gate rounds 1–2; dispositions in the progress log):
+> `workflow_file_state` → `core/path_state.py::path_state(path) -> "present"|"absent"|"unknown"` (a dangling
+> symlink is `unknown`; settings, retention, resume and `resume list` all use it). `is_trace_locked(path)` has
+> no `strict=` mode; the deleter probes through `read_trace_meta_and_lock_strict` (one open). `Unreadable` is
+> `TraceUnreadableError(PflowError)`; its message names the path once (`… {path}: {strerror}`).
+
 Home: `core/`, beside `core/trace_io.py` (the read seam) — NOT `runtime/`: `pflow/runtime/__init__.py`
 imports the compiler and the engine, so a `ui/` import of `pflow.runtime.trace_dir` would drag ~100
 modules into the Viewer process; `core/prompt_cache_analysis/trace_loading.py` also stays inside `core/`.
@@ -216,6 +222,20 @@ there (drop the full re-read → they fail).
 
 ### 1.4 Readers
 
+> **As built — supersedes the lines below:** `_iter_workflow_traces(entries, workflow_path, *, unreadable=)`
+> — entries are required (callers own the listing; no `debug_dir`/`None` fallback). `--only` never walks past
+> an unreadable candidate: a strict tail read (an unreadable tail goes to the full load), the full load with
+> `unreadable="raise"`, mapped to `OnlySnapshotUnreadableError` (advice: restore read permission; never move or
+> delete a trace — it may be consumption evidence). `report` auto-select names every candidate it could not read
+> or parse (either read) and says "No readable completed trace" when that explains the miss.
+> `list_paused_runs(debug_dir=None)` owns its listing (no `listing=`); strict reads; `PausedRunListing(runs,
+> hidden_missing_file: list[PausedRun], unreadable: list[str], legacy_count)`; `resume list` names hidden tokens
+> + paths and unreadable traces, and says "No readable paused runs; the list is incomplete." instead of "No
+> paused runs." when any were unreadable. By-id on an `--only` trace refuses `ResumeNotResumableError` ("was an
+> --only run"), and a failed `--only` run prints no resume hint. The post-consumption check is `path.stat()`,
+> never `exists()`. `/api/gate`: gone → aged-out 404, unreadable → 500 naming the file, corrupt → not paused;
+> the Viewer scan cache never caches a read fault.
+
 | Reader | After |
 |---|---|
 | `workflow_trace._iter_workflow_traces(debug_dir, workflow_path, *, entries=None)` | `entries = entries if entries is not None else list_traces(debug_dir).traces`; candidates = entries with `workflow_hash in workflow_hashes(workflow_path)` and `not e.only` (no `resumed_from=` parameter — the consumption check has its own iterator); then the existing per-file guards (load, dict, `workflow_path` re-check, `2.` version, `only_node is None` — kept: a hand-made name may carry no tag). Still NEVER filters `final_status`. |
@@ -239,6 +259,16 @@ Glob sites removed: `workflow_trace.py:169-172`, `resume_source.py:304,1138`, `r
 once, in `trace_dir.debug_dir`.
 
 ### 1.5 Retention `src/pflow/runtime/trace_retention.py` (new; policy)
+
+> **As built — supersedes the lines below:** `SweepReport(removed: int, skipped: tuple[str] ("<path>: <cause>"),
+> unreadable: tuple[Path], unchecked_workflows: tuple[str])` — no `protected`; count with `len()`; the warning
+> names the first three of each with a remedy. `retention_days()`: override from the process env, else
+> `settings.env`'s stored exact key; `None` + one warning for a misspelling matched by the stems
+> `reten`/`retain` in unknown settings keys (any level), `settings.env` names saying `trace` or `PFLOW_`, and
+> (override unset) `PFLOW_` process variables; a failed load also covers duplicate JSON keys and a bool
+> `trace_retention_days` (`true` is not 1; `"0"` still coerces to 0). `settings init`/`reset` ask before replacing anything
+> at the path (`path_state`); the failed-load and insecure-permissions warnings print once per file per
+> process; `settings show` ends with the window in effect.
 
 ```python
 @dataclass(frozen=True) class SweepReport: removed: int; protected: int; skipped: int; unreadable: int

@@ -79,7 +79,7 @@ pflow resume my-workflow                             # resume the newest failed 
 pflow resume my-workflow api_url=https://fixed.example.com   # override an input while resuming
 ```
 
-The failed run prints the exact command to use (`To resume from the failed step: pflow resume <execution-id>`). A resumed run is a new run with its own trace, linked to the original.
+The failed run prints the exact command to use (`To resume from the failed step: pflow resume <execution-id>`); a failed `--only` run doesn't — it records only its one step, so re-run it with `--only`. A resumed run is a new run with its own trace, linked to the original.
 
 | Option | Description |
 |--------|-------------|

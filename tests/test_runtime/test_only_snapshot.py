@@ -1209,6 +1209,10 @@ def test_an_unreadable_newer_snapshot_refuses_never_restores_an_older_run(
 
     assert raised.value.trace_path == str(newer)
     assert "Permission denied" in str(raised.value)
+    # The remedy restores readability; moving or deleting a trace can erase the record that a pause was answered.
+    [advice] = raised.value.to_diagnostics()[0].suggestions or []
+    assert "restore read permission on that file" in advice
+    assert "Don't move or delete it" in advice and "out of ~/.pflow/debug" not in advice
 
 
 def test_a_newer_snapshot_that_vanished_falls_through_to_the_older_run(

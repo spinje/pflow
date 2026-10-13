@@ -301,8 +301,65 @@ class TestListEnvCommand:
         assert result.exit_code == 0
 
 
+@pytest.mark.skipif(__import__("sys").platform == "win32", reason="symlinks need privileges on Windows")
+@pytest.mark.parametrize("command", ["init", "reset"])
+def test_init_and_reset_ask_before_replacing_a_link_whose_target_is_unavailable(
+    runner: CliRunner, isolated_settings: Path, command: str
+) -> None:
+    """A dangling settings symlink (an unmounted volume) is "exists, unreadable", not "no file": both commands
+    ask first, and declining keeps the link; confirming replaces it."""
+    isolated_settings.parent.mkdir(parents=True, exist_ok=True)
+    target = isolated_settings.parent / "unmounted" / "settings.json"
+    isolated_settings.symlink_to(target)
+
+    declined = runner.invoke(settings, [command], input="n\n")
+    assert declined.exit_code == 1  # click.confirm(abort=True)
+    assert isolated_settings.is_symlink() and not isolated_settings.exists()
+
+    confirmed = runner.invoke(settings, [command], input="y\n")
+    assert confirmed.exit_code == 0, confirmed.output
+    assert not isolated_settings.is_symlink()
+    assert json.loads(isolated_settings.read_text(encoding="utf-8"))["runtime"]["trace_retention_days"] == 14
+
+
+@pytest.mark.parametrize("command", ["init", "reset"])
+def test_init_and_reset_write_without_asking_when_there_is_no_file(
+    runner: CliRunner, isolated_settings: Path, command: str
+) -> None:
+    result = runner.invoke(settings, [command])
+    assert result.exit_code == 0, result.output
+    assert "?" not in result.output.splitlines()[0]
+    assert isolated_settings.is_file()
+
+
 class TestShowCommand:
     """Test pflow settings show command."""
+
+    @pytest.mark.parametrize(
+        ("data", "env", "says"),
+        [
+            ({}, None, "Trace retention in effect: 14 days"),
+            ({"runtime": {"trace_retention_days": 0}}, None, "Trace retention in effect: none — 0 keeps every trace"),
+            ({"runtime": {"trace_retention_days": 30}}, "5", "Trace retention in effect: 5 days"),
+            ({"runtime": {"trace_retension_days": 0}}, None, "Trace retention in effect: none — pflow can't trust"),
+        ],
+        ids=["default", "zero", "env-override", "misspelled"],
+    )
+    def test_show_prints_the_retention_window_in_effect(
+        self, runner: CliRunner, isolated_settings: Path, monkeypatch, data: dict, env: str | None, says: str
+    ) -> None:
+        """A misspelled opt-out leaves the file's value at the default — show says what pflow will actually do."""
+        if env is None:
+            monkeypatch.delenv("PFLOW_TRACE_RETENTION_DAYS", raising=False)
+        else:
+            monkeypatch.setenv("PFLOW_TRACE_RETENTION_DAYS", env)
+        isolated_settings.parent.mkdir(parents=True, exist_ok=True)
+        isolated_settings.write_text(json.dumps(data), encoding="utf-8")
+
+        result = runner.invoke(settings, ["show"])
+
+        assert result.exit_code == 0, result.output
+        assert says in result.output
 
     def test_show_omits_keys_pflow_does_not_know(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Unknown keys are kept in the file (Task 185) but never printed: a value hand-placed outside env

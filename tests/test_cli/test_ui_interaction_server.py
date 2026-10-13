@@ -1276,13 +1276,13 @@ class TestGateEndpoint:
     @pytest.mark.parametrize(
         ("error", "status", "says"),
         [
-            (PermissionError(13, "Permission denied"), 500, "Could not read the trace of run 'target-run' ("),
-            (FileNotFoundError(2, "No such file or directory"), 404, "aged out of `runtime.trace_retention_days`"),
+            (PermissionError, 500, "Could not read the trace of run 'target-run' ("),
+            (FileNotFoundError, 404, "aged out of `runtime.trace_retention_days`"),
         ],
         ids=["unreadable", "removed-since-the-listing"],
     )
     def test_a_found_trace_that_cannot_be_loaded_is_never_called_not_paused(
-        self, tmp_path: Path, monkeypatch, error: OSError, status: int, says: str
+        self, tmp_path: Path, monkeypatch, error: type[OSError], status: int, says: str
     ) -> None:
         """Found by id, then the load fails: a file that cannot be read is a 500 naming it (the run may still
         be paused), one removed since the listing (Retention) is the not-found 404 — never "not paused"."""
@@ -1295,7 +1295,7 @@ class TestGateEndpoint:
 
         def faulty(file, *args, **kwargs):
             if str(file) == str(target):
-                raise error
+                raise error(13 if error is PermissionError else 2, "injected", str(target))  # names the file
             return real_open(file, *args, **kwargs)
 
         client = _client()
@@ -1306,7 +1306,8 @@ class TestGateEndpoint:
         assert response.status_code == status
         assert says in response.json()["error"]
         assert "not paused" not in response.json()["error"]
-        assert response.json()["error"].count(str(target)) <= 1  # the path is named once, never repeated
+        # An unreadable trace is named exactly once (the OSError names it too); a removed one is not named.
+        assert response.json()["error"].count(str(target)) == (1 if status == 500 else 0)
 
     def test_non_paused_run_is_404(self, tmp_path: Path, monkeypatch) -> None:
         debug = self._debug_dir(tmp_path, monkeypatch)

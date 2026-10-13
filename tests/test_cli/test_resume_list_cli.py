@@ -300,24 +300,34 @@ def test_hidden_pauses_beyond_three_are_counted_not_dropped(home):
     assert "(/gone/wf.pflow.md); and 1 more. Restore the workflow file at its path to answer one." in text
 
 
-def test_a_marked_trace_that_cannot_be_read_is_reported_never_dropped(home, monkeypatch):
-    """A pending pause whose trace cannot be read may still be answerable: `resume list` names it (and the
-    read error) instead of answering "No paused runs." as if nothing were pending — beside a readable row."""
+@pytest.mark.parametrize("fault_on", [None, 2], ids=["every-read", "the-trailer-read"])
+@pytest.mark.parametrize("with_readable", [True, False], ids=["beside-a-readable-row", "alone"])
+def test_a_marked_trace_that_cannot_be_read_is_reported_never_dropped(home, monkeypatch, fault_on, with_readable):
+    """A pending pause whose trace cannot be read — at its head, or only at its trailer after a clean head —
+    may still be answerable: `resume list` names it and the read error, and never answers "No paused runs."
+    as if the list were complete."""
     import builtins
     import errno
     import io
+    import itertools
 
     debug = home / ".pflow" / "debug"
     readable_id = "0b7e6a52-1c4d-4e8f-9a3b-5d6c7e8f9a01"
     unreadable_id = "0b7e6a52-1c4d-4e8f-9a3b-5d6c7e8f9a02"
-    _write_paused_trace(debug, execution_id=readable_id, gate_request=_APPROVAL_GATE)
+    if with_readable:
+        _write_paused_trace(debug, execution_id=readable_id, gate_request=_APPROVAL_GATE)
     locked = _write_paused_trace(debug, execution_id=unreadable_id, gate_request=_APPROVAL_GATE)
     real_open = builtins.open
+    opens = {"count": itertools.count(1)}
 
     def faulty(file: Any, *args: Any, **kwargs: Any) -> Any:
-        if str(file) == str(locked):
+        if str(file) == str(locked) and (fault_on is None or next(opens["count"]) == fault_on):
             raise PermissionError(errno.EACCES, "Permission denied")
         return real_open(file, *args, **kwargs)
+
+    def invoke(*args: str) -> Any:
+        opens["count"] = itertools.count(1)  # each CLI invocation reads the trace afresh
+        return _runner().invoke(cli, ["resume", "list", *args])
 
     monkeypatch.setattr(builtins, "open", faulty)
     monkeypatch.setattr(io, "open", faulty)
@@ -326,12 +336,17 @@ def test_a_marked_trace_that_cannot_be_read_is_reported_never_dropped(home, monk
         "Permission denied. Retry; if it keeps failing, check the trace file's permissions."
     )
 
-    text = _runner().invoke(cli, ["resume", "list"])
+    text = invoke()
     assert text.exit_code == 0, text.stderr
-    assert readable_id in text.stdout and unreadable_id not in text.stdout.replace(str(locked), "")
+    assert unreadable_id not in text.stdout.replace(str(locked), "")
     assert text.stdout.rstrip("\n").endswith(expected)
-    as_json = _runner().invoke(cli, ["resume", "list", "--output-format", "json"])
-    assert [row["execution_id"] for row in json.loads(as_json.stdout)] == [readable_id]
+    if with_readable:
+        assert readable_id in text.stdout
+    else:
+        assert text.stdout.startswith("No readable paused runs; the list is incomplete.\n")
+    assert "No paused runs." not in text.stdout
+    as_json = invoke("--output-format", "json")
+    assert [row["execution_id"] for row in json.loads(as_json.stdout)] == ([readable_id] if with_readable else [])
     assert expected in as_json.stderr
 
 

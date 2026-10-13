@@ -7,6 +7,7 @@ import stat
 import sys
 import tempfile
 import threading
+from collections import Counter
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
@@ -18,10 +19,10 @@ from pflow.core.path_state import path_state
 logger = logging.getLogger(__name__)
 
 
-# Settings files already warned about insecure permissions in this process: one run loads settings from
-# several places (and Retention once more at finalize), and the warning is per file, not per load.
-_INSECURE_PERMISSIONS_WARNED: set[Path] = set()
-_INSECURE_PERMISSIONS_LOCK = threading.Lock()  # concurrent MCP requests build separate managers
+# (warning kind, settings file) pairs already warned about in this process: one run loads settings from
+# several places (and Retention once more at finalize), and a warning is per file, not per load.
+_WARNED: set[tuple[str, Path]] = set()
+_WARNED_LOCK = threading.Lock()  # concurrent MCP requests build separate managers
 
 # Valid output modes for probe output (used by settings validator and CLI)
 OUTPUT_MODES: list[str] = ["smart", "structure", "full"]
@@ -75,6 +76,16 @@ class RuntimeSettings(BaseModel):
         "kept whatever their age); 0 keeps every trace. Read by runtime/trace_retention.retention_days, where "
         "PFLOW_TRACE_RETENTION_DAYS overrides it for one process.",
     )
+
+    @field_validator("trace_retention_days", mode="before")
+    @classmethod
+    def reject_bool_window(cls, v: object) -> object:
+        """``true`` would coerce to a 1-day window: a bool fails the load (retention off, with a warning). Any
+        other value keeps pydantic's int coercion — ``"0"`` is 0 (a whole-file failure would drop env keys)."""
+        if isinstance(v, bool):
+            # pydantic reports only ValueError as a validation error; a TypeError would escape the load
+            raise ValueError("trace_retention_days must be a whole number of days, not true/false")  # noqa: TRY004
+        return v
 
     @field_validator("template_resolution_mode")
     @classmethod
@@ -152,12 +163,22 @@ class PflowSettings(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
 
 
-def _first_insecure_warning(settings_path: Path) -> bool:
-    """Whether this process has not yet warned about ``settings_path``'s permissions (and now has)."""
-    with _INSECURE_PERMISSIONS_LOCK:
-        if settings_path in _INSECURE_PERMISSIONS_WARNED:
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """``json.load``'s pairs hook: a key given twice fails the load. JSON keeps the last one silently, so a
+    hand-edited second ``runtime`` block would drop the first one's opt-out (pflow's writer never repeats one)."""
+    counts = Counter(key for key, _ in pairs)
+    duplicates = sorted(key for key, count in counts.items() if count > 1)
+    if duplicates:
+        raise ValueError(f"duplicate key(s) in one object: {', '.join(duplicates)}")
+    return dict(pairs)
+
+
+def _first_warning(kind: str, settings_path: Path) -> bool:
+    """Whether this process has not yet given the ``kind`` warning about ``settings_path`` (and now has)."""
+    with _WARNED_LOCK:
+        if (kind, settings_path) in _WARNED:
             return False
-        _INSECURE_PERMISSIONS_WARNED.add(settings_path)
+        _WARNED.add((kind, settings_path))
         return True
 
 
@@ -212,18 +233,22 @@ class SettingsManager:
         self.load_error = None
         try:
             with open(self.settings_path, encoding="utf-8") as f:
-                data = json.load(f)
+                data = json.load(f, object_pairs_hook=_reject_duplicate_keys)
             return PflowSettings(**data)
         except (FileNotFoundError, NotADirectoryError) as e:
             if path_state(self.settings_path) == "absent":
                 return PflowSettings()
             self.load_error = f"{e} (the path exists but its target cannot be read)"
-            logger.warning(f"Failed to load settings from {self.settings_path} ({self.load_error}); using defaults")
+            self._warn_load_failed()
             return PflowSettings()
         except Exception as e:
             self.load_error = str(e)
-            logger.warning(f"Failed to load settings from {self.settings_path} ({e}); using defaults")
+            self._warn_load_failed()
             return PflowSettings()
+
+    def _warn_load_failed(self) -> None:
+        if _first_warning("load-failed", self.settings_path):
+            logger.warning(f"Failed to load settings from {self.settings_path} ({self.load_error}); using defaults")
 
     def _apply_env_overrides(self, settings: PflowSettings) -> None:
         """Apply environment variable overrides."""
@@ -484,7 +509,7 @@ class SettingsManager:
                     # Use provided settings or load (avoid recursion)
                     if settings is None:
                         settings = self.load()
-                    if settings.env and _first_insecure_warning(self.settings_path):
+                    if settings.env and _first_warning("insecure-permissions", self.settings_path):
                         logger.warning(
                             f"Settings file {self.settings_path} contains secrets "
                             f"but has insecure permissions {oct(mode)}. "

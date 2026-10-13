@@ -1401,8 +1401,8 @@ class OnlySnapshotUnreadableError(PflowError):
                 title="Snapshot trace unreadable",
                 source="runtime",
                 suggestions=[
-                    "Retry. If it keeps failing, fix that file's permissions — or move it out of ~/.pflow/debug "
-                    "to restore from the run before it."
+                    "Retry. If it keeps failing, restore read permission on that file. Don't move or delete it: "
+                    "a trace can be the record that a paused run was already answered."
                 ],
                 context={"category": "execution_failure", "trace_path": self.trace_path},
             )

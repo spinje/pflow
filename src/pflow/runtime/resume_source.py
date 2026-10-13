@@ -349,19 +349,31 @@ def _select_resume_trace(
                 return trace_file, data  # first non-dead = newest resumable
         _raise_resume_source_missing(debug_dir, workflow_path, execution_id, legacy_count=listing.legacy_count)
     hit = find_trace(listing.traces, execution_id) if execution_id is not None else None
-    # An --only run records only its target, so resuming its exec id would seed an empty scope (the meta
-    # check covers a hand-made name without the tag). A matched-but-corrupt (or vanished) trace degrades to
-    # the same clean "missing" refusal; one that exists but cannot be read refuses retryably.
-    if hit is not None and not hit.only:
+    # A matched-but-corrupt (or vanished) trace degrades to the clean "missing" refusal; one that exists but
+    # cannot be read refuses retryably; an --only run refuses with its own reason (below).
+    if hit is not None:
+        if hit.only:
+            _refuse_only_run(hit.path, execution_id)
         try:
             with _refuse_unreadable(hit.path, execution_id, "this run's trace"):
                 data = load_trace_file(hit.path)
         except (json.JSONDecodeError, FileNotFoundError):
             logger.debug("Skipping unparseable resume-source trace %s", hit.path, exc_info=True)
         else:
-            if data.get("only_node") is None:
-                return hit.path, data
+            if data.get("only_node") is not None:  # a hand-made name without the tag: the meta is the truth
+                _refuse_only_run(hit.path, execution_id)
+            return hit.path, data
     _raise_resume_source_missing(debug_dir, workflow_path, execution_id, legacy_count=listing.legacy_count)
+
+
+def _refuse_only_run(path: Path, execution_id: str | None) -> NoReturn:
+    """An --only run records only its target step, so resuming it would seed an empty upstream scope."""
+    raise ResumeNotResumableError(
+        f"Run '{execution_id}' was an --only run: its trace records only the one step it ran, so it cannot be resumed.",
+        execution_id=execution_id,
+        trace_path=str(path),
+        suggestions=["Re-run that step with `--only <step>` (it restores upstream from the last full run)."],
+    )
 
 
 def _seedable_final_events(

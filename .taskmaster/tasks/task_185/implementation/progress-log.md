@@ -1110,3 +1110,159 @@ the sweep runs on both paths.
   warning after it is unreachable). Also updated: ADR-0018's settings sentence and the `debugging.mdx` "can't
   trust the setting" line. Real probe (isolated HOME): a settings.env typo and a shell typo each gave exactly
   1 warning. `make check` exit 0; `make test` 11997 passed. Not committed.
+
+## [2026-10-13 10:50] task-orchestrator (Opus) — gate round 1 closed; round 2 + falsifier dispatched
+- Did: committed round-1 fixes `67a12d4a` (amended into the P5-bench commit by a hook-retry slip — one combined commit,
+  message states both) and the shell-variable guard `80bffdf1`. `make test-all-local` at `0cb28a3e`: 12,037 passed, 2 skipped.
+- Ruling (importance 2, mine): a misspelled `PFLOW_*RETENTION*` process variable switches retention off with a warning —
+  same ruled class as the settings typo, fails safe, one-line revert. Accepted the gate-runner's skips: the private-cache
+  tuple assertion (plan P2's only thread-safety guard); Viewer legacy-count + unreadable-vs-not-found need `web/` →
+  follow-ups; analyze-cache's silent skip of an unreadable trace → follow-up (out of spec scope).
+- Round 1 tally: 3 verified Criticals (settings.env typo; unreadable newest trace → `--only` restores an older upstream;
+  unreadable pending pause → "No paused runs.") — all fixed.
+- Round 2 (per-lens): RERUN silent-failures ×2 (verified Criticals), agent-ux (6 new messages), simplicity (path_state,
+  SweepReport reshape), test-fidelity (26 new tests), feature-interactions (round-1 coverage incomplete + the new
+  `--only`-refuses-on-unreadable interaction), impact-completeness (consolidation renamed shapes). RETIRED:
+  concurrency-safety (clean; fixes touched only bookkeeping), spec-conformance (clean inventory). → `reviews/gate-r2.md`.
+  `review-falsifier` launched directly in parallel (read-only to the repo; isolated HOMEs; env=0 except its own probes).
+- Next: both reports → the gate-runner evaluates; round 3 only for lenses still finding verified Criticals (round 3 still
+  finding them ⇒ hand back).
+
+## [2026-10-13 11:00] task-phase-implementer (Opus, gate-runner) — gate round 2 + falsifier r1: START
+- Read `reviews/gate-r2.md` and `reviews/falsifier-r1.md` in full at `80bffdf1`. Inventory: gate-r2 — 2 Criticals
+  (report second read; stored exact env key lost when injection aborts), 4 Warnings, 2 Suggestions + test gaps;
+  falsifier — W1–W4 + 5 "older behaviour" lines. Dispositions follow in the next entry.
+
+## [2026-10-13 11:55] task-phase-implementer (Opus, gate-runner) — gate round 2 + falsifier r1 dispositioned
+- Did: verified every item at `80bffdf1`. Fixed 2/2 Criticals, 4/4 gate Warnings, both Suggestions, falsifier
+  W1–W4, and 2 of the "older behaviour" lines. Each fix has a test that fails without it, mutation-run and judged
+  by the counted `N failed`. Real probes ran in isolated HOMEs (`scratchpads/task-185/gate-r2-*`, `pf.sh`).
+- Changed:
+  - Source: `cli/commands/{report,resume,settings}.py`, `core/{settings,exceptions}.py`,
+    `runtime/{trace_retention,resume_source,workflow_trace}.py`.
+  - Docs: `debugging.mdx`, `cli/index.mdx`, guide `resume.md`.
+  - Records: ADR-0018 (settings bullet rewritten to current truth), `core/CLAUDE.md`, plan §1.2/§1.4/§1.5
+    "As built" blocks.
+  - Tests: 7 files.
+
+**gate-r2:**
+- **Critical: report's second read — CONFIRMED, FIXED as the class** (a fault at the full load after a clean
+  tail was a silent skip).
+  - Fix: `_is_complete_run` raises on any fault. `_latest_complete_trace` names every candidate it could not
+    read or parse, at either read, with path and cause. With nothing older it says "No readable completed trace
+    found … (N could not be read — named above)", never "only in-flight or interrupted runs".
+  - Test: parametrized trailer-read / full-load × older control / nothing older.
+  - Mutation: the full-load OSError → silent skip → 2 failed.
+- **Critical: stored `settings.env.PFLOW_TRACE_RETENTION_DAYS` lost when injection aborts — CONFIRMED.**
+  - Executed: `os.environ['BAD=KEY']` raises ValueError, and `settings set-env 'BAD=KEY' x` stores it.
+  - **FIXED** in `retention_days()` only; injection is unchanged. With no process override, it reads the stored
+    exact key from the already-loaded settings: valid wins, invalid (`""`, `never`) gives `None` + a warning
+    naming the source.
+  - This also closes the empty-value residual from round 1.
+  - Tests: stored `0`/`3`/`""`/`never` behind `BAD=KEY`; the process override wins.
+  - Mutation: the stored read dropped → 4 failed.
+  - Real probe: `BAD=KEY` + stored `0`, a real run with the variable unset → the 40-day trace was kept, no
+    warning.
+- **W resume-list headline — FIXED.** "No readable paused runs; the list is incomplete." replaces "No paused
+  runs." whenever any marked trace was unreadable.
+  - The test is now parametrized every-read / trailer-only × beside a readable row / alone; the fault counter is
+    reset per CLI invocation.
+  - Mutations: a lenient trailer → the trailer-only params fail (3 failed); old headline → 2 failed.
+  - Real probe: `chmod 000` on a paused trace → the new headline.
+- **W Snapshot advice "move it out" — CONFIRMED** (moving an Attempt erases consumption evidence). **FIXED**:
+  "restore read permission on that file. Don't move or delete it: a trace can be the record that a paused run was
+  already answered."
+  - Pinned by presence + absence on the diagnostic's suggestion.
+  - Swept every user-facing string in the diff for move/delete advice: this was the only one. The report miss
+    says "fix the file's permissions"; the retention warning says "check those files".
+  - **SKIPPED**: the lens's combined answered-pause + unreadable-Attempt + relocation scenario test. The hazard
+    was the advice text, which the test now pins; with it gone, reaching the scenario takes a manual deletion
+    the docs forbid.
+- **W stale plan contracts — FIXED**: an "As built — supersedes the lines below" block at the top of plan
+  §1.2, §1.4 and §1.5 names each superseded shape and its replacement; history is not rewritten.
+- **S redundant protection pass — APPLIED**: the loop is deleted; the candidate filter stays (a collider probe
+  can protect an earlier group's candidate). 94/94 retention tests green.
+- **S gate path test — APPLIED**: the injected OSError names the file; the assertion is now exactly one
+  occurrence (unreadable) / zero (removed).
+  - Mutation: interpolating the whole exception → 1 failed.
+
+**falsifier-r1:**
+- **W1 typos inside the word — FIXED (ruling).** The detector uses the stems `reten`/`retain` (case-insensitive)
+  in three places:
+  - unknown settings keys at any level;
+  - `settings.env` names that also say `trace` or start with `PFLOW_` (so the user's `S3_RETENTION_DAYS` /
+    `LOG_RETAIN` stay ignored);
+  - `PFLOW_` process variables.
+
+  The exact names still win. Tests: `trace_retension_days`, `trace_retain_days`, env `PFLOW_TRACE_RETENTON_DAYS`,
+  shell `PFLOW_TRACE_RETENTON_DAYS`. Mutation (back to the `retention` substring) → 4 failed.
+
+  **Verified on the real surface that `settings show` did NOT print the effective window**: it printed the
+  file's value, so a typo showed 14 and the env override was invisible. So `show` now ends with "Trace retention
+  in effect: N days | none — 0 keeps every trace | none — pflow can't trust the setting (see the warning)…",
+  which is additive. The test covers default/zero/env/misspelled; mutation (print the file value) → 3 failed.
+  The `debugging.mdx` line says to spell the opt-out exactly and that `show` ends with the window in effect.
+- **W2 `settings init` over a dangling link — CONFIRMED, FIXED; `reset` had the same bug, fixed too.** Both use
+  `path_state(…) != "absent"`, so anything at the path asks first.
+  - Tests: decline keeps the link; confirm replaces it; no file → no prompt.
+  - Mutations: each `exists()` back → 1 failed.
+  - Real probe: `init` over the link → "Overwrite? [y/N]: Aborted!", link intact.
+- **W3 `true` → 1 — FIXED**: `strict=True` on the field. A bool — and also a string `"0"`, which used to coerce —
+  is a failed load: retention off with a warning, saves refused.
+  - Tests: both. Mutation → 2 failed.
+  - Real probe: `show` warns and prints "none".
+- **W4 duplicate JSON keys — FIXED**: an `object_pairs_hook` rejects a key repeated in one object → `load_error`.
+  - Test: a repeated `runtime` → nothing pruned, the warning names `runtime`, `set_env` refused, the file
+    byte-identical. Mutation → 1 failed.
+
+**Older behaviour:**
+- **Failed `--only` run → misleading by-id miss — FIXED as the class.**
+  - By-id on an `--only` trace (tag, or meta for an untagged name) refuses `ResumeNotResumableError`
+    "Run '<id>' was an --only run: its trace records only the one step it ran, so it cannot be resumed." with
+    "Re-run that step with `--only <step>`".
+  - `has_resumable_step()` returns False for an `--only` collector, so neither the text hint nor JSON/MCP
+    `resume_command` is printed.
+  - Real-CLI test with a presence control (a failed FULL run shows the hint). Two unit tests flipped from
+    `ResumeSourceMissingError`.
+  - Mutations: hint not suppressed → 1 failed; by-id back to missing → 2 failed.
+  - Docs: `cli/index.mdx` and guide `resume.md` say a failed `--only` run offers no resume.
+- **"Failed to load settings" printed 7× per run — FIXED.** One `_first_warning(kind, path)` with one
+  lock-guarded set now dedupes it and the insecure-permissions warning, once per file per process; the race
+  test was retargeted.
+  - Test: a real run over a broken settings file → exactly 1, and nothing pruned. Mutation → 1 failed.
+- **`/api/gate` serves a consumed pause (200) — SKIPPED**: same on main. The answer is refused at `/api/resume`
+  preflight (409 superseded), so nothing executes. Follow-up candidate: the gate could run the one consumption
+  check (0–2 extra reads).
+- **`PFLOW_EXECUTION_ID` unsafe value hard-fails — no action** (internal variable, ruled at plan time).
+- **Saved workflow by name under a redirected HOME — no action**: same on main, not this task's surface.
+
+- Verified:
+  - `make check` exit 0; `make test` 12025 passed, 0 failed (from 11997 at `80bffdf1`);
+    `pytest -m trace_files` 726 passed; Task-159 `verify.sh` 88/88.
+  - The engine / `web/` / `workflow_executor.py` diff against the merge-base is empty.
+  - No `pflow ui` running. Not committed.
+- Deviations/surprises:
+  - Strict int also rejects a quoted `"0"` that pydantic used to coerce: retention turns off (the safe
+    direction), but saves are refused until the file is fixed.
+  - `settings show` gained a line: the ruling's premise ("verify that it does") did not hold.
+  - The settings.env predicate keeps its own scope (`trace` or `PFLOW_` + stem), distinct from the process-env
+    scope (`PFLOW_` + stem), as ADR-0018 records.
+  - The failed-load dedupe is per process: a long-lived MCP server warns once even if the file breaks
+    differently later.
+- Self-checks: fully happy? Yes. Residuals are stated above (gate on a consumed pause; analyze-cache and Viewer
+  follow-ups from round 1). test-reflect: every new test is mutation-killed; two old exact-text tests updated
+  (hidden headline, `--only` by-id).
+- Lenses whose surface changed:
+  - silent-failures, seam B (settings load/detector/stored override), and seam A (report, `resume list`,
+    `--only` resume);
+  - agent-ux (report miss text, list headline, Snapshot advice, `--only` refusal, `settings show` line);
+  - test-fidelity;
+  - impact-completeness (plan blocks, docs);
+  - feature-interactions (`--only` × resume).
+- Addendum [12:15] (ruling: reject only bools): StrictInt has been replaced by a `mode="before"` validator that
+  raises only on a bool, using ValueError with a coded TRY004 noqa because pydantic reports only ValueError as a
+  validation error; lax int coercion is back. `"0"` loads as 0 (no failed load, `env` keys kept — new test
+  `test_a_quoted_number_of_days_loads_and_keeps_the_env_keys`); `true` still fails the load. Mutations: the bool
+  check off → 1 failed; strict=True back → 1 failed. ADR-0018 and the plan's As-built block were reworded. W4
+  duplicate keys are unchanged. `make check` exit 0; `make test` 12025 passed (the earlier `"0"`-fails param was
+  removed, the new test added). Not committed.

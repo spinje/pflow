@@ -143,11 +143,14 @@ def test_by_execution_id_selects_exact_attempt(tmp_path: Path) -> None:
     assert source.execution_id == "target"
 
 
-def test_by_execution_id_skips_only_node_run(tmp_path: Path) -> None:
-    """An --only run records only its target; resuming its exec id must not seed an empty scope."""
-    _write_trace(tmp_path, execution_id="only-run", timestamp="20260101-000000", only_node="k")
-    with pytest.raises(ResumeSourceMissingError):
+def test_by_execution_id_refuses_an_only_run_with_its_own_reason(tmp_path: Path) -> None:
+    """An --only run records only its target; resuming its exec id must not seed an empty scope — and the
+    refusal says why, never "no run was found … may have aged out" for a run that is right there."""
+    path = _write_trace(tmp_path, execution_id="only-run", timestamp="20260101-000000", only_node="k")
+    with pytest.raises(ResumeNotResumableError, match="was an --only run") as refused:
         load_resume_source(execution_id="only-run", debug_dir=tmp_path)
+    assert refused.value.trace_path == str(path)
+    assert "aged out" not in str(refused.value)
 
 
 def test_no_trace_for_workflow_raises_missing(tmp_path: Path) -> None:
@@ -1639,7 +1642,7 @@ def test_by_execution_id_refuses_an_only_run_by_its_meta_when_the_name_has_no_ta
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     parsed = parse_trace_filename(path.name)
     assert parsed is not None and not parsed.only, "the name carries no .only tag"
-    with pytest.raises(ResumeSourceMissingError):
+    with pytest.raises(ResumeNotResumableError, match="was an --only run"):
         load_resume_source(execution_id="only-run", debug_dir=tmp_path)
 
 

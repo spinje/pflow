@@ -800,6 +800,30 @@ class TestTheExitCodeSaysWhetherTheRunStarted:
         assert "needs a prior full run" in result.stderr
 
 
+class TestAFailedOnlyRunOffersNoResume:
+    """An --only run records only its target step, so it is never a resume source: its failure prints no
+    resume hint, and `pflow resume <its id>` refuses with that reason — not "no run was found"."""
+
+    def test_no_hint_and_a_true_refusal(self, home: Path, tmp_path: Path) -> None:
+        workflow = _write(tmp_path, "flaky", _OK)
+        assert _invoke(workflow).exit_code == 0  # the Snapshot
+        workflow.write_text(_FAIL_BY_ACTION, encoding="utf-8")  # step `two` now fails
+
+        full_failure = _invoke(workflow)  # presence control: a failed FULL run offers the resume
+        assert "To resume from the failed step: pflow resume " in full_failure.stdout + full_failure.stderr
+
+        failed, document = _json(workflow, "--only", "two")
+        assert failed.exit_code == 1, failed.stderr
+        assert document["status"] == "failed" and "resume_command" not in document
+        text = _invoke(workflow, "--only", "two")
+        assert "To resume from the failed step" not in text.stdout + text.stderr
+
+        refused = _invoke("resume", document["execution_id"])
+        assert refused.exit_code != 0
+        assert "was an --only run" in refused.stderr
+        assert "aged out" not in refused.stderr and "No run with execution id" not in refused.stderr
+
+
 class TestTheTraceNameAndThePausedMarker:
     """Task 185: the filename carries the run's id, its ``--only`` and lineage tags; a durable pause has a
     ``.paused`` marker beside its trace, written BEFORE the trailer — so a marker that cannot be written

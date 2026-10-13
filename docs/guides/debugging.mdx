@@ -165,7 +165,7 @@ To change the window, set `runtime.trace_retention_days` in `~/.pflow/settings.j
 { "runtime": { "trace_retention_days": 30 } }
 ```
 
-`PFLOW_TRACE_RETENTION_DAYS` overrides it for one process and is never saved. If pflow can't trust the setting — the settings file fails to load, a retention-looking key is misspelled or in the wrong section, a `PFLOW_` variable looks like a misspelling of `PFLOW_TRACE_RETENTION_DAYS`, or the variable isn't a whole number of days — it removes nothing and prints a warning saying why.
+`PFLOW_TRACE_RETENTION_DAYS` overrides it for one process (in your shell, or stored with `pflow settings set-env`) and is never saved to `runtime`. Spell the opt-out exactly. If pflow can't trust the setting — the settings file fails to load, a retention-looking key is misspelled or in the wrong section, a `PFLOW_` variable looks like a misspelling of `PFLOW_TRACE_RETENTION_DAYS`, or the value isn't a whole number of days — it removes nothing and prints a warning saying why. `pflow settings show` ends with the retention window in effect.
 
 Don't delete traces by hand: removing a trace breaks `--only`, `pflow resume`, the answer to a pending pause and `pflow report` for that run.
 

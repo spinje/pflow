@@ -7,6 +7,7 @@ from typing import Any, ClassVar
 import click
 
 from pflow.core.llm_providers import CURATED_PROVIDERS, CuratedProvider
+from pflow.core.path_state import path_state
 from pflow.core.settings import OUTPUT_MODES, LLMSettings, PflowSettings, SettingsManager, unknown_settings_keys
 
 
@@ -63,8 +64,9 @@ def init() -> None:
     """
     manager = SettingsManager()
 
-    # Check if settings already exist
-    if manager.settings_path.exists():
+    # Anything at the path asks first — a file that cannot be read, or a link whose target is unavailable,
+    # included (``Path.exists()`` reads both as "no file").
+    if path_state(manager.settings_path) != "absent":
         click.confirm(f"Settings file already exists at {manager.settings_path}. Overwrite?", abort=True)
 
     # Create default settings
@@ -99,6 +101,20 @@ def show() -> None:
     click.echo(f"Settings file: {manager.settings_path}")
     click.echo("\nCurrent settings:")
     click.echo(json.dumps(settings_dict, indent=2))
+    click.echo(f"\nTrace retention in effect: {_retention_in_effect()}")
+
+
+def _retention_in_effect() -> str:
+    """The window Retention will actually apply — the env override, a stored override and a misspelled key
+    included — so a typo that leaves the file's value at the default is visible here."""
+    from pflow.runtime.trace_retention import retention_days
+
+    days = retention_days()
+    if days is None:
+        return "none — pflow can't trust the setting (see the warning), so it removes no trace"
+    if days == 0:
+        return "none — 0 keeps every trace"
+    return f"{days} days"
 
 
 @settings.command()
@@ -199,7 +215,7 @@ def reset() -> None:
     """
     manager = SettingsManager()
 
-    if manager.settings_path.exists():
+    if path_state(manager.settings_path) != "absent":  # never ``exists()``: see ``init``
         click.confirm("This will reset all settings to defaults. Continue?", abort=True)
         manager.settings_path.unlink()
         click.echo("Settings file deleted.")

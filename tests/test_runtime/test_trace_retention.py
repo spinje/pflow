@@ -910,9 +910,9 @@ def _settings_file(tmp_path: Path, data: dict[str, Any]) -> Path:
     [
         None,
         {"llm": {"foo": True}, "registry": {"nodes": {"bar": 1}}},
-        # The user's own variables, and the exact override name — a real process copies that into os.environ
-        # (settings-env injection, skipped under pytest); only a misspelling of it is a suspect.
-        {"env": {"S3_RETENTION_DAYS": "1", "API_TOKEN": "x", "PFLOW_TRACE_RETENTION_DAYS": "0"}},
+        # The user's own variables, retention-flavoured ones included: only a name that also says `trace` or
+        # starts with `PFLOW_` is a suspect.
+        {"env": {"S3_RETENTION_DAYS": "1", "API_TOKEN": "x", "LOG_RETAIN": "7"}},
     ],
     ids=["no-file", "unrelated-unknown-keys", "env-names-that-are-not-misspellings"],
 )
@@ -959,6 +959,7 @@ def test_the_env_override_wins_over_the_file(
         ("never", None, "PFLOW_TRACE_RETENTION_DAYS='never'"),
         ("-1", None, "PFLOW_TRACE_RETENTION_DAYS='-1'"),
         (None, {"runtime": {"trace_retention_days": 0, "template_resolution_mode": "bogus"}}, "could not be loaded"),
+        (None, {"runtime": {"trace_retention_days": True}}, "could not be loaded"),
         (None, {"runtime": {"trace_retention_day": 0}}, "runtime.trace_retention_day"),
         (None, {"runtime": {"traceRetentionDays": 0}}, "runtime.traceRetentionDays"),
         (None, {"trace_retention_days": 0}, "sets trace_retention_days"),
@@ -968,11 +969,15 @@ def test_the_env_override_wins_over_the_file(
         (None, {"runtime_settings": {"trace_retention_days": 0}}, "sets runtime_settings"),
         (None, {"env": {"PFLOW_TRACE_RETENTION_DAY": "0"}}, "sets env.PFLOW_TRACE_RETENTION_DAY"),
         (None, {"env": {"pflow_trace_retention_days": "0"}}, "sets env.pflow_trace_retention_days"),
+        (None, {"runtime": {"trace_retension_days": 0}}, "runtime.trace_retension_days"),
+        (None, {"runtime": {"trace_retain_days": 0}}, "runtime.trace_retain_days"),
+        (None, {"env": {"PFLOW_TRACE_RETENTON_DAYS": "0"}}, "sets env.PFLOW_TRACE_RETENTON_DAYS"),
     ],
     ids=[
         "env-word",
         "env-negative",
         "file-fails-to-load",
+        "a-bool-is-not-a-number-of-days",
         "misspelled",
         "camel-case",
         "misplaced-at-root",
@@ -982,6 +987,9 @@ def test_the_env_override_wins_over_the_file(
         "inside-an-unknown-section",
         "misspelled-in-env",
         "wrong-case-in-env",
+        "typo-inside-the-word",
+        "retain-not-retention",
+        "typo-inside-the-word-in-env",
     ],
 )
 def test_a_setting_that_cannot_be_trusted_prunes_nothing_with_a_warning(
@@ -1009,11 +1017,98 @@ def test_a_setting_that_cannot_be_trusted_prunes_nothing_with_a_warning(
     assert len(warnings) == 1 and "trace retention skipped" in warnings[0] and says in warnings[0], warnings
 
 
+@pytest.mark.parametrize(
+    ("stored", "expected"), [("0", 0), ("3", 3), ("", None), ("never", None)], ids=["zero", "three", "empty", "word"]
+)
+def test_the_override_stored_in_settings_env_is_read_directly(
+    tmp_path: Path,
+    debug: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    stored: str,
+    expected: int | None,
+) -> None:
+    """``settings.env.PFLOW_TRACE_RETENTION_DAYS`` counts even when startup injection never copied it into the
+    process environment (it skips an empty value and aborts on an entry it cannot set, like ``BAD=KEY``): a
+    valid value wins over ``runtime.trace_retention_days``; an invalid one prunes nothing, with a warning."""
+    monkeypatch.delenv("PFLOW_TRACE_RETENTION_DAYS")
+    _settings_file(
+        tmp_path,
+        {"runtime": {"trace_retention_days": 30}, "env": {"BAD=KEY": "x", "PFLOW_TRACE_RETENTION_DAYS": stored}},
+    )
+    aged = trace(debug, deleted(tmp_path, "w"), 400)
+
+    assert retention_days() == expected
+    with caplog.at_level(logging.WARNING):
+        sweep_after_write(debug)
+
+    assert aged.exists() == (expected != 3)
+    warnings = [record.getMessage() for record in caplog.records if record.name == "pflow.runtime.trace_retention"]
+    if expected is None:
+        assert any(f"env.PFLOW_TRACE_RETENTION_DAYS in {tmp_path}" in warning for warning in warnings), warnings
+    else:
+        assert warnings == []
+
+
+def test_the_process_override_wins_over_the_stored_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PFLOW_TRACE_RETENTION_DAYS", "5")
+    _settings_file(tmp_path, {"env": {"PFLOW_TRACE_RETENTION_DAYS": "0"}})
+    assert retention_days() == 5
+
+
+def test_a_settings_file_that_repeats_a_key_prunes_nothing_and_is_never_overwritten(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A hand edit that repeats ``runtime``: JSON would keep the last block and drop the opt-out silently."""
+    from pflow.core.settings import SettingsManager
+    from pflow.core.user_errors import UserFriendlyError
+
+    monkeypatch.delenv("PFLOW_TRACE_RETENTION_DAYS")
+    path = tmp_path / ".pflow" / "settings.json"
+    path.write_text(
+        '{"runtime": {"trace_retention_days": 0}, "env": {"K": "v"}, "runtime": {"template_resolution_mode": "strict"}}',
+        encoding="utf-8",
+    )
+    original = path.read_bytes()
+    aged = trace(debug, deleted(tmp_path, "w"), 400)
+
+    with caplog.at_level(logging.WARNING):
+        sweep_after_write(debug)
+
+    assert aged.exists()
+    assert any("duplicate key(s) in one object: runtime" in warning for warning in _retention_warnings(caplog))
+    with pytest.raises(UserFriendlyError, match="Settings file not saved"):
+        SettingsManager().set_env("OTHER", "x")
+    assert path.read_bytes() == original
+
+
+def test_a_quoted_number_of_days_loads_and_keeps_the_env_keys(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``"0"`` is a reasonable hand edit: it coerces to 0 — no failed load, so the user's env keys still load."""
+    from pflow.core.settings import SettingsManager
+
+    monkeypatch.delenv("PFLOW_TRACE_RETENTION_DAYS")
+    _settings_file(tmp_path, {"runtime": {"trace_retention_days": "0"}, "env": {"API_TOKEN": "s3cret"}})
+    aged = trace(debug, deleted(tmp_path, "w"), 400)
+
+    manager = SettingsManager()
+    assert manager.get_env("API_TOKEN") == "s3cret" and manager.load_error is None
+    assert retention_days() == 0
+    with caplog.at_level(logging.WARNING):
+        sweep_after_write(debug)
+    assert aged.exists()
+    assert _retention_warnings(caplog) == []
+
+
 def _retention_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [record.getMessage() for record in caplog.records if record.name == "pflow.runtime.trace_retention"]
 
 
-@pytest.mark.parametrize("name", ["PFLOW_TRACE_RETENTION_DAY", "pflow_trace_retention_days", "PFLOW_RETENTION_DAYS"])
+@pytest.mark.parametrize(
+    "name",
+    ["PFLOW_TRACE_RETENTION_DAY", "pflow_trace_retention_days", "PFLOW_RETENTION_DAYS", "PFLOW_TRACE_RETENTON_DAYS"],
+)
 def test_a_misspelled_override_in_the_environment_prunes_nothing_with_one_warning(
     tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, name: str
 ) -> None:
@@ -1296,6 +1391,24 @@ def test_a_run_that_sweeps_warns_about_insecure_settings_exactly_once(
     assert not aged.exists(), "the sweep ran and read the settings file"
     insecure = [record for record in caplog.records if "insecure permissions" in record.getMessage()]
     assert len(insecure) == 1, [record.getMessage() for record in insecure]
+
+
+def test_a_run_over_a_broken_settings_file_says_so_exactly_once(
+    tmp_path: Path, debug: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Every settings load of a run fails the same way: "Failed to load settings" prints once (it printed once
+    per load), and the sweep still refuses to prune."""
+    monkeypatch.delenv("PFLOW_TRACE_RETENTION_DAYS")
+    (tmp_path / ".pflow" / "settings.json").write_text("{not json", encoding="utf-8")
+    aged = trace(debug, deleted(tmp_path, "w"), 30)
+
+    with caplog.at_level(logging.WARNING):
+        result = _invoke(_workflow(tmp_path, "ok", _OK))
+
+    assert result.exit_code == 0, result.output
+    assert aged.exists()
+    failed = [record for record in caplog.records if "Failed to load settings" in record.getMessage()]
+    assert len(failed) == 1, [record.getMessage() for record in failed]
 
 
 # ── A writer finishing between the listing and the unlink ────────────────────────────────────────────

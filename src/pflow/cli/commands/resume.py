@@ -475,7 +475,8 @@ def resume_list(output_format: str) -> None:
         return
 
     if not runs:
-        click.echo("No paused runs.")
+        # "No paused runs." only when the answer is complete: an unreadable marked trace may be pending.
+        click.echo("No readable paused runs; the list is incomplete." if listing.unreadable else "No paused runs.")
         for line in unlisted:
             click.echo(line)
         return

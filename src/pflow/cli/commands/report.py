@@ -5,31 +5,28 @@ from pathlib import Path
 import click
 
 
-def _trace_is_complete(path: Path) -> bool:
-    """True if the trace loads as a FINISHED run — not an eager-``meta`` / crash-tail ``incomplete`` file.
-
-    The no-arg ``pflow report`` auto-select uses this to skip in-flight / interrupted traces, which
-    eager-``meta`` (Task 173) now leaves on disk from t=0 (before this, a crash left no file). Unreadable
-    or legacy single-object traces also report False (they can't be reported anyway)."""
-    import json
-
+def _is_complete_run(path: Path) -> bool:
+    """Whether a trace is a FINISHED run: a trailer (one tail read), then a full load that is not
+    ``incomplete``. Eager-``meta`` (Task 173) leaves an in-flight or crashed run on disk from t=0, so this is
+    what keeps a hollow "incomplete, 0 nodes" file from shadowing the last good run. Raises on any read or
+    parse fault (``FileNotFoundError`` included) — the caller decides what each means."""
+    from pflow.core.trace_dir import read_trace_trailer_strict
     from pflow.core.trace_io import load_trace_file
 
-    try:
-        return load_trace_file(path).get("final_status") != "incomplete"
-    except (json.JSONDecodeError, OSError):
+    if read_trace_trailer_strict(path) is None:
         return False
+    return load_trace_file(path).get("final_status") != "incomplete"
 
 
 def _latest_complete_trace(ctx: click.Context) -> Path:
     """The newest COMPLETE trace by start time (the one recency rule, ``trace_dir.list_traces``), or exit 1.
 
-    Eager-``meta`` (Task 173) means an in-flight or crash-before-first-completion run leaves a ``meta``-only /
-    ``incomplete`` file from t=0; picking it would shadow the user's last good run with a hollow "incomplete,
-    0 nodes" report. So walk newest-first, lazily: a tail read rules out an unfinished trace, and only a
-    finished one is fully loaded to confirm it — never a read of every file. A newer trace it cannot read is
-    named on stderr, so "latest" never silently means an older run."""
-    from pflow.core.trace_dir import TraceUnreadableError, legacy_note, list_traces, read_trace_trailer_strict
+    Walks newest-first, lazily — never a read of every file. A trace that vanished since the listing is
+    passed over; one that cannot be read or parsed, at either read, is named on stderr with its cause, so
+    "latest" never silently means an older run."""
+    import json
+
+    from pflow.core.trace_dir import TraceUnreadableError, legacy_note, list_traces
 
     listing = list_traces()
     note = legacy_note(listing.legacy_count)
@@ -37,26 +34,35 @@ def _latest_complete_trace(ctx: click.Context) -> Path:
     if not listing.traces:
         click.echo(f"No trace files found in ~/.pflow/debug/{unsearched}", err=True)
         ctx.exit(1)
-    chosen: Path | None = None
+    skipped = 0
     for entry in listing.traces:
         try:
-            finished = read_trace_trailer_strict(entry.path) is not None
+            if _is_complete_run(entry.path):
+                return entry.path
+            continue
         except FileNotFoundError:
             continue
         except TraceUnreadableError as exc:
-            click.echo(f"Skipped a newer trace — {exc}", err=True)
-            continue
-        if finished and _trace_is_complete(entry.path):
-            chosen = entry.path
-            break
-    if chosen is None:
+            reason = str(exc)
+        except OSError as exc:
+            reason = f"could not read trace {entry.path}: {exc.strerror or exc}"
+        except json.JSONDecodeError as exc:
+            reason = f"could not parse trace {entry.path}: {exc.msg}"
+        skipped += 1
+        click.echo(f"Skipped a newer trace — {reason}", err=True)
+    if skipped:
+        click.echo(
+            f"No readable completed trace found in ~/.pflow/debug/ ({skipped} could not be read — named above). "
+            f"Fix the file's permissions and retry, or pass a specific trace path.{unsearched}",
+            err=True,
+        )
+    else:
         click.echo(
             "No completed trace found in ~/.pflow/debug/ (only in-flight or interrupted runs). "
             f"Run the workflow to completion, or pass a specific trace path.{unsearched}",
             err=True,
         )
-        ctx.exit(1)
-    return chosen
+    ctx.exit(1)
 
 
 @click.command("report")

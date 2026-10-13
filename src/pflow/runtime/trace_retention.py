@@ -71,35 +71,26 @@ class SweepReport:
 
 
 def retention_days() -> int | None:
-    """The age window in days — ``PFLOW_TRACE_RETENTION_DAYS`` when set, else ``runtime.trace_retention_days``.
+    """The age window in days — the ``PFLOW_TRACE_RETENTION_DAYS`` override when set (in the process
+    environment, else stored in ``settings.env``), else ``runtime.trace_retention_days``.
 
-    ``0`` keeps everything. ``None`` means "cannot tell — prune nothing", with a warning: the env value is not
-    a whole number ≥ 0 (an opt-out typed as ``never`` must not fall through to the default and delete), the
-    settings file failed to load, or it holds a retention-looking key anywhere outside
-    ``runtime.trace_retention_days`` (a misplaced or misspelled opt-out, at any level — ``env`` included), or
-    — with the override unset — the environment holds a misspelling of it (``_misspelled_env_variable``). The
-    env value is never written to the settings file."""
+    ``0`` keeps everything. ``None`` means "cannot tell — prune nothing", with a warning: the override is not a
+    whole number ≥ 0 (an opt-out typed as ``never`` must not fall through to the default and delete), the
+    settings file failed to load, or something that looks like the opt-out is spelled or placed wrong — a
+    settings key at any level, a ``settings.env`` name, or (override unset) a ``PFLOW_`` process variable
+    (``_looks_like_retention``). The override is never written to the settings file."""
     raw = os.environ.get(RETENTION_ENV_VAR)
+    if raw is not None:
+        return _override_days(raw, RETENTION_ENV_VAR)
     misspelled = sorted(name for name in os.environ if _misspelled_env_variable(name))
-    if raw is None and misspelled:
+    if misspelled:
         # One warning: a settings.env typo reaches here too (startup copies settings.env into os.environ), so
         # the settings check below never reports it a second time.
         logger.warning(
             "trace retention skipped: the environment sets %s (directly or through settings.env), which pflow "
-            "does not read — the variable is %s (0 keeps every trace)",
+            "does not read — the variable is %s, spelled exactly (0 keeps every trace)",
             ", ".join(misspelled),
             RETENTION_ENV_VAR,
-        )
-        return None
-    if raw is not None:
-        try:
-            days = int(raw)
-        except ValueError:
-            days = -1
-        if days >= 0:
-            return days
-        logger.warning(
-            "trace retention skipped: %s=%r is not a whole number of days (0 keeps every trace)", RETENTION_ENV_VAR, raw
         )
         return None
     manager = SettingsManager()
@@ -116,35 +107,64 @@ def retention_days() -> int | None:
     if suspects:
         logger.warning(
             "trace retention skipped: %s sets %s, which pflow does not read — the setting is "
-            "runtime.trace_retention_days, or %s in env (0 keeps every trace)",
+            "runtime.trace_retention_days, or %s in env, spelled exactly (0 keeps every trace)",
             manager.settings_path,
             ", ".join(sorted(suspects)),
             RETENTION_ENV_VAR,
         )
         return None
+    stored = settings.env.get(RETENTION_ENV_VAR)
+    if stored is not None:
+        # Startup injection copies it into os.environ — unless it skipped it (an empty value) or aborted on an
+        # earlier entry; retention never depends on that copy.
+        return _override_days(stored, f"env.{RETENTION_ENV_VAR} in {manager.settings_path}")
     return settings.runtime.trace_retention_days
+
+
+def _override_days(raw: str, source: str) -> int | None:
+    """The override's value: a whole number ≥ 0, else ``None`` with a warning naming where it came from."""
+    try:
+        days = int(raw)
+    except ValueError:
+        days = -1
+    if days >= 0:
+        return days
+    logger.warning("trace retention skipped: %s=%r is not a whole number of days (0 keeps every trace)", source, raw)
+    return None
+
+
+# Stems, not the whole word: a typo inside it (``retension``, ``retenton``, ``retain``) must still switch
+# retention off rather than leave deletion on.
+_RETENTION_STEMS = ("reten", "retain")
+
+
+def _looks_like_retention(name: str) -> bool:
+    lower = name.lower()
+    return any(stem in lower for stem in _RETENTION_STEMS)
 
 
 def _mentions_retention(key: str, value: Any) -> bool:
     """Whether an unknown settings key — or any key nested in its value — looks like the retention setting."""
-    if "retention" in key.lower():
+    if _looks_like_retention(key):
         return True
     return isinstance(value, dict) and any(_mentions_retention(str(k), v) for k, v in value.items())
 
 
 def _misspelled_env_override(name: str) -> bool:
-    """Whether a ``settings.env`` name looks like the env override but is not it (``PFLOW_TRACE_RETENTION_DAY``).
-    The exact name reaches ``os.environ`` through settings-env injection; ``settings.env`` also carries the
-    user's own variables, so only a ``TRACE_RETENTION`` name counts — any other key leaves retention on."""
-    return name != RETENTION_ENV_VAR and "TRACE_RETENTION" in name.upper()
+    """Whether a ``settings.env`` name looks like the override but is not it (``PFLOW_TRACE_RETENSION_DAYS``).
+    ``settings.env`` also carries the user's own variables, so the name must also say ``trace`` or start with
+    ``PFLOW_`` — ``S3_RETENTION_DAYS`` leaves retention on."""
+    lower = name.lower()
+    return (
+        name != RETENTION_ENV_VAR and _looks_like_retention(name) and ("trace" in lower or lower.startswith("pflow_"))
+    )
 
 
 def _misspelled_env_variable(name: str) -> bool:
-    """Whether a process environment name looks like the override but is not it (``PFLOW_TRACE_RETENTION_DAY``).
+    """Whether a process environment name looks like the override but is not it (``PFLOW_TRACE_RETENTON_DAYS``).
     Only pflow's own ``PFLOW_`` namespace counts: other tools' variables (``OTEL_…_RETENTION``) never switch
     pflow's retention off."""
-    upper = name.upper()
-    return name != RETENTION_ENV_VAR and upper.startswith("PFLOW_") and "RETENTION" in upper
+    return name != RETENTION_ENV_VAR and name.upper().startswith("PFLOW_") and _looks_like_retention(name)
 
 
 def sweep_after_write(directory: Path) -> None:
@@ -264,9 +284,7 @@ class _Sweep:
                 self._classify(group)
                 examined.append(group)
         candidates = [entry for group in examined for entry in self._removal_candidates(group)]
-        for group in examined:  # a group kept late (an unreadable probe) takes back its earlier candidates
-            if group.kept:
-                self.protected.update(entry.path for entry in group.aged)
+        # A later group's rules can protect an earlier candidate (an Attempt's source is matched across groups).
         candidates = [entry for entry in candidates if entry.path not in self.protected]
         for entry in self.listing.legacy:  # pre-185 names: age alone, zero reads
             if _is_aged(entry, self.cutoff):

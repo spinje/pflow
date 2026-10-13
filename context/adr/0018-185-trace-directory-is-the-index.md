@@ -93,21 +93,25 @@ until it ages out, is never protected, and ages out by the timestamp its old nam
   The loader re-checks that its source still exists after the consumption check, and an Attempt that
   vanished mid-check counts as consumed, so a concurrent sweep makes a resume refuse — never
   double-answer. `resumed_from` stays pure lineage for data (ADR-0010).
-- **Retention is configured leniently.** Every settings model (the root and each section) allows
-  unknown keys and keeps them through a save (a strict model would turn a typo into a whole-file fallback that drops
-  API keys and is written back by the next settings command; an ignoring model would erase the typo on
-  the next save and switch deletion on silently); the sweep prunes nothing — with a warning — when a key
-  that looks like the retention key sits in the wrong place or spelling at any level (one walk over every
-  model's unknown keys, including keys inside an unknown section, plus any `settings.env` name containing
-  `TRACE_RETENTION` other than the exact override — never the user's other variables), when the file failed to load (only no directory entry at the path means "no file"; a file that
-  cannot be read, or a link whose target is unavailable, is a failed load),
-  when the environment override is not a non-negative integer, or when — the override unset — a process
-  environment variable in pflow's own namespace looks like it (`PFLOW_…RETENTION…`; other tools' variables
-  never count; a `settings.env` typo exported at startup is reported once); other unknown keys are ignored, so a
-  newer version's future key never switches an older lane's retention off. `SettingsManager.save()` refuses after a failed load. The sweep reads the
-  settings once more per run, so the insecure-permissions warning is printed once per settings file per
-  process, not once per load. An older pflow's settings
-  write still drops the key: `PFLOW_TRACE_RETENTION_DAYS=0` is the opt-out that survives it.
+- **Retention is configured leniently, and a doubtful opt-out keeps every trace.** Every settings model
+  (the root and each section) allows unknown keys and keeps them through a save (a strict model would turn a
+  typo into a whole-file fallback that drops API keys and is written back by the next settings command; an
+  ignoring model would erase the typo on the next save and switch deletion on silently). The sweep prunes
+  nothing — with a warning — when something looks like the opt-out but is spelled or placed wrong: matched
+  by the stems `reten`/`retain` (a typo inside the word counts), in any unknown settings key at any level
+  (keys inside an unknown section included), in a `settings.env` name that also says `trace` or starts with
+  `PFLOW_`, or — the override unset — in a `PFLOW_` process variable (other tools' variables never count; a
+  `settings.env` typo exported at startup is reported once). It also prunes nothing when the file failed to
+  load — only no directory entry at the path means "no file"; a file that cannot be read, a link whose
+  target is unavailable, a key repeated in one JSON object, or a `trace_retention_days` given as `true`/`false`
+  (never a 1-day window; `"0"` still means 0) is a failed load — or when the override is not a whole number ≥ 0. The
+  override is read from the process environment, else from `settings.env` itself (startup injection may
+  skip or abort before copying it). Other unknown keys are ignored, so a newer version's future key never
+  switches an older lane's retention off. `SettingsManager.save()` refuses after a failed load; `settings
+  init`/`reset` ask before replacing anything at the path. The sweep reads the settings once more per run, so
+  the insecure-permissions and failed-load warnings print once per settings file per process, not once per
+  load; `pflow settings show` ends with the window in effect. An older pflow's settings write still drops
+  the key: `PFLOW_TRACE_RETENTION_DAYS=0` is the opt-out that survives it.
 - Every trace path printed before this version keeps working with `pflow report <path>` until the
   trace ages out; the run behind it is not listed anywhere. Do not run pre- and post-185 pflow versions
   against one `~/.pflow`: an older pflow can see and answer a newer pflow's pause, and its answer —

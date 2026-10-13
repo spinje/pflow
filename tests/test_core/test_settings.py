@@ -719,7 +719,7 @@ def test_two_managers_racing_warn_about_insecure_permissions_once(
                 both_checking.wait()  # the other thread checks before this one acts on its answer
             return seen
 
-    monkeypatch.setattr(settings_module, "_INSECURE_PERMISSIONS_WARNED", RendezvousSet())
+    monkeypatch.setattr(settings_module, "_WARNED", RendezvousSet())
     with caplog.at_level(logging.WARNING, logger="pflow.core.settings"):
         threads = [threading.Thread(target=SettingsManager(settings_path=path).load) for _ in range(2)]
         for thread in threads:

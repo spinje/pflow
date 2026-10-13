@@ -1640,6 +1640,8 @@ class WorkflowTraceCollector:
         refusal, not a dead crash. Computed in memory so it holds on the JSON path,
         which runs BEFORE the trace is finalized.
         """
+        if self.only_node is not None:
+            return False  # an --only run is never a resume source (the loader refuses it by id)
         final_events = final_events_by_node(self._top_level_events())
         if self._determine_trace_status(final_events) != "failed":
             return False

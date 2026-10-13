@@ -184,8 +184,8 @@ Settings saves are atomic and permission-restricted. `save()` refuses while
 Every settings model keeps unknown keys (`extra="allow"`) so a typo survives a save;
 `unknown_settings_keys` walks them at every level (Retention's misplaced-key check,
 `settings show`'s omission); `runtime.trace_retention_days` is read only by
-`runtime/trace_retention.py::retention_days` (env `PFLOW_TRACE_RETENTION_DAYS` first,
-never written back). Node filtering happens at
+`runtime/trace_retention.py::retention_days` (the `PFLOW_TRACE_RETENTION_DAYS` override first — the
+process environment, then `settings.env` — never written back). Node filtering happens at
 registry **load**, not storage; MCP matching includes tool/server aliases.
 Workflow input precedence is separately owned by
 `runtime/compilation/ir_preparation.py::prepare_inputs`, not the provider resolver.
