@@ -181,3 +181,35 @@ Entry format: ORCHESTRATION.md → "Progress-log entry format".
   integer, trivially removable; flagged at handback.
 - Resume point: relaunch the five dead lenses on `a4534ebd`+this fold (per-lens rule: all five had
   verified/important findings in round 2 or their surface changed); architecture-fit retired (clean).
+
+## [2026-10-13 01:40] task-planner (Fable) — Claude plan battery, ROUND 3 (relaunched; 6 lenses incl. architecture-fit from the first attempt)
+- Lenses and why: review-plan, review-silent-failures (verified Critical in round 2), review-concurrency-safety
+  (important W1, consumption iterator rewritten), review-architecture-fit (grammar/parser rewritten),
+  review-impact-completeness (new data paths), ADDED review-test-fidelity (two rounds found tests that
+  pass for the wrong reason); review-feature-interactions retired (clean, no new mechanism).
+- Reported Criticals: 5, all from review-test-fidelity (planned tests). **Verified: 5** — C1 read pins
+  on the lister, not the surfaces; C2 dropping `os.utime` removes the only mtime-vs-start discrimination;
+  C3 `f"id-{started}"` makes a filename sort pass as a time sort; C4 the cost bound admits a rule-2 walk
+  over young files and an in-process cache; C5 rule 3 masks rule 1's `count_live=False` in the fixture.
+  All five folded (read-SET pins per public surface, inverted `os.utime` pins, descending deterministic
+  ids, opened-set assertions with fresh state, a newer unrelated run beside each rule-1 fixture). The
+  other five lenses: 0 Criticals. Their Warnings, all CONFIRMED and folded: `answerable_pause` still
+  used `is_file()` (raises on 3.10–3.13, `False` on 3.14) → tri-state via `workflow_file_state`, hidden
+  count returned in `PausedRunListing` and rendered; group identity when the newest head is `None`
+  (the disk-full file the sweep deliberately follows) → newest PARSEABLE head, else keep group;
+  newline-less first line → `None` not `Unreadable`; rule-2 pick head-confirmed (reverse-direction
+  collision) and `nodes_executed > 0` (residual closed); `--only` full-loads every newer failed run →
+  tail shortlist; settings text contradicted itself (§1.5 vs §1.6 vs ADR) → aligned (root + runtime,
+  `*retention*`, case-insensitive) + root test + `settings show` omits extras; new refusal raised as the
+  base class → `ResumeSourceUnreadableError` + `_RESUME_REFUSALS` entry; UI reader twins' fate stated,
+  oversized pins moved to the strict reader; orphan marker unlink after a positive `lstat`;
+  `_attempt_consumed_work` propagates FileNotFound, callers map; rule-3 source search across the whole
+  listing; flock non-blocking errors → `None`; `list_traces` error contract; aged-out hint on by-id
+  misses; docs: env is per-process, newer pflow ages out older lanes' pauses, `execution_tools.py`
+  docstring, `configuration.mdx` cites +1 (#857), Task-159 case 06 + regen of 15/03; dead
+  `resumed_from=` param dropped; spec gained the four behaviour lines; §10 of the checkpoint corrected.
+- Not folded (stated): the CLI sweeps before printing the outcome (Ctrl-C in the ~2 s first sweep loses
+  the printed outcome once; one call site wins); readdir-vs-concurrent-unlink assumption recorded in the
+  ADR rather than engineered around for rule 4.
+- Stop: round 3 yielded verified Criticals only in the ADDED test-fidelity lens, all folded; per the
+  user's rule no fourth round — handed back with that tally.

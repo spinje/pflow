@@ -159,7 +159,9 @@ def trace_filename(workflow_path: str | None, workflow_name: str, started: datet
                    *, only: bool = False, resumed_from: str | None = None) -> str   # asserts parse-back
 def parse_trace_filename(name: str) -> ParsedTraceName | None      # (hash, started, id, only, from) — path-free
 def list_traces(directory: Path | None = None, *, include_legacy: bool = False) -> TraceListing
-    # ONE os.scandir; markers folded in; newest-first by (started, name); empty listing if no dir.
+    # ONE os.scandir; markers folded in; newest-first by (started, name); empty listing if the dir does
+    # not exist (FileNotFoundError); any OTHER OSError on the directory PROPAGATES (a lookup must never
+    # report "no runs" because the directory could not be read; the sweep catches it and warns).
     # Legacy names are counted always and returned only with include_legacy — the sweep is the ONE caller.
 def find_trace(entries: Sequence[TraceEntry], execution_id: str) -> TraceEntry | None
     # exact name match, zero reads. ONE home for by-id resolution — CLI resume, /api/gate, the pinned
@@ -167,17 +169,24 @@ def find_trace(entries: Sequence[TraceEntry], execution_id: str) -> TraceEntry |
 def workflow_hashes(workflow_path: str) -> frozenset[str]           # the 3 spellings _iter_workflow_traces hashes today
 def paused_marker(trace_path: Path) -> Path                         # trace_path.with_name(trace_path.name + ".paused")
 class Unreadable(Exception): ...                                     # raised by the strict readers: the file exists but could not be read/parsed
-def read_trace_meta_strict(path: Path) -> dict[str, Any] | None     # the ONE implementation: FileNotFoundError propagates (gone); any other OSError / UnicodeDecodeError / a corrupt first line → raises Unreadable; None = a readable file with no meta line
+def read_trace_meta_strict(path: Path) -> dict[str, Any] | None     # the ONE implementation: FileNotFoundError propagates (gone); any other OSError / UnicodeDecodeError / a corrupt first line that ENDS IN A NEWLINE → raises Unreadable; None = a readable file with no meta line, INCLUDING a first line with no terminating newline (a write cut by a full disk — the same mid-flush rule the trailer reader applies; never Unreadable, so such a file ages out instead of freezing its group)
 def read_trace_trailer_strict(path: Path) -> dict[str, Any] | None  # same contract; None = readable, no (or not yet a) trailer; 64 KB tail, oversized full re-read
 def read_trace_meta(path: Path) -> dict[str, Any] | None            # the lenient twin for display consumers: strict → None on ANY failure (the union of today's _read_trace_meta_line / run_tailer._read_meta guards; the UI pops `inputs`/`step_identity` in its cache layer)
 def read_trace_trailer(path: Path) -> dict[str, Any] | None         # lenient twin of the strict reader
-def is_trace_locked(path: Path, *, strict: bool = False) -> bool | None   # moved twin; FileNotFoundError → False (no writer exists — a vanished file must not read as "maybe live"); on POSIX any other OSError → None lenient / raises Unreadable strict; Windows (no fcntl) → None
+def is_trace_locked(path: Path, *, strict: bool = False) -> bool | None   # moved twin; FileNotFoundError → False (no writer exists — a vanished file must not read as "maybe live"); a flock BlockingIOError → True; any OTHER flock error (ENOTSUP/ENOLCK — a filesystem without flock) → None, "age decides", never a silent "locked forever"; an open OSError → None lenient / raises Unreadable strict; Windows (no fcntl) → None
 def workflow_file_state(path: str) -> Literal["present", "absent", "unknown"]   # os.stat: FileNotFoundError/NotADirectoryError → absent; other OSError → unknown (Python 3.14's is_file() swallows PermissionError — precedent workflow_resolver._file_exists)
 ```
 
 Deletion test: deleting it re-scatters the grammar over 8 sites and the 3 twins over 2 modules — keep.
 It imports only stdlib + `core.trace_io` constants; `ui/` and `runtime/` both import it.
 `format_trace_filename` and `_trace_recency_key` in `workflow_trace.py` are deleted (their callers move).
+Fate of the UI twins in `ui/run_tailer.py`: `_read_meta`, `read_run_trailer`, `_scan_tail_for_terminal`
+are DELETED (callers import `read_trace_meta`/`read_trace_trailer` from `trace_dir` into `run_tailer`'s
+namespace, so `monkeypatch.setattr(run_tailer, "read_trace_meta", …)` keeps working — `test_run_tailer.py:309`
+retargets from `_read_meta`); `read_run_status` stays as a two-line wrapper over `read_trace_trailer`
+(its `_check_stopped` caller). The oversized-trailer pins (`test_run_tailer.py:194`, `test_resume_list_cli.py`
+oversized tests) move to `test_trace_dir.py` against `read_trace_trailer_strict` and are mutation-verified
+there (drop the full re-read → they fail).
 
 ### 1.3 Writer (`runtime/workflow_trace.py`)
 
@@ -209,15 +218,15 @@ It imports only stdlib + `core.trace_io` constants; `ui/` and `runtime/` both im
 
 | Reader | After |
 |---|---|
-| `workflow_trace._iter_workflow_traces(debug_dir, workflow_path, *, entries=None, resumed_from=None)` | `entries = entries if entries is not None else list_traces(debug_dir)`; candidates = entries with `workflow_hash in workflow_hashes(workflow_path)` and `not e.only` and (`resumed_from is None` or `e.resumed_from_prefix == resumed_from[:8]`); then the existing per-file guards (load, dict, `workflow_path` re-check, `2.` version, `only_node is None` — kept: a hand-made name may carry no tag). Still NEVER filters `final_status`. |
-| `workflow_trace.load_full_run_events` | `debug_dir()` resolver; otherwise unchanged. `OnlySnapshotMissingError`'s suggestion gains the two new causes: "its trace aged out of `runtime.trace_retention_days`" and, when `legacy_count > 0`, "N traces written by an earlier pflow version are not searched". |
-| `resume_source._select_resume_trace(debug_dir, workflow_path, execution_id, *, listing)` by id | `hit = find_trace(listing.traces, id)`; if hit: `.only` tag or `meta.only_node` → fall to missing (mirrors today's skip); else load. Then missing — `ResumeSourceMissingError`'s message gains, when `listing.legacy_count > 0`, the clause "N traces written by an earlier pflow version are not searched (readable with `pflow report <path>`)". |
+| `workflow_trace._iter_workflow_traces(debug_dir, workflow_path, *, entries=None)` | `entries = entries if entries is not None else list_traces(debug_dir).traces`; candidates = entries with `workflow_hash in workflow_hashes(workflow_path)` and `not e.only` (no `resumed_from=` parameter — the consumption check has its own iterator); then the existing per-file guards (load, dict, `workflow_path` re-check, `2.` version, `only_node is None` — kept: a hand-made name may carry no tag). Still NEVER filters `final_status`. |
+| `workflow_trace.load_full_run_events` | `debug_dir()` resolver; lists once; **shortlists by a lenient tail read first** (newest-first over the workflow's non-`.only` entries: `read_trace_trailer` → keep only `success`/`degraded`), then feeds `_iter_workflow_traces(entries=shortlist)` which does the full loads with its existing guards — so a workflow with 1,000 young failed runs costs 1,000 tail reads (0.4 s) and ONE full load, not 1,000 full loads (the spec's "read only files that belong to the answer"); the status policy stays the consumer's, the iterator still never filters `final_status`. `OnlySnapshotMissingError`'s suggestion gains the two new causes: "its trace aged out of `runtime.trace_retention_days`" and, when `legacy_count > 0`, "N traces written by an earlier pflow version are not searched". |
+| `resume_source._select_resume_trace(debug_dir, workflow_path, execution_id, *, listing)` by id | `hit = find_trace(listing.traces, id)`; if hit: `.only` tag or `meta.only_node` → fall to missing (mirrors today's skip); else load. Then missing — `ResumeSourceMissingError`'s message gains, when `listing.legacy_count > 0`, the clause "N traces written by an earlier pflow version are not searched (readable with `pflow report <path>`)", and always the hint "or its trace aged out of `runtime.trace_retention_days`" (the same two causes every by-id miss — `/api/gate` 404, `report <path>` not found — names). |
 | `resume_source._select_resume_trace` by workflow | unchanged logic over `_iter_workflow_traces(…, entries=entries)`. |
-| `resume_source._find_consuming_attempt(debug_dir, W, X, *, entries, count_live=True)` | Does NOT go through `_iter_workflow_traces` (its `except (JSONDecodeError, OSError): continue` at `workflow_trace.py:176` is right for `--only`/analyze-cache and wrong here — a swallowed read fault would read as "no consumer", i.e. a second answer). It iterates the `.from-{X[:8]}` entries of W's hashes itself, newest-first, loading each with three outcomes: `FileNotFoundError` → **consumed** (the sweep removes an Attempt only after its source is gone, so a vanished Attempt means a gone source; fail closed); any other `OSError`/`UnicodeDecodeError` → `count_live=True` callers (the loader, `resume list`) raise `ResumeSourceError` "could not read attempt <path>; retry" and the sweep treats the source as protected this sweep; `JSONDecodeError` → skip as today. The loaded dict keeps the existing guards (path re-check, `2.`, `only_node`, `resumed_from == X`) and the consumed test; `is_trace_locked(...) is True` applies only when `count_live`. `_attempt_consumed_work`'s raw re-read maps `FileNotFoundError` the same way (consumed), and the by-workflow selection loop (`_select_resume_trace:300`) and `list_paused_runs` map a `FileNotFoundError` from it to "skip this candidate". ONE policy, one flag. |
+| `resume_source._find_consuming_attempt(debug_dir, W, X, *, entries, count_live=True)` | Does NOT go through `_iter_workflow_traces` (its `except (JSONDecodeError, OSError): continue` at `workflow_trace.py:176` is right for `--only`/analyze-cache and wrong here — a swallowed read fault would read as "no consumer", i.e. a second answer). It iterates the `.from-{X[:8]}` entries of W's hashes itself, newest-first, loading each with three outcomes: `FileNotFoundError` → **consumed** (the sweep removes an Attempt only after its source is gone, so a vanished Attempt means a gone source; fail closed); any other `OSError` → `count_live=True` callers (the loader, `resume list`) raise **`ResumeSourceUnreadableError(ResumeSourceError)`** ("could not read attempt <path>; retry" — a new subclass with its own `refusal` literal `source_unreadable`, added to `ui/server._RESUME_REFUSALS` so `/api/resume` returns a typed 409 and the refusal-map meta-test `test_ui_interaction_server.py:1884-1903` stays green; the browser's generic refusal arm renders it — P2 verifies whether `web/src/api/client.ts`'s union needs the one literal and, if so, that one-line `web/` edit is in scope) and the sweep treats the source as protected this sweep; `JSONDecodeError` (which `load_trace_file` also raises for a `UnicodeDecodeError`) → skip as today. The loaded dict keeps the existing guards (path re-check, `2.`, `only_node`, `resumed_from == X`) and the consumed test; `is_trace_locked(...) is True` applies only when `count_live`. `_attempt_consumed_work` lets a `FileNotFoundError` from its raw re-read PROPAGATE and each caller maps it: the consumption check → consumed; the by-workflow selection loop (`_select_resume_trace:300`) and `list_paused_runs` → skip this candidate (a vanished candidate must fall through to the next older run, never be selected and then refused as missing). ONE policy, one flag. |
 | `resume_source.load_resume_source` | lists ONCE (`listing = list_traces(debug_dir)`) and passes it to selection and the consumption check — a public lookup performs exactly one directory enumeration (pinned by the scandir-count test). **After the consumption check returns `None`, `path.exists()` is re-checked; a source that vanished refuses with `ResumeSourceMissingError`** (the one `stat` that closes the resume-vs-sweep race: the sweep unlinks a source before its Attempt, so a source still present after the check had no consumer when it was checked). `_iter_raw_trace_lines` keeps raising on an earlier malformed line but a `FileNotFoundError` from it is converted by the same refusal. |
-| `resume_source.answerable_pause(entry, meta, trailer) -> bool` (new, ONE predicate) | the row rule `list_paused_runs` applies today — marker-bearing, trailer `paused`, `paused_node_id` + `gate_request` present, not `.only`, not inline `ir-hash:` — **plus: the workflow file still exists** (`Path(meta["workflow_path"]).is_file()`; a by-id resume re-resolves the file and refuses "no longer exists" otherwise, `resume_preflight.py:114-122`, so such a token can never be consumed). Shared by `list_paused_runs` and the sweep's rule 1 so the list, the verdict and retention agree. Behaviour change (flagged at handback): `resume list` no longer shows a pause whose workflow file was deleted — on the owner's machine that is all 26 currently pending rows (#734's "stale pauses" symptom). |
-| `resume_source.list_paused_runs(debug_dir=None)` | `listing = list_traces(debug_dir)`; rows = `[e for e in listing.traces if e.paused]` newest-first → `read_trace_meta` + `read_trace_trailer` → `answerable_pause` → consumption via `_find_consuming_attempt(..., entries=listing.traces)`. `PausedRun` unchanged. The CLI's "No paused runs." gains the legacy clause when `listing.legacy_count > 0`. |
-| `cli/commands/report.py` | `listing = list_traces()`; a LAZY generator over `listing.traces` newest-first: tail-read (`read_trace_trailer` not `None`) then `_trace_is_complete` (the existing full-load check stays) — the first that passes is chosen; never a list comprehension over all entries. "No trace files found" / "No completed trace found" gain the legacy clause when `listing.legacy_count > 0`; the `--help` example gets a real name. |
+| `resume_source.answerable_pause(entry, meta, trailer, file_state) -> Literal["yes","no","unknown"]` (new, ONE predicate, pure — callers pass the reads: `list_paused_runs` the lenient ones, the sweep the strict ones) | the row rule `list_paused_runs` applies today — marker-bearing, trailer `paused`, `paused_node_id` + `gate_request` present, not `.only`, not inline `ir-hash:` — **plus the workflow file's state** (`trace_dir.workflow_file_state`, never `is_file()`: it raises `PermissionError` on 3.10–3.13 and returns `False` on 3.14): `present` → `yes`; `absent` → `no` (a by-id resume re-resolves the file and refuses "no longer exists", `resume_preflight.py:114-122`, so such a token can never be consumed); `unknown` → `unknown` (the sweep keeps the group; `resume list` shows the row with a "(workflow file unreadable)" note). Shared by `list_paused_runs` and the sweep's rule 1 so the list, the verdict and retention agree. Behaviour change (flagged at handback): `resume list` no longer lists a pause whose workflow file was deleted — on the owner's machine that is all 26 currently pending rows (#734's "stale pauses" symptom) — and SAYS SO: `list_paused_runs` returns `PausedRunListing(runs, hidden_missing_file: int, legacy_count: int)` (`PausedRun` unchanged; the CLI is the only caller) and the text renderer prints "N paused runs are not listed: their workflow file no longer exists" (JSON: the same counts on stderr), paired presence/absence tested. |
+| `resume_source.list_paused_runs(debug_dir=None, *, listing=None) -> PausedRunListing` | `listing = listing or list_traces(debug_dir)`; rows = `[e for e in listing.traces if e.paused]` newest-first → `read_trace_meta` + `read_trace_trailer` + `workflow_file_state` → `answerable_pause` → consumption via `_find_consuming_attempt(..., entries=listing.traces)`; a candidate that vanishes mid-check is skipped. The CLI's "No paused runs." gains the legacy clause when `listing.legacy_count > 0` and the hidden-pause sentence when `hidden_missing_file > 0`. |
+| `cli/commands/report.py` (+ `execution/resume_preflight.py:138-152`, which re-raises the by-id miss with its own message and must carry the clauses; `cli/commands/resume.py:452,470`; `cli/commands/analyze_cache.py:164`; `rendering/traces_list.py:33-38`) | `listing = list_traces()`; a LAZY generator over `listing.traces` newest-first: tail-read (`read_trace_trailer` not `None`) then `_trace_is_complete` (the existing full-load check stays) — the first that passes is chosen; never a list comprehension over all entries. "No trace files found" / "No completed trace found" gain the legacy clause when `listing.legacy_count > 0`; the `--help` example gets a real name. |
 | `core/prompt_cache_analysis/trace_loading.py` | `debug_dir()` resolver at `:289,:338`; `_autoload_trace` and `list_traces_for_workflow` list ONCE and pass the listing to `_collect_candidate_traces` and to the no-match note (`bool(listing.traces)` replaces the `:355` glob; a second note when `listing.legacy_count > 0`: "N traces written by an earlier pflow version are not searched — pass `--from-trace <path>`"); `list_traces_for_workflow` sorts by `(started, name)` desc via the parsed entry (not `path.name`); `_autoload_selection_with_disclosure`'s `failed[0][0].name > chosen.name` compares the same key. The analysis still loads every trace of the workflow (out of scope, spec). |
 | `ui/run_tailer.scan_traces(workflow_key, debug_dir)` | `_stat_sorted_listing(directory, wf_hash)`: the `_DIR_LIST_CACHE` key becomes `(directory, wf_hash|None)`, its value an IMMUTABLE `tuple[TraceEntry, ...]` from `list_traces` (one scandir, gated on dir mtime as today — stat the dir BEFORE listing, as now; never sort a cached list in place: the cache is read from the Starlette threadpool and the tailer's `to_thread`); scoped = `workflow_hash == wf_hash`; **order = `(started, name)` desc (D3), no stat for ordering**; the per-file stat remains only as the `_SCAN_CACHE` key. `_file_facts` calls `read_trace_meta` (then pops `inputs`/`step_identity`) and `read_trace_trailer`. The vanished-entry prune uses the scoped entry set instead of a name prefix. `TraceCandidate` shape unchanged. |
 | `ui/run_tailer.RunTailer._resolve_pinned` | `find_trace([e for e in list_traces().traces if e.workflow_hash in workflow_hashes(self._key)], run_id)`; on a hit, one `read_trace_meta` for `content_hash` (the stale check) + the `_same_path` guard. No `scan_traces`. Nothing ever renames a trace (Q4: no migration), so the tailer's fixed-path lifecycle is unchanged. |
@@ -247,13 +256,21 @@ Candidates = entries older than the window (`listing.legacy` included). Legacy c
 on age alone, no reads. Current-grammar candidates are grouped by `workflow_hash`; a group is examined
 only if it has at least one candidate. Per group:
 - rule 3 (newest run): the newest entry of the hash by name — zero reads; when that entry carries
-  `.from-{src8}`, its source entry is protected with it (names only — a dead zero-work Attempt must not
-  move "the newest run" off a resumable source);
+  `.from-{src8}`, its source entry is protected with it (names only, matched by id prefix across the
+  WHOLE listing, not only the Attempt's hash group — the three `workflow_hashes` spellings can file an
+  Attempt under another hash; a dead zero-work Attempt must not move "the newest run" off a resumable
+  source);
 - rule 1 (pending pause): marker-bearing candidates only (the marker is written before the trailer, so
   a durable pause always has one) — `answerable_pause` reads that trace's head+tail (P small) and the
   consumption check reads 0–2 `.from-` Attempts;
 - rule 2 (the Snapshot): **walk the group's AGED candidates only**, newest-first, skipping `.only`,
-  tail-reading until the first `success`/`degraded` trailer; protect it. This over-protects by at most
+  tail-reading until the first `success`/`degraded` trailer **with `nodes_executed > 0`** (a success
+  trailer over zero events is what the loader skips too — `nodes_executed` counts non-restored
+  top-level events, `workflow_trace.py:1094`, so this agrees with the loader's non-empty-`nodes` rule
+  at zero extra reads; the "zero-event residual" is gone); then **head-read the pick** (+1 read) and
+  confirm its `workflow_path` equals the group's identity — on a mismatch (a hash collision in the
+  OTHER direction: the collider's success is the newest aged one) keep walking for the identity's
+  path, and keep the collider's pick too; protect it. This over-protects by at most
   one file per group when a younger Snapshot exists (acceptable; stated in the ADR) and bounds reads to
   files the same sweep removes — a group of 500 young failed runs is never read. A trailer is enough (a
   trace with a `run.complete` trailer had every earlier line fully flushed — `_flush_line` disables
@@ -267,7 +284,10 @@ only if it has at least one candidate. Per group:
   a later pflow's "keep this" fact (Task 121's recordings) must be honoured by every older binary
   sharing the directory, not only by binaries built after it; lookups still ignore unknown tags.
 Identity grouping: the hash narrows; the file-exists qualifier and the per-path rules use the head of
-the group's newest entry (one head read per examined group). Each candidate chosen for removal is
+**the newest entry whose strict head parses to a meta line with a `workflow_path`** — walking back
+from the newest on `None` (a 0-byte or newline-less file: the disk-full run the sweep deliberately
+follows leaves exactly that as the group's newest entry) or `FileNotFoundError`; if no head in the
+group parses, the whole group is kept this sweep (one head read per examined group in the common case). Each candidate chosen for removal is
 head-read once more (it is about to be deleted; 0.4 ms) and, if its `workflow_path` differs from the
 group-newest head (a hash collision), rules 2 and 3 are re-applied for that path before it is removed
 — so a colliding workflow's Snapshot or newest run is never taken. Budget on the owner's shape with the
@@ -308,16 +328,21 @@ the user's call — the plan proceeds on it unless overruled.
 **Reads are three-outcome, per candidate, fail closed — built on the STRICT readers (§1.2), never on
 the lenient twins (which turn every fault into `None`, and `None` here would mean "delete"):**
 `FileNotFoundError` = gone (fine, not counted); `Unreadable` (any other `OSError`, `UnicodeDecodeError`,
-a corrupt head or a last line that fails to parse on a file that ends in a newline) = **keep it, count
-`unreadable`, and keep its whole group this sweep**; a head read of `None` (a readable file with no meta
+a corrupt head or last line on a file that ends in a newline) = **keep it, count `unreadable`, and keep
+its whole group this sweep when the unreadable file is newer than the group's rule-2/3 picks or carries
+a marker or `.from-` tag (it could be the thing that protects others); otherwise keep only the file**
+— and the warning names the first three unreadable paths, so a permanently unreadable file can be found; a head read of `None` (a readable file with no meta
 line — a 0-byte file from a failed open) = removable on age alone once its lock probe is not `True`.
 An `unknown` workflow-file state keeps the group. Every candidate is handled in its own `try`; one bad
 file never aborts the sweep.
 
 Removal: `path.unlink(missing_ok=True)` then `paused_marker(path).unlink(missing_ok=True)`; Windows
 `PermissionError` (winerror 5/32) → one retry via the `mcp/manager.py:15-31` backoff shape, then
-`skipped`. Orphan markers (`listing.orphan_markers` — a `.paused` whose trace name is absent from the
-RAW scandir, whatever grammar) are unlinked.
+`skipped`. Orphan markers (`listing.orphan_markers` — a `.paused` whose trace name is absent from the RAW
+scandir, whatever grammar) are unlinked only after an `os.lstat` of the exact trace path raises
+`FileNotFoundError` (a readdir racing concurrent unlinks may skip a live entry; a destructive act never
+rests on absence from a listing alone — the ADR states the readdir assumption rule 4 and the loader
+still make).
 
 - `retention_days()`: `os.environ.get("PFLOW_TRACE_RETENTION_DAYS")` first — an integer ≥ 0 wins; any
   other value → `logger.warning` and **`None`** (an opt-out typed as `never` or `-1` must not fall
@@ -325,7 +350,8 @@ RAW scandir, whatever grammar) are unlinked.
   a one-shot `PFLOW_TRACE_RETENTION_DAYS=1 pflow settings …` can never persist `1`. Then the settings
   FILE, read ONCE through `SettingsManager().load()`: `load_error` set → `None`; else any extra key
   whose name contains `retention` in `settings.model_extra` (root — a misplaced opt-out) or
-  `settings.runtime.model_extra` → `None`; other unknown keys are ignored (a newer pflow's future
+  `settings.runtime.model_extra` (case-insensitive substring, so `traceRetentionDays` counts too) →
+  `None`; other unknown keys are ignored (a newer pflow's future
   `runtime.*` key must not switch an older lane's retention off and warn on every run). Both
   `PflowSettings` and `RuntimeSettings` get `model_config = ConfigDict(extra="allow")`: unknown keys never fail validation — so no whole-file fallback, no API-key drop — and they
   SURVIVE `model_dump()`, so a `pflow settings set-env …` after a typo does not silently erase the typo
@@ -346,9 +372,17 @@ RAW scandir, whatever grammar) are unlinked.
   failure, a class this task widens by adding a validated field (`ge=0`). `settings init`/`reset` build
   a fresh manager and save without loading, so recovery is unaffected. `_apply_env_overrides` is NOT
   extended.
+- `pflow settings show` (`cli/commands/settings.py:83-85`) dumps `model_dump()` masking only `env`; with
+  `extra="allow"` unknown keys now reach the dump — `show` OMITS extras (a secret hand-placed at the root
+  must not print in clear).
 - `tests/conftest.py`: `isolate_pflow_config` sets `PFLOW_TRACE_RETENTION_DAYS=0`; so does
   `set_isolated_home` (`conftest.py:508`), because `prepared_subprocess_env` copies `os.environ` at
   module scope (`:531-553`). `tests/CLAUDE.md:48,52` says so (opt in per test).
+- Timing note (accepted): the CLI sweeps inside `finalize`, i.e. before it prints the outcome
+  (`run.py:404-418`); a Ctrl-C landing in the first post-upgrade sweep (~2 s of unlinks, once) exits 130
+  without printing the outcome although the trace is durable. The interrupted sweep itself is safe
+  (sources before Attempts, trace before marker). Moving the sweep after output would need two call
+  sites (CLI `finally` + runner `finally`); one call site wins.
 - Concurrency note: one listing per lookup means the loader's consumption check uses a snapshot taken
   before the source's full load — it widens #763's two-concurrent-resumes window by that load time
   (milliseconds against an existing seconds-wide window); stated, accepted.
@@ -357,7 +391,7 @@ RAW scandir, whatever grammar) are unlinked.
 
 `engine.py`, `workflow_executor.py`, the trace format and version, `load_trace_file`, `PausedRun`,
 `TraceCandidate`, `ResumeSource`, every public function signature except the keyword-only `entries=`/
-`listing=`/`resumed_from=` additions, `_apply_env_overrides`, the settings model's leniency (`extra="allow"` on `runtime` only), the `resume list` text/JSON layout, the `/api/runs` entry shape, the
+`listing=` additions and `list_paused_runs`'s `PausedRunListing` return, `_apply_env_overrides`, the settings models' leniency beyond `extra="allow"` on `PflowSettings` AND `RuntimeSettings` (§1.5), the `resume list` text/JSON layout, the `/api/runs` entry shape, the
 `--only`/resume/pause semantics, the UI's two caches (they survive the deletion test — they bound the
 4 Hz poll — only their listing source and sort key change), `analyze-cache`'s load-everything choice.
 
@@ -386,9 +420,12 @@ orchestrator starts at P1. No handback is owed for CP-1.
   `tests/test_import_hygiene.py` docstring AND its `:159` failure message (both tell future agents to
   duplicate across the layer — the shared home is `core/trace_dir` now); stale prose at
   `resume_source.py:11-15`, `trace_loading.py:206-207,312-316`, `run_tailer.py:192,278`; the Task-159
-  baseline fixtures `03-analyze-cache-modes/07,08,09/command.sh` (hand-written old-grammar names →
-  composed through `trace_filename`, 07's two traces given distinct ids) and
-  `15-run-flag-interactions/03-report-with-only/command.sh`'s `sed` mask (add the `.{id}` field).
+  baseline fixtures `03-analyze-cache-modes/06,07,08,09/command.sh` (hand-written old-grammar names →
+  composed through `trace_filename`; 06 seeds a `deadbeef` hash that never matched its workflow — rebuild
+  it with the real hash and add a no-flag twin so the case proves autoload fires; 07's two traces get
+  distinct ids) and `15-run-flag-interactions/03-report-with-only/command.sh`'s `sed` mask (a
+  UUID-SHAPED id mask — a greedy `\.[A-Za-z0-9_-]+` would eat `.only`; its expected files are
+  regenerated: the name gains `-workflow.<uuid>.only-`).
 - Tests (new `tests/test_core/test_trace_dir.py` + edits):
   - Grammar round-trip: compose → parse for every field combination (`.only`, `.from-`, both, an
     unknown future tag that parses as current and is ignored; the name is always present — `workflow`
@@ -399,13 +436,21 @@ orchestrator starts at P1. No handback is owed for CP-1.
     `foo.json` — parse to `None`, are never listed, never counted as legacy, and (P3) never deleted; a
     name whose display name contains a timestamp-like run still parses correctly (the dot anchor).
   - `list_traces`: newest-first by `started` regardless of name prefix (the `zzz`/`aaa` scenario);
-    markers folded in (`paused=True`); orphan marker ignored; missing dir → `[]`; a 2,000-file dir
-    with ONE `open()` counted by monkeypatching `builtins.open`/`io.open` = 0 for `list_traces` and
-    exactly 1 for `find_trace`+load of one id (the "reads only the answer" pin — the spec's bound,
-    stated as a read count, not wall time).
+    markers folded in (`paused=True`); orphan marker ignored; missing dir → empty; an unreadable dir
+    (`PermissionError`) propagates. **Read-SET pins on the PUBLIC surfaces** (the spec's bound; a count
+    on the lister alone is a tautology — `find_trace` is a filter): record every path opened by
+    monkeypatching BOTH `builtins.open` and `io.open` (`Path.read_text` uses only the latter) on a
+    directory mixing other workflows, other runs of the same workflow, other paused runs, `.only`
+    traces and legacy names; assert `opened ⊆ answer` for `load_resume_source(execution_id=)` (the
+    target + its `.from-` Attempts), `load_resume_source(workflow_path=)`, `list_paused_runs` (the P
+    marked traces + their Attempts), `load_full_run_events` (tail reads of the workflow's traces + ONE
+    full load), `pflow report` auto-select (tail + load of the newest complete only); and `os.scandir`
+    called ≤ 1 per public lookup. Each pin is mutation-verified by dropping the name filter it guards.
   - Collector: a forced unsafe `execution_id` raises `ValueError`; a streamed paused run leaves
     `….json.paused` beside its trace and `trace_path` is set; a marker `OSError` (monkeypatched `open`
-    for the marker path only) nulls `trace_path`, writes NO trailer (the file on disk reads
+    for the marker path only) nulls `trace_path`, writes NO trailer — `resume <id>` on it then takes
+    the incomplete arm exactly as a trailer fault does today (assert that specific outcome, never the
+    gate) — (the file on disk reads
     `incomplete` — presence assertion: no `run.complete` line), and the CLI reports the pause as
     non-durable (`is_durable_pause` False — extend `test_run_outcome_cli.py::TestATrailerWriteFault
     LeavesNoIdentity`'s shape); `/api/gate` and `resume <id>` on that trace do NOT offer the gate (the
@@ -419,7 +464,8 @@ orchestrator starts at P1. No handback is owed for CP-1.
     `~/.pflow` still orders and finds new traces).
   - Miss messages: with 3 legacy-named files and no current trace, `pflow report`, `resume <id>` (through
     the REAL CLI — `resume_preflight.py:138-152` re-raises the by-id miss with its own message and must
-    carry the clause), `resume <workflow>`, `resume list` (text; the JSON form stays a bare array and the
+    carry the clause; the three legacy files are RENAMED COPIES of a fixture shown to be found under
+    its current name, so the miss is the cutover and nothing else), `resume <workflow>`, `resume list` (text; the JSON form stays a bare array and the
     clause goes to stderr), `--only` (`load_snapshot_or_raise` lists once more on its miss path — an
     error path, so the second enumeration is fine) and `analyze-cache --list-traces` (`rendering/
     traces_list.py:33-38` currently returns early without the note; its "Looked in … for
@@ -439,6 +485,13 @@ orchestrator starts at P1. No handback is owed for CP-1.
     and the resume refuses `ResumeSourceMissingError` (monkeypatched `unlink` between the two); a
     consuming Attempt that vanishes mid-check counts as consumed; `test_paused_cli.py` and
     `test_resume_cli.py` batteries (real producers) green.
+  - Recency (D3, the one rule): in ONE discover test and ONE report test, KEEP `os.utime` and INVERT
+    it — the trace with the newer start time gets the OLDER mtime — and assert start time wins (without
+    this the fixture rewrite leaves mtime and start time agreeing, and a surviving `st_mtime` sort at
+    `run_tailer.py:242`/`report.py:57` passes every test); a prefix-collision pin: two pending sources
+    whose ids share 8 chars (`pause-aaaa1`/`pause-aaaa2`), one consumed — the other stays listed,
+    resumable and protected (drops the `resumed_from == id` confirmation → fails); by-id with ids
+    `abc` / `abc-2` (newer) resolves exactly.
   - Snapshot: `test_only_snapshot.py:438` (timestamp beats name prefix) stays green through the new key;
     a current-grammar trace hand-written WITHOUT the tag but with `only_node` in its meta is still
     excluded (the meta guard is not dead).
@@ -457,7 +510,14 @@ orchestrator starts at P1. No handback is owed for CP-1.
     `datetime` (102 fixture sites pass the short form; a name that parses as legacy would make every
     presence test fail and every absence test pass for free), asserts the written name parses as
     CURRENT grammar, and point the per-file helpers at it. Fixtures without an `execution_id` get one
-    (e.g. `f"id-{started}"`). Fixtures whose `workflow_path` is a fake like `/work/big/wf.pflow.md`
+    (deterministic and DESCENDING with time — e.g. derived from `99999999999999 - int(digits)` — so a
+    whole-filename sort, where the id now precedes the timestamp, orders the OPPOSITE way to start time
+    and every same-name order pin fails under it; never `f"id-{started}"`). The helper is a NAME
+    COMPOSER (built from the same fields as the meta, asserting name-id == meta-id) plus the existing
+    content writers — `_write_incomplete_trace`/`complete=False` fixtures keep their trailer-less
+    writer (`flatten_trace_to_lines` always appends `run.complete`; routing crashed-run fixtures
+    through it would make them complete and the crashed-run tests vacuous). Fixtures whose
+    `workflow_path` is a fake like `/work/big/wf.pflow.md`
     (`test_resume_list_cli.py:106`) create that file under the test's HOME when the test expects the
     pause to be listed or protected (`answerable_pause` requires it) — never weaken the predicate. `test_workflow_trace.py:376-379,420,500` flip to the new grammar (the id
     IS in the name now — `:500` was a Task-32-era design pin, reversed deliberately).
@@ -495,7 +555,10 @@ orchestrator starts at P1. No handback is owed for CP-1.
   - `/api/gate` tests: hand-written names → composer; add "gate by id over 500 traces of other
     workflows opens exactly one trace file" (read-count pin, the ~25 s symptom's guard); and "gate by
     id of a LEGACY-named paused trace is 404" beside "the same trace under a current name is 200".
-  - `test_ui.py:1087-1252` and `test_ui_interaction_server.py:1217-1286` hand-written names → composer.
+  - `test_ui.py:1087-1252` and `test_ui_interaction_server.py:1217-1286` hand-written names → composer;
+    the two corrupt-trailer gate tests (`:1229-1257`) add `"not paused" in error` beside the 404 (an
+    unrecognised name would 404 for the wrong reason); `test_run_tailer.py:358` adds `a_path.name in
+    opened` beside "B never opened".
 - Failure scenarios: `/api/gate` scanning every file (read count); a pinned run id resolving to another
   workflow's run with the same id prefix; the unpinned overlay following an `--only` trace; a cache
   prune that evicts another workflow's entries (`test_scoped_scan_prunes_only_its_own_vanished_cache`).
@@ -521,11 +584,18 @@ orchestrator starts at P1. No handback is owed for CP-1.
   retention_days` with the env override; `save()` refuses after a failed load).
 - Tests (explicit `keep_days`/`now`, synthetic dirs through the shared fixture helper, the clock passed
   in — never `sleep`):
-  - A fixture with every protected kind — a pending paused (marker, file exists, no attempt), a paused
-    whose workflow file is gone, a consumed paused (marker + `.from-` attempt that ran a step), a paused
-    source with a LIVE zero-work attempt (POSIX, `flock` held, no events), the newest success per
+  - A fixture with every protected kind — stated as a PER-ITEM TABLE (workflow, file present?, newest
+    of its workflow?, the ONE rule that explains its outcome), each paused fixture's workflow file
+    created except the one testing the deleted-file conjunct, and the hash-colliding pair a REAL md5[:8]
+    collision found at runtime under `tmp_path` (~65k candidates, sub-second) — a pending paused
+    (marker, file exists, no attempt, with a NEWER unrelated non-Attempt run of the same workflow so
+    rule 3 cannot explain its survival), a paused whose workflow file is gone, a consumed paused (marker + `.from-` attempt that ran a step), a paused
+    source with a LIVE zero-work attempt (POSIX, `flock` held, no events; plus a newer unrelated run of
+    that workflow, so only rule 1 with `count_live=False` explains the source's survival), the newest success per
     workflow, an older success, a newer success of a hash-colliding OTHER path (same `hash8`, different
-    `workflow_path`), a failed newest run (rule 5) with an older success (rule 2), a denied, an
+    `workflow_path`) in BOTH directions (the collider's success newer, and older, than the identity's),
+    a 0-byte CURRENT-GRAMMAR file as a group's NEWEST entry beside that group's aged Snapshot and newest
+    real run (both survive), a failed newest run (rule 3) with an older success (rule 2), a denied, an
     incomplete, an `--only` run newer than the full success, a locked incomplete (POSIX), a 0-byte
     current-grammar file, an orphan marker, five legacy names — all older than the window: after
     `prune_traces`, exactly these remain: the answerable pending paused, the paused source of the live
@@ -537,9 +607,10 @@ orchestrator starts at P1. No handback is owed for CP-1.
     raise `PermissionError` for P only → A survives, `resume list` does NOT list P, `resume P` refuses
     as superseded; without the fault both go. P ← A1 ← A2 with the fault on A1 → A2 survives; without
     the fault the chain is removed in one sweep.
-  - Fail-closed reads — the fault is injected at `builtins.open` / `os.open` for ONE path (raise
-    `OSError(errno.EMFILE, …)`), never at the helper (a helper mock would pass against a sweep that
-    fails open): the aged pending pause's trailer read fails → the pause is kept, `unreadable == 1`,
+  - Fail-closed reads — the fault is injected at `builtins.open`/`io.open` / `os.stat` for ONE path
+    (raise `OSError(errno.EMFILE, …)`), never at the helper (a helper mock would pass against a sweep
+    that fails open), and EVERY such test has a control: an unrelated aged unprotected trace in the same
+    directory IS removed by the same sweep (so "kept" is not "the sweep aborted"): the aged pending pause's trailer read fails → the pause is kept, `unreadable == 1`,
     one warning; the group's newest success fails → nothing in that group is removed; the lock probe's
     open fails on POSIX → kept; `workflow_file_state` → `unknown` (monkeypatched `os.stat` raising
     `PermissionError`) → the group is kept; a `FileNotFoundError` mid-sweep removes nothing else and is
@@ -547,35 +618,44 @@ orchestrator starts at P1. No handback is owed for CP-1.
   - Unknown facts keep: an aged trace with an unknown tag (`.recording`) and one with an unknown
     sidecar (`….json.claim`) survive the sweep; the same traces are still found by id and listed.
   - Agreement: on a mixed fixture (young + aged successes, `.only`, failed, degraded, empty-`nodes`
-    success), the trace rule 2 protects is the one `load_full_run_events` picks, or is older than it
-    (the one-file over-protection), never newer.
+    success — which rule 2 now skips via `nodes_executed`), `load_full_run_events(...)` returns the
+    SAME trace before and after `prune_traces` (the oracle); an older extra survivor is allowed only
+    when the loader's pick is younger than the window.
   - Cost: a fixture with 2,000 idle identities (each: one aged success, workflow file present) + 50
-    aged removable traces + ONE identity with 1,000 YOUNG failed runs and an aged success → the SECOND
-    sweep opens ≤ 2 × 2,001 + 50 files (count opens — the young failures are never read) and completes
-    in well under a second; with the files absent (identities dead) it opens ≤ 2,000 heads and removes
-    everything.
+    aged removable traces + ONE identity with 1,000 YOUNG failed runs and an aged success → record the
+    opened PATH SET of the second sweep (fresh process state — clear any module-level cache between
+    sweeps, or run the second sweep in a subprocess): `opened ∩ {the 1,000 young paths} == ∅`; per
+    examined group at most the identity head, the rule-2 pick's tail+head, and per removal candidate
+    ONE open (strict head + flock probe on the same handle — derive the bound from that, reusing the
+    group head when it is the candidate); the first sweep is bounded the same way; wall time is
+    recorded, not asserted (or asserted with a 10× margin).
   - `keep_days=0` removes nothing; a file younger than the window is never a candidate; no
     over-protection outside the window.
   - `finalize` hook: a real paused run (`trace_files`) in a dir holding an aged unprotected trace with
     `PFLOW_TRACE_RETENTION_DAYS=1` → the old trace is gone after the run, the run's own trace and marker
-    exist, the token resumes; a stream-faulted run still sweeps. A read-only command (`pflow report`,
-    `resume list`, `pflow ui` startup, `--dry-run`) never removes anything (presence assertion).
+    exist, the token resumes; a stream-faulted run still sweeps; a disk-full-shaped fault (the meta
+    write fails, a 0-byte file stays) sweeps without touching that workflow's protected traces. A
+    read-only command (`pflow report`, `resume list`, `pflow ui` startup, `--dry-run`) with
+    `PFLOW_TRACE_RETENTION_DAYS=1` set never removes anything (presence assertion — under the conftest
+    default of 0 the test would be vacuous).
   - Fault isolation: `prune_traces` raising never changes the run outcome or `trace_path`; a Windows-
     style `PermissionError` on one file retries once then skips it and continues; the warning names the
     count.
   - Lifecycle faults, deterministic: (a) a live attempt that exits without consuming (start → sweep →
-    exit) leaves its source resumable; (b) two sweeps over the same dir in two threads complete without
-    error and leave exactly the protected set.
+    exit) leaves its source resumable; (b) two sweeps interleaved at a monkeypatched barrier (X lists,
+    Y removes P and A, X resumes) leave exactly the protected set — never a timing race.
   - Settings: default 14, `ge=0`; `retention_days()` honours the env first (an invalid env value →
     warning and `None`, nothing pruned); a file with `trace_retention_days: 0` AND an unrelated invalid
     key → `load_error` set, `None`, nothing pruned, one warning, the aged trace still present; a
-    misspelled `runtime.trace_retention_day: 0` with an otherwise valid file → `None`, nothing pruned,
+    misspelled `runtime.trace_retention_day: 0` with an otherwise valid file → `None`, nothing pruned;
+    a ROOT-level `trace_retention_days: 0` → `None`, nothing pruned; an unrelated unknown `runtime.foo`
+    → 14 and prunes; `pflow settings show` omits the unknown key;
     the user's `env` keys still load (presence) AND after a `set_env` the typo key is still in the file
     and `retention_days()` is still `None`; no env + no file → 14 and an aged trace IS pruned (the
     default path most users hit); `save()` after a failed load raises and the file is byte-identical;
     the env override never reaches `settings.json` after a `set_env`.
 - Failure scenarios: a pending paused run deleted; the Snapshot of an idle workflow deleted; the last
-  run of a workflow deleted (rule 5); the sweep on a read-only command; a sweep exception failing a run;
+  run of a workflow deleted (rule 3); the sweep on a read-only command; a sweep exception failing a run;
   a legacy name protected, read, or surfaced; an `.only` run protected as the Snapshot; a live writer's
   file removed on POSIX; an answered token resurrected because its Attempt went while it stayed; a
   source removed while a zero-work attempt held its lock; a hash-colliding workflow's Snapshot
@@ -601,9 +681,11 @@ orchestrator starts at P1. No handback is owed for CP-1.
     breaks — no `rm` recipe; plus the cutover sentence: traces written by earlier pflow versions are not
     listed by `resume list`, `report` or the Viewer, stay readable by path, and age out), `:159` summary
     row ("pflow (retention; `trace_retention_days`)"), `:73` example name.
-  - `docs/reference/configuration.mdx:29-31,48` (the field), `:126` (env row), `:129-139` (the stale
+  - `mcp_server/tools/execution_tools.py:52-54` (the `workflow_execute` docstring: "usable for … within
+    the retention window").
+  - `docs/reference/configuration.mdx:29-31,48` (the field), `:127` (env row), `:130-140` (the stale
     `PFLOW_TRACE_*` section — none of those variables exist in `src/`; replace it with the real trace
-    configuration: the retention key + env), `:223` (debug row: "Yes, but deleting a trace breaks `--only`,
+    configuration: the retention key + env), `:224` (debug row: "Yes, but deleting a trace breaks `--only`,
     `resume`, pending pauses and `report` for that run — pflow prunes it on `trace_retention_days`").
   - `docs/reference/cli/index.mdx:511-513,528` (pattern/example), `:132` (add `--report`/`--report-dir`
     rows beside `--no-trace` and the precedence), `:537` keep.
@@ -631,7 +713,10 @@ orchestrator starts at P1. No handback is owed for CP-1.
     pauses" — CORRECTED to the real hazard: "an older pflow can answer a newer pflow's pause and the
     newer one will not see that answer; answer each pause with the version that issued it; an older
     version's settings write drops `trace_retention_days` — `PFLOW_TRACE_RETENTION_DAYS=0` is the
-    opt-out that survives it" — and the `--only` note: the first `--only` after upgrading needs one
+    opt-out that survives it, but it is per-process (an MCP server launched by a desktop client does not
+    inherit a shell export) — the settings key is the opt-out for every pflow process; set both when
+    mixing versions; and a newer pflow ages out an OLDER lane's traces, pending pauses included, after
+    the window" — and the `--only` note: the first `--only` after upgrading needs one
     full run first (there is no old-grammar Snapshot it can read). Guide AND PR body: "answer pending
     pauses before upgrading".
   - `docs/reference/cli/index.mdx:256,288` example `trace_path` values → the new grammar.

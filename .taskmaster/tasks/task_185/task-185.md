@@ -127,6 +127,10 @@ drafting time (session-16); the planner re-checks `git log` on those files again
 - A removed trace is never referenced by a stale index or marker (a lookup after removal reports "no such run", not a crash).
 - Cutover: a trace written before this version (old filename grammar) is invisible to every lookup, stays readable by
   explicit path (`pflow report <path>`, `load_trace_file`), is never protected, and ages out like any other file.
+- Every lookup that finds nothing says how many old-grammar traces it did not search; `resume list` says how many pending
+  pauses it hid because their workflow file is gone. A trace carrying a tag or sidecar this version does not know is never
+  removed. `settings.json` that fails to load is never overwritten by a settings command, and a key that looks like the
+  retention key in the wrong place or spelling switches retention off, with a warning, rather than on.
 
 ### Consolidation
 - One function resolves the debug directory; the 8 inline spellings are gone. One recency rule; `report`, the UI, resume and

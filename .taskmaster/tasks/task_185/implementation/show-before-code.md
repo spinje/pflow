@@ -187,11 +187,18 @@ CONTEXT.md nouns are on the branch. Q6: consent for P5 on the owner's directory 
 
 Three findings verified against the code and the owner's directory change ruled items; the plan proceeds
 on them unless overruled: (a) **Q1 field order** — the start timestamp stays LAST
-(`…[-{name}].{execution_id}[.only][.from-{src8}]-{started}.json`) so pre-185 pflow versions sharing
+(`…-{name}.{execution_id}[.only][.from-{src8}]-{started}.json`, the name always written) so pre-185 pflow versions sharing
 `~/.pflow` (other worktrees, a lagging install) still order and find post-185 traces; (b) **rules 1, 2
-and 5 apply only while the Workflow's file exists** — 2,074 of the owner's 2,267 recorded workflow
+and 3 (pause, Snapshot, newest run) apply only while the Workflow's file exists** — 2,074 of the owner's 2,267 recorded workflow
 identities are deleted worktrees/scratchpads and all 26 pending pauses belong to deleted files, so
 without the qualifier the protected set and the per-run sweep cost grow without end; consequence:
 `resume list` stops showing pauses whose workflow file is gone; (c) no `extra="forbid"` on the settings
 model (a typo would drop API keys for every run and be written back by the next settings command) —
-the sweep itself refuses to prune on an unknown `runtime` key, and `save()` refuses after a failed load.
+the sweep itself refuses to prune when a key that looks like the retention key sits in the wrong place or spelling (root or `runtime`), and `save()` refuses after a failed load.
+
+## 11. Round-3 amendments (2026-10-13)
+(d) The sweep keeps any trace carrying a tag or sidecar it does not know (a later pflow's protection is honoured by older lanes).
+(e) `resume list` reports how many pending pauses it hid because their workflow file is gone. (f) Version-skew hazards stated
+in both directions: an older pflow's answer to a newer pause is invisible to the newer one; a newer pflow ages out an older
+lane's traces, pending pauses included. The consumption arm over old-grammar names that would close the first is the
+user's call (it contradicts Q4's letter).
