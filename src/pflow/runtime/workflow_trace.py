@@ -615,6 +615,9 @@ class WorkflowTraceCollector:
         self._stream_to_disk = stream_to_disk and is_run_scoped
         self._stream: TextIO | None = None
         self._stream_path: Path | None = None
+        # The directory the stream was opened in — kept past ``_disable_streaming`` (which drops the path) so
+        # ``finalize`` still sweeps it after a mid-run fault; ``None`` when the stream never opened.
+        self._trace_dir: Path | None = None
         self._declared_blobs: set[str] = set()
         self._finalized = False
         # First disk I/O fault disables streaming for the rest of the run: the streamed file is a
@@ -1005,6 +1008,7 @@ class WorkflowTraceCollector:
             return
         try:
             trace_dir = debug_dir()
+            self._trace_dir = trace_dir
             trace_dir.mkdir(parents=True, exist_ok=True)
             self._stream_path = trace_dir / trace_filename(
                 self.workflow_path,
@@ -1168,11 +1172,24 @@ class WorkflowTraceCollector:
 
         A paused run gets its ``.paused`` marker (``trace_dir.paused_marker``) BEFORE the trailer that makes
         the pause durable, so a durable pause always has one (ADR-0018). A marker that cannot be written
-        disables streaming before any trailer exists: the run is then non-durable on every surface at once."""
+        disables streaming before any trailer exists: the run is then non-durable on every surface at once.
+
+        Then Retention sweeps the directory (``trace_retention.sweep_after_write`` — never raises) whenever the
+        stream was opened, even if it faulted mid-run: a full disk is when pruning helps most."""
         if self._finalized:
             return self._stream_path
         self._open_stream()  # BEFORE _finalized: _open_stream guards on it, so the meta line writes first
         self._finalized = True
+        path = self._write_trailer()
+        if self._trace_dir is not None:
+            # Lazy: trace_retention imports resume_source, which imports this module.
+            from pflow.runtime.trace_retention import sweep_after_write
+
+            sweep_after_write(self._trace_dir)
+        return path
+
+    def _write_trailer(self) -> Path | None:
+        """The marker (paused runs) and the ``run.complete`` trailer; always leaves the stream closed."""
         if self._stream is None or self._stream_path is None:  # gated off, or disabled mid-run by an I/O fault
             return None
         try:

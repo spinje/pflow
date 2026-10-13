@@ -45,7 +45,7 @@ Check `examples/CLAUDE.md` and references to a committed fixture before changing
 
 | Fixture | Non-obvious boundary |
 |---------|----------------------|
-| `isolate_pflow_config` | Redirects `Path.home()`, `HOME` and `USERPROFILE`, manager paths, registry, and memoization cache. Yields isolated config paths; `DEBUG_TEST_PATHS=1` prints them. |
+| `isolate_pflow_config` | Redirects `Path.home()`, `HOME` and `USERPROFILE`, manager paths, registry, and memoization cache; sets `PFLOW_TRACE_RETENTION_DAYS=0` (so does `set_isolated_home` for children) — a test that finalizes a trace never sweeps its fixtures; a retention test opts in with its own `setenv`/`delenv`. Yields isolated config paths; `DEBUG_TEST_PATHS=1` prints them. |
 | `mock_llm_client` | Patches `pflow.core.llm_client.complete` and imported consumer bindings; yields `MockLLMClient`. |
 | `_inject_fake_llm_api_keys` | Supplies absent canonical-provider keys so validation reaches mocked calls. `no_fake_llm_keys` instead clears ANTHROPIC/OPENAI/GEMINI/GOOGLE key variables, including the Gemini alias. |
 | `_block_upstream_cost_map_fetch` | Blocks runtime and validator catalog fetches using separate latches. Fetch-path tests must reset the relevant latch; see `test_core/test_litellm_runtime.py`. |

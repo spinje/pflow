@@ -2,12 +2,12 @@
 
 import json
 import os
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import click
 
 from pflow.core.llm_providers import CURATED_PROVIDERS, CuratedProvider
-from pflow.core.settings import OUTPUT_MODES, LLMSettings, PflowSettings, SettingsManager
+from pflow.core.settings import OUTPUT_MODES, LLMSettings, PflowSettings, SettingsManager, unknown_settings_keys
 
 
 class SettingsGroup(click.Group):
@@ -81,10 +81,19 @@ def show() -> None:
     """Show current settings.
 
     Every env value is masked, as in 'pflow settings list-env' — env is the credential store.
-    Use 'pflow settings list-env --show-values' to view full values.
+    Use 'pflow settings list-env --show-values' to view full values. Keys pflow does not know are
+    not shown (a value placed outside env must not print in clear).
     """
     manager = SettingsManager()
-    settings_dict = manager.load().model_dump()
+    settings = manager.load()
+    unknown: dict[str, Any] = {}
+    for path, _value in unknown_settings_keys(settings):
+        *sections, key = path
+        level = unknown
+        for section in sections:
+            level = level.setdefault(section, {})
+        level[key] = True
+    settings_dict = settings.model_dump(exclude=unknown)
     settings_dict["env"] = manager.list_env(mask_values=True)
 
     click.echo(f"Settings file: {manager.settings_path}")

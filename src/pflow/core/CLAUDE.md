@@ -178,7 +178,13 @@ resets process state for tests or changed keys.
 Keep presence checks and request keys on this resolver. Settings injection records
 provenance so genuinely exported environment aliases still take precedence.
 
-Settings saves are atomic and permission-restricted. Node filtering happens at
+Settings saves are atomic and permission-restricted. `save()` refuses while
+`load_error` is set (the file failed to load; writing defaults back would wipe it).
+Every settings model keeps unknown keys (`extra="allow"`) so a typo survives a save;
+`unknown_settings_keys` walks them at every level (Retention's misplaced-key check,
+`settings show`'s omission); `runtime.trace_retention_days` is read only by
+`runtime/trace_retention.py::retention_days` (env `PFLOW_TRACE_RETENTION_DAYS` first,
+never written back). Node filtering happens at
 registry **load**, not storage; MCP matching includes tool/server aliases.
 Workflow input precedence is separately owned by
 `runtime/compilation/ir_preparation.py::prepare_inputs`, not the provider resolver.

@@ -506,3 +506,150 @@ the sweep runs on both paths.
   clauses.
 - Next: P3 handback → verify, "fully happy?", directed test-reflect, commit, mid-task review (concurrency-safety +
   silent-failures on P3's diff).
+
+## [2026-10-13 03:05] task-phase-implementer (Opus, fresh) — P3 done (retention and settings)
+- Did: conftest `PFLOW_TRACE_RETENTION_DAYS=0` in `isolate_pflow_config` + `set_isolated_home` FIRST; then NEW
+  `runtime/trace_retention.py` (`retention_days` / `sweep_after_write` / `prune_traces`: the five rules, Attempt waves,
+  orphan markers after `lstat`, Windows winerror-5/32 retry-once); settings field + `load_error` + `save()` refusal +
+  `extra="allow"` on root and `runtime`; `settings show` omits unknown keys; the sweep wired into `finalize` (one call
+  site, runs whenever the stream was opened — also after a mid-run fault).
+- Changed: NEW `src/pflow/runtime/trace_retention.py`, NEW `tests/test_runtime/test_trace_retention.py` (48 tests,
+  module marked `trace_files`); `core/settings.py`; `core/trace_dir.py` (see deviation 5); `runtime/workflow_trace.py`
+  (`_trace_dir` captured in `_open_stream`; `finalize` → `_write_trailer` + sweep); `cli/commands/settings.py::show`;
+  `tests/conftest.py`; `tests/test_core/test_settings.py` (+6); `tests/test_cli/test_settings_cli.py` (+1);
+  `core/CLAUDE.md` settings paragraph; `tests/CLAUDE.md` `isolate_pflow_config` row.
+- Verified: baseline `make test` 11895 passed / `pytest -m trace_files` 626 passed → after 11950 passed (+55, 0 failed)
+  / 674 passed (+48); `make check` exit 0; `git diff --stat 10bad571 -- src/pflow/runtime/engine web/
+  src/pflow/runtime/workflow_executor.py` empty; no trace-format change. **Cost, 2,000-identity fixture** (2,000 idle
+  workflows × one aged Snapshot, 50 aged removable, one workflow with 1,000 young failures + an aged Snapshot):
+  first sweep 2,078 opens, 0.07–0.14 s; **second sweep 2,003 opens, 0.07–0.11 s** — its opened PATH SET is exactly the
+  2,001 aged Snapshots + the busy workflow's newest (young) trace; bound asserted `≤ 3 × groups`. Real surface
+  (isolated `HOME` under `scratchpads/task-185/p3home.*`, every `pflow` call with `PFLOW_TRACE_RETENTION_DAYS=0` and
+  provider keys unset): a gated run pauses (exit 4), writes trace + `.paused`, and an aged legacy + an aged
+  deleted-workflow trace stay (env 0 holds in a real process); `settings show` hides a root `OPENAI_API_KEY` and a
+  `runtime.trace_retention_day` typo while printing `"trace_retention_days": 14`; `settings set-env` on a file with
+  `trace_retention_days: -5` exits 1 "Settings file not saved … could not be loaded … 'pflow settings reset'", file
+  sha1 unchanged. The sweep itself on that real dir via Python (`sweep_after_write`/`prune_traces` — not a `pflow`
+  invocation, per the safety rule): typo'd settings → stderr `WARNING: trace retention skipped: … sets
+  runtime.trace_retention_day …`, nothing removed; valid file → `removed=2` (legacy + deleted-workflow trace), the
+  paused trace + marker kept. | Assumed: the Windows arms (winerror retry simulated on macOS — `tests-windows` at
+  P5); the first real-directory sweep (P5, behind the backup gate). No process left running.
+- Deviations/surprises:
+  1. **Plan contradiction resolved toward data safety — the identity read may be ONE young file.** §1.5 Identity
+     grouping (walk back from the group's NEWEST name past `None` heads — "the disk-full run … leaves exactly that as
+     the group's newest entry") and the P3 disk-full finalize test contradict the cost test's `opened ∩ young == ∅`.
+     With aged-only reads, a run that hit a full disk (a young 0-byte newest name) makes the sweep delete the
+     workflow's aged newest real run (rule 3). I followed the identity paragraph: the walk starts at the group's
+     newest name, so a group whose newest is young costs exactly one young read; the cost test asserts
+     `opened ∩ young == {that newest}` plus the exact path set. Side effect: the hash-collision case where an idle
+     path's newest run hid behind the other path's young runs is closed too. ADR-0018's "reads only the aged files it
+     is about to judge" needs a P4 touch ("…plus the head of each examined workflow's newest trace").
+  2. "No head in the group parses → keep the group" applied to UNREADABLE heads only; a group whose every head is
+     `None` (0-byte / newline-less) has nothing protectable and ages out — the plan's own table requires the lone
+     0-byte file gone.
+  3. Rule 3 also protects the source of the group's newest NAME when it carries `.from-` (not only of the newest
+     parsed run) — names only, conservative.
+  4. Collisions are judged in one place: the removal probe reads a head naming another workflow → rules 3 + 2 for that
+     path, once per sweep (its newest-run walk may read young heads — collision groups only). The plan's extra "keep
+     the collider's pick met on the rule-2 walk" call was redundant (its mutation survived) → deleted.
+  5. `core/trace_dir.py` edited (outside P3's file list): `read_trace_meta_and_lock_strict` — strict head + flock probe
+     through ONE open (the plan's per-candidate cost bound; the 04:00 note's "shared-handle helper"); `_probe_lock` /
+     `_meta_from_first_line` now shared with `is_trace_locked` / `read_trace_meta_strict` (no twin; `fcntl` stays here).
+  6. `cli/commands/settings.py::show` and `tests/test_cli/test_settings_cli.py` edited — required by §1.5 and the P3
+     test list, missing from the P3 Files line.
+  7. The save refusal raises the existing `UserFriendlyError` (no `SettingsError` exists — the plan's "nearest
+     existing one"); `PflowCLI.invoke` renders it, exit 1.
+  8. `SweepReport` gained `unreadable_paths` (the warning names the first three). `prune_traces` treats an
+     `OverflowError` window (`999999999` typed as "forever") as nothing-aged instead of warning on every run.
+  9. Unreadable granularity is the plan's (group kept on an unreadable identity head, marked trace, trailer before
+     the Snapshot pick, or an Attempt / newer-than-pick probe; otherwise only the file). ADR-0018 says "its whole
+     Workflow group" unconditionally — P4 reconcile.
+  10. **Open, for the orchestrator (importance 2):** retention-key detection covers root + `runtime` extras only (plan
+      §1.5; §1.6 freezes the other models). `llm.trace_retention_days` / `registry.…` are silently DROPPED by those
+      models' `extra="ignore"` → retention stays ON, contrary to the ruling's "a key in the wrong place switches
+      retention off". Closing it = `extra="allow"` on `LLMSettings`/`RegistrySettings`/`NodeFilterSettings` + `show`
+      omitting nested extras + one detection walk. Not built (§1.6).
+  11. Observed, not fixed: `retention_days()` loads settings once more per finalize, so a user whose settings file is
+      0644 with `env` secrets now sees the pre-existing "insecure permissions" warning twice per run.
+- Mutations (38 applied, **38 killed**, counted `N failed` over the 3 P3 test files / 188 tests;
+  `scratchpads/task-185/p3_mutate_batch.py`, output `p3-mutations.txt`): rule 1 dropped 3; `count_live`→True 2; rule 2
+  6; rule 3 8; rule-3 source 1; rule 4 2; rule 5 2; file qualifier rules 2–3 22 / rule 1 1; unknown facts 1;
+  `nodes_executed` ignored 1; `.only` not skipped 2; collider via probe 1 / newest run 1 / Snapshot 1; identity
+  unreadable fails open 1; walk-unreadable keeps only the file 1; pause unreadable fails open 1; `_note_unreadable`
+  not protecting 1; probe-unreadable Attempt 1 / newer-than-pick 1; unknown file state ignored 1; legacy read 1;
+  orphan markers kept 1; no Windows retry 1; sweep unguarded 1; invalid env → file 2; `load_error` ignored 1; suspects
+  ignored 4 / root suspects 1; finalize never sweeps 6; `_trace_dir` not captured 6; sweep only on a clean trailer 2;
+  runtime `extra="ignore"` 4 / root 2; save refusal dropped 3; `load_error` not cleared 1; `show` prints extras 1.
+  Also: protect-every-aged-success (over-protection) 4 failed; vanished-attempt-not-consumed is killed by P1's
+  `test_an_attempt_that_vanishes_mid_check_counts_as_consuming`.
+- Consolidation candidates (logged, not built): (a) `resume_source._find_consuming_attempt` now has three consumers in
+  two modules — make it public; (b) "retry once on a Windows sharing violation {5,32}" now exists twice
+  (`mcp/manager._replace_config_file`, `trace_retention._unlink`) — two adapters, a real seam for one `core` helper;
+  (c) `retention_days` logs its own reason — a `(days, reason)` return if a second caller (e.g. `settings show`
+  printing the effective window) appears.
+- Self-checks: fully happy? — raised and fixed: the redundant collider call (deleted), the unreadable-trailer hole
+  (`_note_unreadable`'s protect was untested), the huge-window overflow, the identity read vs. the disk-full case
+  (deviation 1). Remaining, stated: deviation 10 (wrong-section key — the orchestrator's call), deviation 11
+  (duplicate warning), ADR sentences for P4 (deviations 1, 9). test-reflect (directed, RESOLVED): deepened
+  `test_a_sweep_fault_never_changes_the_run_outcome` (now asserts the run's own trailer; labelled a regression guard —
+  the CLI's `_save_trace_file` guard + the `trace_path` property keep the outcome even without `sweep_after_write`'s
+  except, confirmed by mutation); deepened the collision rows (A1's newest run ≠ its Snapshot — before, dropping either
+  collider rule survived); added `test_an_unreadable_trailer_on_an_older_trace_keeps_that_trace`,
+  `test_an_unreadable_newest_trace_keeps_its_whole_group_even_without_a_snapshot`,
+  `test_an_unreadable_attempt_or_a_trace_newer_than_the_snapshot_keeps_its_group` (each closed a surviving mutation);
+  kept `test_two_interleaved_sweeps…` (the plan's (b); overlaps the vanish test but pins FNF-on-a-stale-listing ≠
+  unreadable); deleted none.
+- Next: orchestrator — verify, "fully happy?", commit, mid-task review (concurrency-safety + silent-failures on P3's
+  diff). P4 reconciles ADR-0018 (deviations 1, 9); ruling needed on deviation 10.
+- Addendum [2026-10-13 03:25] — orchestrator rulings on P3 items #1, #3, #4 accepted; fixes A and B done, in that order.
+  - **Fix A (deviation 10 closed as a class).**
+    - Every settings model now keeps unknown keys (`extra="allow"`): `NodeFilterSettings`, `RegistrySettings` and
+      `LLMSettings` join root and `runtime`.
+    - One walk, `core/settings.unknown_settings_keys(model) -> [(path, value)]`, covers `model_extra` at every
+      level. Retention checks it for a "retention" key, at any depth, including keys nested inside an unknown
+      section's value (`runtime_settings: {trace_retention_days: 0}`).
+    - `settings show` builds one nested exclude from the same walk, so it omits unknown keys at every level.
+    - Pre-check (grep over `src/` for `model_dump`, `model_fields`, `model_extra`, `vars(`, and every
+      `settings.llm` / `settings.registry` / `settings.runtime` reader): every consumer reads named attributes
+      (`llm_config`, `_probe_impl`, `execution_service`, `compile_validation`, `ui.py`, the `settings` CLI, the
+      `should_include_node` filters). The only `model_dump()` calls are `save()` (keeping the unknown keys is the
+      point) and `init`/`reset` (defaults, no unknown keys). Nothing iterates fields generically.
+    - Tests: wrong-place parametrizations `llm.`, `registry.`, `registry.nodes.` and `inside-an-unknown-section`
+      each give `None`, prune nothing, and log exactly one retention warning. Control: unrelated `llm.foo` +
+      `registry.nodes.bar` → 14, and it prunes. `show` omits extras in `llm` and `registry.nodes` (presence:
+      `tts_voice`, `output_mode`, `deny` still print). The `set_env` round-trip keeps an `llm.` typo.
+    - Edited the ADR-0018 sentence (now "every settings model … allows unknown keys") and the `core/CLAUDE.md`
+      line.
+    - **Plan §1.6 NOT edited.** My standing rules forbid editing the plan; its "beyond `extra="allow"` on
+      `PflowSettings` AND `RuntimeSettings`" now needs to read "on every settings model". That edit is yours.
+  - **Fix B (deviation 11). The ruling's premise was partly off, so I widened the fix.**
+    - A real run under an isolated HOME (retention 0, 0644 settings holding `env` secrets) already printed
+      "insecure permissions" **6 times** before this diff; the sweep's extra read made 7 (6 under pytest with
+      retention on).
+    - Neither `load(validate_permissions=False)` nor reusing loaded settings meets "exactly once"; either only
+      takes 7 back to 6.
+    - Chosen, minimal: `_validate_permissions` warns once per settings file per process (module set
+      `_INSECURE_PERMISSIONS_WARNED`). That closes the class, including the sweep's read, with no new parameter.
+    - Trade-off: a long-lived MCP server warns once, not on every load.
+    - Real run after the fix: 1 warning.
+    - Test `test_a_run_that_sweeps_warns_about_insecure_settings_exactly_once`: a real CLI run with retention
+      read from the file (env unset) and 0644 permissions. It asserts the aged trace is gone (the sweep read the
+      settings) and exactly one warning (`== 1`, so it also fails if the warning vanishes). Without the dedupe it
+      fails 6 == 1.
+  - Mutations, all killed:
+
+    | Mutation | Failed |
+    |---|---|
+    | `extra="ignore"` on NodeFilter / Registry / LLM | 1 / 1 / 2 |
+    | walk not recursive | 7 |
+    | unknown-section values not searched | 1 |
+    | `show` excludes root extras only | 1 |
+    | permission warning not de-duplicated | 1 |
+    | suspects ignored | 8 |
+    | runtime / root `extra="ignore"` | 4 / 3 |
+
+    Two batch entries are obsolete (the per-section code they mutated is gone) and were removed. The
+    `registry-extra-ignore` mutation first survived; adding a key directly under `registry` now kills it.
+  - Gates: `make check` exit 0. `make test` 11957 passed (+7 over 11950, 0 failed); against the start-of-phase
+    baseline that is 11895 → 11957 (+62). `pytest -m trace_files` 681 passed. The engine/`web/`/`workflow_executor`
+    diff is empty.

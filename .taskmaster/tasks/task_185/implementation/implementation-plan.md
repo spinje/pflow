@@ -391,7 +391,7 @@ still make).
 
 `engine.py`, `workflow_executor.py`, the trace format and version, `load_trace_file`, `PausedRun`,
 `TraceCandidate`, `ResumeSource`, every public function signature except the keyword-only `entries=`/
-`listing=` additions and `list_paused_runs`'s `PausedRunListing` return, `_apply_env_overrides`, the settings models' leniency beyond `extra="allow"` on `PflowSettings` AND `RuntimeSettings` (§1.5), the `resume list` text/JSON layout, the `/api/runs` entry shape, the
+`listing=` additions and `list_paused_runs`'s `PausedRunListing` return, `_apply_env_overrides`, the settings models' leniency beyond `extra="allow"` on every settings model (§1.5; widened at P3 so a misplaced retention key anywhere switches retention off), the `resume list` text/JSON layout, the `/api/runs` entry shape, the
 `--only`/resume/pause semantics, the UI's two caches (they survive the deletion test — they bound the
 4 Hz poll — only their listing source and sort key change), `analyze-cache`'s load-everything choice.
 

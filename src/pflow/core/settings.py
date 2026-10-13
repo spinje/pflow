@@ -9,11 +9,16 @@ import tempfile
 import threading
 from fnmatch import fnmatch
 from pathlib import Path
+from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
+
+# Settings files already warned about insecure permissions in this process: one run loads settings from
+# several places (and Retention once more at finalize), and the warning is per file, not per load.
+_INSECURE_PERMISSIONS_WARNED: set[Path] = set()
 
 # Valid output modes for probe output (used by settings validator and CLI)
 OUTPUT_MODES: list[str] = ["smart", "structure", "full"]
@@ -22,12 +27,16 @@ OUTPUT_MODES: list[str] = ["smart", "structure", "full"]
 class NodeFilterSettings(BaseModel):
     """Node filtering configuration."""
 
+    model_config = ConfigDict(extra="allow")
+
     allow: list[str] = Field(default_factory=lambda: ["*"])  # Default: allow all
     deny: list[str] = Field(default_factory=list)
 
 
 class RegistrySettings(BaseModel):
     """Registry-specific settings."""
+
+    model_config = ConfigDict(extra="allow")
 
     nodes: NodeFilterSettings = Field(default_factory=NodeFilterSettings)
     output_mode: str = Field(
@@ -51,8 +60,17 @@ class RuntimeSettings(BaseModel):
     These settings control workflow execution behavior.
     """
 
+    model_config = ConfigDict(extra="allow")
+
     template_resolution_mode: str = Field(
         default="strict", description="Default template resolution mode: strict or permissive"
+    )
+    trace_retention_days: int = Field(
+        default=14,
+        ge=0,
+        description="Days a trace is kept in ~/.pflow/debug before Retention removes it (protected traces are "
+        "kept whatever their age); 0 keeps every trace. Read by runtime/trace_retention.retention_days, where "
+        "PFLOW_TRACE_RETENTION_DAYS overrides it for one process.",
     )
 
     @field_validator("template_resolution_mode")
@@ -91,6 +109,8 @@ class LLMSettings(BaseModel):
         }
     """
 
+    model_config = ConfigDict(extra="allow")
+
     default_model: str | None = Field(
         default=None,
         description="Default model for all pflow LLM usage. "
@@ -115,7 +135,12 @@ class LLMSettings(BaseModel):
 
 
 class PflowSettings(BaseModel):
-    """Main settings configuration."""
+    """Main settings configuration.
+
+    Every settings model keeps keys it does not declare (``extra="allow"``): a typo never fails the whole file
+    and survives a save, so Retention can see it (``unknown_settings_keys``); ``settings show`` omits them."""
+
+    model_config = ConfigDict(extra="allow")
 
     version: str = Field(default="1.0.0")
     registry: RegistrySettings = Field(default_factory=RegistrySettings)
@@ -124,12 +149,28 @@ class PflowSettings(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
 
 
+def unknown_settings_keys(model: BaseModel, path: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], Any]]:
+    """Every key no settings model declares, at every level, as ``(path, value)`` — e.g.
+    ``(("llm", "trace_retention_day"), 0)``."""
+    found: list[tuple[tuple[str, ...], Any]] = [
+        ((*path, key), value) for key, value in (model.model_extra or {}).items()
+    ]
+    for name in type(model).model_fields:
+        section = getattr(model, name)
+        if isinstance(section, BaseModel):
+            found += unknown_settings_keys(section, (*path, name))
+    return found
+
+
 class SettingsManager:
     """Manages pflow settings with environment variable override support."""
 
     def __init__(self, settings_path: Path | None = None):
         self.settings_path = settings_path or Path.home() / ".pflow" / "settings.json"
         self._settings: PflowSettings | None = None
+        # Why the file failed to load (defaults are in use), else None. ``save()`` refuses while it is set:
+        # writing the defaults back would wipe the user's file.
+        self.load_error: str | None = None
         # RLock for thread-safe operations (reentrant since set_env calls load)
         self._lock = threading.RLock()
 
@@ -152,7 +193,8 @@ class SettingsManager:
         return self.load()
 
     def _load_from_file(self) -> PflowSettings:
-        """Load settings from file or return defaults."""
+        """Load settings from file or return defaults; a file that fails to load sets ``load_error``."""
+        self.load_error = None
         if self.settings_path.exists():
             try:
                 with open(self.settings_path, encoding="utf-8") as f:
@@ -160,6 +202,7 @@ class SettingsManager:
                 return PflowSettings(**data)
             except Exception as e:
                 # If file is corrupted, use defaults
+                self.load_error = str(e)
                 logger.warning(f"Failed to load settings from {self.settings_path} ({e}); using defaults")
                 return PflowSettings()
         return PflowSettings()
@@ -248,9 +291,25 @@ class SettingsManager:
         return False
 
     def save(self, settings: PflowSettings | None = None) -> None:
-        """Save settings to file with atomic operations and secure permissions."""
+        """Save settings to file with atomic operations and secure permissions.
+
+        Refuses when the file failed to load (``load_error``): the in-memory settings are defaults, and
+        writing them would erase the user's file. A fresh manager that never loaded (``settings init`` /
+        ``reset``) saves normally."""
         if settings is None:
             settings = self.load()
+        if self.load_error is not None:
+            from pflow.core.user_errors import UserFriendlyError
+
+            raise UserFriendlyError(
+                "Settings file not saved",
+                f"{self.settings_path} could not be loaded ({self.load_error}), so saving now would replace it "
+                "with defaults.",
+                suggestions=[
+                    f"Fix the file by hand: {self.settings_path}",
+                    "Or start over with 'pflow settings reset' (replaces the file with defaults).",
+                ],
+            )
 
         self.settings_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -410,7 +469,8 @@ class SettingsManager:
                     # Use provided settings or load (avoid recursion)
                     if settings is None:
                         settings = self.load()
-                    if settings.env:
+                    if settings.env and self.settings_path not in _INSECURE_PERMISSIONS_WARNED:
+                        _INSECURE_PERMISSIONS_WARNED.add(self.settings_path)
                         logger.warning(
                             f"Settings file {self.settings_path} contains secrets "
                             f"but has insecure permissions {oct(mode)}. "

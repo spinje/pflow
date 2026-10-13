@@ -617,3 +617,87 @@ class TestConcurrentAccess:
 
         # All writes should succeed
         assert len(results["writes"]) == 20
+
+
+class TestRetentionSettingAndFailedLoads:
+    """Task 185: the retention window field, unknown keys kept through a save, and no save after a failed
+    load (defaults written back would wipe the user's file — API keys included)."""
+
+    def test_the_retention_window_defaults_to_14_days_and_is_never_negative(self) -> None:
+        from pydantic import ValidationError
+
+        assert PflowSettings().runtime.trace_retention_days == 14
+        assert PflowSettings(**{"runtime": {"trace_retention_days": 0}}).runtime.trace_retention_days == 0
+        with pytest.raises(ValidationError):
+            PflowSettings(**{"runtime": {"trace_retention_days": -1}})
+
+    def test_unknown_keys_survive_a_save(self, settings_manager: SettingsManager) -> None:
+        settings_manager.settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_manager.settings_path.write_text(
+            json.dumps({"from_a_newer_pflow": {"x": 1}, "runtime": {"future_key": "y"}, "env": {"K": "v"}}),
+            encoding="utf-8",
+        )
+
+        settings_manager.set_env("OTHER", "w")
+
+        saved = json.loads(settings_manager.settings_path.read_text(encoding="utf-8"))
+        assert saved["from_a_newer_pflow"] == {"x": 1}
+        assert saved["runtime"]["future_key"] == "y"
+        assert saved["runtime"]["trace_retention_days"] == 14
+        assert saved["env"] == {"K": "v", "OTHER": "w"}
+
+    @pytest.mark.parametrize(
+        "content",
+        ['{"runtime": {"template_resolution_mode": "bogus"}, "env": {"API_KEY": "sk-1"}}', "{not json"],
+        ids=["fails-validation", "not-json"],
+    )
+    def test_a_file_that_failed_to_load_is_never_overwritten(
+        self, settings_manager: SettingsManager, content: str
+    ) -> None:
+        from pflow.core.user_errors import UserFriendlyError
+
+        settings_manager.settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_manager.settings_path.write_text(content, encoding="utf-8")
+        original = settings_manager.settings_path.read_bytes()
+
+        assert settings_manager.load().env == {}  # defaults are in use...
+        assert settings_manager.load_error is not None
+        with pytest.raises(UserFriendlyError, match="could not be loaded"):
+            settings_manager.set_env("NEW", "x")  # ...so a write would erase the file
+        with pytest.raises(UserFriendlyError):
+            settings_manager.save()
+
+        assert settings_manager.settings_path.read_bytes() == original
+
+    def test_a_fixed_file_loads_and_saves_again(self, settings_manager: SettingsManager) -> None:
+        settings_manager.settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_manager.settings_path.write_text("{not json", encoding="utf-8")
+        settings_manager.load()
+        assert settings_manager.load_error is not None
+
+        settings_manager.settings_path.write_text('{"env": {"K": "v"}}', encoding="utf-8")
+        settings_manager.reload()
+        settings_manager.set_env("OTHER", "w")
+
+        assert settings_manager.load_error is None
+        assert json.loads(settings_manager.settings_path.read_text(encoding="utf-8"))["env"] == {"K": "v", "OTHER": "w"}
+
+    def test_the_cli_refuses_the_write_and_reset_still_recovers(self, tmp_path: Path) -> None:
+        """The real surface: a settings command after a failed load exits 1 naming the file; `reset`
+        (a fresh manager that never loaded) replaces it."""
+        from click.testing import CliRunner
+
+        from pflow.cli.main import cli
+
+        path = tmp_path / ".pflow" / "settings.json"  # conftest points the default manager here
+        path.write_text('{"runtime": {"trace_retention_days": -3}, "env": {"API_KEY": "sk-1"}}', encoding="utf-8")
+        original = path.read_bytes()
+
+        refused = CliRunner().invoke(cli, ["settings", "set-env", "NEW", "x"])
+        assert refused.exit_code == 1
+        assert "Settings file not saved" in refused.output and str(path) in refused.output
+        assert path.read_bytes() == original
+
+        reset = CliRunner().invoke(cli, ["settings", "reset"], input="y\n")
+        assert reset.exit_code == 0, reset.output
+        assert json.loads(path.read_text(encoding="utf-8"))["runtime"]["trace_retention_days"] == 14

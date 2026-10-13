@@ -85,7 +85,7 @@ until it ages out, is never protected, and ages out by the timestamp its old nam
   The loader re-checks that its source still exists after the consumption check, and an Attempt that
   vanished mid-check counts as consumed, so a concurrent sweep makes a resume refuse — never
   double-answer. `resumed_from` stays pure lineage for data (ADR-0010).
-- **Retention is configured leniently.** The settings models (root and `runtime`) allow unknown keys
+- **Retention is configured leniently.** Every settings model (the root and each section) allows unknown keys
   and keep them through a save (a strict model would turn a typo into a whole-file fallback that drops
   API keys and is written back by the next settings command; an ignoring model would erase the typo on
   the next save and switch deletion on silently); the sweep prunes nothing — with a warning — when a key

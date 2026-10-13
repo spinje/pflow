@@ -1,0 +1,517 @@
+"""Retention: remove traces older than the age window, never a Protected trace (ADR-0018).
+
+Runs when a trace finishes writing (``WorkflowTraceCollector.finalize`` → ``sweep_after_write``), never on a
+read. ``retention_days`` is the one reader of the setting; ``prune_traces`` is the policy.
+
+Protected — kept whatever their age (the spec's rule numbers):
+  1. a Paused Run whose token is still answerable (``resume_source.answerable_pause`` and no consuming
+     Attempt, a live zero-work Attempt counting as a reservation, not consumption);
+  2. the newest Success/Degraded full run of each Workflow (its Snapshot);
+  3. the newest run of each Workflow, whatever its status (plus the source of that run when it is an Attempt);
+     rules 1-3 only while the Workflow's file is present (an inline ``ir-hash:`` identity never qualifies);
+  4. an Attempt, until the Run it resumed is gone from the directory;
+  5. a trace whose writer still holds its lock.
+A trace carrying a tag or sidecar this version does not know is kept too: a later pflow's "keep this".
+
+Cost: the sweep classifies from names wherever it can and reads aged files — per Workflow group with an aged
+trace, the head of its newest trace (its identity: the one read that may be of a young file), the tail+head
+of the Snapshot pick, and one open (head + lock probe) per trace it is about to remove; a group's other young
+traces are never read. Pre-185 (legacy) names are removed on age alone,
+with no read. Every read is three-outcome and fails closed: gone is fine; a file that cannot be read is kept
+(with its whole group when it could be what protects the others); a workflow file whose existence cannot be
+determined keeps its group.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import time
+from collections import Counter
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Literal
+
+from pflow.core.exceptions import ResumeSourceUnreadableError
+from pflow.core.settings import SettingsManager, unknown_settings_keys
+from pflow.core.trace_dir import (
+    TraceEntry,
+    TraceListing,
+    TraceUnreadableError,
+    list_traces,
+    paused_marker,
+    read_trace_meta_and_lock_strict,
+    read_trace_trailer_strict,
+    workflow_file_state,
+)
+from pflow.core.trace_tree import normalize_workflow_path_key
+from pflow.runtime.resume_source import _find_consuming_attempt, answerable_pause
+
+logger = logging.getLogger(__name__)
+
+RETENTION_ENV_VAR = "PFLOW_TRACE_RETENTION_DAYS"
+_REUSABLE_STATUSES = ("success", "degraded")
+# Windows refuses to unlink a file another process holds open (winerror 5 / 32): retry once, then skip.
+_WINDOWS_TRANSIENT_UNLINK_ERRORS = frozenset({5, 32})
+_WINDOWS_UNLINK_RETRY_DELAY = 0.05
+
+
+@dataclass(frozen=True)
+class SweepReport:
+    """What one sweep did. ``protected`` counts aged traces kept by a rule; ``skipped`` the removals that
+    failed; ``unreadable`` the aged traces kept because they could not be read (``unreadable_paths``)."""
+
+    removed: int = 0
+    protected: int = 0
+    skipped: int = 0
+    unreadable: int = 0
+    unreadable_paths: tuple[Path, ...] = ()
+
+
+def retention_days() -> int | None:
+    """The age window in days — ``PFLOW_TRACE_RETENTION_DAYS`` when set, else ``runtime.trace_retention_days``.
+
+    ``0`` keeps everything. ``None`` means "cannot tell — prune nothing", with a warning: the env value is not
+    a whole number ≥ 0 (an opt-out typed as ``never`` must not fall through to the default and delete), the
+    settings file failed to load, or it holds a retention-looking key anywhere outside
+    ``runtime.trace_retention_days`` (a misplaced or misspelled opt-out, at any level). The env value is never written to the settings file."""
+    raw = os.environ.get(RETENTION_ENV_VAR)
+    if raw is not None:
+        try:
+            days = int(raw)
+        except ValueError:
+            days = -1
+        if days >= 0:
+            return days
+        logger.warning(
+            "trace retention skipped: %s=%r is not a whole number of days (0 keeps every trace)", RETENTION_ENV_VAR, raw
+        )
+        return None
+    manager = SettingsManager()
+    settings = manager.load()
+    if manager.load_error is not None:
+        logger.warning(
+            "trace retention skipped: %s could not be loaded (%s)", manager.settings_path, manager.load_error
+        )
+        return None
+    suspects = [
+        ".".join(path) for path, value in unknown_settings_keys(settings) if _mentions_retention(path[-1], value)
+    ]
+    if suspects:
+        logger.warning(
+            "trace retention skipped: %s sets %s, which pflow does not read — the setting is "
+            "runtime.trace_retention_days (0 keeps every trace)",
+            manager.settings_path,
+            ", ".join(sorted(suspects)),
+        )
+        return None
+    return settings.runtime.trace_retention_days
+
+
+def _mentions_retention(key: str, value: Any) -> bool:
+    """Whether an unknown settings key — or any key nested in its value — looks like the retention setting."""
+    if "retention" in key.lower():
+        return True
+    return isinstance(value, dict) and any(_mentions_retention(str(k), v) for k, v in value.items())
+
+
+def sweep_after_write(directory: Path) -> None:
+    """Apply Retention to ``directory`` after a trace was written there. Never raises: a fault is a warning,
+    and a run's outcome never depends on its sweep."""
+    try:
+        days = retention_days()
+        if not days:
+            return
+        report = prune_traces(directory, keep_days=days)
+        if report.skipped or report.unreadable:
+            shown = ", ".join(str(path) for path in report.unreadable_paths[:3])
+            logger.warning(
+                "trace retention kept %d unreadable trace(s)%s and could not remove %d trace(s); the next run retries",
+                report.unreadable,
+                f" ({shown})" if shown else "",
+                report.skipped,
+            )
+    except Exception as exc:
+        logger.warning("trace retention failed, no further traces removed: %s", exc)
+
+
+def prune_traces(directory: Path, *, keep_days: int, now: datetime | None = None) -> SweepReport:
+    """Remove every trace in ``directory`` started more than ``keep_days`` ago, except the Protected traces
+    (module docstring). ``keep_days <= 0`` removes nothing. A directory that cannot be listed raises."""
+    if keep_days <= 0:
+        return SweepReport()
+    try:
+        cutoff = (now or datetime.now()) - timedelta(days=keep_days)
+    except OverflowError:  # a window longer than the calendar: nothing is old enough
+        return SweepReport()
+    return _Sweep(list_traces(directory, include_legacy=True), cutoff).run()
+
+
+def _is_aged(entry: TraceEntry, cutoff: datetime) -> bool:
+    try:
+        return entry.started_at < cutoff
+    except ValueError:  # a name whose digits are not a real date: never a candidate
+        return False
+
+
+def _workflow_path(meta: dict[str, Any] | None) -> str | None:
+    path = meta.get("workflow_path") if meta is not None else None
+    return path if isinstance(path, str) and path else None
+
+
+def _is_snapshot_trailer(trailer: dict[str, Any] | None) -> bool:
+    """A trailer that can back a Snapshot: success/degraded over at least one executed step (the loader skips
+    a run with no events; ``nodes_executed`` counts the executed top-level events)."""
+    if trailer is None or str(trailer.get("final_status") or "success") not in _REUSABLE_STATUSES:
+        return False
+    executed = trailer.get("nodes_executed")
+    return not (isinstance(executed, int) and executed <= 0)
+
+
+def _unknown_facts(entry: TraceEntry) -> bool:
+    return bool(entry.unknown_tags or entry.other_sidecars)
+
+
+@dataclass
+class _Group:
+    """The traces of one workflow hash, newest-first, and what the sweep learned about them."""
+
+    entries: list[TraceEntry]
+    aged: list[TraceEntry]
+    identity: str | None = None
+    snapshot: TraceEntry | None = None
+    kept: bool = False
+
+
+class _Sweep:
+    """One sweep's state: the listing, the per-file and per-path read caches, and the protected set."""
+
+    def __init__(self, listing: TraceListing, cutoff: datetime) -> None:
+        self.listing = listing
+        self.cutoff = cutoff
+        self.protected: set[Path] = set()
+        self.unreadable: dict[Path, None] = {}  # insertion-ordered set
+        self._heads: dict[Path, tuple[dict[str, Any] | None, bool | None]] = {}
+        self._states: dict[str, Literal["present", "absent", "unknown"]] = {}
+        self._rules_applied: set[str] = set()  # workflows whose rules 2-3 ran (normalized paths)
+
+    def run(self) -> SweepReport:
+        groups: dict[str, list[TraceEntry]] = {}
+        for entry in self.listing.traces:  # newest-first, so every group is too
+            groups.setdefault(entry.workflow_hash, []).append(entry)
+        examined: list[_Group] = []
+        for entries in groups.values():
+            aged = [entry for entry in entries if _is_aged(entry, self.cutoff)]
+            if aged:
+                group = _Group(entries=entries, aged=aged)
+                self._classify(group)
+                examined.append(group)
+        candidates = [entry for group in examined for entry in self._removal_candidates(group)]
+        for group in examined:  # a group kept late (an unreadable probe) takes back its earlier candidates
+            if group.kept:
+                self.protected.update(entry.path for entry in group.aged)
+        candidates = [entry for entry in candidates if entry.path not in self.protected]
+        for entry in self.listing.legacy:  # pre-185 names: age alone, zero reads
+            if _is_aged(entry, self.cutoff):
+                if _unknown_facts(entry):
+                    self.protected.add(entry.path)
+                else:
+                    candidates.append(entry)
+        removed, skipped, kept_attempts = self._remove_in_waves(candidates)
+        self._remove_orphan_markers()
+        return SweepReport(
+            removed=removed,
+            protected=len(self.protected - set(self.unreadable)) + kept_attempts,
+            skipped=skipped,
+            unreadable=len(self.unreadable),
+            unreadable_paths=tuple(self.unreadable),
+        )
+
+    # --- reads (cached; FileNotFoundError and TraceUnreadableError propagate) ---
+
+    def _head(self, entry: TraceEntry) -> tuple[dict[str, Any] | None, bool | None]:
+        """The meta line and the lock verdict, through one open per file per sweep."""
+        if entry.path not in self._heads:
+            self._heads[entry.path] = read_trace_meta_and_lock_strict(entry.path)
+        return self._heads[entry.path]
+
+    def _file_state(self, workflow_path: str) -> Literal["present", "absent", "unknown"]:
+        """Rules 1-3 apply only while this is ``present`` (one stat per path per sweep); an inline
+        ``ir-hash:`` identity has no file."""
+        if workflow_path not in self._states:
+            self._states[workflow_path] = (
+                "absent" if workflow_path.startswith("ir-hash:") else workflow_file_state(workflow_path)
+            )
+        return self._states[workflow_path]
+
+    def _note_unreadable(self, entry: TraceEntry) -> None:
+        self.unreadable[entry.path] = None
+        self.protected.add(entry.path)
+
+    def _keep_group(self, group: _Group) -> None:
+        group.kept = True
+        self.protected.update(entry.path for entry in group.aged)
+
+    # --- classification ---
+
+    def _classify(self, group: _Group) -> None:
+        """Apply the name-only rules and rules 1-3 to one group."""
+        for entry in group.aged:
+            if _unknown_facts(entry):
+                self.protected.add(entry.path)
+        identity_entry = self._find_identity(group)
+        if group.kept:
+            return
+        if group.identity is not None:
+            self._rules_applied.add(normalize_workflow_path_key(group.identity))
+            state = self._file_state(group.identity)
+            if state == "unknown":
+                self._keep_group(group)
+                return
+            if state == "present":
+                self._apply_newest_run_rule(group, identity_entry)
+                if not all(entry.path in self.protected for entry in group.aged if not entry.only):
+                    group.snapshot = self._protect_snapshot(group, group.identity)
+                if group.kept:
+                    return
+        self._apply_pending_pause_rule(group)
+
+    def _find_identity(self, group: _Group) -> TraceEntry | None:
+        """The group's newest run: the newest trace whose head names its workflow — the group's identity.
+        Walks back past head-less files (a run whose meta line never landed: the disk-full run this sweep
+        follows leaves exactly that, young, as the newest name); usually one read, of the newest trace. A
+        head that cannot be read keeps the group (it is newer than anything the rules would pick)."""
+        for entry in group.entries:
+            try:
+                meta, _locked = self._head(entry)
+            except FileNotFoundError:
+                continue
+            except TraceUnreadableError:
+                self._note_unreadable(entry)
+                self._keep_group(group)
+                return None
+            path = _workflow_path(meta)
+            if path is not None:
+                group.identity = path
+                return entry
+        return None
+
+    def _apply_newest_run_rule(self, group: _Group, newest_run: TraceEntry | None) -> None:
+        """Rule 3: the group's newest run (its identity entry). An Attempt as the newest run — or as the newest
+        name, by its tag alone — protects its source too: a dead zero-work Attempt must not move "the newest
+        run" off a resumable source."""
+        if newest_run is not None:
+            self.protected.add(newest_run.path)
+        for entry in (group.entries[0], newest_run):
+            if entry is not None and entry.resumed_from_prefix is not None:
+                self._protect_source(entry)
+
+    def _protect_source(self, attempt: TraceEntry) -> None:
+        """Protect the Run an Attempt resumed — by its id prefix, across the whole listing (an Attempt may be
+        filed under another spelling's hash)."""
+        prefix = attempt.resumed_from_prefix
+        for entry in self.listing.traces:
+            if entry is not attempt and entry.execution_id is not None and entry.execution_id[:8] == prefix:
+                self.protected.add(entry.path)
+
+    def _protect_snapshot(self, group: _Group, workflow_path: str) -> TraceEntry | None:
+        """Rule 2 for one workflow of the group: the newest aged full run with a Snapshot trailer whose head
+        names that workflow. Walks aged traces only — a workflow's young runs are never read, so an aged pick
+        may be kept beside a younger Snapshot. Another workflow's success met on the way (an md5[:8] collision)
+        is passed over here and judged by the removal probe; an unreadable trace met before the pick could be
+        the real Snapshot and keeps the group."""
+        walked_unreadable = False
+        for entry in group.aged:
+            if entry.only:
+                continue
+            try:
+                if not _is_snapshot_trailer(read_trace_trailer_strict(entry.path)):
+                    continue
+                path = _workflow_path(self._head(entry)[0])
+            except FileNotFoundError:
+                continue
+            except TraceUnreadableError:
+                self._note_unreadable(entry)
+                walked_unreadable = True
+                continue
+            if path is None:
+                continue
+            if _same_workflow(path, workflow_path):
+                self.protected.add(entry.path)
+                if walked_unreadable:
+                    self._keep_group(group)
+                return entry
+        return None
+
+    def _apply_pending_pause_rule(self, group: _Group) -> None:
+        """Rule 1: a marked aged trace that is an answerable pause no Attempt has consumed."""
+        for entry in group.aged:
+            if not entry.paused:
+                continue
+            try:
+                meta = self._head(entry)[0]
+                trailer = read_trace_trailer_strict(entry.path)
+            except FileNotFoundError:
+                continue
+            except TraceUnreadableError:  # a marked trace could be a pending pause: keep the group
+                self._note_unreadable(entry)
+                self._keep_group(group)
+                return
+            path = _workflow_path(meta)
+            verdict = answerable_pause(entry, meta, trailer, self._file_state(path) if path else "absent")
+            if verdict == "unknown":
+                self._keep_group(group)
+                return
+            if verdict == "no" or path is None or meta is None:
+                continue
+            execution_id = str(meta.get("execution_id") or entry.execution_id)
+            try:
+                consumer = _find_consuming_attempt(path, execution_id, entries=self.listing.traces, count_live=False)
+            except ResumeSourceUnreadableError as exc:  # an Attempt we cannot read might not have consumed it
+                logger.debug("Keeping %s: an attempt of it could not be read (%s)", entry.path, exc)
+                self.unreadable[Path(exc.trace_path) if exc.trace_path else entry.path] = None
+                consumer = None
+            if consumer is None:
+                self.protected.add(entry.path)
+
+    def _apply_collider_rules(self, group: _Group, workflow_path: str) -> None:
+        """Rules 3 and 2 for a workflow that shares the group's hash but is not its identity (an md5[:8]
+        collision): its newest run — found by walking the group's heads, young ones included (collisions are
+        rare) — and its Snapshot. Once per workflow per sweep."""
+        key = normalize_workflow_path_key(workflow_path)
+        if key in self._rules_applied:
+            return
+        self._rules_applied.add(key)
+        state = self._file_state(workflow_path)
+        if state == "unknown":
+            self._keep_group(group)
+        if state != "present":
+            return
+        for entry in group.entries:
+            try:
+                path = _workflow_path(self._head(entry)[0])
+            except FileNotFoundError:
+                continue
+            except TraceUnreadableError:
+                self._note_unreadable(entry)
+                self._keep_group(group)
+                return
+            if _same_workflow(path, workflow_path):
+                self.protected.add(entry.path)
+                if entry.resumed_from_prefix is not None:
+                    self._protect_source(entry)
+                break
+        self._protect_snapshot(group, workflow_path)
+
+    def _removal_candidates(self, group: _Group) -> list[TraceEntry]:
+        """The group's aged traces no rule protects, each confirmed through one open (head + lock probe): a
+        live writer keeps it (rule 5); a head naming another workflow re-applies rules 2-3 for that workflow;
+        an unreadable one is kept, with the group when it is marked, an Attempt, or newer than the Snapshot."""
+        candidates: list[TraceEntry] = []
+        for entry in group.aged:
+            if group.kept:
+                return []
+            if entry.path in self.protected:
+                continue
+            try:
+                meta, locked = self._head(entry)
+            except FileNotFoundError:
+                continue
+            except TraceUnreadableError:
+                self._note_unreadable(entry)
+                newer_than_snapshot = group.snapshot is not None and (entry.started, entry.path.name) > (
+                    group.snapshot.started,
+                    group.snapshot.path.name,
+                )
+                if entry.paused or entry.resumed_from_prefix is not None or newer_than_snapshot:
+                    self._keep_group(group)
+                continue
+            if locked is True:
+                self.protected.add(entry.path)
+                continue
+            path = _workflow_path(meta)
+            if path is not None and group.identity is not None and not _same_workflow(path, group.identity):
+                self._apply_collider_rules(group, path)
+                if entry.path in self.protected:
+                    continue
+            candidates.append(entry)
+        return [] if group.kept else candidates
+
+    # --- removal ---
+
+    def _remove_in_waves(self, candidates: list[TraceEntry]) -> tuple[int, int, int]:
+        """Rule 4: an Attempt goes only once its source is gone. Wave 1 removes every candidate that is not an
+        Attempt and the Attempts whose source is already absent; each later wave the Attempts whose source the
+        previous wave removed. A source that could not be removed keeps its Attempts. Returns ``(removed,
+        skipped, attempts kept)``."""
+        present = Counter(entry.execution_id[:8] for entry in self.listing.traces if entry.execution_id)
+        removed = skipped = 0
+        pending = candidates
+        while pending:
+            wave = [entry for entry in pending if not _source_present(entry, present)]
+            if not wave:
+                break
+            in_wave = {entry.path for entry in wave}
+            pending = [entry for entry in pending if entry.path not in in_wave]
+            for entry in wave:
+                if _remove_trace(entry):
+                    removed += 1
+                    if entry.execution_id:
+                        present[entry.execution_id[:8]] -= 1
+                else:
+                    skipped += 1
+        return removed, skipped, len(pending)
+
+    def _remove_orphan_markers(self) -> None:
+        """A ``.paused`` marker whose trace is gone — removed only after a stat proves the trace absent (a
+        listing racing concurrent unlinks may skip a live name)."""
+        for marker in self.listing.orphan_markers:
+            try:
+                os.lstat(marker.with_name(marker.name.removesuffix(".paused")))
+            except FileNotFoundError:
+                try:
+                    marker.unlink(missing_ok=True)
+                except OSError:
+                    logger.debug("Could not remove orphan marker %s", marker, exc_info=True)
+            except OSError:
+                continue
+
+
+def _same_workflow(path: str | None, other: str) -> bool:
+    return path is not None and normalize_workflow_path_key(path) == normalize_workflow_path_key(other)
+
+
+def _source_present(entry: TraceEntry, present: Counter[str]) -> bool:
+    """Whether the Run this Attempt resumed is still in the directory (never for a non-Attempt)."""
+    prefix = entry.resumed_from_prefix
+    if prefix is None:
+        return False
+    own = 1 if entry.execution_id is not None and entry.execution_id[:8] == prefix else 0
+    return present[prefix] - own > 0
+
+
+def _remove_trace(entry: TraceEntry) -> bool:
+    """Unlink a trace, then its marker (never the marker first: a pause must not lose its index entry while
+    its trace stays). ``False`` when the trace could not be removed — it is kept and retried next sweep."""
+    try:
+        _unlink(entry.path)
+    except OSError:
+        logger.debug("Could not remove trace %s", entry.path, exc_info=True)
+        return False
+    if entry.paused:
+        try:
+            paused_marker(entry.path).unlink(missing_ok=True)
+        except OSError:  # an orphan marker; the next sweep removes it
+            logger.debug("Could not remove marker of %s", entry.path, exc_info=True)
+    return True
+
+
+def _unlink(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except PermissionError as exc:
+        if getattr(exc, "winerror", None) not in _WINDOWS_TRANSIENT_UNLINK_ERRORS:
+            raise
+        time.sleep(_WINDOWS_UNLINK_RETRY_DELAY)
+        path.unlink(missing_ok=True)

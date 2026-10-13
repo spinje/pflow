@@ -304,6 +304,33 @@ class TestListEnvCommand:
 class TestShowCommand:
     """Test pflow settings show command."""
 
+    def test_show_omits_keys_pflow_does_not_know(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Unknown keys are kept in the file (Task 185) but never printed: a value hand-placed outside env
+        must not show in clear."""
+        isolated_settings.parent.mkdir(parents=True, exist_ok=True)
+        isolated_settings.write_text(
+            json.dumps({
+                "OPENAI_API_KEY": "sk-misplaced-123",
+                "runtime": {"trace_retention_day": "typo-value"},
+                "llm": {"api_key": "sk-nested-456"},
+                "registry": {"nodes": {"token": "tok-deep-789"}},
+            }),
+            encoding="utf-8",
+        )
+
+        result = runner.invoke(settings, ["show"])
+
+        assert result.exit_code == 0
+        assert "sk-misplaced-123" not in result.output and "OPENAI_API_KEY" not in result.output
+        assert "typo-value" not in result.output
+        assert "sk-nested-456" not in result.output and "tok-deep-789" not in result.output
+        # Presence: the known keys of the same sections still print.
+        assert '"trace_retention_days": 14' in result.output
+        assert '"template_resolution_mode": "strict"' in result.output
+        assert '"tts_voice": "Kore"' in result.output and '"output_mode": "smart"' in result.output
+        assert '"deny": []' in result.output
+        assert json.loads(isolated_settings.read_text(encoding="utf-8"))["OPENAI_API_KEY"] == "sk-misplaced-123"
+
     def test_show_masks_sensitive_env_vars(self, runner: CliRunner, isolated_settings: Path) -> None:
         """Test that sensitive env vars are masked in show output."""
         # Setup: Add sensitive env vars

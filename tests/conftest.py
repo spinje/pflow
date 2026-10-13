@@ -448,6 +448,9 @@ def isolate_pflow_config(tmp_path, monkeypatch, precomputed_core_registry_nodes)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))  # what Windows children and expanduser read
+    # Trace retention off: a test that finalizes a trace must never sweep the directory it shares with its
+    # fixtures. A retention test opts in with its own ``monkeypatch.setenv`` (or ``delenv`` for the settings path).
+    monkeypatch.setenv("PFLOW_TRACE_RETENTION_DAYS", "0")
 
     # Create temporary paths for each component
     test_registry_path = test_pflow_dir / "registry.json"
@@ -516,6 +519,7 @@ def set_isolated_home(env: dict[str, str], home: Path) -> None:
     """
     env["HOME"] = str(home)
     env["USERPROFILE"] = str(home)
+    env["PFLOW_TRACE_RETENTION_DAYS"] = "0"  # a child that finalizes a trace never sweeps (opt in per test)
 
 
 @pytest.fixture(scope="session")

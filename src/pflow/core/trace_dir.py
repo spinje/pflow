@@ -29,7 +29,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, BinaryIO, Literal
 
 from pflow.core.exceptions import PflowError
 from pflow.core.trace_tree import normalize_workflow_path_key
@@ -286,6 +286,25 @@ def read_trace_meta_strict(path: Path) -> dict[str, Any] | None:
         raise
     except OSError as exc:
         raise TraceUnreadableError(f"could not read trace {path}: {exc}") from exc
+    return _meta_from_first_line(first, path)
+
+
+def read_trace_meta_and_lock_strict(path: Path) -> tuple[dict[str, Any] | None, bool | None]:
+    """``read_trace_meta_strict`` and ``is_trace_locked(strict=True)`` through ONE open — what a deleter
+    needs of a file it is about to remove. Same outcomes as the two: ``FileNotFoundError`` propagates, a read
+    or open fault raises ``TraceUnreadableError``."""
+    try:
+        with open(path, "rb") as handle:
+            first = handle.readline()
+            locked = _probe_lock(handle)
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise TraceUnreadableError(f"could not read trace {path}: {exc}") from exc
+    return _meta_from_first_line(first, path), locked
+
+
+def _meta_from_first_line(first: bytes, path: Path) -> dict[str, Any] | None:
     if not first.endswith(b"\n"):
         return None
     try:
@@ -367,10 +386,6 @@ def is_trace_locked(path: Path, *, strict: bool = False) -> bool | None:
     if sys.platform == "win32":
         return None
     try:
-        import fcntl
-    except ImportError:
-        return None
-    try:
         handle = open(path, "rb")  # noqa: SIM115 — closed by the with-block below
     except FileNotFoundError:
         return False
@@ -379,14 +394,25 @@ def is_trace_locked(path: Path, *, strict: bool = False) -> bool | None:
             raise TraceUnreadableError(f"could not open trace {path} to probe its lock: {exc}") from exc
         return None
     with handle:
-        try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return True
-        except OSError:
-            return None
-        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        return False
+        return _probe_lock(handle)
+
+
+def _probe_lock(handle: BinaryIO) -> bool | None:
+    """The lock verdict on an open handle (``is_trace_locked``'s contract); ``None`` without ``flock``."""
+    if sys.platform == "win32":
+        return None
+    try:
+        import fcntl
+    except ImportError:
+        return None
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    except OSError:
+        return None
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    return False
 
 
 def workflow_file_state(path: str) -> Literal["present", "absent", "unknown"]:
