@@ -76,7 +76,7 @@ def preflight_resume(
 ) -> ResumePreflight:
     """Everything a resume refuses on, in CLI order, with zero click.
 
-    ``load_resume_source`` ladder → workflow-identity gate (a denial: its gate-still-there check) →
+    ``load_resume_source`` ladder → (a denial: its gate-still-there check →) workflow-identity gate →
     between-nodes entry resolution (``entry_node_id is None``) → side-effect verdict (constructed, not
     raised). Raises ``ResumeSourceError`` subclasses / ``ResumeStaleWorkflowError`` /
     ``ResumeNotResumableError`` exactly as the CLI does today.
@@ -85,10 +85,10 @@ def preflight_resume(
     # The identity gate applies to --dry-run too (preview mirrors what a real
     # resume would do), but the side-effect confirmation does NOT: a dry-run
     # never runs K, so nothing can fire.
-    if gate_answer is not None and gate_answer.get("approve") is False:
-        _check_denial_reaches_gate(resolved, source, force=force)
-    else:
-        _check_workflow_identity(resolved, source, force=force)
+    denying = gate_answer is not None and gate_answer.get("approve") is False
+    if denying:
+        _check_denial_reaches_gate(resolved, source)
+    _check_workflow_identity(resolved, source, force=force, denying=denying)
     # A between-nodes source — a killed-between-nodes incomplete run (Decision 7)
     # or a paused escalation (Task 171) — has no entry yet: resolve the
     # unambiguous successor against the (identity-checked) workflow.
@@ -162,18 +162,14 @@ def _load_source_and_workflow(
     return load_resume_source(workflow_path=workflow_path_id(resolved), gate_answer=gate_answer), resolved
 
 
-def _check_denial_reaches_gate(resolved: ResolvedWorkflow, source: ResumeSource, *, force: bool) -> None:
-    """Refuse a denial the resumed walk would not deliver to the paused step's gate.
+def _check_denial_reaches_gate(resolved: ResolvedWorkflow, source: ResumeSource) -> None:
+    """Refuse a denial the resumed walk would not deliver to the paused step's gate — even with --force.
 
     A denial re-enters the walk at the paused step, whose approval gate records the "no" before the
-    step runs, so the edited-workflow check does not apply. What it needs is the walk to meet that
-    gate: a step renamed or removed since the pause has none, one nothing leads to from the start
-    step cannot be entered, and a step whose ``approval: required`` was removed would RUN on the "no"
-    — ``--force``, consent to re-running steps, waives none of these. The step's templates also
-    resolve BEFORE its gate fires, so a reference to a step resume does not restore would fail the
-    attempt (consuming the token) instead of recording the denial; that check reads references
-    statically (a ``${a ?? b}`` fallback or permissive mode cannot fail), so ``--force`` waives it.
-    (The CLI also turns the cache off for a denial: a memo hit skips the gate.)
+    step runs. A step renamed or removed since the pause has no gate, one nothing leads to from the
+    start step cannot be entered, and a step whose ``approval: required`` was removed would RUN on the
+    "no". ``--force`` is consent to re-running steps, which a denial never gives, so it waives none of
+    these. (The CLI also turns the cache off for a denial: a memo hit skips the gate.)
     """
     from pflow.core.workflow_id import step_identity
 
@@ -187,8 +183,6 @@ def _check_denial_reaches_gate(resolved: ResolvedWorkflow, source: ResumeSource,
     elif node.get("approval") is None:
         problem = "no longer has `approval: required`, so resuming would run it instead of recording the denial"
     else:
-        if not force:
-            _check_denial_reads_restored(node, source, set(current["steps"]))
         return
     raise ResumeNotResumableError(
         f"The paused step '{step}' {problem}.",
@@ -202,54 +196,16 @@ def _check_denial_reaches_gate(resolved: ResolvedWorkflow, source: ResumeSource,
     )
 
 
-def _check_denial_reads_restored(node: dict[str, Any], source: ResumeSource, step_ids: set[str]) -> None:
-    """Refuse when the paused step's templates read a step resume will not restore (unless --force).
-
-    Only what resolves before the gate counts: the step's params, and its carry on a carried
-    iteration — never its ``loop`` conditions, which run after it. The step itself has an output
-    only past its first iteration (the seed holds the previous one).
-    """
-    from pflow.core.workflow.template_surfaces import iter_node_surfaces
-    from pflow.runtime.resume_source import restored_node_ids
-
-    step = str(node.get("id"))
-    iteration = source.entry_iteration or 1
-    available = {*restored_node_ids(source), *([step] if iteration > 1 else [])}
-    unrestored = sorted({
-        ref.root
-        for surface in iter_node_surfaces(node)
-        if surface.kind == "param" or (surface.kind == "carry" and iteration > 1)
-        for _, template in surface.templates()
-        for ref in template.references
-        if ref.root in step_ids and ref.root not in available
-    })
-    if not unrestored:
-        return
-    names = ", ".join(f"'{name}'" for name in unrestored)
-    raise ResumeNotResumableError(
-        f"The paused step '{step}' now reads {names}, which has no saved output before the pause, so "
-        f"'{step}' would fail resolving its templates before its approval gate could record the denial.",
-        execution_id=source.execution_id,
-        trace_path=str(source.path),
-        node_id=step,
-        suggestions=[
-            f"Point '{step}' back at steps that ran before the pause, deny, then make the edit.",
-            "If the reference resolves without that output — a fallback to a literal, like "
-            '`${extra.stdout ?? ""}`, or permissive template mode — pass --force to deny anyway. '
-            "A fallback to another missing output still fails.",
-            "Or leave the paused run unanswered — nothing runs until it is resumed.",
-        ],
-    )
-
-
-def _check_workflow_identity(resolved: ResolvedWorkflow, source: ResumeSource, *, force: bool) -> None:
+def _check_workflow_identity(
+    resolved: ResolvedWorkflow, source: ResumeSource, *, force: bool, denying: bool = False
+) -> None:
     """Refuse a resume that an edit since the original run would make wrong, unless --force (§E step 3).
 
     Resume restores the saved outputs of the steps that ran before its resume point, so it refuses
     when one of them was edited (its definition minus prose), removed, or now leads somewhere else,
     when the workflow now starts at a different step, when the resume point itself is gone, or when a
     paused approval step being approved was edited since its preview (the answer covers what the human
-    saw). A denial is never checked here — ``_check_denial_reaches_gate`` is its whole gate.
+    saw; a denial runs nothing, so ``denying`` skips that one check).
     Everything at or after the resume point is free to change. A trace without per-step identity
     (recorded by an older pflow) falls back to the whole-workflow hash — any edit refuses.
     """
@@ -267,7 +223,7 @@ def _check_workflow_identity(resolved: ResolvedWorkflow, source: ResumeSource, *
             return
         changes = None
     else:
-        changes = _identity_changes(resolved.ir, source, resumes_at)
+        changes = _identity_changes(resolved.ir, source, resumes_at, denying=denying)
         if not changes:
             return
     rerun = _side_effect_refusal(resolved, source, force=False) if resumes_at is not None else None
@@ -283,7 +239,9 @@ def _check_workflow_identity(resolved: ResolvedWorkflow, source: ResumeSource, *
     )
 
 
-def _identity_changes(ir: dict[str, Any], source: ResumeSource, resumes_at: str | None) -> StepIdentityChanges | None:
+def _identity_changes(
+    ir: dict[str, Any], source: ResumeSource, resumes_at: str | None, *, denying: bool = False
+) -> StepIdentityChanges | None:
     """What changed among the steps the resume depends on (``None`` = nothing). Fail-closed: a
     checked step the recorded map lacks counts as edited."""
     from pflow.core.workflow_id import step_identity
@@ -299,7 +257,7 @@ def _identity_changes(ir: dict[str, Any], source: ResumeSource, resumes_at: str 
     restored = [node_id for node_id in restored_node_ids(source) if node_id != resumes_at]
     # A paused approval step is the resume point, yet checked when approved: `--approve yes` is consent
     # to the version the human saw. Only its definition — where it leads is downstream of the resume.
-    approval = source.paused_node_id if source.paused_node_id == source.entry_node_id else None
+    approval = source.paused_node_id if source.paused_node_id == source.entry_node_id and not denying else None
     rerouted = {node_id: edges for node_id in restored if (edges := _rerouted(now, then, node_id))}
     new_start = (current["start"], recorded.get("start")) if current["start"] != recorded.get("start") else None
     # A new route or start step is SKIPPED when the resume neither restores it nor reaches it from
