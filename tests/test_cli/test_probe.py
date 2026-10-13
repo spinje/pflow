@@ -273,6 +273,21 @@ def test_verbose_failure_adds_the_technical_details(runner: click.testing.CliRun
     assert "Technical details:\nchecked PATH and /bin" in verbose.stderr
 
 
+def test_a_secret_param_value_never_prints_wherever_it_travelled(runner: click.testing.CliRunner) -> None:
+    """A sensitive-named param's value is scrubbed from the failure the node echoed it into (shell
+    stderr, the error message), from the `-v` banner, and from the JSON document — the rule a run follows."""
+    args = ["shell", "command=echo $API_TOKEN >&2; exit 2", 'env={"API_TOKEN": "s3cr3t-token-value"}']
+
+    text = runner.invoke(probe_cmd, args, obj={"verbose": True})
+    as_json = runner.invoke(probe_cmd, [*args, "--output-format", "json"], obj={"verbose": True})
+
+    assert text.exit_code == as_json.exit_code == 1
+    assert "Command failed with exit code 2: <REDACTED>" in text.stderr
+    assert "s3cr3t-token-value" not in text.stderr + text.stdout
+    assert "s3cr3t-token-value" not in as_json.stdout + as_json.stderr
+    assert json.loads(as_json.stdout)["outputs"]["stderr"] == "<REDACTED>\n"
+
+
 # --- Refused before the node ran: exit 2 (the call is wrong) ---
 
 

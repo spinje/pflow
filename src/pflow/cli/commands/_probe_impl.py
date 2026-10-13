@@ -26,8 +26,9 @@ def execute_single_node(node_type: str, params: tuple[str, ...], output_format: 
     ran and failed, 2 when the probe was refused before it ran."""
     # A node parameter has no workflow-input declaration, so its token type is guessed here.
     execution_params = {key: infer_type(value) for key, value in parse_workflow_params(params).items()}
+    shown_params = _shown_params(execution_params)
     if verbose:
-        _display_execution_banner(node_type, execution_params)
+        _display_execution_banner(node_type, shown_params)
 
     with reserve_stdout():
         probe = probe_node(node_type, execution_params)
@@ -41,9 +42,9 @@ def execute_single_node(node_type: str, params: tuple[str, ...], output_format: 
     warnings, advisories = partition_surfaced_diagnostics(probe.warnings)
     sections = diagnostic_sections(warnings, advisories)
     if output_format == "json":
-        click.echo(json.dumps(_json_document(probe, execution_params, verbose), indent=2, default=str))
+        click.echo(json.dumps(_json_document(probe, shown_params, verbose), indent=2, default=str))
     elif probe.success:
-        click.echo(_format_success_text(probe, execution_params, verbose))
+        click.echo(_format_success_text(probe, shown_params, verbose))
         if sections:
             click.echo("\n".join(sections), err=True)
     else:
@@ -52,6 +53,15 @@ def execute_single_node(node_type: str, params: tuple[str, ...], output_format: 
 
     if not probe.success:
         sys.exit(EXIT_CODES[WorkflowStatus.FAILED] if probe.ran else EXIT_REJECTED)
+
+
+def _shown_params(execution_params: dict[str, Any]) -> dict[str, Any]:
+    """The params as output may show them — a sensitive-named one (and any secret value) redacted."""
+    from pflow.core.security_utils import redact_for_display, scrub_secret_values, secret_values
+
+    redacted = {name: redact_for_display([name], value) for name, value in execution_params.items()}
+    shown: dict[str, Any] = scrub_secret_values(redacted, secret_values(execution_params))
+    return shown
 
 
 def _display_execution_banner(node_type: str, execution_params: dict[str, Any]) -> None:

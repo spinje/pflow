@@ -15,7 +15,7 @@ pflow probe <NODE> [PARAMS...] --output-format json
 
 ## Parameters
 
-`name=value` arguments become the node's params; a value's type is inferred (`5` is a number, `true` a boolean, `{"a": 1}` an object). A `${VAR}` in a param is filled from the environment or from `pflow settings set-env` before the node runs — except inside a body (a shell command, a code block), whose `${…}` belongs to that language. A variable set in neither place refuses the probe with the commands that set it. The node runs the way a workflow step does: a file path in a param that takes content (`command`, `code`, `prompt`, `source`, `stdin`, `headers`, `output_schema`) — one starting with `./` or `../`, or one containing `/` and ending in `.md`, `.txt`, `.py`, `.sh`, `.yaml`, `.yml` or `.json` — is replaced by the file's content, and params are validated as `pflow run` validates a step: an unknown or malformed param is refused before the node runs.
+`name=value` arguments become the node's params; a value's type is inferred (`5` is a number, `true` a boolean, `{"a": 1}` an object). A `${VAR}` in a param is filled from the environment or from `pflow settings set-env` before the node runs — except inside a body (a shell command, a code block), whose `${…}` belongs to that language. A variable set in neither place refuses the probe with the commands that set it. The node runs the way a workflow step does: a file path in a param that takes content (`command`, `code`, `prompt`, `source`, `stdin`, `headers`, `output_schema`) — one starting with `./` or `../`, or one containing `/` and ending in `.md`, `.txt`, `.py`, `.sh`, `.yaml`, `.yml` or `.json` — is replaced by the file's content, and params are validated as `pflow run` validates a step: an unknown param or an invalid param name is refused before the node runs (exit `2`); a value the node itself rejects (an empty `file_path`, a bad `timeout`) is a node failure (exit `1`). As in a run, the value of a sensitive-named param (`api_key`, `auth_token`, an `env` entry like `API_TOKEN`) and every `pflow settings set-env` value print as `<REDACTED>` wherever they appear.
 
 ## Failures and exit codes
 
@@ -23,6 +23,6 @@ pflow probe <NODE> [PARAMS...] --output-format json
 |------|---------|--------|
 | `0` | The node succeeded | The output paths on stdout (or the JSON document) |
 | `1` | The node ran and failed (a shell exit code, an HTTP error, a raised exception) | The error on stderr — the same diagnostic `pflow run` prints for that step |
-| `2` | The probe was refused before the node ran: an unknown or ambiguous node, an invalid or unknown param, an unset `${VAR}` | The error on stderr |
+| `2` | The probe was refused before the node ran: an unknown or ambiguous node, an unknown param or an invalid param name, an unset `${VAR}` | The error on stderr |
 
 With `--output-format json`, stdout always carries one document. A failure's document has `"success": false` and an `errors` list (plus `warnings`); a successful one omits `errors` and carries `warnings` only when there are any.

@@ -13,8 +13,10 @@ from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity, exception_to_diagnostics
 from pflow.core.execution_cache import ExecutionCache
+from pflow.core.security_utils import scrub_secret_values, secret_values
 from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
 from pflow.core.workflow.template_surfaces import param_mode
+from pflow.execution.formatters.run_outcome import scrub_diagnostic
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
 from pflow.registry import Registry
@@ -71,10 +73,14 @@ def probe_node(node_type: str, params: dict[str, Any]) -> ProbeResult:
     workflow_ir = {"nodes": [node], "edges": []}
     result = WorkflowRunner().run(workflow_ir, {}, RunnerConfig(cache_enabled=False, trace_enabled=False))
     execution_time_ms = int(result.metrics.workflow_nodes.get(resolved, 0)) if result.metrics else 0
-    warnings = [d for d in result.diagnostics if d.severity is not Severity.ERROR]
+    # A probe's params are its inputs: their sensitive-named values (and every `pflow settings` value)
+    # never print, wherever they travelled — the rule `build_run_outcome` applies to a run.
+    secrets = secret_values(node_params)
+    errors = [scrub_diagnostic(d, secrets) for d in result.errors]
+    warnings = [scrub_diagnostic(d, secrets) for d in result.diagnostics if d.severity is not Severity.ERROR]
     # Wherever the run left them: a failure record, or the node's own key when the run failed after
     # the node completed (a non-interactive escalation).
-    outputs = _as_outputs(get_node_output(result.shared_after, resolved))
+    outputs = scrub_secret_values(_as_outputs(get_node_output(result.shared_after, resolved)), secrets)
 
     if not result.success:
         return ProbeResult(
@@ -82,7 +88,7 @@ def probe_node(node_type: str, params: dict[str, Any]) -> ProbeResult:
             success=False,
             ran=result.engine_started,
             outputs=outputs,
-            errors=result.errors,
+            errors=errors,
             warnings=warnings,
             execution_time_ms=execution_time_ms,
         )
