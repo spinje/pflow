@@ -833,14 +833,21 @@ def _show_workflow_help(first_arg: str, resolved: ResolvedWorkflow) -> None:
 
     library = resolved.source == "library"
     name = os.path.basename(first_arg) if "/" in first_arg else first_arg
+    # A saved workflow's stored metadata carries its run history, as `pflow describe <name>` shows it.
+    metadata = WorkflowManager().load(_saved_name(first_arg)) if library else resolved_interface_metadata(resolved)
     click.echo(
         format_workflow_interface_for_cli(
             name,
-            resolved_interface_metadata(resolved),
+            metadata,
             example_name=name if library else shlex.quote(first_arg),
             source="Saved workflow" if library else first_arg,
         )
     )
+
+
+def _saved_name(first_arg: str) -> str:
+    """The saved-workflow name a library argument names (``my-flow.pflow.md`` → ``my-flow``)."""
+    return first_arg[:-9] if first_arg.lower().endswith(".pflow.md") else first_arg
 
 
 def _setup_workflow_execution(
@@ -862,7 +869,7 @@ def _setup_workflow_execution(
         file_stem = Path(first_arg).stem
         ctx.obj["workflow_name"] = file_stem[:-6] if file_stem.endswith(".pflow") else file_stem
     elif source == "library":
-        workflow_name = first_arg[:-9] if first_arg.lower().endswith(".pflow.md") else first_arg
+        workflow_name = _saved_name(first_arg)
         ctx.obj["workflow_name"] = workflow_name
         try:
             wm = WorkflowManager()

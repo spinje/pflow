@@ -7,7 +7,8 @@ from pflow.execution.result import ResolvedWorkflow
 
 
 def resolved_interface_metadata(resolved: ResolvedWorkflow) -> dict[str, Any]:
-    """The interface metadata of a resolved workflow — ``describe`` of a file and ``<workflow> --help``.
+    """The interface metadata of a resolved FILE — ``describe`` and ``<workflow> --help`` of one (a saved
+    workflow's is ``WorkflowManager.load``, which adds its run history).
 
     The description is the file's H1 prose; the IR carries none.
     """
