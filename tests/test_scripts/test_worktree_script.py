@@ -97,6 +97,25 @@ def test_new_refuses_an_existing_worktree_dir(repo: dict[str, Path]) -> None:
     assert "already exists" in result.stderr
 
 
+@pytest.mark.parametrize("name", ["task-94", "feature/x", "feat/Model_List", "feat/", "feat/a--b"])
+def test_new_refuses_a_new_branch_outside_the_naming_convention(repo: dict[str, Path], name: str) -> None:
+    result = run(repo, "new", name, "--no-open")
+
+    assert result.returncode == 1
+    assert "<type>/<kebab-slug>" in result.stderr
+    assert not repo["worktrees"].exists()
+    assert branches(repo, name) == ""
+
+
+def test_new_checks_out_an_existing_branch_under_any_name(repo: dict[str, Path]) -> None:
+    git(repo["main"], "branch", "experiment")
+
+    result = run(repo, "new", "experiment", "--no-open")
+
+    assert result.returncode == 0, result.stderr
+    assert git(repo["worktrees"] / "experiment", "branch", "--show-current") == "experiment"
+
+
 def test_new_off_a_feature_branch_requires_an_explicit_base(repo: dict[str, Path]) -> None:
     git(repo["main"], "checkout", "-qb", "feat/elsewhere")
 

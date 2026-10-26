@@ -12,6 +12,12 @@
 #       base-ref defaults to main ONLY when the MAIN checkout is on main (wherever this runs from);
 #       on any other branch it must be given explicitly, so a worktree never silently branches
 #       off unmerged work. A local main behind origin/main is warned about, not refused.
+#       A NEW branch must be named <type>/<kebab-slug> (type: feat fix docs refactor perf test
+#       chore) — refused otherwise; an existing branch is checked out under its own name. The
+#       slug convention: task-<N>-<slug> for taskmaster tasks (title via `./scripts/tasks <N>`),
+#       issue-<N>-<slug> for GitHub issues (title via `gh issue view <N>` — an issue number is
+#       never a task id), a bare slug for ad-hoc work; the slug part is 2–4 words, no articles.
+#       e.g. feat/task-94-model-list, fix/issue-620-template-escape, fix/stale-ui-server
 #   ./scripts/worktree rm <branch|path> [-f]
 #       Remove a worktree whose PR has MERGED — squash-safe: the merged PR's head SHA (via gh) must
 #       equal the branch tip, and the tree must be clean (a refusal lists the dirty paths); the
@@ -171,6 +177,10 @@ cmd_new() {
     shift
   done
   [ -n "$branch" ] || die "usage: scripts/worktree new <branch> [base-ref] [--copy <path>]... [--no-open] [--claude|--codex [\"context\"]] [--model <name>]"
+  if ! git -C "$REPO_ROOT" show-ref --verify --quiet "refs/heads/$branch" \
+     && ! [[ "$branch" =~ ^(feat|fix|docs|refactor|perf|test|chore)/[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+    die "branch '$branch' is not <type>/<kebab-slug> (type: feat fix docs refactor perf test chore) — e.g. feat/task-94-model-list, fix/issue-620-template-escape, fix/stale-ui-server"
+  fi
 
   # Base guard: default to main only FROM main — otherwise a worktree silently branches off
   # unmerged work. To branch off a feature branch deliberately, name it.

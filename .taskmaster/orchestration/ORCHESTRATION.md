@@ -166,7 +166,7 @@ merged PR and point the packet there instead; almost all recent tasks have revie
    ```
    ./scripts/worktree new <type>/task-<N>-<slug> --no-open [--copy scratchpads/<subject>]
    ```
-   (branch naming and the base-ref rule: `.claude/commands/worktree.md`) → creates
+   (branch naming and the base-ref rule: the `scripts/worktree` header) → creates
    `../pflow-worktrees/<branch-slug>/` on the feature branch and runs `make install`. NEVER the
    Agent tool's `isolation: "worktree"` — an unmanaged tree with no packet, whose auto-cleanup
    fights this process. Create worktrees sequentially, never in one parallel shot.

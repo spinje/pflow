@@ -64,7 +64,6 @@ MODEL_HOMES = (
     "workflows/review/run-review-lenses.pflow.md",
     "workflows/search/run-searcher.pflow.md",
     "AGENTS.md",
-    ".claude/commands/worktree.md",
     ".taskmaster/orchestration/ORCHESTRATION.md",
 )
 
